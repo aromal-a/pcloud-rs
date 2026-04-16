@@ -109,6 +109,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use pcloud_auth::SessionState;
+    use pcloud_config::auth::VaultBackend;
     use pcloud_config::{ConfigProfile, Environment};
     use pcloud_ipc::{IpcClient, IpcServer, Request, ResponseStatus};
     use pcloud_model::ids::RemoteFolderId;
@@ -118,12 +119,18 @@ mod tests {
     use crate::{bootstrap_with_config, dispatch};
 
     fn bootstrap_test_shell() -> crate::RuntimeShell {
+        // Use `/tmp` (not `std::env::temp_dir()`) so the fully-qualified
+        // Unix-socket path stays under SUN_LEN on macOS, where the
+        // per-user tempdir `/var/folders/.../T/` alone eats 49 chars.
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock should be after epoch")
             .as_nanos();
-        let root =
-            std::env::temp_dir().join(format!("pcloud-daemon-test-{}-{nonce}", std::process::id()));
+        let root = std::path::PathBuf::from("/tmp").join(format!(
+            "pd-lib-{}-{}",
+            std::process::id(),
+            nonce % 1_000_000_000
+        ));
         let config = ConfigProfile::secure_defaults(root, Environment::Development);
         bootstrap_with_config(config).expect("runtime bootstrap should succeed")
     }
@@ -175,7 +182,7 @@ mod tests {
             .roundtrip(
                 &Request::PasswordSubmission {
                     username: "alice@example.com".to_owned(),
-                    value: "correct-horse".to_owned(),
+                    value: "correct-horse".to_owned().into(),
                 },
                 |request_bytes| {
                     let request = server.decode_request(request_bytes)?;
@@ -205,7 +212,7 @@ mod tests {
             &mut runtime,
             Request::PasswordSubmission {
                 username: "mallory@example.com".to_owned(),
-                value: "wrong-password".to_owned(),
+                value: "wrong-password".to_owned().into(),
             },
         );
 
@@ -336,7 +343,7 @@ mod tests {
         let login = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(login.status, ResponseStatus::Ok);
@@ -410,7 +417,7 @@ mod tests {
         let login = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(login.status, ResponseStatus::Ok);
@@ -508,7 +515,7 @@ mod tests {
         let login = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(login.status, ResponseStatus::Ok);
@@ -550,7 +557,7 @@ mod tests {
         let login = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(login.status, ResponseStatus::Ok);
@@ -595,7 +602,7 @@ mod tests {
         let login = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(login.status, ResponseStatus::Ok);
@@ -660,7 +667,7 @@ mod tests {
             &mut runtime,
             Request::ChangePublicLinkPassword {
                 link_id: 7,
-                password: Some("new-secret".to_owned()),
+                password: Some("new-secret".to_owned().into()),
             },
         );
         assert_eq!(change_password.status, ResponseStatus::Ok);
@@ -767,7 +774,7 @@ mod tests {
             &mut runtime,
             Request::ChangePublicLinkPassword {
                 link_id: 405,
-                password: Some("bad".to_owned()),
+                password: Some("bad".to_owned().into()),
             },
         );
         assert_eq!(invalid_password.status, ResponseStatus::Conflict);
@@ -813,7 +820,7 @@ mod tests {
         let login = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(login.status, ResponseStatus::Ok);
@@ -874,7 +881,7 @@ mod tests {
         let login = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(login.status, ResponseStatus::Ok);
@@ -931,7 +938,7 @@ mod tests {
         let login = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(login.status, ResponseStatus::Ok);
@@ -982,7 +989,7 @@ mod tests {
         let login = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(login.status, ResponseStatus::Ok);
@@ -1043,7 +1050,7 @@ mod tests {
         let login = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(login.status, ResponseStatus::Ok);
@@ -1110,7 +1117,7 @@ mod tests {
         let setup = dispatch(
             &mut runtime,
             Request::CryptoSetup {
-                password: "topsecret".to_owned(),
+                password: "topsecret".to_owned().into(),
                 hint: None,
             },
         );
@@ -1118,7 +1125,7 @@ mod tests {
         let start = dispatch(
             &mut runtime,
             Request::CryptoUnlock {
-                password: "topsecret".to_owned(),
+                password: "topsecret".to_owned().into(),
             },
         );
         assert_eq!(start.status, ResponseStatus::Ok);
@@ -1204,7 +1211,7 @@ mod tests {
         let empty_setup = dispatch(
             &mut runtime,
             Request::CryptoSetup {
-                password: String::new(),
+                password: String::new().into(),
                 hint: None,
             },
         );
@@ -1214,7 +1221,7 @@ mod tests {
         let empty_unlock = dispatch(
             &mut runtime,
             Request::CryptoUnlock {
-                password: String::new(),
+                password: String::new().into(),
             },
         );
         assert_eq!(empty_unlock.status, ResponseStatus::InvalidRequest);
@@ -1234,7 +1241,7 @@ mod tests {
         let setup = dispatch(
             &mut runtime,
             Request::CryptoSetup {
-                password: "topsecret".to_owned(),
+                password: "topsecret".to_owned().into(),
                 hint: Some("hint".to_owned()),
             },
         );
@@ -1244,7 +1251,7 @@ mod tests {
         let start = dispatch(
             &mut runtime,
             Request::CryptoUnlock {
-                password: "topsecret".to_owned(),
+                password: "topsecret".to_owned().into(),
             },
         );
         assert_eq!(start.status, ResponseStatus::Ok);
@@ -1275,7 +1282,7 @@ mod tests {
         let wrong = dispatch(
             &mut runtime,
             Request::CryptoUnlock {
-                password: "wrong".to_owned(),
+                password: "wrong".to_owned().into(),
             },
         );
         assert_eq!(wrong.status, ResponseStatus::Unauthorized);
@@ -1289,7 +1296,7 @@ mod tests {
             &mut runtime,
             Request::PasswordSubmission {
                 username: "alice@example.com".to_owned(),
-                value: "correct-horse".to_owned(),
+                value: "correct-horse".to_owned().into(),
             },
         );
         let response = dispatch(
@@ -1327,7 +1334,7 @@ mod tests {
             &mut runtime,
             Request::PasswordSubmission {
                 username: "alice@example.com".to_owned(),
-                value: "correct-horse".to_owned(),
+                value: "correct-horse".to_owned().into(),
             },
         );
         let response = dispatch(
@@ -1350,7 +1357,7 @@ mod tests {
             &mut runtime,
             Request::PasswordSubmission {
                 username: "alice@example.com".to_owned(),
-                value: "correct-horse".to_owned(),
+                value: "correct-horse".to_owned().into(),
             },
         );
         let response = dispatch(
@@ -1373,7 +1380,7 @@ mod tests {
             &mut runtime,
             Request::PasswordSubmission {
                 username: "alice@example.com".to_owned(),
-                value: "correct-horse".to_owned(),
+                value: "correct-horse".to_owned().into(),
             },
         );
         let _ = dispatch(
@@ -1403,7 +1410,7 @@ mod tests {
             &mut runtime,
             Request::PasswordSubmission {
                 username: "alice@example.com".to_owned(),
-                value: "correct-horse".to_owned(),
+                value: "correct-horse".to_owned().into(),
             },
         );
         let response = dispatch(
@@ -1427,7 +1434,7 @@ mod tests {
         let response = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
 
@@ -1463,7 +1470,7 @@ mod tests {
         let auth = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(auth.status, ResponseStatus::Ok);
@@ -1484,7 +1491,7 @@ mod tests {
         let auth = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(auth.status, ResponseStatus::Ok);
@@ -1532,7 +1539,7 @@ mod tests {
         let auth = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(auth.status, ResponseStatus::Ok);
@@ -1608,7 +1615,7 @@ mod tests {
         let auth = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(auth.status, ResponseStatus::Ok);
@@ -1672,7 +1679,7 @@ mod tests {
         let auth = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(auth.status, ResponseStatus::Ok);
@@ -1719,7 +1726,7 @@ mod tests {
         let auth = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(auth.status, ResponseStatus::Ok);
@@ -1773,7 +1780,7 @@ mod tests {
         let auth = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(auth.status, ResponseStatus::Ok);
@@ -1817,7 +1824,7 @@ mod tests {
         let _ = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         let response = dispatch(
@@ -1851,7 +1858,7 @@ mod tests {
         let response = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
 
@@ -1874,7 +1881,7 @@ mod tests {
         let auth = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(auth.status, ResponseStatus::Ok);
@@ -1902,7 +1909,7 @@ mod tests {
         let response = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
 
@@ -1947,7 +1954,7 @@ mod tests {
         let auth = dispatch(
             &mut runtime,
             Request::AuthTokenSubmission {
-                value: "digest-auth-token".to_owned(),
+                value: "digest-auth-token".to_owned().into(),
             },
         );
         assert_eq!(auth.status, ResponseStatus::Ok);
@@ -1979,6 +1986,9 @@ mod tests {
         ));
         let mut config = ConfigProfile::secure_defaults(root, Environment::Development);
         config.features.durable_auth_tokens_enabled = true;
+        // Force the file vault: Auto would pick Keychain on macOS and
+        // ignore the on-disk seed written below.
+        config.auth.backend = VaultBackend::File;
         fs::create_dir_all(&config.paths.config_dir).expect("config dir should exist");
         fs::write(config.paths.auth_token_vault_path(), "digest-auth-token\n")
             .expect("vault file should be written");
@@ -2182,6 +2192,9 @@ mod tests {
         ));
         let mut config = ConfigProfile::secure_defaults(root, Environment::Test);
         config.features.durable_auth_tokens_enabled = true;
+        // Force the file vault: Auto would pick Keychain on macOS and
+        // skip the on-disk seed that this test writes.
+        config.auth.backend = VaultBackend::File;
         config.api.mode = pcloud_config::api::ApiMode::Plaintext;
         config.api.host = "127.0.0.1".to_owned();
         config.api.port = 9;
@@ -2236,6 +2249,10 @@ mod tests {
         ));
         let mut config = ConfigProfile::secure_defaults(root, Environment::Development);
         config.features.durable_auth_tokens_enabled = true;
+        // Force the file vault: insecure-permission rejection is a
+        // file-vault invariant and the Auto backend on macOS (Keychain)
+        // has no concept of POSIX mode bits.
+        config.auth.backend = VaultBackend::File;
         fs::create_dir_all(&config.paths.config_dir).expect("config dir should exist");
         fs::write(config.paths.auth_token_vault_path(), "digest-auth-token\n")
             .expect("vault file should be written");

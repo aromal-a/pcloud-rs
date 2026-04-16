@@ -68,11 +68,13 @@ fn live_upload_download_roundtrip() {
     // Re-authenticate the embedded daemon via IPC dispatch to keep credentials
     // out of the fresh in-memory session.
     let resp = if let Some(token) = optional_env(ENV_TOKEN) {
-        sdk.dispatch(pcloud_ipc::Request::AuthTokenSubmission { value: token })
+        sdk.dispatch(pcloud_ipc::Request::AuthTokenSubmission {
+            value: token.into(),
+        })
     } else {
         sdk.dispatch(pcloud_ipc::Request::PasswordSubmission {
             username: optional_env(ENV_USER).unwrap(),
-            value: optional_env(ENV_PASSWORD).unwrap(),
+            value: optional_env(ENV_PASSWORD).unwrap().into(),
         })
     };
     assert_eq!(

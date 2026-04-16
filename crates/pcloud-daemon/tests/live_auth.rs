@@ -78,7 +78,12 @@ fn live_token_auth_and_userinfo_succeed_against_production_path() {
     let mut runtime =
         bootstrap_with_config(config.clone()).expect("runtime bootstrap should succeed");
 
-    let auth = dispatch(&mut runtime, Request::AuthTokenSubmission { value: token });
+    let auth = dispatch(
+        &mut runtime,
+        Request::AuthTokenSubmission {
+            value: token.into(),
+        },
+    );
     assert_eq!(
         auth.status,
         ResponseStatus::Ok,
@@ -110,7 +115,7 @@ fn live_password_auth_progresses_on_production_path() {
         &mut runtime,
         Request::PasswordSubmission {
             username,
-            value: password,
+            value: password.into(),
         },
     );
     assert_eq!(
@@ -161,7 +166,7 @@ fn live_password_tfa_auth_and_userinfo_succeed_against_production_path() {
         &mut runtime,
         Request::PasswordSubmission {
             username,
-            value: password,
+            value: password.into(),
         },
     );
     assert_eq!(
@@ -210,7 +215,7 @@ fn live_invalid_password_is_rejected_on_production_path() {
         &mut runtime,
         Request::PasswordSubmission {
             username: "nobody@example.invalid".to_owned(),
-            value: "definitely-wrong-password".to_owned(),
+            value: "definitely-wrong-password".to_owned().into(),
         },
     );
     assert!(

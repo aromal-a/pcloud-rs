@@ -564,21 +564,34 @@ impl RuntimeShell {
                     Err(err) => map_auth_flow_error(err),
                 }
             }
-            Request::CryptoUnlock { password } => self.unlock_crypto(password),
-            Request::CryptoSetup { password, hint } => self.setup_crypto(password, hint),
+            Request::CryptoUnlock { password } => self.unlock_crypto(password.into_string()),
+            Request::CryptoSetup { password, hint } => {
+                self.setup_crypto(password.into_string(), hint)
+            }
             Request::CryptoChangePassword {
                 old_password,
                 new_password,
                 hint,
                 code,
                 flags,
-            } => self.change_crypto_password(old_password, new_password, hint, code, flags),
+            } => self.change_crypto_password(
+                old_password.into_string(),
+                new_password.into_string(),
+                hint,
+                code,
+                flags,
+            ),
             Request::CryptoChangePasswordUnlocked {
                 new_password,
                 hint,
                 code,
                 flags,
-            } => self.change_crypto_password_unlocked(new_password, hint, code, flags),
+            } => self.change_crypto_password_unlocked(
+                new_password.into_string(),
+                hint,
+                code,
+                flags,
+            ),
             Request::CryptoMkdir {
                 name,
                 parent_folder_id,
@@ -609,7 +622,7 @@ impl RuntimeShell {
                 self.change_public_link_expire(link_id, expire)
             }
             Request::ChangePublicLinkPassword { link_id, password } => {
-                self.change_public_link_password(link_id, password)
+                self.change_public_link_password(link_id, password.map(|p| p.into_string()))
             }
             Request::ChangePublicLinkUpload { link_id, policy } => {
                 self.change_public_link_upload(link_id, policy)
@@ -777,12 +790,15 @@ impl RuntimeShell {
             Request::AccountChangePassword {
                 current_password,
                 new_password,
-            } => self.account_change_password(current_password, new_password),
+            } => self.account_change_password(
+                current_password.into_string(),
+                new_password.into_string(),
+            ),
             Request::AccountRegister {
                 email,
                 password,
                 terms_accepted,
-            } => self.account_register(email, password, terms_accepted),
+            } => self.account_register(email, password.into_string(), terms_accepted),
             Request::GetFileLink { file_id } => self.get_file_link_ipc(file_id),
             Request::DownloadFile {
                 file_id,
@@ -1165,7 +1181,7 @@ impl RuntimeShell {
     /// [`crate::mount_runtime::MountControl::mount`] after refreshing
     /// the adapter factory with the current auth state.
     pub fn mount_filesystem(&mut self, mountpoint: &Path) -> Response {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         self.try_install_pcloud_shim_factory();
         self.mount_control.mount(mountpoint)
     }
@@ -1254,11 +1270,17 @@ impl RuntimeShell {
         Box::new(pcloud_proto::revision_provider::NullRevisionProvider::new())
     }
 
-    /// Compose a real [`pcloud_fs::fuser_shim::PcloudFsShim`] factory and
-    /// install it on [`MountControl`] if, and only if, (a) auth is live and
-    /// (b) a networked transport is available. Otherwise the existing
-    /// factory (default `NullFuseAdapter`) is left untouched.
-    #[cfg(target_os = "linux")]
+    /// Compose a real live-FUSE adapter factory and install it on
+    /// [`MountControl`] if, and only if, (a) auth is live and (b) a
+    /// networked transport is available. Otherwise the existing factory
+    /// (default `NullFuseAdapter`) is left untouched.
+    ///
+    /// On Linux the factory returns a [`pcloud_fs::fuser_shim::PcloudFsShim`]
+    /// wrapped around a [`pcloud_fs::fuse_adapter::ProtoFuseAdapter`].
+    /// On macOS the `fuser` crate is not available, so the factory returns
+    /// the bare `ProtoFuseAdapter` and [`pcloud_fs::mount_service::MountService`]
+    /// dispatches through the fuse-t FFI instead of `mount_fuser`.
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
     fn try_install_pcloud_shim_factory(&mut self) {
         let Some(auth_token) = self
             .auth

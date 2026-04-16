@@ -40,6 +40,7 @@ use crate::mount_orphan::MountinfoReader;
 use crate::mount_service::{MountError, MountHandle, MountOptions};
 use crate::platform::PlatformMount;
 
+#[path = "macos_ffi.rs"]
 pub mod macos_ffi;
 
 // -----------------------------------------------------------------------------
@@ -79,15 +80,11 @@ impl PlatformMount for MacosPlatformMount {
     /// Returns [`MountError::Unsupported`] with an install hint when
     /// neither check passes.
     fn probe_supported(&self) -> Result<(), MountError> {
-        if Path::new("/Library/Frameworks/fuse-t.framework").exists() {
+        let backend = MacFuseBackend::from_env();
+        if find_libfuse_install_path(backend).is_some() {
             return Ok(());
         }
-        if dlopen_libfuse_succeeds() {
-            return Ok(());
-        }
-        Err(MountError::Unsupported(
-            "fuse-t not installed; install from https://www.fuse-t.org/".to_string(),
-        ))
+        Err(MountError::Unsupported(install_hint(backend)))
     }
 
     /// macOS-flavored defaults: we advertise a pCloud volume name,
@@ -160,6 +157,12 @@ fn mount_with_fuse_t(
     mount_point: &Path,
     opts: MountOptions,
 ) -> Result<MountHandle, MountError> {
+    // Publish fuse-t's `libfuse.dylib` symbols into the process's flat
+    // namespace before the first call to any `fuse_*` extern. Without
+    // this the `-undefined,dynamic_lookup` linker flag will defer the
+    // symbols forever and dyld will abort on first call.
+    ensure_libfuse_loaded()?;
+
     let mount_point_c = path_to_cstring(mount_point)?;
     let argv_owned = build_fuse_args(&opts);
 
@@ -1325,25 +1328,150 @@ extern "C" fn thunk_statfs(req: macos_ffi::fuse_req_t, _ino: macos_ffi::fuse_ino
 // Probe helpers.
 // -----------------------------------------------------------------------------
 
-/// Attempt `dlopen("libfuse.dylib", RTLD_LAZY)`; return whether the
-/// symbol resolves. We `dlclose` immediately because we only care
-/// about presence, not a live handle.
-fn dlopen_libfuse_succeeds() -> bool {
-    let Ok(name) = CString::new("libfuse.dylib") else {
-        return false;
-    };
-    // SAFETY: `dlopen` accepts a NUL-terminated C string and an integer
-    // flag; it is documented thread-safe. We immediately pair every
-    // non-null return with `dlclose`. No pointer escapes this function.
-    unsafe {
-        let handle = libc::dlopen(name.as_ptr(), libc::RTLD_LAZY);
-        if handle.is_null() {
-            false
-        } else {
-            libc::dlclose(handle);
-            true
+/// Which userspace libfuse implementation pcloud-rs should bind at
+/// mount time.
+///
+/// Both fuse-t and macFUSE export the libfuse 2.9 low-level ABI, so
+/// our FFI is agnostic once the right dylib is loaded. The default is
+/// [`Self::FuseT`] because it needs no kernel extension and no SIP
+/// carve-out; [`Self::MacFuse`] is available for callers who already
+/// rely on macFUSE. [`Self::Auto`] probes fuse-t first, then macFUSE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MacFuseBackend {
+    FuseT,
+    MacFuse,
+    Auto,
+}
+
+impl MacFuseBackend {
+    /// Read the selector from `PCLOUD_MACOS_FUSE_BACKEND`. Unknown or
+    /// empty values fall back to the default ([`Self::FuseT`]).
+    fn from_env() -> Self {
+        match std::env::var("PCLOUD_MACOS_FUSE_BACKEND")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("fuse-t") | Some("fuset") | Some("fuse_t") => Self::FuseT,
+            Some("macfuse") | Some("mac-fuse") | Some("mac_fuse") | Some("osxfuse") => {
+                Self::MacFuse
+            }
+            Some("auto") => Self::Auto,
+            _ => Self::FuseT,
         }
     }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::FuseT => "fuse-t",
+            Self::MacFuse => "macFUSE",
+            Self::Auto => "auto",
+        }
+    }
+}
+
+/// Known absolute install paths for **fuse-t**'s userspace libfuse
+/// shim. Separate from [`MACFUSE_CANDIDATES`] because the two stacks
+/// ship under distinct file names so they can coexist on the same
+/// machine. macOS dyld does not search `/usr/local/lib` or
+/// `/opt/homebrew/lib` for bare dlopen names on modern SIP-enforced
+/// systems, so we probe absolute paths.
+const FUSET_CANDIDATES: &[&str] = &[
+    "/usr/local/lib/libfuse-t.dylib",
+    "/opt/homebrew/lib/libfuse-t.dylib",
+    "/Library/Application Support/fuse-t/lib/libfuse-t.dylib",
+];
+
+/// Known absolute install paths for **macFUSE**'s kext-backed libfuse
+/// 2.9-compat shim. macFUSE requires its kernel extension to be
+/// approved in System Settings → Privacy & Security; without that
+/// `fuse_mount` returns `mount_macfuse: the file system is not
+/// available`. This module does not attempt to detect kext-approval
+/// state — the daemon surfaces the libfuse error verbatim.
+const MACFUSE_CANDIDATES: &[&str] = &[
+    "/usr/local/lib/libfuse.dylib",
+    "/opt/homebrew/lib/libfuse.dylib",
+];
+
+/// Return the first existing install candidate for `backend`, if any.
+fn find_libfuse_install_path(backend: MacFuseBackend) -> Option<&'static str> {
+    let probe = |candidates: &[&'static str]| -> Option<&'static str> {
+        candidates.iter().copied().find(|p| Path::new(p).exists())
+    };
+    match backend {
+        MacFuseBackend::FuseT => probe(FUSET_CANDIDATES),
+        MacFuseBackend::MacFuse => probe(MACFUSE_CANDIDATES),
+        MacFuseBackend::Auto => probe(FUSET_CANDIDATES).or_else(|| probe(MACFUSE_CANDIDATES)),
+    }
+}
+
+/// Human-readable install hint used by `probe_supported` / mount
+/// bring-up when no dylib matching the requested backend is present.
+fn install_hint(backend: MacFuseBackend) -> String {
+    match backend {
+        MacFuseBackend::FuseT => {
+            "fuse-t not installed; install from https://www.fuse-t.org/ \
+             (or set PCLOUD_MACOS_FUSE_BACKEND=macfuse to use macFUSE)"
+                .to_string()
+        }
+        MacFuseBackend::MacFuse => {
+            "macFUSE not installed; install from https://macfuse.github.io/ \
+             (or unset PCLOUD_MACOS_FUSE_BACKEND to use fuse-t)"
+                .to_string()
+        }
+        MacFuseBackend::Auto => {
+            "no macOS FUSE backend found; install fuse-t from https://www.fuse-t.org/ \
+             or macFUSE from https://macfuse.github.io/"
+                .to_string()
+        }
+    }
+}
+
+/// Ensure the selected backend's `libfuse*.dylib` is loaded into the
+/// process with `RTLD_GLOBAL` so the `-undefined,dynamic_lookup` extern
+/// symbols declared in [`macos_ffi`] can resolve on first call via
+/// dyld's flat-namespace lookup.
+///
+/// The handle is intentionally leaked (never `dlclose`d) — the mount
+/// session references `fuse_*` symbols for as long as the daemon is
+/// alive, and a `dlclose` would invalidate them. Called once at the
+/// start of every `mount_with_fuse_t`; `dlopen` is idempotent so
+/// repeated calls return the same underlying library.
+fn ensure_libfuse_loaded() -> Result<(), MountError> {
+    let backend = MacFuseBackend::from_env();
+    let path = find_libfuse_install_path(backend)
+        .ok_or_else(|| MountError::Unsupported(install_hint(backend)))?;
+    let Ok(path_c) = CString::new(path) else {
+        return Err(MountError::Unsupported(format!(
+            "libfuse path contains NUL: {path}"
+        )));
+    };
+    // SAFETY: `dlopen` accepts a NUL-terminated C string and an integer
+    // flag; it is documented thread-safe. `RTLD_GLOBAL` publishes the
+    // library's symbols so subsequent flat-namespace lookups (triggered
+    // by our `extern "C"` call sites) can find them. We intentionally
+    // do not call `dlclose`: the library must outlive the mount session.
+    let handle = unsafe { libc::dlopen(path_c.as_ptr(), libc::RTLD_LAZY | libc::RTLD_GLOBAL) };
+    if handle.is_null() {
+        // SAFETY: `dlerror` returns a pointer to a thread-local NUL-
+        // terminated error string owned by libdl; valid until the next
+        // dlopen/dlsym/dlclose call on this thread.
+        let err = unsafe {
+            let e = libc::dlerror();
+            if e.is_null() {
+                "dlopen returned NULL".to_string()
+            } else {
+                std::ffi::CStr::from_ptr(e).to_string_lossy().into_owned()
+            }
+        };
+        return Err(MountError::Unsupported(format!(
+            "failed to load {} backend ({path}): {err}",
+            backend.label()
+        )));
+    }
+    Ok(())
 }
 
 // -----------------------------------------------------------------------------

@@ -782,7 +782,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
         daemon

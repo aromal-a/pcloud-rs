@@ -147,9 +147,9 @@ fn arb_request() -> impl Strategy<Value = Request> {
         arb_method().prop_map(|method| Request::Plain { method }),
         (".{0,64}", ".{0,64}").prop_map(|(u, v)| Request::PasswordSubmission {
             username: u,
-            value: v
+            value: v.into()
         }),
-        ".{0,64}".prop_map(|v| Request::AuthTokenSubmission { value: v }),
+        ".{0,64}".prop_map(|v| Request::AuthTokenSubmission { value: v.into() }),
         (".{0,16}", any::<bool>(), any::<bool>()).prop_map(|(v, t, r)| {
             Request::TwoFactorCodeSubmission {
                 value: v,
@@ -157,9 +157,9 @@ fn arb_request() -> impl Strategy<Value = Request> {
                 recovery_code: r,
             }
         }),
-        ".{0,64}".prop_map(|p| Request::CryptoUnlock { password: p }),
+        ".{0,64}".prop_map(|p| Request::CryptoUnlock { password: p.into() }),
         (".{0,64}", proptest::option::of(".{0,64}")).prop_map(|(p, h)| Request::CryptoSetup {
-            password: p,
+            password: p.into(),
             hint: h
         }),
         any::<bool>().prop_map(|enabled| Request::AuthPersistence { enabled }),
@@ -185,7 +185,7 @@ fn arb_request() -> impl Strategy<Value = Request> {
         (any::<u64>(), proptest::option::of(".{0,64}")).prop_map(|(id, p)| {
             Request::ChangePublicLinkPassword {
                 link_id: id,
-                password: p,
+                password: p.map(Into::into),
             }
         }),
         Just(Request::ListBookmarks),

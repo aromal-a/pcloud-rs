@@ -815,7 +815,7 @@ impl Command {
                 password: inputs
                     .public_link_password
                     .as_ref()
-                    .map(|s| s.expose_secret().to_owned()),
+                    .map(|s| s.expose_secret().to_owned().into()),
             },
             Self::ChangeLinkUpload => Request::ChangePublicLinkUpload {
                 link_id: inputs.public_link_id,
@@ -909,10 +909,10 @@ impl Command {
                 // Secret is exposed only here, right before IPC dispatch.
                 // The request is short-lived send-and-forget (see
                 // pcloud-ipc/src/methods.rs NOTE on secret handling).
-                value: inputs.password.expose_secret().to_owned(),
+                value: inputs.password.expose_secret().to_owned().into(),
             },
             Self::SubmitAuthToken => Request::AuthTokenSubmission {
-                value: inputs.auth_token.expose_secret().to_owned(),
+                value: inputs.auth_token.expose_secret().to_owned().into(),
             },
             Self::SubmitTwoFactorCode | Self::SubmitRecoveryCode => {
                 Request::TwoFactorCodeSubmission {
@@ -922,7 +922,7 @@ impl Command {
                 }
             }
             Self::SubmitCryptoPassword => Request::CryptoUnlock {
-                password: inputs.crypto_password.expose_secret().to_owned(),
+                password: inputs.crypto_password.expose_secret().to_owned().into(),
             },
             Self::AuthSave => Request::AuthPersistence {
                 enabled: inputs.auth_persistence_enabled,
@@ -1182,14 +1182,14 @@ impl Command {
                 method: Method::SendCryptoChangeUserPrivate,
             },
             Self::CryptoChangePassword => Request::CryptoChangePassword {
-                old_password: inputs.crypto_password.expose_secret().to_owned(),
-                new_password: inputs.new_crypto_password.expose_secret().to_owned(),
+                old_password: inputs.crypto_password.expose_secret().to_owned().into(),
+                new_password: inputs.new_crypto_password.expose_secret().to_owned().into(),
                 hint: inputs.crypto_change_hint.clone(),
                 code: inputs.crypto_change_code.clone(),
                 flags: inputs.crypto_change_flags,
             },
             Self::CryptoChangePasswordUnlocked => Request::CryptoChangePasswordUnlocked {
-                new_password: inputs.new_crypto_password.expose_secret().to_owned(),
+                new_password: inputs.new_crypto_password.expose_secret().to_owned().into(),
                 hint: inputs.crypto_change_hint.clone(),
                 code: inputs.crypto_change_code.clone(),
                 flags: inputs.crypto_change_flags,
@@ -1216,12 +1216,12 @@ impl Command {
                 email: inputs.username.clone(),
             },
             Self::AccountChangePassword => Request::AccountChangePassword {
-                current_password: inputs.password.expose_secret().to_owned(),
-                new_password: inputs.account_new_password.expose_secret().to_owned(),
+                current_password: inputs.password.expose_secret().to_owned().into(),
+                new_password: inputs.account_new_password.expose_secret().to_owned().into(),
             },
             Self::AccountRegister => Request::AccountRegister {
                 email: inputs.username.clone(),
-                password: inputs.password.expose_secret().to_owned(),
+                password: inputs.password.expose_secret().to_owned().into(),
                 terms_accepted: inputs.account_terms_accepted,
             },
             Self::AccountApiServers => Request::Plain {
