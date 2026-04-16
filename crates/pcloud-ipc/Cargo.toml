@@ -1,0 +1,57 @@
+# **PLATFORM MATRIX:**
+# - Linux: full support (tier 1) — UNIX sockets + SO_PEERCRED peer checks.
+# - FreeBSD: tier 2 — UNIX sockets + LOCAL_PEERCRED source-level cfg.
+# - macOS: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.4 (LOCAL_PEERCRED).
+# - Windows: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.5 (Named Pipes + SID checks).
+
+[package]
+name = "pcloud-ipc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Local IPC codec and transport (owner-only UNIX sockets) for pcloud-rs daemon/CLI."
+
+[dependencies]
+libc = "0.2"
+pcloud-model = { path = "../pcloud-model" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Planned (bd-xplat-macos): LOCAL_PEERCRED via libc (already unconditional).
+
+[target.'cfg(windows)'.dependencies]
+# bd-xplat-windows: Named Pipes + SID-based peer authentication.
+# - Win32_System_Pipes:            CreateNamedPipeW / GetNamedPipeClientProcessId
+# - Win32_Security:                TOKEN_USER / TokenUser / SID structures
+# - Win32_Foundation:              HANDLE / CloseHandle / BOOL / LUID
+# - Win32_Security_Authorization:  ConvertSidToStringSidW /
+#                                  ConvertStringSecurityDescriptorToSecurityDescriptorW
+# - Win32_System_Threading:        OpenProcessToken / OpenProcess / GetCurrentProcess
+# - Win32_Storage_FileSystem:      FILE_FLAG_OVERLAPPED, PIPE_ACCESS_* constants
+windows = { version = "0.58", features = [
+    "Win32_System_Pipes",
+    "Win32_Security",
+    "Win32_Foundation",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
+    "Win32_Storage_FileSystem",
+] }
+
+[dev-dependencies]
+proptest = "1.5"
+criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
+# Security-invariant integration test (`tests/security_invariants.rs`)
+# exercises the secret wrappers and the zeroize contract alongside IPC
+# surfaces; neither is a runtime dependency of pcloud-ipc itself.
+pcloud-secret = { path = "../pcloud-secret" }
+zeroize = "1.8"
+
+[[bench]]
+name = "ipc_codec"
+harness = false
+
+[lints]
+workspace = true

@@ -1,0 +1,104 @@
+# Codecov configuration for the pcloud-rs Rust workspace.
+#
+# P2.1 PLAN_A_PLUS.md coverage gate.
+#
+# Ratchet plan:
+#   - 2026-04-15 -> 2026-04-29: gate is INFORMATIONAL ONLY.
+#       Coverage regressions are reported on PRs but do not block merge.
+#       This gives contributors two weeks to establish a stable baseline.
+#   - 2026-04-29 onward: flip `informational: false` on the project gate
+#       (and on the per-crate flag gates) so the check becomes REQUIRED.
+#   - Workspace floor starts at 65% (ratchet start) and will be stepped up
+#       by 2-3 percentage points per release cycle toward the 80% long-term
+#       target. Update `target:` below (and in CI doc comments) when raising.
+#
+# Per-crate floors below apply to the high-risk security/crypto/IPC surface
+# areas called out in PLAN_A_PLUS.md P2.1. They are keyed off Codecov flags,
+# which are produced by cargo-llvm-cov's lcov output plus the path filters
+# configured in `component_management`.
+
+coverage:
+  precision: 2
+  round: down
+  range: "65...80"
+
+  status:
+    project:
+      default:
+        target: 65%
+        threshold: 1%
+        base: auto
+        informational: true  # flip to false on 2026-04-29
+        if_ci_failed: error
+        only_pulls: false
+      pcloud-crypto:
+        target: 85%
+        threshold: 0.5%
+        informational: true  # flip to false on 2026-04-29
+        paths:
+          - "crates/pcloud-crypto/"
+      pcloud-auth:
+        target: 80%
+        threshold: 0.5%
+        informational: true  # flip to false on 2026-04-29
+        paths:
+          - "crates/pcloud-auth/"
+      pcloud-resilience:
+        target: 85%
+        threshold: 0.5%
+        informational: true  # flip to false on 2026-04-29
+        paths:
+          - "crates/pcloud-resilience/"
+      pcloud-secret:
+        target: 90%
+        threshold: 0.5%
+        informational: true  # flip to false on 2026-04-29
+        paths:
+          - "crates/pcloud-secret/"
+      pcloud-ipc:
+        target: 80%
+        threshold: 0.5%
+        informational: true  # flip to false on 2026-04-29
+        paths:
+          - "crates/pcloud-ipc/"
+
+    patch:
+      default:
+        target: 65%
+        threshold: 2%
+        informational: true  # flip to false on 2026-04-29
+        if_ci_failed: error
+
+component_management:
+  individual_components:
+    - component_id: pcloud-crypto
+      name: pcloud-crypto
+      paths:
+        - crates/pcloud-crypto/**
+    - component_id: pcloud-auth
+      name: pcloud-auth
+      paths:
+        - crates/pcloud-auth/**
+    - component_id: pcloud-resilience
+      name: pcloud-resilience
+      paths:
+        - crates/pcloud-resilience/**
+    - component_id: pcloud-secret
+      name: pcloud-secret
+      paths:
+        - crates/pcloud-secret/**
+    - component_id: pcloud-ipc
+      name: pcloud-ipc
+      paths:
+        - crates/pcloud-ipc/**
+
+comment:
+  layout: "header, diff, components, files, footer"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "target/**"
+  - "**/tests/**"
+  - "**/benches/**"
+  - "**/examples/**"

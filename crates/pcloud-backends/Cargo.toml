@@ -1,0 +1,41 @@
+[package]
+name = "pcloud-backends"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Backend implementations split out of pcloud-daemon (P6.1)."
+
+[dependencies]
+pcloud-auth = { path = "../pcloud-auth" }
+pcloud-cache = { path = "../pcloud-cache" }
+pcloud-config = { path = "../pcloud-config" }
+pcloud-crypto = { path = "../pcloud-crypto" }
+pcloud-engine = { path = "../pcloud-engine" }
+pcloud-fs = { path = "../pcloud-fs" }
+pcloud-ipc = { path = "../pcloud-ipc" }
+pcloud-model = { path = "../pcloud-model" }
+pcloud-observability = { path = "../pcloud-observability" }
+pcloud-p2p = { path = "../pcloud-p2p" }
+pcloud-proto = { path = "../pcloud-proto" }
+pcloud-resilience = { path = "../pcloud-resilience" }
+pcloud-secret = { path = "../pcloud-secret" }
+pcloud-store = { path = "../pcloud-store" }
+libc.workspace = true
+log.workspace = true
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+sha3.workspace = true
+tar = "0.4"
+tempfile = "3"
+thiserror.workspace = true
+zeroize = "1.8"
+zstd.workspace = true
+
+[dev-dependencies]
+filetime = "0.2"
+
+[lints]
+workspace = true

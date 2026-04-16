@@ -1,0 +1,231 @@
+# cargo-deny configuration for the pcloud-rs Rust rewrite workspace.
+# Enforces license hygiene, known-advisory policy, and source allowlisting.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+# Hard-gate: in cargo-deny v2 the advisory schema collapses the old
+# severity knobs (`vulnerability`, `unsound`, `notice`) into a single
+# advisory stream that is hard-deny by default. That gives us the
+# requested `vulnerability = "deny"` behavior — any known CVE in the
+# dep tree fails the build. This is the PR gate (see .github/workflows/rust.yml).
+yanked = "deny"
+# `unmaintained = "workspace"` limits unmaintained-advisory diagnostics to
+# crates directly in this workspace (transitive unmaintained crates are
+# reported as warnings only, not hard-fails). This is the v2 equivalent of
+# the legacy `unmaintained = "warn"` knob: CVEs hard-fail, unmaintained
+# does not. Tracked separately via the nightly cargo-audit watchdog.
+unmaintained = "workspace"
+# Every ignore MUST carry a `review: YYYY-MM-DD` comment. The reviewer
+# re-validates by re-running `cargo deny --locked check` and removing any
+# entry flagged `advisory-not-detected` (dep already gone) or any entry
+# whose upstream has shipped a patched release.
+#
+# Current reviewer: @ezechiel203. Next scheduled sweep: 2026-07-15.
+ignore = [
+    # RUSTSEC-2021-0119: nix 0.19.1 has an OOB write in `getgrouplist` on
+    # platforms with >16 groups. Pulled transitively by `battery v0.7.8`,
+    # which we only depend on for `cfg(target_os = "macos")` and
+    # `cfg(windows)` in pcloud-daemon (the Linux integrity-sweeper reads
+    # /sys/class/power_supply directly, so `battery` is not compiled on
+    # the Linux release target). `cargo deny`'s `--all-features` graph
+    # walk still resolves the non-Linux path, hence the ignore.
+    # Mitigation: bd-xplat-windows / bd-xplat-macos will replace `battery`
+    # with a platform-native probe before first macOS/Windows release.
+    # review: 2026-07-15
+    "RUSTSEC-2021-0119",
+    # RUSTSEC-2026-0097: rand unsound with custom logger. Pulled via the
+    # reqwest / aws-sdk-kms / rustls transitive stack. No upstream patched
+    # release as of review date — tracked under the enterprise-dep hygiene
+    # milestone (bd-1du.10). Will flip to hard-fail once upstream ships a
+    # patched `rand` major.
+    # review: 2026-07-15
+    "RUSTSEC-2026-0097",
+    # RUSTSEC-2025-0134: rustls-pemfile is unmaintained (recommended
+    # migration: rustls-pki-types). Direct dep in pcloud-fleet is already
+    # on 2.2.0 (the final 2.x); the 1.0.4 copy is pinned by the AWS
+    # transitive chain (aws-smithy-http-client -> hyper-rustls 0.24.2).
+    # Cannot be dropped without a breaking AWS SDK bump; tracked under the
+    # enterprise-dep hygiene milestone (bd-1du.10).
+    # review: 2026-07-15
+    "RUSTSEC-2025-0134",
+    # RUSTSEC-2026-0098: rustls name-constraints for URIs. Upstream is
+    # patching; we are on rustls 0.23.38 (latest 0.23 line). Watch for the
+    # 0.23.x point release that ships the fix.
+    # review: 2026-06-01
+    "RUSTSEC-2026-0098",
+    # RUSTSEC-2026-0099: rustls name-constraints wildcard. Same source as
+    # RUSTSEC-2026-0098 — will flip to hard-fail once the rustls 0.23.x
+    # patch is out. Watched by the nightly `deny-audit` job so a fix ships
+    # within one cron cycle of upstream.
+    # review: 2026-06-01
+    "RUSTSEC-2026-0099",
+]
+
+[licenses]
+version = 2
+# Permissive licenses we allow. GPL-only variants are intentionally NOT listed.
+# Anything outside this allow-list is rejected.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "ISC",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "Zlib",
+    "MIT-0",
+    "Apache-2.0 WITH LLVM-exception",
+    "CC0-1.0",
+    "BSL-1.0",
+    "OpenSSL",
+]
+confidence-threshold = 0.8
+# Explicit exceptions live here if ever needed per-crate.
+# webpki-roots ships the Mozilla CA bundle under CDLA-Permissive-2.0, a
+# permissive data-license that the workspace allow-list intentionally does
+# not carry globally. The license applies only to the bundled root-CA data
+# (not code) and webpki-roots is a standard transitive in the TLS stack,
+# so we grant a narrowly scoped per-crate exception.
+exceptions = [
+    { name = "webpki-roots", allow = ["CDLA-Permissive-2.0"] },
+]
+
+# Copyleft GPL-only families are blocked at the workspace level. cargo-deny
+# denies anything not in `allow`, but we pin the intent here for reviewers.
+# Blocked (not listed above): GPL-2.0-only, GPL-3.0-only, AGPL-3.0-only,
+# LGPL-2.1-only, LGPL-3.0-only, SSPL-1.0, Apache-2.0 WITH LLVM-exception,
+# CC0-1.0, OpenSSL, BSL-1.0.
+
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [
+    { path = "LICENSE", hash = 0xbd0eed23 },
+]
+
+[bans]
+# `multiple-versions = "deny"` would force pinning >50 transitive families
+# that we do not control — the workspace's resolution graph is dominated by
+# four upstream stacks that each maintain independent major-version pins:
+#
+#   1. AWS SDK (`aws-config` / `aws-sdk-kms` / `aws-smithy-*`) pins the
+#      legacy `hyper-rustls 0.24 / rustls-pemfile 1.0 / base64 0.21 /
+#      security-framework 2 / core-foundation 0.9` family. The reqwest +
+#      rustls 0.23 stack we pull directly is on the modern side. Bumping
+#      AWS to drop this is a cascading breaking change (tracked under
+#      bd-1du.10 enterprise-dep hygiene), not a local fix.
+#   2. zbus / secret-service. `secret-service 4.0` (which we depend on for
+#      the Linux Keychain-backed auth vault) pins `zbus 4.4 / zvariant 4.2`;
+#      `notify-rust 4.15` (plugin notifications) pins `zbus 5.13 / zvariant
+#      5.9`. Neither upstream has aligned yet.
+#   3. regorus (policy engine) pins `thiserror 1`, `itertools 0.11`, and
+#      `uuid`'s `rand 0.10` branch. The rest of the workspace is on
+#      `thiserror 2` / `itertools 0.14` / `rand 0.9`.
+#   4. Windows target graph (`windows-sys` / `windows-targets` /
+#      `windows-*`). Multiple copies are an artifact of Rust's `windows`
+#      crate release cadence on the cross-platform target graph; cargo-deny
+#      resolves every `cfg(windows)` even when we're not building for it.
+#
+# Keeping `"warn"` + explicit `skip` entries makes the noise-floor auditable
+# (new duplicates outside the known families show up as fresh warnings in
+# CI) without producing a hard-fail that would block every routine bump.
+# Flip to `"deny"` once any of the four stacks collapses a major.
+multiple-versions = "warn"
+# Wildcard version requirements are banned for external crates, but the
+# internal workspace crates legitimately use `version = "*"` with path
+# dependencies. Allow wildcards only on path-based (workspace-internal)
+# deps; any external `*` still fails the build.
+wildcards = "deny"
+allow-wildcard-paths = true
+highlight = "all"
+deny = []
+
+# Known-duplicate families. Each entry cites the upstream blocker so a
+# reviewer can verify the situation hasn't moved. If an entry goes stale
+# (warning: not encountered), drop it.
+skip = [
+    # --- AWS SDK legacy stack (hyper-rustls 0.24 / rustls 0.21) ---
+    # Bump requires aws-sdk-kms >= ? shipping on hyper-rustls 0.27 / rustls 0.23.
+    # Upstream: https://github.com/awslabs/aws-sdk-rust/issues/977
+    { name = "base64", version = "0.21" },
+    { name = "rustls-pemfile", version = "1.0" },
+    { name = "hyper-rustls", version = "0.24" },
+    { name = "rustls", version = "0.21" },
+    { name = "rustls-webpki", version = "0.101" },
+    { name = "rustls-native-certs", version = "0.6" },
+    { name = "tokio-rustls", version = "0.24" },
+    { name = "h2", version = "0.3" },
+    { name = "http", version = "0.2" },
+    { name = "http-body", version = "0.4" },
+    { name = "hyper", version = "0.14" },
+    { name = "core-foundation", version = "0.9" },
+    { name = "core-foundation-sys", version = "0.8.6" },
+    { name = "security-framework", version = "2" },
+
+    # --- zbus split: secret-service 4 (zbus 4) vs notify-rust 4 (zbus 5) ---
+    # Upstream: https://github.com/hwchen/keyring-rs/issues (secret-service 5).
+    { name = "zbus", version = "4" },
+    { name = "zbus_macros", version = "4" },
+    { name = "zbus_names", version = "3" },
+    { name = "zvariant", version = "4" },
+    { name = "zvariant_derive", version = "4" },
+    { name = "zvariant_utils", version = "2" },
+
+    # --- regorus policy engine legacy stack ---
+    # Upstream: https://github.com/microsoft/regorus/issues
+    { name = "thiserror", version = "1" },
+    { name = "thiserror-impl", version = "1" },
+    { name = "itertools", version = "0.11" },
+    { name = "rand", version = "0.8" },
+    { name = "rand", version = "0.10" },
+    { name = "rand_core", version = "0.6" },
+    { name = "rand_core", version = "0.10" },
+    { name = "rand_chacha", version = "0.3" },
+    { name = "getrandom", version = "0.2" },
+    { name = "getrandom", version = "0.4" },
+    { name = "hashbrown", version = "0.15" },
+    { name = "cpufeatures", version = "0.2" },
+    { name = "winnow", version = "0.7" },
+
+    # --- misc transitive churn (platform/cfg-driven) ---
+    { name = "bitflags", version = "1" },
+    { name = "socket2", version = "0.5" },
+    { name = "nix", version = "0.19" },
+    { name = "cron", version = "0.12" },
+    { name = "openssl-probe", version = "0.1.5" },
+    { name = "wit-bindgen", version = "0.46" },
+
+    # --- windows target graph (multi-version by design) ---
+    # Cargo's `cfg(windows)` graph resolves both windows 0.58 (direct, used
+    # by pcloud-daemon on Windows) and windows 0.61+ (transitive). These
+    # warnings are noise on non-Windows builds.
+    { name = "windows", version = "0.58" },
+    { name = "windows-core", version = "0.58" },
+    { name = "windows-implement", version = "0.58" },
+    { name = "windows-interface", version = "0.58" },
+    { name = "windows-link", version = "0.1" },
+    { name = "windows-result", version = "0.3" },
+    { name = "windows-strings", version = "0.1" },
+    { name = "windows-sys", version = "0.52" },
+    { name = "windows-sys", version = "0.59" },
+    { name = "windows-targets", version = "0.52" },
+    { name = "windows_aarch64_gnullvm", version = "0.52" },
+    { name = "windows_aarch64_msvc", version = "0.52" },
+    { name = "windows_i686_gnu", version = "0.52" },
+    { name = "windows_i686_msvc", version = "0.52" },
+    { name = "windows_x86_64_gnu", version = "0.52" },
+    { name = "windows_x86_64_gnullvm", version = "0.52" },
+    { name = "windows_x86_64_msvc", version = "0.52" },
+]
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

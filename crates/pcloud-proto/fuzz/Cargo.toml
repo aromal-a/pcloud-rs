@@ -1,0 +1,70 @@
+[package]
+name = "pcloud-proto-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Exclude from parent workspace; cargo-fuzz is nightly-only.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+pcloud-proto = { path = ".." }
+pcloud-ipc = { path = "../../pcloud-ipc" }
+pcloud-model = { path = "../../pcloud-model" }
+
+[[bin]]
+name = "fuzz_response_parser"
+path = "fuzz_targets/fuzz_response_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_binary_request_roundtrip"
+path = "fuzz_targets/fuzz_binary_request_roundtrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_json_response"
+path = "fuzz_targets/fuzz_json_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_auth_flow_state"
+path = "fuzz_targets/fuzz_auth_flow_state.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_path_canonicalize"
+path = "fuzz_targets/fuzz_path_canonicalize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_ipc_method_decode"
+path = "fuzz_targets/fuzz_ipc_method_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_listfolder_response"
+path = "fuzz_targets/fuzz_listfolder_response.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

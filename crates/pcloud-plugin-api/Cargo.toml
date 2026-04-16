@@ -1,0 +1,18 @@
+[package]
+name = "pcloud-plugin-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Plugin manifest, signature verification (ed25519), and registry API for pcloud-rs."
+
+[dependencies]
+pcloud-config = { path = "../pcloud-config" }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+ed25519-dalek = { version = "2.1", default-features = false, features = ["std"] }
+
+[lints]
+workspace = true

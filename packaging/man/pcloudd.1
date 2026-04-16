@@ -1,0 +1,1217 @@
+.\" Manual page for pcloudd(1) - the pCloud background daemon.
+.\" Lint with: groff -ww -man -Tutf8 packaging/man/pcloudd.1 >/dev/null
+.TH PCLOUDD 1 "April 16, 2026" "pcloud-rs-rust" "pCloud Client Manual"
+.nh
+.ad l
+.
+.SH NAME
+pcloudd \- pCloud background service daemon (Rust rewrite)
+.
+.SH SYNOPSIS
+.B pcloudd
+.br
+.B pcloudd
+.B serve
+.br
+.B pcloudd
+.RB { \-\-help | \-h | help }
+.br
+.B pcloudd
+.RB { \-\-version | \-V | version }
+.
+.SH DESCRIPTION
+.B pcloudd
+is the long-running background service that owns every piece of state a
+pCloud client needs: the local IPC socket, the auth-token vault, the
+SQLite state store, the transfer/sync/crypto/shares runtimes, the
+observability exporters, and \(em once the FUSE parity work (tracker
+bead
+.BR bd\-1du.4 )
+lands \(em the mounted-drive runtime. Interactive control flows
+exclusively through
+.BR pcloudc (1)
+over a Unix-domain socket: operators only run
+.B pcloudd
+themselves to produce a one-shot bootstrap summary, or have a service
+manager (systemd, launchd, SCM, rc.d) launch
+.B pcloudd serve
+on their behalf.
+.
+.SS Why a separate daemon at all
+The pcloud-rs SDK is a library, but many of the guarantees the product
+relies on can only be made by a long-lived process: (1) there must be a
+single owner of the upload journal, crash-safe staging, and the SQLite
+write lock; (2) the auth vault must live under a fixed UID so the
+on-disk mode
+.B 0600
+check is meaningful; (3) TLS connections to the API, bandwidth pacing,
+and retry schedules amortize only when amortized across requests; (4)
+the FUSE mount, once wired, is a kernel-attached resource that cannot
+migrate across processes. Splitting
+.B pcloudd
+from
+.BR pcloudc (1)
+also keeps the CLI free of ambient authority: the CLI is a thin
+tool that can run as any user and is gated at the socket.
+.
+.SS Request lifecycle
+.nf
+  pcloudc (or SDK embedder)
+        |
+        |  JSON-encoded, length-prefixed frame on an owner-only AF_UNIX
+        |  socket ($PCLOUD_ROOT/runtime/pcloudd.sock, mode 0600)
+        v
+  pcloud-ipc::IpcServer::accept
+        |  peer-credential check (SO_PEERCRED on Linux,
+        |  getpeereid(3) on *BSD/macOS, named-pipe SID DACL on Windows).
+        |  Reject cross-UID peers.
+        v
+  pcloud-ipc::transport::read_frame
+        |  Enforces 1 MiB (1_048_576 B) per-request cap
+        |  (pcloud_ipc::MAX_REQUEST_BYTES) before allocating.
+        v
+  pcloud-daemon::dispatch::dispatch
+        |  Optional W3C traceparent extraction (tracing-otlp feature);
+        |  opens a pcloudd.dispatch span parented to caller.
+        |  Routes Request -> backend runtime (auth/transfer/sync/crypto/
+        |  public_link/shares/backup/account/notifications).
+        v
+  Backend runtime -> pcloud-proto HTTPS -> pCloud API (or local only).
+        |
+        v
+  Response frame written back. Serve loop observes
+  signals::shutdown_requested() between accepts and drains cleanly.
+.fi
+.
+.SS Security model (one-line version)
+Owner-only IPC socket, peer-UID gated on accept, 1 MiB request cap,
+TLS-only in production, opt-in durable auth tokens in a
+.B 0700
+vault dir with per-file
+.B 0600
+mode, no cleartext password persistence, secret-bearing fields wrapped
+in
+.B SecretString
+/
+.B SecretBytes
+(zeroize-on-drop, redacted
+.BR Debug ).
+.
+.SS Persistence model
+One SQLite file
+.RI ( state/store.sqlite3 ),
+one vault directory
+.RI ( state/vault ),
+one append-only audit log
+.RI ( state/audit.log ),
+and transient state under
+.I runtime/
+and
+.IR cache/ .
+The daemon runs
+.B PRAGMA integrity_check
+at bootstrap and surfaces the result on the first
+.B Health
+request.
+.
+.SH COMMAND-LINE OPTIONS
+.B pcloudd
+accepts a deliberately minimal argument surface. All runtime tuning
+happens through
+.BR pcloud.conf (5)
+and
+.B PCLOUD_*
+environment variables, so the binary remains safe to ship with no
+flags to audit.
+.TP
+.B (no argument)
+.B Mode: Summary.
+Bootstraps the runtime, prints the resolved configuration plus every
+subsystem's health verdict, and exits 0. Does NOT bind the IPC socket.
+.RS
+.IP \(bu 2
+.B Why:
+verify on a fresh host that config discovery, directory modes, vault
+permissions, store migrations, and credential bootstrap all succeed
+before you ask systemd to flip the service on.
+.IP \(bu 2
+.B Failure modes:
+any bootstrap error surfaces here exactly as it would in
+.B serve
+mode, but you get to fix it before a service manager starts
+retry-looping.
+.RE
+.TP
+.B serve
+.B Mode: Serve.
+Long-running. Installs SIGTERM/SIGINT/SIGHUP/SIGPIPE handlers
+.B before
+bootstrapping, bootstraps the runtime, binds the owner-only IPC
+socket, optionally spawns the Prometheus scrape listener (feature
+.BR metrics ),
+and enters the dispatch loop. This is the mode every service manager
+must launch.
+.TP
+.BR \-\-help ", " \-h ", " help
+Print the built-in help text and exit 0. Authoritative inventory of
+the daemon's argument surface (mirrors this manpage's
+.B SYNOPSIS ).
+.TP
+.BR \-\-version ", " \-V ", " version
+Print
+.RB \(dq pcloudd
+.IR <cargo-pkg-version> \(dq
+and exit 0. Use in packaging scripts and for release-note regressions.
+.PP
+Unknown arguments are rejected with exit
+.BR 1 .
+There are no hidden flags and no environment-only feature toggles that
+are not also documented under
+.B ENVIRONMENT
+below.
+.
+.SH CONFIGURATION
+The authoritative reference is
+.BR pcloud.conf (5);
+this section is an operator-level table of contents.
+.B pcloudd
+starts from
+.BR ConfigProfile::secure_defaults ,
+layers the on-disk
+.I pcloud.toml
+over it, applies any
+.B PCLOUD_*
+environment overrides via
+.BR apply_env_overrides ,
+then validates the result. Validation is strict: a production
+environment that would end up on plaintext HTTP is rejected at
+startup.
+.TP
+.B [profile]
+Top-level envelope:
+.B environment
+(one of
+.BR Production ,
+.BR Development ,
+.BR Test ).
+Everything security-sensitive \(em TLS policy, metrics wildcard bind,
+integrity sweeper cadence \(em keys off this. Operators should treat
+.B Production
+as the default and only flip to
+.B Development
+on dev boxes.
+.TP
+.B [profile.paths]
+File-system layout:
+.BR config_dir ,
+.BR state_dir ,
+.BR runtime_dir ,
+.BR cache_dir .
+Governed by
+.BR PCLOUD_ROOT ;
+see
+.B FILES
+below for modes and owners. Touch these only for containerized /
+multi-tenant / test layouts.
+.TP
+.B [profile.api]
+Upstream transport:
+.BR mode ,
+.BR host ,
+.BR port ,
+.BR server_name
+(TLS SNI / cert verify),
+.BR connect_timeout_ms ,
+.BR read_timeout_ms .
+Production mode refuses plaintext; overrides via
+.B PCLOUD_API_*
+are honored but re-validated.
+.TP
+.B [profile.features]
+Product feature gates.
+.B durable_auth_tokens_enabled
+(the only field the daemon reads for security posture) defaults off.
+.TP
+.B [profile.features.integrity_sweeper]
+Background worker that re-verifies on-disk state.
+.BR enabled ,
+.BR interval_seconds ,
+.BR chunk_size .
+Leave disabled unless you are debugging store corruption.
+.TP
+.B [profile.crypto]
+Client-side-crypto subsystem parameters: KDF cost, AES-GCM sector
+size. Sensible defaults; do not touch without a threat model.
+.TP
+.B [profile.crypto.kms]
+KMS / HSM adapter selector. A
+.B Pkcs11Hsm
+variant is declared but is a stub in pre-alpha \(em the production path
+is the built-in software-backed key wrapper.
+.TP
+.B [profile.data_residency]
+Region pin for where user data should land. Enforced via API-server
+selection and by refusing requests that would cross residency.
+.TP
+.B [profile.resilience]
+Retry policy for the TLS transport: base backoff, jitter, maximum
+attempts. Consumed by
+.B TransportFactory
+in production; development/test bypass the wrapper for test
+determinism.
+.TP
+.B [profile.observability]
+Metrics, tracing, and SLO knobs. See
+.B OBSERVABILITY
+below.
+.TP
+.B [profile.extensions]
+Plugin registry gates. All four plugin booleans default off. Flip them
+at your own risk \(em capabilities granted here are ambient to plugin
+code.
+.
+.SH ENVIRONMENT
+Every variable listed below is actually read by
+.B pcloudd
+or a crate it depends on (verified by grepping
+.B std::env::var*
+across
+.I crates/pcloud-daemon
+and
+.IR crates/pcloud-config ).
+Values are parsed at bootstrap; the daemon does not re-read the
+environment after startup. A variable not listed here has no effect on
+.BR pcloudd .
+.TP
+.B PCLOUD_ROOT
+.RS
+.IP "Purpose:" 14
+Single-tree override for every managed directory. Sets
+.BR config_dir ,
+.BR state_dir ,
+.BR runtime_dir ,
+.BR cache_dir ,
+and (when plugins are enabled)
+.B plugin_dir
+to
+.IR <root>/{config,state,runtime,cache,plugins} .
+.IP "Why:" 14
+Multi-instance isolation, containers, test harnesses.
+.IP "Default:" 14
+unset (XDG/Library/AppData defaults apply).
+.IP "Example:" 14
+.B PCLOUD_ROOT=/var/lib/pcloud/alice
+.IP "Failure:" 14
+Parent not writable -> bootstrap directory provisioning fails.
+.RE
+.TP
+.B PCLOUD_ENV
+.RS
+.IP "Purpose:" 14
+Select environment semantics. Accepts
+.IR dev / development ,
+.IR test ,
+.IR prod / production
+(case-insensitive).
+.IP "Why:" 14
+Flips secure defaults (TLS on/off, metrics wildcard bind allowed,
+etc.). Also snaps
+.B api.mode
+to the environment default
+.B unless
+.B PCLOUD_API_MODE
+is also set.
+.IP "Default:" 14
+.B production
+.IP "Failure:" 14
+Unknown token -> config validation error, daemon aborts.
+.RE
+.TP
+.B PCLOUD_API_MODE
+.RS
+.IP "Purpose:" 14
+Transport mode override. Values:
+.BR tls ,
+.BR plaintext ,
+.BR development .
+.IP "Why:" 14
+Dev/CI can pin
+.B plaintext
+against a local stub; production
+.B always
+rejects anything that isn't TLS.
+.IP "Failure:" 14
+Plaintext in production -> bootstrap refuses to start.
+.RE
+.TP
+.B PCLOUD_API_HOST
+Override
+.B api.host
+(e.g.
+.BR binapi.pcloud.com ,
+.BR eapi.pcloud.com ).
+.TP
+.B PCLOUD_API_PORT
+Override
+.B api.port
+(u16, 0 rejected).
+.TP
+.B PCLOUD_API_SERVER_NAME
+Override TLS SNI / certificate verification name. Only touch when
+pinning a non-standard gateway.
+.TP
+.B PCLOUD_API_CONNECT_TIMEOUT_MS
+u64 milliseconds,
+.B 0
+rejected. Bounds initial TCP+TLS handshake.
+.TP
+.B PCLOUD_API_READ_TIMEOUT_MS
+u64 milliseconds,
+.B 0
+rejected. Bounds per-read on the established TLS stream.
+.TP
+.B PCLOUD_DURABLE_AUTH_TOKENS
+Boolean (
+.IR 1 / 0 ,
+.IR true / false ,
+.IR yes / no ,
+.IR on / off ).
+Opt-in to on-disk auth-token persistence under the vault. Off by
+default. When off, a restart requires re-auth. Plaintext passwords are
+.B never
+persisted regardless of this flag.
+.TP
+.B PCLOUD_VAULT
+Backend selector for the token vault. Values:
+.BR file
+(default),
+.B secret-service
+(XDG DBus keyring, where available). The
+.B secret-service
+backend falls back to file with an audit line if DBus is unavailable.
+.TP
+.B PCLOUD_CACHE_SIZE_GB
+Runtime ceiling (in GiB) for the upload/download cache. Parsed at
+runtime init. Non-numeric values are ignored with a log line.
+.TP
+.B PCLOUD_AUDIT_HMAC_KEY
+Key material (treated as opaque bytes) for HMAC-signing every audit
+record. When present the audit log is a hash
+.B and
+HMAC chain; when absent it is a hash chain only. The audit verifier
+(\c
+.B pcloudc audit verify\c
+) requires the same key to validate HMACs.
+.TP
+.B PCLOUD_FORCE_UMOUNT
+Boolean. If set, an orphaned FUSE mount left behind by a SIGKILLed or
+crashed daemon is force-unmounted during startup instead of blocking
+the mount service. Prefer the
+.B pcloudc mount --force-umount <path>
+command for targeted recovery.
+.TP
+.B PCLOUD_METRICS_PORT
+(feature
+.BR metrics )
+Loopback port for the Prometheus scrape listener. Default
+.BR 9353 .
+Setting
+.B 0
+picks an ephemeral port (used by tests).
+.TP
+.B PCLOUD_METRICS_BIND_ALL
+(feature
+.BR metrics )
+Bind the metrics exporter on
+.B 0.0.0.0
+instead of
+.BR 127.0.0.1 .
+.B Refused
+when
+.B PCLOUD_ENV
+is not
+.B development
+\(em production scrapers must reach the daemon via loopback, a local
+reverse proxy, or a mesh sidecar.
+.TP
+.B PCLOUD_PLUGINS_ENABLED
+Boolean. Gate for the entire plugin registry. Off by default.
+.TP
+.B PCLOUD_PLUGIN_ALLOW_NETWORK
+Boolean. Grants plugins the network capability. Requires
+.BR plugins_enabled=true .
+.TP
+.B PCLOUD_PLUGIN_ALLOW_SYNC_CONTROL
+Boolean. Grants plugins sync-control authority.
+.TP
+.B PCLOUD_PLUGIN_ALLOW_CRYPTO
+Boolean. Grants plugins direct crypto authority. Strongly discouraged.
+.TP
+.B PCLOUD_MIGRATE_LEGACY_PATHS
+Boolean. One-shot migration from the legacy C-client on-disk layout
+into the new XDG tree. Safe to run repeatedly; a no-op if nothing is
+left to migrate.
+.TP
+.B PCLOUDRS_TOKEN_FILE
+Path to a file containing a bearer auth token used for headless
+bootstrap. File must be a regular file, owned by the effective UID,
+mode
+.B 0600
+(no group/other bits). Content is UTF-8, trimmed of whitespace, and
+wrapped in
+.B SecretString
+before use. Buffer is zeroized on error.
+.TP
+.B PCLOUDRS_USERNAME_FILE
+Path to a file containing the pCloud account email. Same permission
+rules as
+.BR PCLOUDRS_TOKEN_FILE .
+.TP
+.B PCLOUDRS_PASSWORD_FILE
+Path to a file containing the account password. Same permission rules.
+The password is consumed into a
+.B SecretString
+at bootstrap and zeroized after the login round-trip; it is
+.B never
+written to disk.
+.TP
+.B PCLOUDRS_TFA_CODE_FILE
+.TP
+.B PCLOUDRS_RECOVERY_CODE_FILE
+Mutually exclusive. File-backed second-factor secret for non-interactive
+TFA flows. Setting both is an error.
+.TP
+.B PCLOUDRS_TRUST_DEVICE
+Boolean. Tells the TFA flow to remember this device after a successful
+second-factor, so subsequent daemons on the same install do not
+re-prompt.
+.TP
+.B CREDENTIALS_DIRECTORY
+systemd-managed directory containing unit
+.B LoadCredential=
+files. When set, the daemon will look for
+.IR pcloud-rs-token ,
+.IR pcloud-rs-username ,
+.IR pcloud-rs-password ,
+.IR pcloud-rs-tfa-code ,
+and
+.I pcloud-rs-recovery-code
+inside it as fallbacks for the
+.B PCLOUDRS_*_FILE
+variables.
+.TP
+.B HOME
+Consumed by
+.B PcloudDirs::discover()
+on Linux/BSD to form the XDG defaults; ignored when
+.B PCLOUD_ROOT
+is set.
+.PP
+Variables prefixed
+.B PCLOUD_OBSERVABILITY_
+are reserved for the observability layer and map directly to
+.B [profile.observability]
+keys; see
+.BR pcloud.conf (5).
+.
+.SH SIGNALS
+Installed by
+.B pcloud_daemon::signals::install_default_handlers
+.B before
+subsystem bootstrap so even a slow bootstrap can be interrupted
+cleanly without tripping
+.BR "systemd TimeoutStopSec" .
+Handlers are async-signal-safe: they flip atomic flags, nothing more.
+.TP
+.B SIGTERM
+Graceful shutdown request. Sets
+.BR SHUTDOWN_REQUESTED ;
+the serve loop observes the flag between
+.BR accept (2)
+calls (blocking
+.B accept
+returns
+.B EINTR
+because
+.B SA_RESTART
+is intentionally not set on these handlers), drains any in-flight IPC
+request through the existing dispatch path, flushes the upload journal
+and audit log, closes the store, unmounts where applicable, and exits
+.BR 0 .
+This is the signal service managers should send.
+.TP
+.B SIGINT
+Same semantics as
+.B SIGTERM .
+Convenient for foreground / debug runs.
+.TP
+.B SIGHUP
+Triggers a hot-reload of the on-disk config file. The serve loop
+re-reads the file, computes a diff of hot-reloadable fields, and
+applies changes to: log level / observability flags, rate-limit
+budgets, integrity-sweeper schedule, sync poll interval, and
+data-residency allow-list. Fields that require a restart (auth vault
+path, IPC socket path, crypto master key) are silently ignored.
+On parse error the previous config is kept and a
+.B config.reload_failed
+audit event is emitted. On success a
+.B config.reloaded
+audit event lists the changed keys. Send via
+.BR "pcloudc reload" .
+.TP
+.B SIGPIPE
+Explicitly ignored (\c
+.BR SIG_IGN ).
+Broken client sockets surface as
+.B EPIPE
+returns on the write-side inside dispatch.
+.TP
+.B SIGKILL
+Do not send. Bypasses the shutdown path entirely; leaves the FUSE
+mountpoint, upload journal sidecars, and vault file locks in recovery
+state. See
+.B TROUBLESHOOTING
+and
+.BR PCLOUD_FORCE_UMOUNT .
+.PP
+Signal-handler installation is idempotent and guarded by a
+.BR std::sync::Once ;
+a failure at install-time returns from
+.B main
+before any I/O happens and the daemon exits
+.BR 1 .
+.
+.SH FILES
+The table below lists every path the daemon touches. Ownership is the
+effective UID of the
+.B pcloudd
+process; all directories and files are created by bootstrap if
+missing.
+.TP
+.I $PCLOUD_ROOT/config/pcloud.toml
+Primary configuration. Mode
+.BR 0600 ,
+parent dir mode
+.BR 0700 .
+See
+.BR pcloud.conf (5).
+.TP
+.I $PCLOUD_ROOT/runtime/pcloudd.sock
+Owner-only Unix-domain IPC socket. Mode
+.BR 0600 .
+Binding fails if a stale socket exists that the current UID does not
+own.
+.TP
+.I $PCLOUD_ROOT/runtime/
+Runtime directory. Mode
+.BR 0700 .
+Holds the socket and any transient per-session state.
+.TP
+.I $PCLOUD_ROOT/state/
+State directory. Mode
+.BR 0700 .
+Parent of everything durable.
+.TP
+.I $PCLOUD_ROOT/state/store.sqlite3
+Primary persistent store: sync roots, device record, primary account,
+preferences, audit chain head, upload resume index, integrity sweeper
+cursor. Created on first launch, migrated in-place, integrity-checked
+at bootstrap.
+.TP
+.I $PCLOUD_ROOT/state/vault/
+Auth-token vault directory. Mode
+.BR 0700 ;
+per-file
+.BR 0600 .
+Populated only when
+.B PCLOUD_DURABLE_AUTH_TOKENS=1
+and a live session exists. Passwords are
+.B never
+stored here.
+.TP
+.I $PCLOUD_ROOT/state/audit.log
+Append-only audit log. Each record carries the previous record's
+hash; with
+.B PCLOUD_AUDIT_HMAC_KEY
+set, also an HMAC. Verified out-of-band by
+.BR "pcloudc audit verify" .
+.TP
+.I $PCLOUD_ROOT/cache/
+Cache directory. Mode
+.BR 0700 .
+Bounded by
+.BR PCLOUD_CACHE_SIZE_GB .
+.TP
+.I $PCLOUD_ROOT/cache/fuse-staging/
+FUSE write-path staging tree. Per-inode chunked-upload sidecars live
+here. Scanned at bootstrap (\c
+.BR enumerate_upload_sidecars );
+live reconcile is driven once the mount comes up.
+.TP
+.I $PCLOUD_ROOT/cache/page-cache/
+Read-side page cache (once FUSE lands under
+.BR bd\-1du.4 ).
+.TP
+.I $PCLOUD_ROOT/state/integrity_sweeper.cursor
+Persistent cursor for the integrity sweeper service. Present only
+when the sweeper is enabled.
+.TP
+.I $PCLOUD_ROOT/config/plugins/
+Plugin drop-in directory. Created and set
+.B 0700
+only when
+.BR PCLOUD_PLUGINS_ENABLED=1 .
+.PP
+Default
+.B PCLOUD_ROOT
+resolution:
+.IR ~/.config/pcloud ,
+.IR ~/.local/state/pcloud ,
+.IR $XDG_RUNTIME_DIR/pcloud ,
+.I ~/.cache/pcloud
+on Linux/BSD;
+.I ~/Library/...
+on macOS;
+.I %APPDATA%/%LOCALAPPDATA%
+on Windows.
+.
+.SH SECURITY MODEL
+.SS IPC socket
+AF_UNIX, mode
+.BR 0600 ,
+owner = daemon UID. Binding uses
+.B pcloud_ipc::IpcServer::new(current_effective_uid())
+so the expected peer UID is captured at server construction. Every
+accepted connection is then validated against that UID using the
+platform-appropriate peer-credential primitive:
+.RS
+.IP \(bu 2
+.B Linux:
+.B getsockopt(SO_PEERCRED)
+\(em returns kernel-enforced (pid, uid, gid) of the peer.
+.IP \(bu 2
+.B FreeBSD, OpenBSD, NetBSD, macOS:
+.BR getpeereid (3)
+\(em returns (euid, egid) of the peer.
+.IP \(bu 2
+.B Windows:
+named-pipe plus SID DACL check. The pipe is opened with an explicit
+DACL granting access to the owner SID only; the server additionally
+asserts the authenticated client SID equals the owner SID before
+accepting traffic.
+.RE
+Peers whose UID (or SID) does not match are rejected at accept-time
+with
+.BR ResponseStatus::Unauthorized ;
+no request bytes are read.
+.SS Request size cap
+.B pcloud_ipc::MAX_REQUEST_BYTES
+= 1 MiB = 1_048_576 B. Frames declaring more are rejected
+.B before
+buffer allocation, which bounds both memory and decode time. The
+typed dispatcher then decodes JSON; malformed frames are rejected with
+a typed error, never by panic.
+.SS Secret handling
+Secret-bearing fields \(em passwords, auth tokens, TFA codes, recovery
+codes, crypto passphrase, HMAC key material as it passes through
+memory \(em use
+.B pcloud_secret::SecretString
+and
+.BR pcloud_secret::SecretBytes ,
+both of which:
+.RS
+.IP \(bu 2
+redact to
+.BR "REDACTED"
+in
+.BR Debug
+output,
+.IP \(bu 2
+zeroize their buffers on
+.BR Drop ,
+.IP \(bu 2
+require explicit
+.B expose_secret()
+to obtain the inner view.
+.RE
+Bootstrap also zeroizes the raw file buffer before returning when a
+.B PCLOUDRS_*_FILE
+is read.
+.SS Auth-token vault
+Durable persistence is
+.B off
+by default. When enabled (\c
+.BR PCLOUD_DURABLE_AUTH_TOKENS=1 ),
+the vault directory is
+.B 0700
+and each token file is
+.BR 0600 ;
+both are re-checked on load. A vault with the wrong mode or owner is
+rejected. Passwords are
+.B never
+persisted.
+.SS Transport policy
+Production mode rejects any config, on-disk or env-driven, that would
+yield a non-TLS transport. The
+.B ResilientTransport
+wrapper (retry + jitter) is applied in production only; development
+and test keep the bare transport for test determinism.
+.SS Metrics listener
+Defaults to loopback
+.RB ( 127.0.0.1 ).
+Wildcard bind requires
+.B BOTH
+.BR PCLOUD_METRICS_BIND_ALL=1
+.B AND
+.B Environment::Development
+\(em production config cannot be coerced into exposing
+.I /metrics
+off-host.
+.SS Audit log
+Every security-relevant action the daemon takes appends one record to
+.IR state/audit.log .
+Each record carries the SHA-256 of the previous record (hash chain).
+When
+.B PCLOUD_AUDIT_HMAC_KEY
+is set, records are additionally HMAC-signed with that key; the key
+must be re-supplied to the verifier. A mid-chain tamper is detected on
+.B pcloudc audit verify.
+.
+.SH OBSERVABILITY
+.SS Metrics (feature
+.BR metrics )
+.B pcloudd serve
+spawns a Prometheus scrape listener in parallel with the IPC loop.
+Default bind is
+.BR 127.0.0.1:9353 .
+Endpoints:
+.TP
+.I /metrics
+Prometheus text format. Families include request counters by method,
+per-backend latency histograms (notably
+.BR flush_latency_seconds ),
+transport retry counters, and the integrity sweeper progress gauge.
+.TP
+.I /slo
+Operator-friendly JSON summary of the in-memory SLO registry. Empty
+until the runtime begins handling requests.
+.TP
+.I /health
+Liveness bit. Returns 200 while the serve loop is clean; non-200
+after shutdown begins.
+.SS Tracing (feature
+.BR tracing-otlp )
+W3C Trace Context propagated from
+.BR pcloudc (1)
+is extracted by
+.B RequestEnvelope::try_from_wire
+and installed on the dispatch thread via
+.BR set_thread_traceparent .
+Each dispatched request opens:
+.RS
+.IP \(bu 2
+a
+.B pcloudd.dispatch
+server span parented to the inbound traceparent (or a fresh root if
+none / unparseable),
+.IP \(bu 2
+an internal
+.BI pcloudd.backend. name
+span per handler, where
+.I <name>
+is drawn from a stable allow-list (\c
+.IR auth ,
+.IR crypto ,
+.IR sync ,
+.IR transfer ,
+.IR public_link ,
+.IR shares ,
+.IR backup ,
+.IR account ,
+.IR control ,
+.IR notifications ,
+.IR other ).
+.IP \(bu 2
+a
+.BI pcloud.proto. method
+client span per upstream HTTPS call.
+.RE
+All span attributes flow through
+.B pcloud_observability::tracing::attr_redact
+which enforces an allow-list (\c
+.BR command ,
+.BR duration_ms ,
+.BR error_category ,
+.BR status_code ,
+.BR trace_kind ).
+Any other key is dropped in release builds and panics in debug builds
+so violations are caught in CI; there is no code path that emits a
+filename, path, email, auth token, or key material through an
+attribute.
+.PP
+Configure under
+.B [profile.observability.tracing]
+in
+.BR pcloud.conf (5):
+.B endpoint
+must be
+.B https://
+unless loopback;
+.B sample_rate
+is clamped to
+.BR [0.0,1.0] ;
+.B headers
+values must use the
+.B ${env:VAR}
+form (literal values are refused at startup).
+.SS Audit log
+Hash-chained, optionally HMAC-signed. See
+.B SECURITY MODEL
+above. Verify with
+.BR "pcloudc audit verify" .
+.
+.SH IPC PROTOCOL
+Wire-level reference:
+.I docs/book/src/reference/ipc-protocol.md
+(repository tree). Summary:
+.RS
+.IP \(bu 2
+Frame shape: 4-byte big-endian
+.B u32
+payload length, followed by that many JSON bytes. Length
+.B must
+be
+.BR "<= 1_048_576" .
+.IP \(bu 2
+Payload type:
+.B pcloud_ipc::Request
+or
+.B pcloud_ipc::RequestEnvelope
+(the envelope is a back-compat wrapper that carries an optional
+.B traceparent
+field; legacy clients sending a bare
+.B Request
+are still accepted and treated as the trace root).
+.IP \(bu 2
+Response type:
+.B pcloud_ipc::Response
+with a typed
+.BR ResponseStatus .
+.RE
+The dispatcher never panics on malformed input; decode errors map to
+typed error statuses.
+.
+.SH DEBUGGING
+.TP
+.B RUST_LOG
+Standard tracing-subscriber envelope. Useful values:
+.IP
+.B RUST_LOG=pcloud_daemon=debug,pcloud_ipc=debug,pcloud_proto=info
+.IP
+Module-level trace (\c
+.BR =trace )
+is very chatty; prefer
+.B =debug
+for routine operator debugging.
+.TP
+.B Summary dry-run
+Run
+.B pcloudd
+with no arguments and read the one-shot summary. It names the failing
+subsystem if bootstrap fails.
+.TP
+.B Audit chain verification
+.nf
+pcloudc audit verify                     # hash chain only
+PCLOUD_AUDIT_HMAC_KEY=... pcloudc audit verify   # HMAC + hash
+.fi
+.TP
+.B Common startup failures
+.RS
+.IP \(bu 2
+.B "Permission denied" on socket bind
+\(em a stale socket remains from a previous run owned by another UID,
+or
+.I runtime_dir
+is not writable by the daemon UID.
+.IP \(bu 2
+.B "config validation failed: production-plaintext"
+\(em
+.B PCLOUD_API_MODE=plaintext
+was set while
+.B PCLOUD_ENV
+resolves to
+.BR production .
+Fix the env, or move to
+.BR development .
+.IP \(bu 2
+.B "vault: file mode 0o644 must be 0o600"
+\(em an external actor widened the vault permissions. Rotate the
+token and reset the file to
+.BR 0600 .
+.IP \(bu 2
+.B "orphan FUSE mounts detected"
+\(em a previous daemon was SIGKILLed. Recover with
+.B "pcloudc mount --force-umount <path>"
+or set
+.B PCLOUD_FORCE_UMOUNT=1
+for the next start.
+.IP \(bu 2
+.B "integrity_check failed"
+\(em SQLite store corruption. Stop the daemon, back up
+.IR state/ ,
+and contact support with the audit log and the
+.B pcloudd
+summary.
+.RE
+.
+.SH SERVICE MANAGEMENT
+.SS systemd (Linux, recommended)
+Minimal hardened unit file:
+.PP
+.RS 4
+.nf
+[Unit]
+Description=pCloud background service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pcloudd serve
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+# Optional headless bootstrap:
+# LoadCredential=pcloud-rs-token:/etc/pcloud/token
+# LoadCredential=pcloud-rs-username:/etc/pcloud/username
+# LoadCredential=pcloud-rs-password:/etc/pcloud/password
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=true
+ReadWritePaths=%h/.pcloud %h/.local/state/pcloud %h/.cache/pcloud
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
+.fi
+.RE
+.PP
+Operator recipes:
+.PP
+.RS 4
+.nf
+sudo systemctl daemon-reload
+sudo systemctl enable --now pcloudd
+systemctl status pcloudd
+journalctl -u pcloudd -f
+sudo systemctl restart pcloudd   # after pcloud.conf changes
+.fi
+.RE
+.PP
+For a desktop login install, prefer a
+.B --user
+unit at
+.IR ~/.config/systemd/user/pcloudd.service
+driven by
+.BR "systemctl --user" .
+Use
+.B "loginctl enable-linger <user>"
+to keep the daemon alive after logout.
+.B pcloudd
+does not hot-reload; restart after any
+.BR pcloud.conf (5)
+edit.
+.SS launchd (macOS)
+User agent at
+.IR ~/Library/LaunchAgents/com.pcloud.pcloudd.plist
+(interactive accounts) or system daemon at
+.I /Library/LaunchDaemons/com.pcloud.pcloudd.plist
+(headless hosts, owned by root, mode
+.BR 0644 ,
+.B UserName
+= dedicated service account). Load with
+.B launchctl load
+(or
+.B "sudo launchctl load"
+for system daemons).
+.SS Service Control Manager (Windows)
+.B pcloudd.exe
+is a console program; wrap it with
+.B pcloudd-svc.exe
+(the shipped service host) and register via
+.BR sc.exe .
+Run the service under a dedicated local account, not
+.BR LocalSystem .
+The wrapper forwards SCM stop as the equivalent of
+.B SIGTERM
+so graceful drain still applies.
+.SS rc.d (FreeBSD, OpenBSD, NetBSD)
+Drop
+.I /usr/local/etc/rc.d/pcloudd
+and enable with
+.B pcloudd_enable="YES"
+in
+.IR /etc/rc.conf ;
+drive via
+.BR "service pcloudd {start|stop|restart|status}" .
+.
+.SH UPGRADE PATH
+.B pcloudd
+schema migrations are idempotent and run at bootstrap. Supported path:
+.B systemctl stop pcloudd
+(graceful drain), replace the binary, review the release notes for
+.BR pcloud.conf (5)
+changes,
+.B pcloudd
+(summary dry-run),
+.BR "systemctl start pcloudd" .
+Downgrade after a schema migration is not supported \(em back up
+.I state/store.sqlite3
+before upgrading if you might roll back.
+.
+.SH KNOWN LIMITATIONS (pre-alpha)
+This release is pre-alpha and the Rust rewrite is not yet "full
+parity" with the legacy C daemon. Concretely:
+.RS
+.IP \(bu 2
+.B Mounted-drive runtime (FUSE).
+Scaffolded only. Linux mount/unmount, readdir, read-path, write-path,
+crash-safe writeback, and integration tests are tracked under
+.BR bd\-1du.4 .
+The macOS/Windows/BSD mount paths are not yet implemented.
+.IP \(bu 2
+.B Final parity proof
+is still open under
+.BR bd\-1du.10 .
+Do not rely on release wording that claims "full parity",
+"production ready", or "drop-in replacement" until that bead closes.
+.IP \(bu 2
+.B KMS/HSM.
+The
+.B Pkcs11Hsm
+adapter is a stub. Only the software-backed key wrapper is wired.
+.IP \(bu 2
+.B OTLP tracing
+has been exercised offline against a local sink during bring-up. Live
+interop with production OTLP backends (Honeycomb, Datadog, Grafana
+Tempo, New Relic) is not certified in this release.
+.IP \(bu 2
+.B SIGHUP reload
+hot-reloads observability flags, rate-limit budgets,
+integrity-sweeper schedule, sync poll interval, and
+data-residency allow-list. Auth vault, IPC socket, and crypto
+master key changes still require a restart.
+.IP \(bu 2
+.B change_crypto_pass
+family,
+.BR send_change_user_private ,
+and
+.B priv_key_flags
+remain unimplemented on the crypto runtime.
+.RE
+See
+.I C_FEATURE_PARITY_MATRIX.csv
+and
+.I STATUS.md
+in the repository tree for the authoritative feature ledger.
+.
+.SH EXIT STATUS
+.TP
+.B 0
+Clean exit. For
+.B serve
+mode: graceful shutdown completed after
+.BR SIGTERM / SIGINT .
+.TP
+.B 1
+Any failure: argument parse error, bootstrap failure, signal-handler
+install failure, socket bind failure, or fatal error inside the
+serve loop. A one-line explanation goes to stderr; the built-in help
+text is printed after it. Service managers pick this up in the
+journal.
+.
+.SH EXAMPLES
+.TP
+.B Foreground debug run with verbose logs
+.nf
+RUST_LOG=pcloud_daemon=debug,pcloud_ipc=debug \\
+  PCLOUD_ENV=development \\
+  pcloudd serve
+.fi
+.TP
+.B One-shot bootstrap dry-run (no socket bind)
+.nf
+pcloudd
+.fi
+Prints the resolved config and each subsystem's health verdict.
+.TP
+.B Ephemeral test instance
+.nf
+tmp=$(mktemp -d)
+PCLOUD_ROOT=$tmp \\
+  PCLOUD_ENV=test \\
+  PCLOUD_API_MODE=development \\
+  pcloudd serve
+.fi
+Isolates config/state/runtime/cache under
+.IR $tmp .
+.TP
+.B Headless bootstrap under systemd with LoadCredential
+.nf
+# /etc/systemd/system/pcloudd.service.d/creds.conf
+[Service]
+LoadCredential=pcloud-rs-token:/etc/pcloud/token
+Environment=PCLOUD_DURABLE_AUTH_TOKENS=1
+.fi
+Token file must be
+.BR 0600 ,
+owner = root (systemd copies it into the per-unit
+.BR CREDENTIALS_DIRECTORY
+with restricted modes).
+.TP
+.B Production unit with metrics scraped via loopback
+.nf
+[Service]
+Environment=PCLOUD_ENV=production
+Environment=PCLOUD_METRICS_PORT=9353
+ExecStart=/usr/bin/pcloudd serve
+.fi
+Prometheus job:
+.B "static_configs: [{ targets: ['127.0.0.1:9353'] }]" .
+.TP
+.B Recover from an orphaned FUSE mount at next start
+.nf
+PCLOUD_FORCE_UMOUNT=1 systemctl start pcloudd
+.fi
+Or, surgically:
+.BR "pcloudc mount --force-umount /path/to/mount" .
+.TP
+.B Audit verification with an HMAC-chained log
+.nf
+export PCLOUD_AUDIT_HMAC_KEY=$(cat /etc/pcloud/audit.key)
+pcloudc audit verify
+.fi
+.
+.SH SEE ALSO
+.BR pcloudc (1),
+.BR pcloud.conf (5),
+.BR systemd (1),
+.BR systemctl (1),
+.BR journalctl (1),
+.BR launchctl (1),
+.BR sc.exe (1),
+.BR rc.conf (5),
+.BR fuse (8),
+.BR sigaction (2),
+.BR unix (7)
+.
+.SH AUTHORS
+The pcloud-rs Rust rewrite contributors. See the project repository
+for the full author list.
+.
+.SH COPYRIGHT
+Licensed under the MIT License OR the Apache License, Version 2.0, at
+the user's option.

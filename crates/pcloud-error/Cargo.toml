@@ -1,0 +1,13 @@
+[package]
+name = "pcloud-error"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Shared error types and result aliases for the pcloud-rs Rust workspace."
+
+[dependencies]
+thiserror.workspace = true
+
+[lints]
+workspace = true

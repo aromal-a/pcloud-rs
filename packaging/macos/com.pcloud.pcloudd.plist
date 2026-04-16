@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  System LaunchDaemon for the pcloudd background service.
+
+  PLATFORM: macOS 11+ (Big Sur and later; hardened-runtime era).
+
+  Install:
+    sudo cp com.pcloud.pcloudd.plist /Library/LaunchDaemons/
+    sudo chown root:wheel /Library/LaunchDaemons/com.pcloud.pcloudd.plist
+    sudo chmod 644      /Library/LaunchDaemons/com.pcloud.pcloudd.plist
+    sudo launchctl load -w /Library/LaunchDaemons/com.pcloud.pcloudd.plist
+
+  LaunchDaemons run as root by default. The UserName/GroupName keys
+  below drop privileges to a dedicated service account; create it with:
+    sudo dscl . -create /Users/_pcloudd UniqueID 299
+    sudo dscl . -create /Users/_pcloudd PrimaryGroupID 299
+    sudo dscl . -create /Users/_pcloudd UserShell /usr/bin/false
+    sudo dscl . -create /Users/_pcloudd NFSHomeDirectory /var/lib/pcloudd
+
+  Environment-variable accuracy (cross-checked against
+  crates/pcloud-config/src/env.rs and pcloud-daemon):
+    - PCLOUD_ROOT / PCLOUD_ENV / PCLOUD_API_MODE / PCLOUD_API_HOST /
+      PCLOUD_API_PORT / PCLOUD_API_SERVER_NAME / PCLOUD_LOG_LEVEL /
+      PCLOUD_DURABLE_AUTH_TOKENS are **read** by the daemon.
+    - PCLOUD_HOME, PCLOUD_CONFIG, PCLOUD_AUTH_VAULT, PCLOUD_IPC_SOCKET,
+      PCLOUD_API_SERVER are present below for operator readability but
+      are **NOT read** by the Rust daemon (the path is derived from
+      PCLOUD_ROOT; the CLI honours PCLOUD_CONFIG). Leaving them set is
+      harmless — they are silently ignored.
+
+  Per-directive notes (load-bearing launchd keys):
+    - Label              — launchd identifier; must match the plist filename stem.
+    - ProgramArguments   — argv[] for the service; argv[0] is the absolute binary path.
+    - RunAtLoad          — start at system boot and after load (true).
+    - KeepAlive          — restart policy; we only restart on crash, not on clean exit.
+    - UserName/GroupName — drop privileges to the dedicated service account.
+    - ProcessType=Background — lower QoS; launchd budgets CPU/IO accordingly.
+    - StandardOutPath/StandardErrorPath — stdout/stderr redirection (newline-buffered).
+    - WorkingDirectory   — daemon's cwd; also its state root.
+    - EnvironmentVariables — exported into the daemon process env. See accuracy note above.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pcloud.pcloudd</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/libexec/pcloudd</string>
+        <string>--system</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>UserName</key>
+    <string>_pcloudd</string>
+    <key>GroupName</key>
+    <string>_pcloudd</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/pcloudd/pcloudd.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/var/log/pcloudd/pcloudd.err.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>/var/lib/pcloudd</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Read by the Rust daemon: -->
+        <key>PCLOUD_ROOT</key>
+        <string>/var/lib/pcloudd</string>
+        <key>PCLOUD_ENV</key>
+        <string>production</string>
+        <key>PCLOUD_LOG_LEVEL</key>
+        <string>info</string>
+        <key>PCLOUD_API_HOST</key>
+        <string>api.pcloud.com</string>
+        <key>PCLOUD_API_SERVER_NAME</key>
+        <string>api.pcloud.com</string>
+        <!-- Compat aliases (NOT read by the Rust daemon; kept for readability): -->
+        <key>PCLOUD_HOME</key>
+        <string>/var/lib/pcloudd</string>
+        <key>PCLOUD_CONFIG</key>
+        <string>/etc/pcloud/pcloudd.toml</string>
+        <key>PCLOUD_AUTH_VAULT</key>
+        <string>/var/lib/pcloudd/auth.vault</string>
+        <key>PCLOUD_API_SERVER</key>
+        <string>api.pcloud.com</string>
+        <key>PCLOUD_IPC_SOCKET</key>
+        <string>/var/run/pcloudd/pcloudd.sock</string>
+    </dict>
+</dict>
+</plist>

@@ -1,0 +1,32 @@
+# Optional cargo-deb metadata snippet.
+#
+# This file is NOT auto-consumed by cargo-deb — cargo-deb reads
+# `[package.metadata.deb]` in a crate's Cargo.toml. Because the CLAUDE.md
+# rules forbid editing existing Cargo.toml files, this snippet is provided
+# as a drop-in reference. If/when packaging via cargo-deb is desired,
+# copy the block below into `crates/pcloud-cli/Cargo.toml` (and
+# an analogous one into `pcloud-daemon/Cargo.toml`) in a dedicated PR.
+#
+# Preferred path: use nfpm.yaml in this same directory instead.
+
+# --- snippet begin ---
+# [package.metadata.deb]
+# maintainer = "pcloud-rs maintainers <maintainers@example.invalid>"
+# copyright = "2026, pcloud-rs contributors"
+# license-file = ["../../LICENSE-MIT", "4"]
+# extended-description = """\
+# pCloud command-line client (Rust rewrite). Provides the `pcloud-rs` CLI
+# and the `pcloudd` user-space daemon for sync, mount, and account
+# management against the pCloud service."""
+# depends = "$auto, fuse3, libsqlite3-0"
+# section = "net"
+# priority = "optional"
+# assets = [
+#   ["target/release/pcloud-rs", "usr/bin/", "755"],
+#   ["target/release/pcloudd",  "usr/bin/", "755"],
+#   ["../packaging/systemd/pcloudd.service", "lib/systemd/system/", "644"],
+#   ["../../LICENSE-MIT",    "usr/share/doc/pcloud-rs/LICENSE-MIT", "644"],
+#   ["../../LICENSE-APACHE", "usr/share/doc/pcloud-rs/LICENSE-APACHE", "644"],
+# ]
+# maintainer-scripts = "../packaging/debian"
+# --- snippet end ---

@@ -1,0 +1,18 @@
+[package]
+name = "pcloud-plugin-dlp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Built-in pre-upload DLP scanner plugin (regex + Shannon entropy) for pcloud-rs."
+
+[dependencies]
+pcloud-plugin-api = { path = "../pcloud-plugin-api" }
+pcloud-secret = { path = "../pcloud-secret" }
+serde = { workspace = true }
+regex = "1.10"
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+
+[lints]
+workspace = true

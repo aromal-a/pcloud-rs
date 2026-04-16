@@ -1,0 +1,21 @@
+#!/bin/ksh
+
+daemon="/usr/local/libexec/pcloudd-wrapper.sh"
+daemon_flags=""
+
+. /etc/rc.d/rc.subr
+
+pexp="pcloudd serve"
+
+rc_reload=NO
+
+rc_start() {
+    [ -r /etc/rc.conf.local ] && . /etc/rc.conf.local
+    export PCLOUD_ROOT PCLOUD_ENV PCLOUD_API_MODE PCLOUD_DURABLE_AUTH_TOKENS
+    export PCLOUDRS_TOKEN_FILE PCLOUDRS_USERNAME_FILE PCLOUDRS_PASSWORD_FILE
+    export PCLOUDRS_TFA_CODE_FILE PCLOUDRS_RECOVERY_CODE_FILE PCLOUDRS_TRUST_DEVICE
+    export PCLOUDRS_DAEMON_BIN
+    ${rcexec} "${daemon}" ${daemon_flags}
+}
+
+rc_cmd $1

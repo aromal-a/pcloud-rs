@@ -1,0 +1,36 @@
+[package]
+name = "pcloud-live-e2e"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Live (gated) end-to-end verification harness for the pcloud-rs Rust rewrite. All tests are #[ignore]d unless PCLOUD_LIVE_E2E=1."
+
+# This crate intentionally ships no library or binary surface: it only
+# contributes integration tests that exercise the real pCloud backend when
+# explicitly opted-in via environment variables. See README.md.
+[lib]
+path = "src/lib.rs"
+
+[features]
+# Default-disabled feature gate. Even when the feature is enabled the tests
+# still honour the PCLOUD_LIVE_E2E=1 runtime gate, so a plain
+# `cargo check --workspace --all-features` cannot accidentally hit the API.
+default = []
+live = []
+
+[dependencies]
+
+[dev-dependencies]
+pcloud-auth = { path = "../pcloud-auth" }
+pcloud-config = { path = "../pcloud-config" }
+pcloud-daemon = { path = "../pcloud-daemon" }
+pcloud-fleet = { path = "../pcloud-fleet" }
+pcloud-ipc = { path = "../pcloud-ipc" }
+pcloud-model = { path = "../pcloud-model" }
+pcloud-sdk = { path = "../pcloud-sdk" }
+pcloud-secret = { path = "../pcloud-secret" }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  PLATFORM: Windows 10/11
+  pcloud-rs WiX installer source.
+  TODO: set SigningCertificatePath via build script / CI secret store.
+  TODO: replace UpgradeCode GUID before first signed release (must stay stable forever after).
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product Id="*"
+           Name="pcloud-rs"
+           Language="1033"
+           Version="!(bind.FileVersion.PcloudDaemonExe)"
+           Manufacturer="pcloud-rs contributors"
+           UpgradeCode="PUT-A-STABLE-GUID-HERE-0000-000000000000">
+
+    <Package InstallerVersion="500"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="pcloud-rs command-line pCloud client"
+             Manufacturer="pcloud-rs contributors" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of pcloud-rs is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- WinFSP is required for the mounted-drive / FUSE-equivalent feature. -->
+    <PackageDependency Id="winfsp" />
+
+    <Icon Id="pcloud-rs.ico" SourceFile="pcloud-rs.ico" />
+    <Property Id="ARPPRODUCTICON" Value="pcloud-rs.ico" />
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+    <UIRef Id="WixUI_InstallDir" />
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="INSTALLFOLDER" Name="pcloud-rs">
+
+          <Component Id="PcloudDaemonExe" Guid="*" Win64="yes">
+            <File Id="PcloudDaemonExe"
+                  Name="pcloudd.exe"
+                  Source="$(var.StageDir)\pcloudd.exe"
+                  KeyPath="yes" />
+          </Component>
+
+          <Component Id="PcloudCliExe" Guid="*" Win64="yes">
+            <File Id="PcloudCliExe"
+                  Name="pcloudc.exe"
+                  Source="$(var.StageDir)\pcloudc.exe"
+                  KeyPath="yes" />
+          </Component>
+
+          <!--
+            Windows Service wrapper.
+            launchd plist analog on Windows = ServiceInstall + ServiceControl.
+          -->
+          <Component Id="PcloudSvcExe" Guid="*" Win64="yes">
+            <File Id="PcloudSvcExe"
+                  Name="pcloudd-svc.exe"
+                  Source="$(var.StageDir)\pcloudd-svc.exe"
+                  KeyPath="yes" />
+            <ServiceInstall Id="PcloudSvcInstall"
+                            Name="pcloudd"
+                            DisplayName="pcloud-rs daemon"
+                            Description="pCloud sync daemon (Rust)"
+                            Type="ownProcess"
+                            Start="auto"
+                            Account="LocalSystem"
+                            ErrorControl="normal"
+                            Vital="yes" />
+            <ServiceControl Id="PcloudSvcControl"
+                            Name="pcloudd"
+                            Start="install"
+                            Stop="both"
+                            Remove="uninstall"
+                            Wait="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="AppProgramMenuDir" Name="pcloud-rs">
+          <Component Id="StartMenuShortcut" Guid="*">
+            <Shortcut Id="PcloudCliShortcut"
+                      Name="pcloud-rs CLI"
+                      Target="[INSTALLFOLDER]pcloudc.exe"
+                      WorkingDirectory="INSTALLFOLDER" />
+            <RemoveFolder Id="RemoveAppProgramMenuDir" On="uninstall" />
+            <RegistryValue Root="HKCU"
+                           Key="Software\pcloud-rs"
+                           Name="installed"
+                           Type="integer"
+                           Value="1"
+                           KeyPath="yes" />
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <Feature Id="MainFeature" Title="pcloud-rs" Level="1">
+      <ComponentRef Id="PcloudDaemonExe" />
+      <ComponentRef Id="PcloudCliExe" />
+      <ComponentRef Id="PcloudSvcExe" />
+      <ComponentRef Id="StartMenuShortcut" />
+    </Feature>
+  </Product>
+</Wix>

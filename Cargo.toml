@@ -1,0 +1,206 @@
+# **PLATFORM MATRIX:**
+# - Linux: full support (tier 1)
+# - FreeBSD: tier 2 (most deps work)
+# - macOS: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.4
+# - Windows: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.5
+#
+# Cross-platform dependency discipline:
+# - Linux-only crates (e.g. `fuser`) live under
+#   `[target.'cfg(target_os = "linux")'.dependencies]` in the consuming crate.
+# - `libc` is cross-platform as a crate; Linux-only *symbols*
+#   (SO_PEERCRED, SIGRTMIN, SysV shm, etc.) must be gated at the source level
+#   with `#[cfg(target_os = "linux")]`, not by gating the dependency itself.
+# - macOS/Windows-specific deps will be added under
+#   `[target.'cfg(target_os = "macos")'.dependencies]` and
+#   `[target.'cfg(windows)'.dependencies]` in the relevant crates.
+
+[workspace]
+members = [
+  "crates/pcloud-model",
+  "crates/pcloud-error",
+  "crates/pcloud-config",
+  "crates/pcloud-secret",
+  "crates/pcloud-proto",
+  "crates/pcloud-plugin-api",
+  "crates/pcloud-plugin-autoheal",
+  "crates/pcloud-plugin-dlp",
+  "crates/pcloud-policy",
+  "crates/pcloud-auth",
+  "crates/pcloud-store",
+  "crates/pcloud-engine",
+  "crates/pcloud-cache",
+  "crates/pcloud-fs",
+  "crates/pcloud-crypto",
+  "crates/pcloud-kms",
+  "crates/pcloud-ipc",
+  "crates/pcloud-observability",
+  "crates/pcloud-daemon",
+  "crates/pcloud-backends",
+  "crates/pcloud-session",
+  "crates/pcloud-cli",
+  "crates/pcloud-p2p",
+  "crates/pcloud-sdk",
+  "crates/pcloud-live-e2e",
+  "crates/pcloud-resilience",
+  "crates/pcloud-compat",
+  "crates/pcloud-mockserver",
+  "crates/pcloud-chaos",
+  "crates/pcloud-web",
+  "crates/pcloud-daemon-win",
+  "crates/pcloud-idp",
+  "crates/pcloud-fleet",
+  "crates/pcloud-plugin-publink-expiry",
+  "crates/pcloud-plugin-backup-schedule",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+publish = false
+rust-version = "1.85"
+repository = "https://github.com/pcloudcom/pcloud-rs"
+homepage = "https://github.com/pcloudcom/pcloud-rs"
+authors = ["pcloud-rs contributors"]
+
+# P5.3 PLAN_A_PLUS.md: LTO profile split.
+# - `release` is the fast dev/local/CI iteration profile: thin LTO with 16
+#   codegen units keeps `cargo build --release` quick while still producing
+#   optimized, stripped, panic=abort binaries for day-to-day work.
+# - `release-dist` is the distribution profile used by tag-build CI: fat LTO
+#   with a single codegen unit matches the prior Fixer 08 numbers
+#   (binary size -27%/-37%) at the cost of substantially slower builds.
+#   Use `cargo build --profile release-dist` for releases.
+[profile.release]
+lto = "thin"
+codegen-units = 16
+strip = "symbols"
+panic = "abort"
+opt-level = 3
+
+[profile.release-dist]
+inherits = "release"
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+opt-level = 3
+
+# Reproducible build profile. See docs/book/src/development/reproducible-builds.md
+# for the full rationale. Goals for `release-repro`:
+#
+# 1. Byte-identical binaries from identical source + toolchain + dependency set.
+# 2. No embedded debug info AND no symbol table. Both are sources of
+#    non-determinism (timestamps, absolute build paths, compiler-internal
+#    UUIDs, link-order-dependent symbol ordering). Crash-dump symbolication
+#    for release-repro artefacts is done via the matching unstripped build
+#    artefact cached alongside the release, NOT via the shipped binary.
+# 3. Deterministic linker output: build-id is a well-known reproducibility
+#    hazard on ELF because the default `--build-id=sha1` hashes input timing
+#    artifacts (and sometimes the linker version). We neutralise it via
+#    `-Wl,--build-id=none`. If your distro REQUIRES a build-id for debuginfod,
+#    switch to `--build-id=sha1` — sha1 over final content is deterministic
+#    provided inputs are deterministic, while `--build-id=uuid` (the occasional
+#    default) is NOT.
+# 4. Scrub local absolute build paths via `--remap-path-prefix`. The remap
+#    target below matches the GitHub Actions runner layout
+#    (`/home/runner/work/<repo>/<repo>`); local developers reproducing a CI
+#    artifact must set `SOURCE_DATE_EPOCH` and either build inside the same
+#    path or pass an equivalent `RUSTFLAGS` override. This is documented in
+#    `docs/book/src/development/reproducible-builds.md`.
+#
+# NOTE: `rustflags` inside `[profile.*]` is unstable on stable toolchains; the
+# stable-compatible mechanism is `[target.'cfg(all())']` below, which applies
+# the flags to every target when this profile is selected via an env-wrapped
+# invocation (`CARGO_PROFILE_RELEASE_REPRO_ACTIVE=1 cargo build --profile
+# release-repro`). Until the profile-scoped `rustflags` key stabilises we keep
+# these flags in `.cargo/config.toml` for CI — see the release checklist.
+#
+# IMPORTANT: `release-repro` is scoped strictly to reproducibility verification.
+# The main `release` and `release-dist` profiles are untouched — day-to-day and
+# release-dist consumers still get symbol tables for crash analysis.
+[profile.release-repro]
+inherits = "release-dist"
+# Strip symbols AND debuginfo. Symbol-table layout is sensitive to codegen-unit
+# ordering and is one of the last non-determinism sources we can eliminate
+# cheaply. Crash symbolication for release-repro artefacts uses the unstripped
+# sibling binary preserved as a CI artefact.
+strip = "symbols"
+# No DWARF at all — debuginfo is the single biggest non-determinism source.
+debug = false
+# Single codegen unit — deterministic symbol emission order.
+codegen-units = 1
+# Explicit LTO pin. `release-dist` already sets `lto = "fat"`; keep `true` here
+# as a self-describing contract (the two forms are equivalent in Cargo).
+lto = true
+# Explicit panic pin for the same reason.
+panic = "abort"
+
+[workspace.dependencies]
+aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
+argon2 = "0.5"
+# `battery` is the cross-platform notebook-battery-state crate used by
+# the integrity-sweeper `pause_on_battery` hook on macOS/Windows. Linux
+# reads `/sys/class/power_supply/` directly for a zero-dep baseline.
+battery = "0.7"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# `cron` parses cron expressions + iterates upcoming boundaries. Used by
+# `[features.integrity_sweeper].schedule_cron` to drive the background
+# sweep scheduler in `pcloud_daemon::integrity_sweeper_service`.
+cron = "0.12"
+directories = "5"
+notify = { version = "6", default-features = false, features = ["macos_fsevent"] }
+fuser = "0.16"
+getrandom = "0.2"
+hmac = "0.12"
+libc = "0.2"
+log = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+sha3 = "0.10"
+subtle = "2.5"
+thiserror = "2.0"
+zeroize = { version = "1.8", features = ["zeroize_derive"] }
+zstd = { version = "0.13", default-features = false }
+
+[workspace.lints.clippy]
+# ── pedantic allows ──────────────────────────────────────────────────
+# These pedantic lints are allowed workspace-wide because the fix would
+# be worse than the warning (rename churn on stable IPC/CLI surface,
+# noisy doc mandates on internal helpers, etc.).
+#
+# `module_name_repetitions`: many public types intentionally repeat the
+# module name for clarity at the call-site (e.g. `sync::SyncRoot`).
+module_name_repetitions = "allow"
+# `doc_markdown`: too many false-positives on identifiers that are not
+# intra-doc links (pCloud, API names, etc.).
+doc_markdown = "allow"
+# `struct_excessive_bools`: `SharePermissions` and similar protocol
+# structs mirror the upstream JSON shape.
+struct_excessive_bools = "allow"
+# `cast_possible_truncation` / `cast_sign_loss` / `cast_precision_loss`:
+# the codebase deliberately truncates protocol u64 values to platform
+# types with documented semantics.  Per-site `#[allow]` would be 200+
+# attributes with no safety gain.
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_precision_loss = "allow"
+cast_possible_wrap = "allow"
+cast_lossless = "allow"
+# `items_after_statements`: used intentionally for scoped helper fns.
+items_after_statements = "allow"
+# `similar_names`: short variable names in protocol code are fine.
+similar_names = "allow"
+# `single_match_else`: often more readable than `if let` for protocol
+# dispatch.
+single_match_else = "allow"
+# `wildcard_imports`: re-exports use them deliberately.
+wildcard_imports = "allow"
+# `manual_string_new`: `String::new()` vs `"".to_owned()` is style.
+manual_string_new = "allow"
+
+[workspace.metadata]
+workspace-name = "pcloud-rs-rust-dev"
+purpose = "Security-first Rust rewrite foundation for pcloud-rs."

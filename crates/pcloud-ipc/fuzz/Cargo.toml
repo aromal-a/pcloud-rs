@@ -1,0 +1,26 @@
+[package]
+name = "pcloud-ipc-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Exclude this crate from the parent workspace so the default `cargo build` /
+# `cargo test --workspace` continues to work without nightly cargo-fuzz.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+pcloud-ipc = { path = ".." }
+
+[[bin]]
+name = "fuzz_ipc_frame"
+path = "fuzz_targets/fuzz_ipc_frame.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

@@ -1,0 +1,52 @@
+#!/bin/sh
+# PLATFORM: NetBSD 10+
+#
+# rc.d service script for the pcloudd daemon (pkgsrc binary location).
+#
+# Install:
+#   install -m 0555 packaging/netbsd/pcloudd /etc/rc.d/pcloudd
+#   echo 'pcloudd=YES' >> /etc/rc.conf
+#   /etc/rc.d/pcloudd start
+#
+# Inputs:
+#   pcloudd (YES/NO) in /etc/rc.conf - master enable flag
+#
+# Outputs:
+#   PID file at /var/run/pcloudd.pid
+#
+# Security:
+#   - /var/run is created at boot but this script re-asserts it in
+#     `pcloudd_precmd` in case /var/run was wiped.
+#   - Run the daemon under a dedicated unprivileged account; use the
+#     pkgsrc install framework (pkg_add) to provision it, or create
+#     manually with useradd.
+#
+# Test:
+#   /etc/rc.d/pcloudd onestart
+#   /etc/rc.d/pcloudd status
+#   /etc/rc.d/pcloudd stop
+#
+# Side effects: writes /var/run/pcloudd.pid on start, removes on stop.
+
+# PROVIDE: pcloudd
+# REQUIRE: DAEMON LOGIN
+# KEYWORD: shutdown
+
+$_rc_subr_loaded . /etc/rc.subr
+
+name="pcloudd"
+rcvar=$name
+command="/usr/pkg/bin/pcloudd"
+pidfile="/var/run/${name}.pid"
+command_args="-p ${pidfile}"
+start_precmd="pcloudd_precmd"
+
+pcloudd_precmd()
+{
+	if [ ! -d /var/run ]; then
+		install -d -o root -g wheel -m 0755 /var/run
+	fi
+}
+
+load_rc_config $name
+run_rc_command "$1"

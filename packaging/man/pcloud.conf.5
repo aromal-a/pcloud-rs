@@ -1,0 +1,1062 @@
+.\" Manpage for pcloud.conf(5)
+.\" Operator-focused configuration reference for pcloudd(1) and pcloudc(1).
+.\" Lint with: groff -ww -man -Tutf8 pcloud.conf.5 >/dev/null
+.TH PCLOUD.CONF 5 "2026-04-16" "pcloud 0.x (pre-alpha)" "File Formats Manual"
+.SH NAME
+pcloud.conf \- configuration file for
+.BR pcloudd (1)
+and
+.BR pcloudc (1)
+.
+.SH STATUS
+This product is
+.B pre-alpha.
+The Rust rewrite has not reached 1.0 and should not be run against data you
+cannot afford to lose. The parity matrix in
+.I C_FEATURE_PARITY_MATRIX.csv
+is the canonical list of what is implemented, partial, or rejected.
+.
+.SH DESCRIPTION
+.I pcloud.conf
+(the operator-facing name for the on-disk profile) is the persistent,
+user-editable configuration the daemon and CLI read at startup. It tells
+them where to keep their data, how to reach the pCloud API, which optional
+features are turned on, and how strict to be about security. A single file
+is resolved per invocation; the merged result is validated before the
+daemon accepts any work. You do not normally hand-edit every knob \(em
+most deployments only change a handful of keys.
+.
+.SH CONCEPT PRIMER \(em FILE FORMAT, PRECEDENCE, AND DISCOVERY
+Read this section before editing the file for the first time.
+.
+.SS File format: JSON envelope (today)
+The Rust loader in
+.I crates/pcloud-config/src/loader.rs
+reads the file with
+.B serde_json
+and wraps it in a versioned envelope:
+.PP
+.EX
+{
+  "version": 2,
+  "profile": {
+    "environment": "Production",
+    "paths":        { ... },
+    "api":          { ... },
+    "extensions":   { ... },
+    "runtime":      { ... },
+    "features":     { ... },
+    "limits":       { ... },
+    "mount":        { ... },
+    "observability":{ ... },
+    "resilience":   { ... },
+    "data_residency":{ ... }
+  }
+}
+.EE
+.PP
+Older documents are migrated in memory:
+.IP \(bu 3
+.B v0
+\(em bare profile (no envelope) \(em lifted into a v2 envelope by
+.BR migrate::migrate_to_current .
+.IP \(bu 3
+.B v1
+\(em envelope without
+.I observability
+\(em upgraded with the
+.B ObservabilityFlags::secure_defaults
+block.
+.IP \(bu 3
+.B v2
+\(em the current shape.
+.PP
+.B Honest caveat \(em TOML is not yet wired.
+The man page and several references speak of
+.IR config.toml ;
+the
+.BR pcloudc (1)
+doctor command even looks for that filename. The actual on-disk parser in
+.B pcloud-config
+is JSON-only today. Two practical consequences:
+.IP \(bu 3
+Use a
+.I .json
+document that matches the shape shown above. The examples in this page are
+written in JSON.
+.IP \(bu 3
+If you migrate to TOML in a future release, the envelope layout
+(`version` + `profile.*`) will be preserved.
+.PP
+Tracked under the final-parity proof bead
+.B bd-1du.10 .
+.
+.SS Precedence of values (lowest to highest)
+The effective value of a field is resolved in this order; later entries
+win:
+.IP \(bu 3
+.B Built-in defaults
+produced by
+.B ConfigProfile::secure_defaults
+(sane, conservative, owner-only).
+.IP \(bu 3
+.B On-disk envelope
+at the resolved config path, run through
+.BR migrate::migrate_to_current .
+.IP \(bu 3
+.B Env vars:
+.B PCLOUD_ROOT
+(coarse path re-rooting) is applied first, then per-field
+.B PCLOUD_*
+overrides. See
+.B ENVIRONMENT OVERRIDES
+below for the complete table.
+.IP \(bu 3
+.B CLI flags
+(e.g.
+.B pcloudc --config
+explicitly sets the file path).
+.PP
+Validation (`ConfigProfile::validate`) runs
+.B after
+every override is applied, so an unsafe combination
+(e.g.
+.B PCLOUD_ENV=production
+with
+.BR PCLOUD_API_MODE=plaintext )
+is rejected with
+.B InvalidApiEndpoint
+rather than silently accepted.
+.
+.SS Finding your config
+Run
+.B pcloudc doctor
+to see the resolved path, the active environment, applied env vars, and
+directory-permission check. Example output:
+.PP
+.EX
+config file        : /home/alice/.config/pcloud/pcloud-rs/config.toml  (missing, using defaults)
+environment        : Production
+api                : Tls bineapi.pcloud.com:443
+paths.config_dir   : /home/alice/.config/pcloud/pcloud-rs      mode 0700 ok
+paths.state_dir    : /home/alice/.local/share/pcloud/pcloud-rs mode 0700 ok
+paths.runtime_dir  : /run/user/1000/pcloud/pcloud-rs           mode 0700 ok
+paths.cache_dir    : /home/alice/.cache/pcloud/pcloud-rs       mode 0700 ok
+durable auth       : disabled
+audit export       : enabled
+result             : OK
+.EE
+.
+.SH LOCATION
+Resolution order (first existing wins):
+.TP
+.B 1. --config <path>
+Explicit override. Any path passed to
+.B pcloudd --config
+or
+.B pcloudc --config
+is used verbatim.
+.TP
+.B 2. $PCLOUD_ROOT/config/<file>
+When
+.B PCLOUD_ROOT
+is set, every managed directory is re-rooted under it
+(`<root>/config`, `<root>/state`, `<root>/runtime`, `<root>/cache`,
+`<root>/plugins`). This is the recommended knob for per-tenant installs,
+test isolation, and container filesystems.
+.TP
+.B 3. Platform default (from the `directories` crate)
+.RS
+.IP \(bu 3
+.B Linux / *BSD (XDG):
+.IR $XDG_CONFIG_HOME/pcloud/pcloud-rs/ ,
+falling back to
+.IR ~/.config/pcloud/pcloud-rs/ .
+.IP \(bu 3
+.B macOS:
+.IR ~/Library/Application\ Support/com.pcloud.pcloud-rs/ .
+.IP \(bu 3
+.B Windows:
+.IR %APPDATA%\epcloud\epcloud-rs\econfig\e .
+.RE
+.PP
+The parent directory must be mode
+.B 0700
+and owned by the invoking user. The daemon refuses to load a config file
+whose
+.I mode & 0o077
+is non-zero (group/world bits set) in
+.B Production;
+it degrades this to a logged warning in
+.B Development / Test.
+Pass
+.B --insecure-config
+to override, which is acceptable only on a throwaway workstation.
+.PP
+Legacy layout
+.RI ( ~/.pcloud/ )
+is consulted read-only as a migration source on Linux, and only when
+.B PCLOUD_MIGRATE_LEGACY_PATHS=1
+is set. Migration never overwrites existing files in the destination.
+.
+.SH COMMON CONFIGURATIONS
+Three worked examples. All three assume the JSON envelope described
+above.
+.
+.SS Minimal home user
+Take every secure default; only pin
+.IR environment .
+.PP
+.EX
+{
+  "version": 2,
+  "profile": {
+    "environment": "Production"
+  }
+}
+.EE
+.PP
+Every other field is filled in from
+.B ConfigProfile::secure_defaults
+plus the XDG path discovery.
+.
+.SS Headless small server
+Durable auth tokens on so the daemon reconnects after reboot without an
+interactive login, higher transfer concurrency, audit export enabled,
+tighter retry budget against a well-known endpoint.
+.PP
+.EX
+{
+  "version": 2,
+  "profile": {
+    "environment": "Production",
+    "features": {
+      "p2p_enabled": false,
+      "crypto_enabled": true,
+      "durable_auth_tokens_enabled": true,
+      "integrity_sweeper": { "enabled": false }
+    },
+    "limits": {
+      "max_concurrent_uploads": 16,
+      "max_concurrent_downloads": 16,
+      "max_parser_frame_bytes": 16777216
+    },
+    "observability": {
+      "structured_logs_enabled": true,
+      "tracing_enabled": false,
+      "metrics_enabled": true,
+      "audit_export_enabled": true
+    },
+    "resilience": {
+      "enabled": true,
+      "rate_limit_capacity": 32,
+      "rate_limit_refill_per_sec": 16.0,
+      "breaker_failure_threshold": 5,
+      "breaker_reset_timeout_ms": 30000,
+      "retry_max_attempts": 3,
+      "retry_base_delay_ms": 100,
+      "retry_factor": 2.0,
+      "retry_max_delay_ms": 5000,
+      "retry_jitter_seed": 13498234234
+    }
+  }
+}
+.EE
+.
+.SS FAANG-ops multi-TB enterprise
+EU-pinned residency, plugin-signed loader with one key, background
+integrity sweep rate-limited to 60 files/min on a nightly cron, KMS
+ready-but-not-wired
+.RI ( see\ Honest\ caveat\ under\ [crypto.kms] ),
+and a coarser (safer) retry policy that gives up sooner.
+.PP
+.EX
+{
+  "version": 2,
+  "profile": {
+    "environment": "Production",
+    "api": {
+      "mode": "Tls",
+      "host": "eapi.pcloud.com",
+      "port": 443,
+      "server_name": "eapi.pcloud.com",
+      "connect_timeout_ms": 3000,
+      "read_timeout_ms": 10000
+    },
+    "extensions": {
+      "plugins_enabled": true,
+      "plugin_dir": "/opt/pcloud/plugins",
+      "allow_network_capability": false,
+      "allow_sync_control_capability": true,
+      "allow_crypto_capability": false,
+      "trusted_plugin_keys": [
+        [26,43,48,5,175,10,64,23,88,201,3,2,1,0,0,42,
+         17,204,88,231,12,44,200,99,100,31,16,15,12,1,2,3]
+      ]
+    },
+    "features": {
+      "p2p_enabled": false,
+      "crypto_enabled": true,
+      "durable_auth_tokens_enabled": true,
+      "integrity_sweeper": {
+        "enabled": true,
+        "schedule_cron": "0 3 * * *",
+        "rate_files_per_minute": 60,
+        "pause_on_battery": true,
+        "skip_list_path": "/etc/pcloud/integrity.skip"
+      }
+    },
+    "limits": {
+      "max_concurrent_uploads": 32,
+      "max_concurrent_downloads": 32,
+      "max_parser_frame_bytes": 8388608
+    },
+    "observability": {
+      "structured_logs_enabled": true,
+      "tracing_enabled": true,
+      "metrics_enabled": true,
+      "audit_export_enabled": true
+    },
+    "data_residency": {
+      "allowed_regions": ["EU"],
+      "strict": true
+    }
+  }
+}
+.EE
+.
+.SH SECTIONS
+Every section below lives under the
+.B profile
+object of the envelope. Types and defaults are taken from
+.IR crates/pcloud-config/src/ .
+.
+.SS environment (top-level enum)
+Controls TLS enforcement and permission posture.
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb lb
+l  l  l  l  l.
+Key|Type|Default|Purpose|Env
+environment|enum|\fBProduction\fR (via secure_defaults)|Development / Test / Production|PCLOUD_ENV
+.TE
+.PP
+.B Why it exists:
+gates several production-only validations in one flag. In
+.B Production
+the daemon refuses plaintext API, refuses group/world-readable config,
+refuses zero-valued timeouts, and enforces owner-only managed directories.
+.PP
+.B Who should change it:
+developers only. A laptop doing real work should stay on
+.B Production.
+.
+.SS [profile.paths]
+Where the daemon stores its files. All four keys are mandatory in the
+envelope (but have serde-driven platform defaults via the loader).
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb lb
+l  l  l  l  l.
+Key|Type|Default|Purpose|Env
+config_dir|abs path|XDG config|JSON envelope and auth-token vault.|PCLOUD_ROOT
+state_dir|abs path|XDG data|SQLite store, audit log, sync DB.|PCLOUD_ROOT
+runtime_dir|abs path|XDG runtime|IPC socket, PID file.|PCLOUD_ROOT
+cache_dir|abs path|XDG cache|Thumbnails, FUSE staging, transient blobs.|PCLOUD_ROOT
+.TE
+.PP
+.B Validation:
+every path must be absolute; a relative entry returns
+.BR PathMustBeAbsolute .
+.PP
+.B Who should change it:
+operators deploying to non-default locations (e.g.
+.IR /var/lib/pcloud ),
+containers, or per-tenant multi-instance installs. Beginners should leave
+it alone and set
+.B PCLOUD_ROOT
+in a service-unit file if they need relocation.
+.PP
+.B Interactions:
+parent directories must be mode
+.B 0700
+or stricter per
+.IR [profile.runtime] .
+.B PCLOUD_ROOT
+overrides all four at once.
+.PP
+.B Security:
+.IR cache_dir
+may briefly hold plaintext of encrypted blobs during FUSE staging; keep
+it on owner-only storage.
+.
+.SS [profile.api]
+API endpoint binding \(em where, how, and with what TLS posture the daemon
+dials pCloud.
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb lb
+l  l  l  l  l.
+Key|Type|Default (Prod)|Purpose|Env
+mode|enum|\fBTls\fR|Development / Plaintext / Tls|PCLOUD_API_MODE
+host|string|bineapi.pcloud.com|TCP connect target.|PCLOUD_API_HOST
+port|u16|443|Port 1\-65535.|PCLOUD_API_PORT
+server_name|string|bineapi.pcloud.com|TLS SNI and cert-verify name.|PCLOUD_API_SERVER_NAME
+connect_timeout_ms|u64|5000|TCP handshake budget (>0).|PCLOUD_API_CONNECT_TIMEOUT_MS
+read_timeout_ms|u64|15000|Per-read budget (>0).|PCLOUD_API_READ_TIMEOUT_MS
+.TE
+.PP
+.B Why it exists:
+production transport policy is load-bearing; this section is where it is
+pinned.
+.B ApiEndpoint::validate
+rejects
+.B Plaintext
+in Production, empty
+.IR host / server_name ,
+port
+.BR 0 ,
+and zero-valued timeouts.
+.PP
+.B Example (EU endpoint):
+.PP
+.EX
+"api": {
+  "mode": "Tls",
+  "host": "eapi.pcloud.com",
+  "port": 443,
+  "server_name": "eapi.pcloud.com",
+  "connect_timeout_ms": 5000,
+  "read_timeout_ms": 15000
+}
+.EE
+.PP
+.B Who should change it:
+anyone pointing at the EU data centre (`eapi.pcloud.com`); anyone
+routing through a staging endpoint (override
+.IR host
+but keep
+.I server_name
+pinned to the production cert name to preserve TLS verification).
+.PP
+.B Security:
+decoupling
+.I host
+from
+.I server_name
+lets you aim at a staging IP while still verifying the real certificate.
+Setting
+.I server_name
+to an attacker-controlled value disables MITM protection.
+.
+.SS [profile.extensions]
+Plugin loader policy. Disabled by default.
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb lb
+l  l  l  l  l.
+Key|Type|Default|Purpose|Env
+plugins_enabled|bool|false|Master switch.|PCLOUD_PLUGINS_ENABLED
+plugin_dir|abs path|<root>/plugins|Trusted plugin directory.|PCLOUD_ROOT
+allow_network_capability|bool|false|Permit plugin outbound sockets.|PCLOUD_PLUGIN_ALLOW_NETWORK
+allow_sync_control_capability|bool|false|Permit plugin sync control.|PCLOUD_PLUGIN_ALLOW_SYNC_CONTROL
+allow_crypto_capability|bool|false|Permit plugin crypto access.|PCLOUD_PLUGIN_ALLOW_CRYPTO
+trusted_plugin_keys|array<[32]bytes>|[]|Ed25519 pubkeys authorised to sign manifests.|\(em
+.TE
+.PP
+.B Validation (ExtensionPolicy::validate):
+relative
+.I plugin_dir
+is rejected. Any capability grant requires
+.BR plugins_enabled=true .
+A non-empty
+.I trusted_plugin_keys
+also requires
+.BR plugins_enabled=true .
+.PP
+.B Who should change it:
+FAANG-ops only, and only for a plugin that has been signed with a key
+whose private half is under hardware control.
+.PP
+.B Security:
+no signature verification is performed when
+.I trusted_plugin_keys
+is empty \(em the loader logs a warning and loads in "dev mode". Leave
+empty only on a developer workstation.
+.
+.SS [profile.runtime]
+Required Unix modes for each managed directory. Applied by the daemon with
+.BR chmod .
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb lb
+l  l  l  l  l.
+Key|Type|Default|Purpose|Env
+config_dir_mode|u32 (octal)|0o700|Mode for config_dir.|\(em
+socket_dir_mode|u32 (octal)|0o700|Mode for runtime_dir.|\(em
+state_dir_mode|u32 (octal)|0o700|Mode for state_dir.|\(em
+cache_dir_mode|u32 (octal)|0o700|Mode for cache_dir.|\(em
+.TE
+.PP
+.B Validation (RuntimePolicy::validate):
+any
+.IR mode & 0o077 != 0
+returns
+.B InsecureMode
+\(em unconditionally, in every environment. Managed directories hold
+auth tokens, sync metadata, audit logs, crypto staging, and the IPC
+socket; there is no legitimate reason for them to be group- or
+world-accessible.
+.PP
+.B Who should change it:
+nobody, in practice. Tightening to
+.B 0o600
+on a file is fine; loosening a directory below
+.B 0o700
+is refused.
+.
+.SS [profile.features]
+Product feature toggles.
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb lb
+l  l  l  l  l.
+Key|Type|Default|Purpose|Env
+p2p_enabled|bool|false|LAN peer transfer. \fBReserved; no code path reads it today.\fR|\(em
+crypto_enabled|bool|true|AES-256-GCM crypto folders, metadata encoding, share temppass.|\(em
+durable_auth_tokens_enabled|bool|false|Persist auth tokens to owner-only vault.|PCLOUD_DURABLE_AUTH_TOKENS
+integrity_sweeper|table|\fIoff\fR|See \fB[profile.features.integrity_sweeper]\fR.|\(em
+.TE
+.PP
+.B Who should change it:
+.IR durable_auth_tokens_enabled = true
+is useful for headless reboot survivors. Leave off on shared or kiosk
+machines \(em the token never leaves memory unless you opt in.
+.PP
+.B Security:
+passwords are
+.B never
+persisted regardless of any flag. When
+.I durable_auth_tokens_enabled = true
+the token lands in
+.I <config_dir>/auth_token
+at
+.B 0600
+inside a
+.B 0700
+parent. Disabling
+.I crypto_enabled
+hides (does not delete) content in crypto folders.
+.
+.SS [profile.features.integrity_sweeper]
+Opt-in, off-by-default background scrub that re-verifies recorded
+size / mtime / content-hash for files under daemon management. Tracked
+under
+.BR bd-1du.4.6.1 .
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb lb
+l  l  l  l  l.
+Key|Type|Default|Purpose|Env
+enabled|bool|false|Master switch. When false, no worker is spawned and no I/O is performed by this subsystem.|\(em
+schedule_cron|string?|null|Cron expression for automatic runs. Parsed via the \fIcron\fR crate (6- or 7-field form); the daemon scheduler thread sleeps until the next boundary and invokes \fBrun_once\fR at each tick. Invalid expressions are rejected at shell construction and the scheduler refuses to start.|\(em
+rate_files_per_minute|u32|100|Token-bucket rate cap. \fB0\fR permanently disables work even when enabled. Tokens accrue at rate/60 per second, capped at the per-minute budget.|\(em
+pause_on_battery|bool|true|Pause scheduler ticks while any power-supply reports \fBDischarging\fR. Linux reads \fI/sys/class/power_supply/*/status\fR; macOS/Windows use the \fIbattery\fR crate. Unsupported platforms log a one-shot warning and behave as if this flag were disabled (servers and VMs keep running unchanged).|\(em
+skip_list_path|abs path?|null|Newline-delimited glob skip-list. Invalid globs raise \fBio::ErrorKind::InvalidData\fR with a 1-based line number; there is no silent drop.|\(em
+.TE
+.PP
+.B Who should change it:
+operators running long-lived staged content on a server. On laptops keep
+.IR pause_on_battery = true .
+On developer machines leave
+.IR enabled = false .
+.PP
+.B Interactions:
+.IR enabled
+gates the whole block;
+.IR rate_files_per_minute = 0
+is an override off-switch that takes precedence over
+.IR enabled = true .
+.PP
+.B Scheduler:
+when
+.B schedule_cron
+is set, a dedicated \fIpcloudd-integrity-scheduler\fR thread parses the
+expression at daemon bootstrap and fires \fBrun_once\fR at each cron
+boundary. The
+.B pause_on_battery
+check consults a platform power-source reader before every tick; when
+the host is discharging the tick is skipped and a
+\fIintegrity_sweeper.paused{reason="on_battery"}\fR event is emitted to
+stderr. The manual
+.B pcloudc integrity run-once
+path remains available for operator-triggered scrubs. See
+.I docs/parity/integrity-sweeper.md
+for the full rollout plan.
+.PP
+.B Security:
+per-installation HMAC-SHA256 paths are recorded in audit events \(em never
+cleartext paths. Skipped-by-glob files are not audited. File contents are
+never touched.
+.
+.SS [profile.limits]
+Resource bounds. These are safety caps, not performance knobs.
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb lb
+l  l  l  l  l.
+Key|Type|Default|Purpose|Env
+max_concurrent_uploads|usize|4|Cap on simultaneous upload tasks.|\(em
+max_concurrent_downloads|usize|4|Cap on simultaneous download tasks.|\(em
+max_parser_frame_bytes|usize|8388608 (8 MiB)|Hard cap on a single parsed wire frame.|\(em
+.TE
+.PP
+.B Why it exists:
+.IR max_parser_frame_bytes
+is checked
+.B before
+allocation against the peer-announced frame length \(em a hostile server
+cannot coerce multi-GiB allocations by advertising a huge frame.
+.PP
+.B Who should change it:
+FAANG-ops on fast uplinks can raise the concurrent limits to 16\-32.
+Embedded devices can drop the parser cap to 1 MiB. Beginners should leave
+everything alone.
+.
+.SS [profile.mount]
+FUSE / mounted-drive policy. Defaults enforce owner-only access.
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb lb
+l  l  l  l  l.
+Key|Type|Default|Purpose|Env
+allow_other|bool|false|Pass FUSE \fBallow_other\fR.|\(em
+owner_only_by_default|bool|true|Enforce owner-uid access.|\(em
+.TE
+.PP
+.B Validation (ConfigProfile::validate):
+.IR allow_other = true
+and
+.IR owner_only_by_default = true
+together produces
+.BR InvalidMountPolicy .
+Enabling
+.I allow_other
+on a multi-user host also requires
+.B user_allow_other
+in
+.IR /etc/fuse.conf .
+.PP
+.B Honest caveat:
+the full mounted-drive runtime is tracked under
+.BR bd-1du.4 ;
+today this section is wired through to the FUSE adapter scaffold but
+end-to-end mount parity is still in flight. Treat it as pre-alpha.
+.PP
+.B Who should change it:
+never flip both to
+.B true
+simultaneously \(em it is a hard config error. FAANG-ops running a shared
+jumphost: leave defaults.
+.
+.SS [profile.observability]
+Telemetry toggles. Defaults: structured logs + audit on; tracing + metrics
+off.
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb lb
+l  l  l  l  l.
+Key|Type|Default|Purpose|Env
+structured_logs_enabled|bool|true|Emit JSON-lines to stderr (falls back to unstructured stderr when false \(em not silent).|\(em
+tracing_enabled|bool|false|Span-based tracing. Behind Cargo feature \fBtracing-otlp\fR; inert in a build without the feature.|\(em
+metrics_enabled|bool|false|Operator metrics endpoint on owner-only IPC.|\(em
+audit_export_enabled|bool|true|Persist audit events under \fIstate_dir\fR.|\(em
+.TE
+.PP
+.B Why it exists:
+audit and structured logs are the forensic record; leaving
+.IR audit_export_enabled = true
+is how "who unlocked the crypto folder at 03:00" gets answered. Tracing
+and metrics are opt-in because they cost CPU.
+.PP
+.B Honest caveat \(em OTLP endpoint is not in the config file today.
+The tracing pipeline (
+.IR pcloud-observability/src/tracing.rs )
+accepts an
+.I endpoint
+and
+.I sample_rate
+programmatically but there is
+.B no corresponding field in ObservabilityFlags.
+If you need to point tracing at an OTLP collector today you must wire it
+in code. A follow-up bead will add
+.IR [profile.observability.tracing]
+with
+.IR otlp_endpoint ,
+.IR sample_rate ,
+and optional headers.
+.PP
+.B Security:
+.B SecretString / SecretBytes
+redaction is applied to structured logs unconditionally. The metrics
+endpoint is gated by IPC peer checks \(em not broadened by this flag.
+.
+.SS [profile.resilience]
+Opt-in circuit breaker, rate limiter, and retry policy used by
+.B ResilientTransport.
+Safe to apply to every endpoint; the default is
+.BR enabled = true .
+Absent blocks load via serde defaults.
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb lb
+l  l  l  l  l.
+Key|Type|Default|Purpose|Env
+enabled|bool|true|Master switch.|\(em
+rate_limit_capacity|u32|16|Per-endpoint burst size.|\(em
+rate_limit_refill_per_sec|f64|8.0|Per-endpoint sustained rate.|\(em
+breaker_failure_threshold|u32|5|Consecutive failures that trip the breaker.|\(em
+breaker_reset_timeout_ms|u64|30000|How long the breaker stays Open before admitting a probe.|\(em
+retry_max_attempts|u32|3|Total attempts incl. the first call (1 disables retry).|\(em
+retry_base_delay_ms|u64|100|Initial retry backoff.|\(em
+retry_factor|f64|2.0|Exponential factor (>= 1.0; < 1.0 rejected).|\(em
+retry_max_delay_ms|u64|5000|Upper bound on a single retry delay.|\(em
+retry_jitter_seed|u64|0x00C0FFEEF00D|Deterministic equal-jitter seed.|\(em
+.TE
+.PP
+.B Who should change it:
+FAANG-ops tuning SLO budgets. On satellite or flaky links,
+.B raise
+.I retry_max_attempts
+and
+.IR retry_max_delay_ms .
+On batch workloads against a dedicated endpoint,
+.B lower
+.I rate_limit_capacity
+and
+.IR rate_limit_refill_per_sec .
+.PP
+.B Security:
+disabling this wholesale is discouraged \(em it removes the client-side
+cap that stops a buggy consumer from tripping server-side abuse
+heuristics. Prefer tuning values over toggling
+.IR enabled = false .
+.
+.SS [profile.data_residency] (optional, H11)
+Region allow-list enforced at sync-root creation,
+.BR upload_create ,
+and
+.BR set_api_server .
+Defaults (empty list, non-strict) load cleanly on older envelopes.
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb lb
+l  l  l  l  l.
+Key|Type|Default|Purpose|Env
+allowed_regions|array<string>|[]|Case-insensitive region tags (`"EU"`, `"US"`). Empty = permit any region.|\(em
+strict|bool|false|true = hard refusal (`ResponseStatus::PolicyViolation`); false = warn-only audit event.|\(em
+.TE
+.PP
+.B Example (EU-only, strict):
+.PP
+.EX
+"data_residency": {
+  "allowed_regions": ["EU"],
+  "strict": true
+}
+.EE
+.PP
+.B Honest caveat:
+enforcement helpers are landed in
+.BR pcloud-backends::residency ,
+but the daemon sync/transfer/account runtimes still need call-site
+adoption in a handful of places. Until then, strict mode may miss a call
+site. Tracked for the daemon integration pass.
+.
+.SS [crypto.kms] (enterprise; scaffolding only today)
+Envelope-encryption wrapping-key provider selection. The provider trait,
+the
+.B AwsKms
+and
+.B HashicorpVault
+impls, the PKCS#11 stub, and the in-process
+.B unwrap_cached
+TTL cache are implemented in
+.IR crates/pcloud-kms/ .
+.PP
+.B Honest caveat \(em parsed-but-not-wired.
+There is
+.B no [crypto.kms] field on ConfigProfile yet.
+Today a KMS provider is constructed programmatically by a binary that
+embeds
+.BR pcloud-kms .
+The config-file surface for this section is documented here because it is
+the agreed schema for the follow-up that routes the per-folder DEK
+through
+.BR KmsProvider::encrypt_dek / decrypt_dek .
+Until that ships, the
+.I [crypto.kms]
+block is
+.B not read
+by the daemon \(em adding it silently has no effect.
+Tracked under the KMS wiring follow-up in
+.BR bd-1du.10 .
+.PP
+Planned schema:
+.PP
+.TS
+tab(|) allbox;
+lb lb lb lb
+l  l  l  l.
+Key|Type|Default|Purpose
+provider|enum|null|One of null / aws / vault / pkcs11.
+region|string|\(em|AWS region (e.g. `eu-central-1`). aws only.
+key_id|string|\(em|AWS CMK ARN or key id. aws only.
+vault_addr|string|\(em|Vault base URL (https only). vault only.
+vault_path|string|\(em|Vault Transit key path. vault only.
+pkcs11_slot|int|\(em|HSM slot number. pkcs11 only (stub today).
+pkcs11_label|string|\(em|HSM key label. pkcs11 only (stub today).
+cache_ttl_seconds|u64|3600|In-memory unwrap cache TTL.
+.TE
+.PP
+.B Credentials rule \(em never in this file:
+.IP \(bu 3
+AWS credentials come from the AWS default provider chain
+(IMDSv2, env vars, shared credentials, SSO). No AWS credential key
+belongs in
+.IR pcloud.conf ;
+when the block is wired up it will refuse to load an AWS credential
+field.
+.IP \(bu 3
+Vault tokens come from
+.B VAULT_TOKEN
+or
+.BR VAULT_TOKEN_FILE ,
+wrapped in
+.B SecretString
+internally, and sent as
+.BR X-Vault-Token
+over TLS. Never log, never persist to config.
+.IP \(bu 3
+PKCS#11 PINs (when the provider lands) come from the OS keyring or a
+dedicated env var \(em never the config file.
+.PP
+.B Who should change it (when wired):
+enterprise deployments needing central key custody, IAM-based
+revocation, and KMS-side audit. Home users leave this section unset.
+.PP
+.B Cargo features:
+.I aws
+and
+.I vault
+are opt-in features on
+.BR pcloud-kms .
+A binary built without the matching feature rejects that
+.I provider
+value at load time.
+.I pkcs11
+is a documented stub and returns
+.B NotImplemented
+on every call.
+.
+.SH ENVIRONMENT OVERRIDES
+Applied
+.B after
+the file is loaded and
+.B before
+validation, so an override that produces an invalid profile is rejected
+with the same diagnostics as a bad file. Unset / whitespace-only values
+are treated as unset. Boolean values accept
+.BR 1 / 0 ,
+.BR true / false ,
+.BR yes / no ,
+.BR on / off
+(case-insensitive).
+.PP
+.TS
+tab(|) allbox;
+lb lb
+l  l.
+Env var|Target key (notes)
+PCLOUD_ROOT|paths.* + extensions.plugin_dir \(em re-roots every managed path under \fI<root>/{config,state,runtime,cache,plugins}\fR
+PCLOUD_ENV|environment \(em also snaps api.mode to the new secure default unless PCLOUD_API_MODE is set
+PCLOUD_API_MODE|api.mode (wins over the PCLOUD_ENV snap)
+PCLOUD_API_HOST|api.host
+PCLOUD_API_PORT|api.port (must parse u16)
+PCLOUD_API_SERVER_NAME|api.server_name
+PCLOUD_API_CONNECT_TIMEOUT_MS|api.connect_timeout_ms (must parse u64; 0 fails validation)
+PCLOUD_API_READ_TIMEOUT_MS|api.read_timeout_ms (must parse u64; 0 fails validation)
+PCLOUD_PLUGINS_ENABLED|extensions.plugins_enabled
+PCLOUD_PLUGIN_ALLOW_NETWORK|extensions.allow_network_capability (needs plugins_enabled)
+PCLOUD_PLUGIN_ALLOW_SYNC_CONTROL|extensions.allow_sync_control_capability (needs plugins_enabled)
+PCLOUD_PLUGIN_ALLOW_CRYPTO|extensions.allow_crypto_capability (needs plugins_enabled)
+PCLOUD_DURABLE_AUTH_TOKENS|features.durable_auth_tokens_enabled
+PCLOUD_MIGRATE_LEGACY_PATHS|opt-in gate for \fI~/.pcloud/\fR \(em> XDG migration (set to 1)
+.TE
+.PP
+.B Valid enum values:
+.IP \(bu 3
+.B PCLOUD_ENV:
+.BR dev / development ,
+.BR test ,
+.BR prod / production .
+.IP \(bu 3
+.B PCLOUD_API_MODE:
+.BR dev / development ,
+.BR plain / plaintext / tcp ,
+.BR tls / ssl .
+.
+.SH DIAGNOSTICS
+Errors are printed on stderr with a JSON pointer, line, and column. A few
+representative messages:
+.PP
+.EX
+error: /profile/api/mode: value 'Plaintext' rejected in Production
+  (production environment requires tls api mode)
+
+error: /profile/api/port: must not be zero
+
+error: /profile/runtime/state_dir_mode: too permissive: 755
+  (managed dirs must be 0o700 or stricter)
+
+error: refusing to load /home/alice/.config/pcloud/pcloud-rs/config
+  (mode 0644 \(em pass --insecure-config to override in development)
+.EE
+.PP
+.B pcloudc doctor
+prints the resolved profile, applied env overrides, and a
+ready-to-paste checklist:
+.PP
+.EX
+$ pcloudc doctor
+config file        : /home/alice/.config/pcloud/pcloud-rs/config  (v2, ok)
+environment        : Production
+api                : Tls bineapi.pcloud.com:443
+paths.config_dir   : /home/alice/.config/pcloud/pcloud-rs      mode 0700 ok
+paths.state_dir    : /home/alice/.local/share/pcloud/pcloud-rs mode 0700 ok
+paths.runtime_dir  : /run/user/1000/pcloud/pcloud-rs           mode 0700 ok
+paths.cache_dir    : /home/alice/.cache/pcloud/pcloud-rs       mode 0700 ok
+env overrides      : PCLOUD_ENV=production
+durable auth       : disabled
+audit export       : enabled
+result             : OK
+.EE
+.
+.SH TROUBLESHOOTING
+.
+.SS Config rejected in Production
+The following keys cannot hold insecure values when
+.IR environment = "Production":
+.IP \(bu 3
+.I api.mode
+must be
+.BR Tls .
+.IP \(bu 3
+.I api.host / server_name
+must be non-empty;
+.I api.port
+must be non-zero;
+.I api.*_timeout_ms
+must be non-zero.
+.IP \(bu 3
+.I runtime.*_mode
+must not grant group or world bits.
+.IP \(bu 3
+.I mount.allow_other = true
+combined with
+.I mount.owner_only_by_default = true
+is refused.
+.IP \(bu 3
+Any plugin capability grant without
+.I extensions.plugins_enabled = true
+is refused.
+.PP
+Fix the file, or (for reproduction) set
+.B PCLOUD_ENV=development
+in a disposable sandbox.
+.
+.SS Permissions errors (0700 / 0600)
+If you see
+.PP
+.EX
+error: refusing to load: /home/alice/.config/pcloud/pcloud-rs
+  has insecure permissions (mode 0755)
+.EE
+.PP
+the daemon has found a world-traversable config dir. Tighten it:
+.PP
+.EX
+chmod 0700 ~/.config/pcloud/pcloud-rs
+chmod 0600 ~/.config/pcloud/pcloud-rs/config
+.EE
+.PP
+The same rule applies to
+.I state_dir
+and the auth-token vault file under
+.IR config_dir/auth_token .
+The daemon never loosens permissions on your behalf; it only refuses to
+proceed.
+.
+.SS Migration on upgrade
+When upgrading from v0 or v1 envelopes the daemon migrates in memory and
+leaves the on-disk file untouched. Rewrite the file by loading it once
+with the current binary and letting a subsequent write (e.g. an auth
+token store) persist the v2 envelope.
+Legacy
+.I ~/.pcloud/
+contents are copied (never moved) to the XDG layout only when
+.B PCLOUD_MIGRATE_LEGACY_PATHS=1
+is set and the XDG destination is empty.
+.
+.SH SECURITY SUMMARY
+.IP \(bu 3
+Config file must be owner-only (0600 file, 0700 dir); refused in
+Production otherwise.
+.IP \(bu 3
+Production rejects plaintext API, empty host/SNI, port 0, and zero
+timeouts.
+.IP \(bu 3
+Managed directories must be 0o700 or stricter \(em enforced in every
+environment, not only Production.
+.IP \(bu 3
+Plaintext password persistence is
+.B not supported.
+Tokens are persisted only when
+.I durable_auth_tokens_enabled = true
+and always in an owner-only vault.
+.IP \(bu 3
+Plugins without a matching signature from
+.I trusted_plugin_keys
+are rejected when the list is non-empty; an empty list triggers a loader
+warning.
+.IP \(bu 3
+.B Credentials do not belong in this file.
+AWS, Vault, and PKCS#11 credentials come from the OS / keyring / env
+\(em never the config. When the KMS block lands, config-resident
+credentials will be refused at load time.
+.IP \(bu 3
+Audit failures are fatal, not advisory.
+.
+.SH SEE ALSO
+.BR pcloudc (1),
+.BR pcloudd (1)
+.
+.SH AUTHORS
+Written and maintained by the pcloud-rs contributors.
+.
+.SH COPYRIGHT
+Licensed under
+.B MIT OR Apache-2.0
+at your option.

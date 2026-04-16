@@ -1,0 +1,4 @@
+#!/bin/sh
+exec 2>&1
+[ -r /etc/default/pcloudd ] && . /etc/default/pcloudd
+exec chpst -u pcloud-rs:pcloud-rs /usr/local/libexec/pcloudd-wrapper.sh

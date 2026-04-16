@@ -1,0 +1,19 @@
+[package]
+name = "pcloud-p2p"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Peer-to-peer LAN sync scaffolding for pcloud-rs (experimental)."
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+mdns-sd = "0.13"
+
+[dev-dependencies]
+
+[lints]
+workspace = true

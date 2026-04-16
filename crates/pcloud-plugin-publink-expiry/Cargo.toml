@@ -1,0 +1,20 @@
+[package]
+name = "pcloud-plugin-publink-expiry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "First-party pcloud-rs plugin that emits desktop notifications when public links are about to expire."
+
+[dependencies]
+pcloud-plugin-api = { path = "../pcloud-plugin-api" }
+pcloud-secret = { path = "../pcloud-secret" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))'.dependencies]
+notify-rust = "4"
+
+[lints]
+workspace = true

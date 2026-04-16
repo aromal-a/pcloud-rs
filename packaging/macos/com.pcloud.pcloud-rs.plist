@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+    "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  User LaunchAgent for the pcloud-rs client.
+
+  PLATFORM: macOS 11+.
+
+  Install:
+    sed "s|{{USER_HOME}}|$HOME|g" com.pcloud.pcloud-rs.plist \
+      > ~/Library/LaunchAgents/com.pcloud.pcloud-rs.plist
+    mkdir -p ~/Library/Logs/pcloud-rs
+    launchctl load -w ~/Library/LaunchAgents/com.pcloud.pcloud-rs.plist
+
+  The {{USER_HOME}} placeholder must be replaced with an absolute path
+  before installation (launchd does not expand $HOME in plist values).
+
+  Environment-variable accuracy (cross-checked against
+  crates/pcloud-config/src/env.rs):
+    - PCLOUD_ROOT / PCLOUD_ENV / PCLOUD_API_MODE / PCLOUD_API_HOST /
+      PCLOUD_API_SERVER_NAME / PCLOUD_LOG_LEVEL / PCLOUD_CONFIG (CLI only) /
+      PCLOUD_DURABLE_AUTH_TOKENS are **read**.
+    - PCLOUD_HOME, PCLOUD_MOUNT_POINT, PCLOUD_AUTH_VAULT, PCLOUD_API_SERVER
+      are **not** read by the Rust daemon (path is derived from PCLOUD_ROOT
+      and mount point is a per-call CLI argument). They are kept below for
+      operator readability and are silently ignored.
+
+  Per-directive notes:
+    - ProgramArguments: invokes the CLI with --daemon, which in turn
+      forks/execs the daemon binary. Replace with a direct pcloudd
+      invocation if you prefer a single-process tree.
+    - ProcessType=Interactive: the client may mount a FUSE volume that
+      shows up in Finder, so launchd gives it a user-interactive QoS.
+    - KeepAlive.SuccessfulExit=false + Crashed=true: respawn on crash
+      but not on clean shutdown (e.g. `launchctl unload`).
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pcloud.pcloud-rs</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/pcloudc</string>
+        <string>--daemon</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Interactive</string>
+
+    <key>StandardOutPath</key>
+    <string>{{USER_HOME}}/Library/Logs/pcloud-rs/pcloud-rs.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{USER_HOME}}/Library/Logs/pcloud-rs/pcloud-rs.err.log</string>
+
+    <key>WorkingDirectory</key>
+    <string>{{USER_HOME}}</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!-- Read by the Rust daemon / CLI: -->
+        <key>PCLOUD_ROOT</key>
+        <string>{{USER_HOME}}/.config/pcloud</string>
+        <key>PCLOUD_ENV</key>
+        <string>production</string>
+        <key>PCLOUD_LOG_LEVEL</key>
+        <string>info</string>
+        <key>PCLOUD_API_HOST</key>
+        <string>api.pcloud.com</string>
+        <key>PCLOUD_API_SERVER_NAME</key>
+        <string>api.pcloud.com</string>
+        <key>PCLOUD_CONFIG</key>
+        <string>{{USER_HOME}}/.config/pcloud/config.toml</string>
+        <!-- Compat aliases (NOT read; kept for readability): -->
+        <key>PCLOUD_HOME</key>
+        <string>{{USER_HOME}}/.pcloud</string>
+        <key>PCLOUD_MOUNT_POINT</key>
+        <string>{{USER_HOME}}/pCloudDrive</string>
+        <key>PCLOUD_API_SERVER</key>
+        <string>api.pcloud.com</string>
+        <key>PCLOUD_AUTH_VAULT</key>
+        <string>{{USER_HOME}}/.config/pcloud/auth.vault</string>
+    </dict>
+</dict>
+</plist>

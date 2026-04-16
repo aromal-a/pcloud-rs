@@ -1,0 +1,44 @@
+[package]
+name = "pcloud-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Typed pCloud protocol clients (auth, transfer, shares, public links) over TLS."
+
+[features]
+# Opt-in HTTP revision provider for file-history / log / diff / restore.
+# Disabled by default so the base crate surface stays minimal and no HTTP
+# client code is pulled in unless the operator configures a revision URL.
+# The provider itself is transport-agnostic: callers inject their own HTTP
+# transport callable (see `revision_provider::HttpTransport`). Enabling
+# this feature adds no network dependencies — only the `serde_json`
+# payload helpers.
+file-history-http = ["dep:serde_json"]
+
+[dependencies]
+pcloud-config = { path = "../pcloud-config" }
+pcloud-model = { path = "../pcloud-model" }
+pcloud-resilience = { path = "../pcloud-resilience" }
+pcloud-secret = { path = "../pcloud-secret" }
+rustls = { version = "0.23", default-features = false, features = ["std", "ring"] }
+serde.workspace = true
+serde_json = { workspace = true, optional = true }
+sha1 = "0.10"
+sha2 = { workspace = true }
+thiserror.workspace = true
+webpki-roots = "1.0"
+
+[dev-dependencies]
+arbitrary = { version = "1", features = ["derive"] }
+criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
+pcloud-ipc = { path = "../pcloud-ipc" }
+proptest = "1.5"
+serde_json.workspace = true
+
+[[bench]]
+name = "proto_dispatch"
+harness = false
+
+[lints]
+workspace = true

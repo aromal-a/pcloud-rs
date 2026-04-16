@@ -1,0 +1,19 @@
+[package]
+name = "pcloud-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Policy enforcement layer (OPA/Rego) for the pcloud-rs Rust daemon."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+regorus = "0.3"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

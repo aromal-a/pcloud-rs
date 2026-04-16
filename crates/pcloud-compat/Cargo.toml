@@ -1,0 +1,37 @@
+# **PLATFORM MATRIX:**
+# - Linux: full support (tier 1) — `legacy-shm` opt-in feature uses SysV shm.
+# - FreeBSD: tier 2 — SysV shm also available.
+# - macOS: tier 1 planned — `legacy-shm` not applicable; rpc_message_t codec stays portable.
+# - Windows: tier 1 planned — `legacy-shm` not applicable (no SysV shm).
+# SysV-shm code paths must be source-level `#[cfg(target_os = "linux")]`-gated;
+# the `legacy-shm` feature must only be enabled on Linux/FreeBSD builds.
+
+[package]
+name = "pcloud-compat"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "C-CLI compatibility shim primitives (rpc_message_t codec, SysV shm producer). Isolated crate, not wired into the daemon by default."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+libc = { workspace = true }
+thiserror = { workspace = true }
+
+[features]
+# SysV shm is Linux-specific and carries legacy C compatibility semantics
+# (0666 segment, world-accessible). OFF by default. Opt-in callers must
+# explicitly enable `legacy-shm`.
+default = []
+legacy-shm = []
+
+[[bin]]
+name = "pcloud-compat-shm-peek"
+path = "src/bin/shm_peek.rs"
+required-features = ["legacy-shm"]
+
+[lints]
+workspace = true

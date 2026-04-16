@@ -1,0 +1,28 @@
+# cargo-mutants workspace configuration (P2.6 PLAN_A_PLUS.md).
+#
+# MMR goal: >= 75% per high-risk crate (pcloud-crypto, pcloud-auth,
+# pcloud-resilience, pcloud-ipc). Enforced by the `mutants` job in
+# .github/workflows/rust.yml.
+#
+# Exclusions: we skip files that are pure data/enum wiring where
+# mutation outcomes are noisy and not meaningful (e.g. error-type
+# definitions, re-export shims). Keep the excluded surface small;
+# prefer writing better tests over widening this list.
+
+# Use the standard cargo test harness (not nextest) so mutant runs
+# match the coverage job's test harness.
+test_tool = "cargo"
+
+# Per-mutant timeout floor. cargo-mutants calibrates timeouts from
+# the baseline test run; this is the minimum in seconds.
+minimum_test_timeout = 120
+
+# Files excluded from mutation. Regexes are matched against the
+# path relative to the crate root.
+#   - src/error.rs:   pure error enum/From impls, rarely carries logic.
+#   - src/lib.rs$:    top-level re-exports and module wiring; any real
+#                     logic should live in submodules that ARE mutated.
+exclude_re = [
+    "src/error.rs",
+    "src/lib.rs$",
+]

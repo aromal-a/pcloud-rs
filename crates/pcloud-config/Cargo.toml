@@ -1,0 +1,38 @@
+[package]
+name = "pcloud-config"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Typed configuration loader and validator for the pcloud-rs Rust workspace."
+
+[dependencies]
+pcloud-error = { path = "../pcloud-error" }
+pcloud-kms = { path = "../pcloud-kms", optional = true }
+pcloud-secret = { path = "../pcloud-secret", optional = true }
+directories.workspace = true
+glob = "0.3"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[features]
+default = []
+# Opt-in: compile the `CryptoKmsConfig::build_provider` factory that
+# materialises a concrete `Box<dyn pcloud_kms::KmsProvider>` from the
+# declarative config record. The factory pulls in `pcloud-kms` and
+# `pcloud-secret`. Leave disabled in contexts that only need to
+# serialise/deserialise the config (e.g. CLI linters).
+kms-factory = ["dep:pcloud-kms", "dep:pcloud-secret"]
+# Pass-throughs: enable the corresponding provider inside `pcloud-kms`.
+# The factory returns `ProviderFeatureDisabled` when the caller configured
+# a provider whose feature is not enabled in the current build.
+aws-kms = ["kms-factory", "pcloud-kms/aws"]
+vault-kms = ["kms-factory", "pcloud-kms/vault"]
+pkcs11-kms = ["kms-factory", "pcloud-kms/pkcs11"]
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true

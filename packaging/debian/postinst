@@ -1,0 +1,32 @@
+#!/bin/sh
+# postinst script for pcloud-rs
+set -e
+
+case "$1" in
+    configure)
+        # Reload systemd units if systemd is the active init.
+        if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+
+        # Ensure the fuse group exists and /dev/fuse is usable; do NOT
+        # auto-enable or auto-start the daemon — the user must opt in.
+        if ! getent group fuse >/dev/null 2>&1; then
+            addgroup --system fuse >/dev/null 2>&1 || true
+        fi
+
+        echo "pcloud-rs installed. To start the daemon manually:"
+        echo "    systemctl --user start pcloudd.service"
+        echo "or run it directly: pcloudd --help"
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

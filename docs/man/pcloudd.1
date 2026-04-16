@@ -1,0 +1,61 @@
+.TH PCLOUDD 1 "2026-04-15" "pcloud-rs Rust" "System Administration Commands"
+.SH NAME
+pcloudd \- pCloud background daemon for the Rust rewrite
+.SH SYNOPSIS
+.B pcloudd
+.br
+.B pcloudd serve
+.br
+.B pcloudd --help
+.br
+.B pcloudd --version
+.SH DESCRIPTION
+.B pcloudd
+is the background service used by
+.BR pcloudc (1).
+It bootstraps the Rust runtime, owns the local state store, local IPC socket,
+auth/session lifecycle, sync engine, transfer runtime, crypto runtime, and
+mount runtime.
+
+With no subcommand,
+.B pcloudd
+prints a one-shot runtime summary and exits.
+With
+.BR serve ,
+it binds the configured local IPC socket and serves requests until shutdown.
+.SH MODES
+.TP
+.B (no subcommand)
+Print the current runtime summary and exit.
+.TP
+.B serve
+Run the daemon request loop.
+.SH OPTIONS
+.TP
+.BR -h ", " --help
+Show help.
+.TP
+.BR -V ", " --version
+Show daemon version.
+.SH ENVIRONMENT
+.TP
+.B PCLOUD_ROOT
+Override the daemon state root.
+.TP
+.B PCLOUD_ENV
+Select bootstrap environment semantics.
+.TP
+.B PCLOUD_API_MODE
+Select development, plaintext, or TLS API mode.
+.SH RUNTIME NOTES
+The current daemon binary documents only its real runtime modes. It does not
+advertise packaging-only flags that are not implemented by the binary itself.
+
+In secure-default bootstrap, the daemon creates and uses owner-only runtime
+paths, including the local IPC socket.
+.SH FILES
+.TP
+.I ~/.pcloud/
+Default development root used by the current bootstrap path.
+.SH SEE ALSO
+.BR pcloudc (1)

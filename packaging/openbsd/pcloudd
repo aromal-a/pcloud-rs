@@ -1,0 +1,40 @@
+#!/bin/ksh
+# PLATFORM: OpenBSD 7.x
+#
+# rc.d service script for the pcloudd daemon.
+#
+# Install:
+#   install -m 0555 packaging/openbsd/pcloudd /etc/rc.d/pcloudd
+#   rcctl enable pcloudd
+#   rcctl set pcloudd user _pcloud        # optional; default below
+#   rcctl set pcloudd flags "--log info"  # optional; any pcloudd CLI flags
+#   rcctl start pcloudd
+#
+# Inputs (set via rcctl or /etc/rc.conf.local):
+#   pcloudd_user   - run-as user; default "_pcloud"
+#   pcloudd_flags  - extra CLI flags passed to pcloudd
+#
+# Outputs: no PID file (OpenBSD rc.subr uses pgrep pexp). Logs go to syslog.
+#
+# Security:
+#   - Create the dedicated service user before starting:
+#       useradd -r 400..999 -c 'pcloudd service' -d /var/pcloudd \
+#               -s /sbin/nologin _pcloud
+#   - Restrict the state directory: install -d -o _pcloud -g _pcloud -m 700 /var/pcloudd
+#
+# Test:
+#   rcctl start pcloudd
+#   rcctl check pcloudd
+#   rcctl stop  pcloudd
+#
+# Side effects: spawns a supervised pcloudd process. No files are created.
+
+daemon="/usr/local/bin/pcloudd"
+daemon_flags=""
+daemon_user="_pcloud"
+
+. /etc/rc.d/rc.subr
+
+pexp="pcloudd${daemon_flags:+ ${daemon_flags}}"
+
+rc_cmd $1

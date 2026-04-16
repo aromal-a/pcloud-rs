@@ -1,0 +1,13 @@
+Package: pcloud-rs
+Version: 0.1.0
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: pcloud-rs maintainers <maintainers@example.invalid>
+Depends: libc6, libssl3 | libssl1.1, libsqlite3-0, libfuse3-3, fuse3
+Recommends: ca-certificates
+Homepage: https://github.com/ezechiel203/pcloud-rs
+Description: pCloud command-line client and user-space daemon (Rust rewrite)
+ Provides the `pcloud-rs` CLI and the `pcloudd` background daemon for
+ syncing, mounting, and managing pCloud accounts. This is the Rust
+ rewrite of the historical C/C++ pcloud-rs client.

@@ -1,0 +1,26 @@
+[package]
+name = "pcloud-chaos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Chaos test harness for pcloud-rs (P1.6). Scripted fault-injection scenarios with predicted outcomes."
+
+# This crate intentionally has no library surface. It exists purely to host
+# integration tests under `tests/` that exercise resilience primitives and
+# platform behaviours under fault injection. No production crate depends on it.
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+
+[dev-dependencies]
+pcloud-resilience = { path = "../pcloud-resilience", features = ["tokio-timeout"] }
+tempfile = "3"
+tokio = { version = "1", features = ["time", "macros", "rt", "rt-multi-thread", "net", "io-util"] }
+libc = { workspace = true }
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

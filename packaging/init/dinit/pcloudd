@@ -1,0 +1,7 @@
+type = process
+command = /usr/local/libexec/pcloudd-wrapper.sh
+restart = true
+smooth-recovery = true
+depends-on = local-fs
+depends-on = network
+logfile = /var/log/pcloud-rs/pcloudd.log

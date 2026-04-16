@@ -1,0 +1,401 @@
+.TH PCLOUDC 1 "2026-04-15" "pcloud-rs Rust" "User Commands"
+.SH NAME
+pcloudc \- pCloud command-line client for the Rust rewrite
+.SH SYNOPSIS
+.B pcloudc
+[\fIGLOBAL-OPTIONS\fR] \fICOMMAND\fR [\fIARGS\fR...]
+.br
+.B pcloudc
+[\fIGLOBAL-OPTIONS\fR]
+.B login
+[\fILOGIN-OPTIONS\fR]
+.SH DESCRIPTION
+.B pcloudc
+is the interactive and scripting client for the Rust-based pCloud daemon.
+It talks to
+.BR pcloudd (1)
+over a local owner-only Unix socket, exposes account/session management,
+sync-root control, crypto control, public-link operations, sharing helpers,
+mount control, notifications, and audit verification.
+
+The command surface retains many legacy
+.B pcloud-rs
+aliases for compatibility, but new scripts should prefer the canonical
+.B pcloudc
+forms documented here.
+.SH GLOBAL OPTIONS
+.TP
+.BR -h ", " --help
+Show help text.
+.TP
+.BR -V ", " --version
+Show CLI version.
+.TP
+.B --json
+Shortcut for
+.BR "--output json" .
+.TP
+.BI --output " text|json"
+Select output format.
+.TP
+.BR -q ", " --quiet
+Suppress normal text output.
+.TP
+.BR -v ", " -vv ", " -vvv
+Increase text-mode verbosity.
+.SH CORE COMMANDS
+.TP
+.BR help ", " ?
+Show help.
+.TP
+.BR start
+Spawn
+.B pcloudd
+in the background if needed.
+.TP
+.BR stop
+Ask the daemon to shut down.
+.TP
+.BR finalize ", " f
+Legacy shutdown alias.
+.TP
+.BR health
+Show daemon health.
+.TP
+.BR status ", " st
+Show sync state summary.
+.TP
+.BR pending ", " p
+Show queued transfer counts.
+.TP
+.BR userinfo
+Show authenticated account information.
+.TP
+.BR pause " / " resume
+Pause or resume syncing.
+.TP
+.B session status
+Show session lifecycle details.
+.SH LOGIN AND SESSION
+.TP
+.BI login " [LOGIN-OPTIONS]"
+Interactive login flow.
+.TP
+.BR logout
+Clear the authenticated session.
+.TP
+.BI authsave " on|off"
+Enable or disable auth-token vault persistence.
+.TP
+.BI "submit-password " [user] " " [password]
+Submit username and password directly.
+.TP
+.BI "auth " password
+Legacy alias for
+.BR submit-password .
+.TP
+.BI "submit-auth " token
+Authenticate with an existing auth token.
+.TP
+.BI "submit-tfa " code
+Submit a two-factor code.
+.TP
+.BI "tfa " code
+Legacy alias for
+.BR submit-tfa .
+.TP
+.BI "submit-recovery " code
+Submit a two-factor recovery code.
+.TP
+.BR send-tfa-sms
+Ask pCloud to resend an SMS code.
+.TP
+.BR send-tfa-notification
+Ask pCloud to notify a trusted device.
+.SH LOGIN OPTIONS
+.TP
+.BI "-u, --user, --username " name
+Preset the account name.
+.TP
+.BR -c ", " --crypto
+Unlock crypto after login.
+.TP
+.BR -y ", " --passascrypto
+Reuse the account password as the crypto password.
+.TP
+.BR -r ", " --trust-device
+Ask pCloud to trust this device.
+.TP
+.BR -s ", " --save-password
+Enable auth-token vault persistence.
+.TP
+.BI "-m, --mountpoint " [path]
+Mount after login. If omitted, the config/default mount path is used.
+.TP
+.BI "-O, --fuse-opts " opts
+Persist FUSE options for the next daemon start.
+.TP
+.BI "-T, --tfa-channel " sms|push
+Prefer a two-factor resend channel.
+.TP
+.B --password-stdin
+Read the account password from standard input.
+.TP
+.BI "--password-env " VAR
+Read the password from environment variable
+.IR VAR ,
+then scrub it.
+.TP
+.BI "--log-path " path
+Persist daemon log path.
+.TP
+.BI "--fs-event-log " path
+Persist filesystem-event log path.
+.TP
+.BI "--log-level " level
+Persist daemon log level.
+.TP
+.BI "--cache-size " GB
+Persist cache-size cap in GiB.
+.TP
+.BI "--config " path
+Use an alternate CLI config file.
+.SH CRYPTO COMMANDS
+.TP
+.BI "crypto start " password
+Unlock crypto.
+.TP
+.BR crypto\ stop
+Lock crypto.
+.TP
+.BR crypto\ status
+Show crypto state.
+.TP
+.BI "unlock-crypto " password
+Canonical crypto unlock form.
+.TP
+.BR lock-crypto
+Canonical crypto lock form.
+.SH SYNC AND FOLDER COMMANDS
+.TP
+.BR "sync list" ", " "sync ls" ", " sync-list
+List sync roots.
+.TP
+.BI "sync add " local " " remote
+.br
+.BI "sync-add " local " " remote
+Add a sync root.
+.TP
+.BI "sync remove " id
+.br
+.BI "sync rm " id
+.br
+.BI "sync-remove " id
+Remove a sync root.
+.TP
+.BR "sync localscan" ", " sync-localscan
+Trigger an immediate local scan.
+.TP
+.BI "folder create " path
+Create a remote folder by absolute pCloud path.
+.TP
+.BI "folder id " path
+Resolve remote folder id.
+.TP
+.BI "folder flags " path
+Show remote folder flags.
+.TP
+.BI "folder owner " path
+Show remote folder owner id.
+.TP
+.BI "fs status " local-path
+Classify a local path against current sync state.
+.SH REVISION HISTORY COMMANDS
+.TP
+.BI "log " path " [--limit N]"
+Show the revision history of a remote file. Aliases
+.BR file-log ", " file-history .
+.TP
+.BI "diff " path " " rev_a " " rev_b
+Diff two revisions of a remote file (requires a configured provider).
+Alias
+.BR file-diff .
+.TP
+.BI "restore " path " " rev
+Restore
+.I path
+to the given revision (requires a configured provider).
+Alias
+.BR file-restore .
+.PP
+These three commands dispatch through a pluggable
+.B RevisionProvider
+selected at runtime from
+.BR "[file_history].revision_url"
+in the active config profile.
+When no URL is configured, the daemon returns a structured JSON payload of the
+form
+.RS
+.EX
+{"status":"not_configured","message":"...","next":"configure [file_history].revision_url ..."}
+.EE
+.RE
+and the CLI exits
+.BR 6 " " (Unavailable) .
+When a URL is configured and the
+.B file-history-http
+cargo feature is built into
+.BR pcloud-proto ,
+the daemon POSTs
+.B {"path": "<remote path>"}
+to the URL and projects the response to
+.BR {"revisions":[...],"count":N} .
+In
+.B Production
+profiles only
+.B https://
+URLs are accepted; plaintext
+.B http://
+is refused at config-load time.
+.SH MOUNT COMMANDS
+.TP
+.BI "mount " path
+Mount the pCloud filesystem.
+.TP
+.BR unmount
+Unmount the active filesystem mount.
+.SH NOTIFICATIONS AND AUDIT
+.TP
+.BR "notifications list" ", " "notif ls"
+List account notifications.
+.TP
+.BI "notifications mark-read " id
+Mark notifications up to
+.I id
+as read.
+.TP
+.BI "audit verify " "[--from ID] [--to ID]"
+Verify the tamper-evident audit chain.
+.SH PUBLIC-LINK COMMANDS
+.TP
+.BR list-links
+List public links.
+.TP
+.BI "show-link " code
+Show a public link by code.
+.TP
+.BI "delete-link " id
+Delete a public link by numeric id.
+.TP
+.BI "create-file-link " path
+Create a file public link.
+.TP
+.BI "create-folder-link " path
+Create a folder public link.
+.TP
+.BR change-link-expire
+Set or clear expiration on a link.
+.TP
+.BR change-link-password
+Set or clear a link password.
+.TP
+.BR change-link-upload
+Change upload policy on a public link.
+.TP
+.BR list-upload-links
+List upload links.
+.TP
+.BR create-upload-link
+Create an upload link.
+.TP
+.BI "delete-upload-link " id
+Delete an upload link.
+.TP
+.BR create-tree-link
+Create a tree public link.
+.TP
+.BR list-link-access
+List upload-link access grants.
+.TP
+.BR add-link-access
+Grant upload-link access.
+.TP
+.BR remove-link-access
+Revoke upload-link access.
+.TP
+.BR list-bookmarks
+List bookmarks/pins.
+.TP
+.BI "remove-bookmark " id
+Remove a bookmark.
+.TP
+.BR change-bookmark
+Update bookmark metadata.
+.TP
+.BI "publink send " code " --to " emails " [--message " text ]
+Mail an existing public link.
+.SH SHARES AND TEAMS
+.TP
+.BR list-incoming-shares
+List incoming shares.
+.TP
+.BR list-outgoing-shares
+List outgoing shares.
+.TP
+.BR list-incoming-share-requests
+List inbound share requests.
+.TP
+.BR list-outgoing-share-requests
+List outbound share requests.
+.TP
+.BR list-contacts
+List contacts.
+.TP
+.BR list-myteams
+List teams.
+.TP
+.BR share-folder
+Share a folder.
+.TP
+.BR cancel-share-request
+Cancel an outgoing share request.
+.TP
+.BR decline-share-request
+Decline an incoming share request.
+.TP
+.BR accept-share-request
+Accept an incoming share request.
+.TP
+.BR remove-share
+Remove a share.
+.TP
+.BR modify-share
+Modify share permissions.
+.TP
+.BR account-stopshare
+Stop an account share.
+.TP
+.BR account-modifyshare
+Modify an account share.
+.TP
+.BR account-teamshare
+Share to a team.
+.SH COMPLETION
+.TP
+.BI "completion " bash|zsh|fish|elvish|powershell
+Emit shell-completion scripts.
+.SH SECURITY NOTES
+Prefer
+.B login
+over passing credentials on the command line. Interactive login keeps
+passwords out of shell history and process listings where possible.
+
+The CLI uses a local owner-checked Unix socket; secret-bearing IPC values still
+cross the serialization boundary transiently, so avoid exposing the socket to
+other users or relaxing runtime-directory permissions.
+.SH FILES
+.TP
+.I ~/.pcloud/
+Default development root used by current secure-default bootstrap.
+.SH SEE ALSO
+.BR pcloudd (1)

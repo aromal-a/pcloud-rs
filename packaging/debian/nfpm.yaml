@@ -1,0 +1,63 @@
+# nfpm configuration for pcloud-rs Debian/RPM packaging.
+#
+# Build (from repo root after `cargo build --release --workspace`):
+#   nfpm pkg --config packaging/debian/nfpm.yaml --packager deb --target dist/
+#   nfpm pkg --config packaging/debian/nfpm.yaml --packager rpm --target dist/
+#
+# Validate without building:
+#   nfpm --config packaging/debian/nfpm.yaml check
+
+name: pcloud-rs
+arch: amd64
+platform: linux
+version: "0.1.0"
+section: net
+priority: optional
+maintainer: "pcloud-rs maintainers <maintainers@example.invalid>"
+description: |
+  pCloud command-line client and user-space daemon (Rust rewrite).
+  Provides the `pcloud-rs` CLI and the `pcloudd` background daemon
+  for syncing, mounting, and managing pCloud accounts.
+vendor: "pcloud-rs"
+homepage: "https://github.com/ezechiel203/pcloud-rs"
+license: "MIT OR Apache-2.0"
+
+depends:
+  - libc6
+  - libssl3 | libssl1.1
+  - libsqlite3-0
+  - libfuse3-3
+  - fuse3
+recommends:
+  - ca-certificates
+
+contents:
+  - src: ../../target/release/pcloud-rs
+    dst: /usr/bin/pcloud-rs
+    file_info:
+      mode: 0755
+  - src: ../../target/release/pcloudd
+    dst: /usr/bin/pcloudd
+    file_info:
+      mode: 0755
+  - src: ../systemd/pcloudd.service
+    dst: /lib/systemd/system/pcloudd.service
+    type: config|noreplace
+    file_info:
+      mode: 0644
+  - src: ../man
+    dst: /usr/share/man/man1
+    type: tree
+  - src: ../../LICENSE-MIT
+    dst: /usr/share/doc/pcloud-rs/LICENSE-MIT
+  - src: ../../LICENSE-APACHE
+    dst: /usr/share/doc/pcloud-rs/LICENSE-APACHE
+
+scripts:
+  postinstall: ./postinst
+  postremove: ./postrm
+
+deb:
+  compression: xz
+  fields:
+    Bugs: "https://github.com/ezechiel203/pcloud-rs/issues"

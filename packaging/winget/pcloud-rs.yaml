@@ -1,0 +1,62 @@
+# PLATFORM: Windows
+# STATUS: scaffolding; release URLs and SHA256s must be filled at release time.
+#
+# Merged winget manifest. At submission time this MUST be split into the
+# three required manifest files:
+#   - pCloud.pcloud-rs.yaml                (version manifest,  ManifestType: version)
+#   - pCloud.pcloud-rs.locale.en-US.yaml   (locale manifest,   ManifestType: defaultLocale)
+#   - pCloud.pcloud-rs.installer.yaml      (installer manifest,ManifestType: installer)
+# The blocks below are grouped under their target ManifestType for clarity.
+
+---
+# --- version manifest ---
+PackageIdentifier: pCloud.pcloud-rs
+PackageVersion: 0.1.0
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: 1.5.0
+
+---
+# --- defaultLocale manifest ---
+PackageIdentifier: pCloud.pcloud-rs
+PackageVersion: 0.1.0
+PackageLocale: en-US
+Publisher: pCloud Community
+PublisherUrl: https://github.com/pcloudcom
+PublisherSupportUrl: https://github.com/pcloudcom/pcloud-rs/issues
+PackageName: pcloud-rs
+PackageUrl: https://github.com/pcloudcom/pcloud-rs
+License: MIT OR Apache-2.0
+LicenseUrl: https://github.com/pcloudcom/pcloud-rs/blob/main/LICENSE
+ShortDescription: pCloud command-line client and sync daemon (Rust rewrite).
+Description: |
+  pcloud-rs is the pCloud command-line client and background sync daemon,
+  rewritten in Rust. Provides authenticated sync, public links, shares,
+  backups, and crypto folder support.
+Moniker: pcloud-rs
+Tags:
+  - pcloud
+  - cloud
+  - sync
+  - cli
+ManifestType: defaultLocale
+ManifestVersion: 1.5.0
+
+---
+# --- installer manifest ---
+PackageIdentifier: pCloud.pcloud-rs
+PackageVersion: 0.1.0
+InstallerType: msi
+Scope: machine
+InstallModes:
+  - silent
+  - silentWithProgress
+UpgradeBehavior: install
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/pcloudcom/pcloud-rs/releases/download/vX.Y.Z/pcloud-rs-X.Y.Z-x64.msi
+    InstallerSha256: SHA256_PLACEHOLDER
+    InstallerLocale: en-US
+    ProductCode: "{00000000-0000-0000-0000-000000000000}"
+ManifestType: installer
+ManifestVersion: 1.5.0

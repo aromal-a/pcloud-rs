@@ -1,0 +1,25 @@
+[package]
+name = "pcloud-store"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "SQLite-backed persistent store (sync roots, metadata, HMAC-indexed KV) for pcloud-rs."
+
+[dependencies]
+pcloud-model = { path = "../pcloud-model" }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde.workspace = true
+sha2.workspace = true
+hmac.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
+
+[[bench]]
+name = "store_kv"
+harness = false
+
+[lints]
+workspace = true

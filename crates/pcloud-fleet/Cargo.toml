@@ -1,0 +1,50 @@
+[package]
+name = "pcloud-fleet"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Fleet-management agent for enterprise pcloud-rs installations."
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+zeroize = { workspace = true }
+pcloud-secret = { path = "../pcloud-secret" }
+
+# mTLS fleet agent implementation.
+# Kept light: rustls-only (no native-tls), JSON bodies only, blocking client.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pemfile = "2"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+base64 = "0.22"
+
+[dev-dependencies]
+tempfile = "3"
+# In-process reference fleet server used by the `live_mtls` integration test.
+# All transitive deps below are already present in the workspace `Cargo.lock`
+# via other crates (pcloud-web pulls axum+tokio; pcloud-proto pulls rustls;
+# tokio-rustls/hyper come in transitively through reqwest).
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes = "1"
+
+[features]
+default = []
+# mTLS transport is now implemented; the feature flag is retained for callers
+# that want to statically exclude the agent in minimal builds.
+mtls = []
+
+[lints]
+workspace = true

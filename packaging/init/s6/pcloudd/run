@@ -1,0 +1,3 @@
+#!/bin/sh
+[ -r /etc/default/pcloudd ] && . /etc/default/pcloudd
+exec s6-setuidgid pcloud-rs /usr/local/libexec/pcloudd-wrapper.sh

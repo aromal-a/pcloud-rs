@@ -1,0 +1,22 @@
+[package]
+name = "pcloud-session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Session lifecycle, refresh-loop, and auth-vault primitives extracted from pcloud-daemon (P6.1)."
+
+[dependencies]
+pcloud-auth = { path = "../pcloud-auth" }
+pcloud-backends = { path = "../pcloud-backends" }
+pcloud-config = { path = "../pcloud-config" }
+pcloud-proto = { path = "../pcloud-proto" }
+pcloud-secret = { path = "../pcloud-secret" }
+pcloud-store = { path = "../pcloud-store" }
+thiserror.workspace = true
+
+[dev-dependencies]
+pcloud-model = { path = "../pcloud-model" }
+
+[lints]
+workspace = true

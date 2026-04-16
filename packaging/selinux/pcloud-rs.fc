@@ -1,0 +1,4 @@
+/usr/local/bin/pcloudd      --  gen_context(system_u:object_r:pcloud-rs_exec_t,s0)
+/var/lib/pcloud-rs(/.*)?                 gen_context(system_u:object_r:pcloud-rs_var_lib_t,s0)
+/run/pcloud-rs(/.*)?                     gen_context(system_u:object_r:pcloud-rs_var_run_t,s0)
+/var/log/pcloud-rs(/.*)?                 gen_context(system_u:object_r:pcloud-rs_log_t,s0)

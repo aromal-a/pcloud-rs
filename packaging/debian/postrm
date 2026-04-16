@@ -1,0 +1,29 @@
+#!/bin/sh
+# postrm script for pcloud-rs
+set -e
+
+case "$1" in
+    remove|upgrade|deconfigure)
+        if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+
+    purge)
+        if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        # Intentionally do NOT remove user data under $HOME/.config/pcloud-rs
+        # or $HOME/.local/share/pcloud-rs — user is responsible for that.
+        ;;
+
+    failed-upgrade|abort-install|abort-upgrade)
+        ;;
+
+    *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+exit 0

@@ -1,0 +1,23 @@
+[package]
+name = "pcloud-secret"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Zeroize-on-drop secret wrappers (SecretString, SecretBytes) with redacted Debug."
+
+[dependencies]
+zeroize.workspace = true
+subtle.workspace = true
+
+[dev-dependencies]
+proptest = "1.5"
+criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
+zeroize.workspace = true
+
+[[bench]]
+name = "secret_ct_eq"
+harness = false
+
+[lints]
+workspace = true

@@ -1,0 +1,113 @@
+# **PLATFORM MATRIX:**
+# - Linux: full support (tier 1)
+# - FreeBSD: tier 2 (most deps work)
+# - macOS: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.4 (Keychain vault via security-framework)
+# - Windows: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.5 (Service + DPAPI vault)
+
+[package]
+name = "pcloud-daemon"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Long-running pcloud-rs daemon (pcloudd): runtime orchestration, backends, IPC server, vault."
+
+[features]
+# Observability add-on. Default OFF for the minimal daemon build. Enables
+# the full Prometheus metric families on the observability shell and
+# populates the Prometheus snapshot inside `Method::Health`. Structured
+# JSON logs are controlled by `json-logs` which forwards to the
+# observability crate's feature of the same name.
+default = []
+metrics = ["pcloud-observability/prometheus-exporter"]
+json-logs = ["pcloud-observability/json-logs"]
+# OpenTelemetry distributed tracing. When enabled, `dispatch::handle_request`
+# parses an inbound W3C `traceparent`, opens `pcloudd.dispatch` and per-backend
+# child spans, and forwards every attribute through `attr_redact` so PII keys
+# can never escape into the OTLP exporter. Off by default; opt in via
+# `--features tracing-otlp` for both daemon and observability crates.
+tracing-otlp = [
+    "pcloud-observability/tracing-otlp",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:tracing-opentelemetry",
+    "dep:opentelemetry",
+]
+
+[dependencies]
+anyhow = "1"
+pcloud-auth = { path = "../pcloud-auth" }
+pcloud-backends = { path = "../pcloud-backends" }
+pcloud-session = { path = "../pcloud-session" }
+pcloud-cache = { path = "../pcloud-cache" }
+pcloud-config = { path = "../pcloud-config" }
+pcloud-crypto = { path = "../pcloud-crypto" }
+pcloud-engine = { path = "../pcloud-engine" }
+pcloud-fs = { path = "../pcloud-fs" }
+pcloud-ipc = { path = "../pcloud-ipc" }
+pcloud-model = { path = "../pcloud-model" }
+pcloud-observability = { path = "../pcloud-observability" }
+pcloud-p2p = { path = "../pcloud-p2p" }
+pcloud-proto = { path = "../pcloud-proto" }
+pcloud-resilience = { path = "../pcloud-resilience" }
+pcloud-secret = { path = "../pcloud-secret" }
+pcloud-store = { path = "../pcloud-store" }
+libc.workspace = true
+log.workspace = true
+# Tier-2 HA: safe cross-platform `flock` wrapper used by
+# `ha_lease::LeaseHolder`. Public API is safe so the new module keeps
+# `#![forbid(unsafe_code)]`.
+fs2 = "0.4"
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+zeroize = "1.8"
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, features = ["registry", "fmt"] }
+tracing-opentelemetry = { version = "0.25", optional = true }
+opentelemetry = { version = "0.24", optional = true }
+# Required by `integrity_sweeper_service::skip_globs` — compile-time
+# pattern matching for sweeper exclude lists. Not gated by any feature.
+glob = "0.3"
+# Cron expression parser backing the sweeper `schedule_cron` field.
+cron.workspace = true
+chrono.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+secret-service = { version = "4", features = ["rt-async-io-crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "2"  # Keychain-backed auth vault
+# core-foundation = "0.9"
+# `battery` is the cross-platform notebook-battery-state crate used by
+# the integrity-sweeper `pause_on_battery` hook. Linux reads
+# `/sys/class/power_supply/` directly, so `battery` is only pulled in on
+# macOS / Windows to keep Linux build closure minimal.
+battery.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
+# Planned (bd-xplat-windows):
+# windows-service = "0.7"
+battery.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
+proptest = "1.5"
+tempfile = "3"
+
+# Produce a short installable binary name (`pcloudd`) while keeping the
+# crate's library/test identity (`pcloud_daemon`) unchanged so downstream
+# crates can still depend on it.
+[[bin]]
+name = "pcloudd"
+path = "src/main.rs"
+
+[[bench]]
+name = "sync_root_canonicalize"
+harness = false
+
+[lints]
+workspace = true

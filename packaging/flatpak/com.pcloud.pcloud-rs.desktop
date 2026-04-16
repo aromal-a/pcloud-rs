@@ -1,0 +1,12 @@
+# PLATFORM: Linux (Flatpak runtime)
+[Desktop Entry]
+Type=Application
+Name=pCloud Console Client
+GenericName=Cloud Sync Client
+Comment=Sync, mount, and manage your pCloud storage from the desktop
+Exec=pcloudc
+Icon=com.pcloud.pcloud-rs
+Terminal=true
+Categories=Network;FileTransfer;
+Keywords=pcloud;cloud;sync;backup;fuse;
+StartupNotify=false

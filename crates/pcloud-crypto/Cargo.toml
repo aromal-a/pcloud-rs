@@ -1,0 +1,32 @@
+[package]
+name = "pcloud-crypto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Client-side crypto folder primitives (AES-256-GCM, Argon2, zeroized keys) for pcloud-rs."
+
+[dependencies]
+aes-gcm.workspace = true
+argon2.workspace = true
+getrandom.workspace = true
+hmac.workspace = true
+pcloud-kms = { path = "../pcloud-kms" }
+pcloud-secret = { path = "../pcloud-secret" }
+serde.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
+proptest = "1.5"
+serde_json.workspace = true
+
+[[bench]]
+name = "aead_sector"
+harness = false
+
+[lints]
+workspace = true

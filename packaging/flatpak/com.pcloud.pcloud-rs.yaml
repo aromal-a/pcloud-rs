@@ -1,0 +1,63 @@
+# PLATFORM: Linux (Flatpak runtime)
+#
+# Flatpak manifest for pcloud-rs (Rust rewrite).
+# Build with:
+#   flatpak-builder --user --install build-dir com.pcloud.pcloud-rs.yaml
+#
+# Notes:
+#   - Uses the freedesktop runtime 24.08 plus the rust-stable SDK extension.
+#   - The build is performed offline-friendly via `cargo build --locked`; a
+#     vendored dependency archive or `flatpak-cargo-generator.py` output should
+#     be wired in before Flathub submission so no network is required at build
+#     time inside the sandbox.
+
+app-id: com.pcloud.pcloud-rs
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: pcloudc
+
+finish-args:
+  # Network access is required to reach the pCloud API and transfer endpoints.
+  - --share=network
+  # Allow access to the user's home directory so sync roots can live under it.
+  - --filesystem=home
+  # FUSE device access is required by the mounted-drive runtime.
+  - --device=fuse
+  # Session bus for optional desktop integration (notifications, secret-service).
+  - --socket=session-bus
+  # Talk to the freedesktop Secret Service for auth-token storage.
+  - --talk-name=org.freedesktop.secrets
+
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  build-args:
+    - --share=network
+  env:
+    CARGO_HOME: /run/build/pcloud-rs/cargo
+    RUST_BACKTRACE: '1'
+
+modules:
+  - name: pcloud-rs
+    buildsystem: simple
+    build-commands:
+      # Build the entire Rust workspace in release mode with a locked lockfile.
+      - cd . && cargo build --release --workspace --locked
+      # Install the two user-facing binaries.
+      - install -Dm755 target/release/pcloudc /app/bin/pcloudc
+      - install -Dm755 target/release/pcloudd /app/bin/pcloudd
+      # Desktop integration files.
+      - install -Dm644 packaging/flatpak/com.pcloud.pcloud-rs.desktop
+          /app/share/applications/com.pcloud.pcloud-rs.desktop
+      - install -Dm644 packaging/flatpak/com.pcloud.pcloud-rs.metainfo.xml
+          /app/share/metainfo/com.pcloud.pcloud-rs.metainfo.xml
+    sources:
+      - type: dir
+        path: ../..
+
+cleanup:
+  - '*.a'
+  - '*.la'
+  - /include

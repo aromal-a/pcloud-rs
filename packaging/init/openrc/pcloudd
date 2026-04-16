@@ -1,0 +1,22 @@
+#!/sbin/openrc-run
+
+name="pcloudd"
+description="pCloud Rust daemon"
+command="/usr/local/libexec/pcloudd-wrapper.sh"
+command_background="yes"
+pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/var/log/pcloud-rs/stdout.log"
+error_log="/var/log/pcloud-rs/stderr.log"
+command_user="pcloud-rs:pcloud-rs"
+
+depend() {
+    need localmount net
+}
+
+start_pre() {
+    [ -r /etc/conf.d/pcloudd ] && . /etc/conf.d/pcloudd
+    export PCLOUD_ROOT PCLOUD_ENV PCLOUD_API_MODE PCLOUD_DURABLE_AUTH_TOKENS
+    export PCLOUDRS_TOKEN_FILE PCLOUDRS_USERNAME_FILE PCLOUDRS_PASSWORD_FILE
+    export PCLOUDRS_TFA_CODE_FILE PCLOUDRS_RECOVERY_CODE_FILE PCLOUDRS_TRUST_DEVICE
+    export PCLOUDRS_DAEMON_BIN
+}

@@ -1,0 +1,17 @@
+[book]
+title = "pcloud-rs Rust Handbook"
+authors = ["pcloud-rs contributors"]
+description = "Operator and developer handbook for the pcloud-rs Rust workspace."
+language = "en"
+multilingual = false
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/pcloudcom/pcloud-rs"
+edit-url-template = "https://github.com/pcloudcom/pcloud-rs/edit/main/docs/book/{path}"
+default-theme = "navy"
+preferred-dark-theme = "navy"
+
+[output.html.fold]
+enable = true
+level = 1

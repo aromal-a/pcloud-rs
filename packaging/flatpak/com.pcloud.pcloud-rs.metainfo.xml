@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- PLATFORM: Linux (Flatpak runtime) -->
+<component type="desktop-application">
+  <id>com.pcloud.pcloud-rs</id>
+  <name>pCloud Console Client</name>
+  <summary>Command-line and daemon client for pCloud storage</summary>
+
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT AND Apache-2.0</project_license>
+
+  <developer id="com.pcloud">
+    <name>pCloud Console Client Contributors</name>
+  </developer>
+
+  <description>
+    <p>
+      pCloud Console Client is a native Linux client for the pCloud storage
+      service. It provides a background daemon, a command-line interface, and a
+      FUSE-based mounted drive for seamless access to your cloud files.
+    </p>
+    <p>Features include:</p>
+    <ul>
+      <li>Two-factor authentication with TOTP, SMS, and device push</li>
+      <li>Client-side crypto folders (AES-256-GCM) with zeroized key handling</li>
+      <li>Sync roots, backups, public links, and share management</li>
+      <li>Mounted-drive (FUSE) access to remote files</li>
+      <li>Owner-only local IPC and opt-in secret-service token vault</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">com.pcloud.pcloud-rs.desktop</launchable>
+
+  <screenshots>
+    <screenshot type="default">
+      <caption>pcloudc CLI showing sync status</caption>
+      <image>https://raw.githubusercontent.com/pcloudcom/console-client/main/packaging/flatpak/screenshots/cli.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Mounted-drive view in a file manager</caption>
+      <image>https://raw.githubusercontent.com/pcloudcom/console-client/main/packaging/flatpak/screenshots/mount.png</image>
+    </screenshot>
+  </screenshots>
+
+  <url type="homepage">https://github.com/pcloudcom/console-client</url>
+  <url type="bugtracker">https://github.com/pcloudcom/console-client/issues</url>
+  <url type="vcs-browser">https://github.com/pcloudcom/console-client</url>
+
+  <categories>
+    <category>Network</category>
+    <category>FileTransfer</category>
+  </categories>
+
+  <provides>
+    <binary>pcloudc</binary>
+    <binary>pcloudd</binary>
+  </provides>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="3.0.0" date="2026-04-15">
+      <description>
+        <p>Initial Flatpak release of the Rust rewrite.</p>
+        <ul>
+          <li>Live-verified authentication and TFA flows</li>
+          <li>Client-side crypto with AES-256-GCM sectors</li>
+          <li>Public link, share, backup, and sync management</li>
+          <li>Mounted-drive runtime scaffolding</li>
+        </ul>
+      </description>
+    </release>
+  </releases>
+</component>

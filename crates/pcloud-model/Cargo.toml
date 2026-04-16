@@ -1,0 +1,16 @@
+[package]
+name = "pcloud-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Shared domain model types (files, folders, users, shares) for pcloud-rs."
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -1,0 +1,87 @@
+policy_module(pcloud-rs, 0.1.0)
+
+########################################
+#
+# SELinux policy for the pcloud-rs Rust daemon.
+#
+# Build:
+#   make -f /usr/share/selinux/devel/Makefile pcloud-rs.pp
+#   semodule -i pcloud-rs.pp
+#
+# Label binaries & dirs:
+#   semanage fcontext -a -t pcloud-rs_exec_t '/usr/local/bin/pcloudd'
+#   semanage fcontext -a -t pcloud-rs_var_lib_t '/var/lib/pcloud-rs(/.*)?'
+#   semanage fcontext -a -t pcloud-rs_var_run_t '/run/pcloud-rs(/.*)?'
+#   semanage fcontext -a -t pcloud-rs_log_t     '/var/log/pcloud-rs(/.*)?'
+#   restorecon -RFv /usr/local/bin/pcloudd /var/lib/pcloud-rs /run/pcloud-rs /var/log/pcloud-rs
+#
+########################################
+
+require {
+    type unconfined_t;
+    type init_t;
+    type http_port_t;
+    type cert_t;
+    type proc_t;
+    class file     { read write create unlink open getattr setattr map execute };
+    class dir      { read write create rmdir add_name remove_name search getattr setattr };
+    class sock_file{ create read write unlink getattr setattr };
+    class unix_stream_socket { create connect accept listen bind read write getattr setopt };
+    class tcp_socket { create connect read write getattr setopt name_connect };
+    class capability { setgid setuid };
+    class process  { signal sigchld };
+}
+
+########################################
+# Types
+########################################
+
+type pcloud-rs_t;
+type pcloud-rs_exec_t;
+init_daemon_domain(pcloud-rs_t, pcloud-rs_exec_t)
+
+type pcloud-rs_var_lib_t;
+files_type(pcloud-rs_var_lib_t)
+
+type pcloud-rs_var_run_t;
+files_pid_file(pcloud-rs_var_run_t)
+
+type pcloud-rs_log_t;
+logging_log_file(pcloud-rs_log_t)
+
+########################################
+# Daemon domain policy
+########################################
+
+# Persistent state (SQLite, auth vault)
+manage_dirs_pattern(pcloud-rs_t,  pcloud-rs_var_lib_t, pcloud-rs_var_lib_t)
+manage_files_pattern(pcloud-rs_t, pcloud-rs_var_lib_t, pcloud-rs_var_lib_t)
+files_var_lib_filetrans(pcloud-rs_t, pcloud-rs_var_lib_t, { dir file })
+
+# IPC socket (0600) under /run/pcloud-rs
+manage_dirs_pattern(pcloud-rs_t,      pcloud-rs_var_run_t, pcloud-rs_var_run_t)
+manage_sock_files_pattern(pcloud-rs_t, pcloud-rs_var_run_t, pcloud-rs_var_run_t)
+files_pid_filetrans(pcloud-rs_t, pcloud-rs_var_run_t, { dir sock_file })
+
+# Logs
+manage_files_pattern(pcloud-rs_t, pcloud-rs_log_t, pcloud-rs_log_t)
+logging_log_filetrans(pcloud-rs_t, pcloud-rs_log_t, file)
+
+# TLS egress to pCloud API (HTTPS only).
+corenet_tcp_connect_http_port(pcloud-rs_t)
+corenet_tcp_connect_https_port(pcloud-rs_t)
+sysnet_dns_name_resolve(pcloud-rs_t)
+miscfiles_read_generic_certs(pcloud-rs_t)
+
+# Read own runtime credentials dir (systemd-creds).
+allow pcloud-rs_t init_t:dir  search;
+allow pcloud-rs_t init_t:file read;
+
+########################################
+# Hard denies (no execmem, no ptrace, no raw net)
+########################################
+# Default for a minimal init_daemon_domain is already strict; be explicit:
+neverallow pcloud-rs_t self:process execmem;
+neverallow pcloud-rs_t *:capability { sys_module sys_rawio net_raw net_admin };
+neverallow pcloud-rs_t self:packet_socket *;
+neverallow pcloud-rs_t self:rawip_socket  *;

@@ -1,0 +1,58 @@
+# PLATFORM: Linux (Snap / snapd)
+# STATUS: scaffolding
+#
+# pcloud-rs snap packaging.
+#
+# NOTE: strict confinement blocks FUSE mount operations on most distros
+# (no access to /dev/fuse from a strict-confined app). A FUSE-capable
+# pcloud mount therefore requires classic confinement, which in turn
+# requires Snap Store review and approval before publication.
+# See README.md in this directory for the full trade-off.
+
+name: pcloud-rs
+base: core24
+version: '0.1.0'
+summary: pCloud console client (Rust rewrite)
+description: |
+  pcloud-rs is a console client and daemon for the pCloud service.
+  This package ships the Rust rewrite of the legacy C client.
+  Provides pcloudc (CLI) and pcloudd (daemon).
+
+grade: devel
+confinement: strict
+license: MIT OR Apache-2.0
+
+platforms:
+  amd64:
+  arm64:
+
+parts:
+  pcloud-rs:
+    plugin: rust
+    source: .
+    source-subdir: 
+    build-packages:
+      - libfuse3-dev
+      - pkg-config
+    stage-packages:
+      - fuse3
+      - libsqlite3-0
+    rust-features:
+      - default
+
+apps:
+  pcloudc:
+    command: bin/pcloudc
+    plugs:
+      - home
+      - network
+      - network-bind
+      - password-manager-service
+  pcloudd:
+    command: bin/pcloudd
+    daemon: simple
+    plugs:
+      - home
+      - network
+      - network-bind
+      - password-manager-service

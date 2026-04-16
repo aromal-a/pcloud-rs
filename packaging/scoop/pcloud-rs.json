@@ -1,0 +1,38 @@
+{
+    "_comment_platform": "PLATFORM: Windows (Scoop)",
+    "_comment_status": "STATUS: scaffolding",
+    "_comment_schema": "Scoop manifest schema v1. Placeholders must be updated per release.",
+    "version": "0.1.0",
+    "description": "pCloud console client (Rust rewrite) - CLI and daemon for pCloud.",
+    "homepage": "https://github.com/pcloudcom/console-client",
+    "license": "MIT OR Apache-2.0",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/pcloudcom/console-client/releases/download/v0.1.0/pcloud-rs-0.1.0-x86_64-pc-windows-msvc.zip",
+            "hash": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+    },
+    "bin": [
+        "pcloudc.exe",
+        "pcloudd.exe"
+    ],
+    "depends": "winfsp",
+    "pre_install": [
+        "Write-Host ''",
+        "Write-Host 'pcloud-rs requires WinFSP for the mounted-drive feature.' -ForegroundColor Yellow",
+        "Write-Host 'Scoop will install the winfsp dependency, but WinFSP ships a kernel-mode driver' -ForegroundColor Yellow",
+        "Write-Host 'that may require a reboot or an elevated installer prompt before pcloudd can mount.' -ForegroundColor Yellow",
+        "Write-Host 'If mount fails after install, reboot and retry, or install WinFSP from https://winfsp.dev/ manually.' -ForegroundColor Yellow",
+        "Write-Host ''"
+    ],
+    "checkver": {
+        "github": "https://github.com/pcloudcom/console-client"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/pcloudcom/console-client/releases/download/v$version/pcloud-rs-$version-x86_64-pc-windows-msvc.zip"
+            }
+        }
+    }
+}

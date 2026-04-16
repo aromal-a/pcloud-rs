@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# PLATFORM: Linux
+#
+# AppImage AppRun entrypoint for pcloud-rs.
+# Launches the CLI (pcloudc) by default. To run the daemon instead, invoke:
+#   ./pcloud-rs-x86_64.AppImage --daemon
+# or set PCLOUDRS_BIN=pcloudd before running the AppImage.
+
+set -euo pipefail
+
+APPDIR="${APPDIR:-$(dirname "$(readlink -f "$0")")}"
+export APPDIR
+
+export PATH="${APPDIR}/usr/bin:${PATH}"
+export LD_LIBRARY_PATH="${APPDIR}/usr/lib:${LD_LIBRARY_PATH:-}"
+export XDG_DATA_DIRS="${APPDIR}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
+
+BIN="${PCLOUDRS_BIN:-pcloudc}"
+
+# Recognise a leading --daemon switch as a request for pcloudd.
+if [ "${1:-}" = "--daemon" ]; then
+    shift
+    BIN="pcloudd"
+fi
+
+exec "${APPDIR}/usr/bin/${BIN}" "$@"

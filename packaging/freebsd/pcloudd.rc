@@ -1,0 +1,54 @@
+#!/bin/sh
+# PLATFORM: FreeBSD 13+
+#
+# rc.d service script for the pcloudd daemon.
+#
+# Install:
+#   install -m 0555 packaging/freebsd/pcloudd.rc /usr/local/etc/rc.d/pcloudd
+#   sysrc pcloudd_enable="YES"
+#   sysrc pcloudd_user="pcloud"         # optional; default below
+#   service pcloudd start
+#
+# Inputs (from /etc/rc.conf or rc.conf.local):
+#   pcloudd_enable   (YES/NO)   - master enable flag; default "NO"
+#   pcloudd_user     (string)   - run-as user; default "pcloud"
+#   pcloudd_flags    (string)   - extra CLI flags passed to pcloudd
+#
+# Outputs:
+#   PID file at /var/run/pcloudd.pid (managed by rc.subr via -p flag).
+#   Logs go to syslog via the daemon's internal logger.
+#
+# Security:
+#   - The script assumes a dedicated `pcloud` user exists. Create with:
+#       pw useradd pcloud -c 'pcloudd service' -d /nonexistent \
+#                         -s /usr/sbin/nologin -h -
+#   - The daemon's state root should be chowned to that user: 0700 perms.
+#   - rc.subr drops privileges before exec via the `daemon_user` facility.
+#
+# Test:
+#   service pcloudd onestart     # ignore rc.conf enable flag
+#   service pcloudd status
+#   service pcloudd stop
+#
+# Side effects: writes /var/run/pcloudd.pid; on stop, rc.subr removes it.
+
+# PROVIDE: pcloudd
+# REQUIRE: LOGIN NETWORKING
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="pcloudd"
+rcvar="pcloudd_enable"
+
+load_rc_config $name
+
+: ${pcloudd_enable:="NO"}
+: ${pcloudd_user:="pcloud"}
+: ${pcloudd_flags:=""}
+
+command="/usr/local/bin/pcloudd"
+pidfile="/var/run/${name}.pid"
+command_args="-p ${pidfile}"
+
+run_rc_command "$1"

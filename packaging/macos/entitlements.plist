@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Minimum entitlements for the pcloud-rs hardened runtime on macOS.
+
+  Philosophy: request nothing we do not actually need. Every entitlement
+  below weakens the hardened runtime somewhere; add with a code-review note.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTD/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Required for outbound HTTPS to the pCloud API. -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+
+    <!-- TODO(fuse-t): enable when fuse-t integration lands. Disables
+         library validation so the hardened runtime will load the fuse-t
+         dylib, which is signed by a different Team ID than ours. Review
+         required before flipping to <true/> — this is the single entitlement
+         most likely to be abused. -->
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <false/>
+
+    <!-- Explicitly deny JIT, executable page allocation, and dyld env
+         overrides. They are off by default under the hardened runtime;
+         we pin them here so a future edit cannot silently enable one. -->
+    <key>com.apple.security.cs.allow-jit</key>
+    <false/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <false/>
+    <key>com.apple.security.cs.allow-dyld-environment-variables</key>
+    <false/>
+</dict>
+</plist>

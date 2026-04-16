@@ -1,0 +1,12 @@
+# PLATFORM: Linux
+[Desktop Entry]
+Type=Application
+Name=pCloud Console Client
+GenericName=pCloud Sync Client
+Comment=Sync and manage your pCloud account from the command line
+Exec=pcloudc
+Icon=pcloud-rs
+Terminal=true
+Categories=Network;FileTransfer;Utility;
+Keywords=pcloud;cloud;sync;backup;storage;
+StartupNotify=false

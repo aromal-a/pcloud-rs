@@ -1,0 +1,106 @@
+[Unit]
+Description=pCloud Console Client (Rust daemon)
+Documentation=https://github.com/pcloudcom/console-client
+After=network-online.target
+Wants=network-online.target
+
+# This unit is intended to be installed as a user-scoped service:
+#   systemctl --user enable --now pcloudd.service
+# For system-wide deployments, DynamicUser=yes below provides an ephemeral
+# unprivileged identity. Flip User=/Group= if you need a fixed account.
+#
+# NOTE: This unit uses Type=simple, not Type=notify, because the daemon
+# does not currently emit sd_notify(3) READY=1 messages. Socket activation
+# (pcloudd.socket) is intentionally NOT required: the daemon binds
+# its own owner-only Unix socket during startup. Graceful shutdown is
+# handled by the daemon's SIGTERM/SIGINT handlers, which flip an internal
+# shutdown flag that lets the IPC serve loop drain in-flight work and exit
+# cleanly within TimeoutStopSec.
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/pcloudd serve
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+# systemd sends SIGTERM on stop by default; the daemon's signal handler
+# translates that into a graceful IPC-level shutdown. SIGKILL is only used
+# if the daemon exceeds TimeoutStopSec.
+KillMode=mixed
+KillSignal=SIGTERM
+
+# --- Identity ---
+# System-mode: use an ephemeral, unprivileged user. Comment out for --user units.
+DynamicUser=yes
+# User=pcloud-rs
+# Group=pcloud-rs
+
+# --- Filesystem isolation ---
+ProtectSystem=strict
+ProtectHome=tmpfs
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+LockPersonality=yes
+RestrictSUIDSGID=yes
+RemoveIPC=yes
+UMask=0077
+
+# Only the runtime directory (auth vault, sqlite, sockets) is writable.
+RuntimeDirectory=pcloud-rs
+RuntimeDirectoryMode=0700
+StateDirectory=pcloud-rs
+StateDirectoryMode=0700
+LogsDirectory=pcloud-rs
+LogsDirectoryMode=0700
+ReadWritePaths=/var/lib/pcloud-rs /var/log/pcloud-rs
+# No other writable paths. FUSE mount (if enabled) should be declared per-deployment.
+
+# --- Privilege reduction ---
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+PrivateUsers=yes
+
+# --- Network ---
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+# Operators MUST broaden IPAddressAllow= to cover the pCloud API endpoints
+# (e.g. binapi.pcloud.com, eapi.pcloud.com) via a drop-in override.
+
+# --- Syscall filter (deny-by-default allowlist) ---
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @mount @debug @cpu-emulation @raw-io @reboot @swap
+SystemCallErrorNumber=EPERM
+
+# --- Resource limits ---
+MemoryMax=512M
+MemoryHigh=384M
+CPUQuota=75%
+TasksMax=256
+LimitNOFILE=4096
+LimitNPROC=256
+LimitCORE=0
+
+# --- Misc hardening ---
+KeyringMode=private
+RestrictNamespaces=yes
+RestrictRealtime=yes
+
+# --- Credentials (operator responsibility) ---
+# Provide secrets via systemd-creds. NEVER via Environment=.
+# Example:
+#   LoadCredentialEncrypted=pcloud-rs-token:/etc/credstore.encrypted/pcloud-rs-token
+# The daemon reads $CREDENTIALS_DIRECTORY/pcloud-rs-token if present.
+
+[Install]
+WantedBy=default.target

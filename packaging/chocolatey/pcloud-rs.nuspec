@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  PLATFORM: Windows
+  STATUS: scaffolding; release URLs and SHA256s must be filled at release time.
+-->
+<package xmlns="http://schemas.microsoft.com/packaging/2015/06/nuspec.xsd">
+  <metadata>
+    <id>pcloud-rs</id>
+    <version>0.1.0</version>
+    <title>pcloud-rs</title>
+    <authors>pCloud Community</authors>
+    <owners>pCloud Community</owners>
+    <projectUrl>https://github.com/pcloudcom/pcloud-rs</projectUrl>
+    <licenseUrl>https://spdx.org/licenses/MIT.html</licenseUrl>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>pCloud command-line client and sync daemon (Rust rewrite).</description>
+    <summary>pCloud CLI + sync daemon for Windows.</summary>
+    <tags>pcloud cloud sync cli</tags>
+    <copyright>pCloud Community</copyright>
+    <dependencies>
+      <dependency id="winfsp" />
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="tools\**" target="tools" />
+  </files>
+</package>

@@ -1,0 +1,49 @@
+[package]
+name = "pcloud-observability"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Metrics, tracing, and structured-log helpers for pcloud-rs (Prometheus, JSON logs)."
+
+[features]
+# Default is OFF to keep minimal builds lean. Consumers opt in explicitly
+# via `--features prometheus-exporter` (metric families + text exporter)
+# or `--features json-logs` (structured JSON log sink).
+default = []
+prometheus-exporter = []
+json-logs = ["dep:serde_json"]
+tracing-otlp = [
+    "dep:opentelemetry",
+    "dep:opentelemetry-otlp",
+    "dep:opentelemetry_sdk",
+    "dep:tracing",
+    "dep:tracing-subscriber",
+    "dep:tracing-opentelemetry",
+]
+
+[dependencies]
+serde.workspace = true
+serde_json = { workspace = true, optional = true }
+opentelemetry = { version = "0.24", optional = true }
+opentelemetry-otlp = { version = "0.17", default-features = false, features = ["http-proto", "reqwest-client", "trace"], optional = true }
+opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"], optional = true }
+tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", optional = true }
+tracing-opentelemetry = { version = "0.25", optional = true }
+
+# Dev-dependencies exist for the `otlp_live_interop` integration test,
+# which stands up an in-process OTLP/HTTP collector with `axum` and
+# decodes the exported protobuf payloads via `opentelemetry-proto`.
+# All of these are only consumed by that test binary, which itself is
+# fully feature-gated behind `tracing-otlp`; a build without the feature
+# still compiles the test file as a bare, empty integration test.
+[dev-dependencies]
+axum = { version = "0.7", default-features = false, features = ["http1", "tokio"] }
+opentelemetry-proto = { version = "0.7", default-features = false, features = ["gen-tonic-messages", "trace"] }
+prost = "0.13"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "sync", "time", "net"] }
+tracing = { version = "0.1" }
+
+[lints]
+workspace = true

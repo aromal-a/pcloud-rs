@@ -1,0 +1,73 @@
+#include <tunables/global>
+
+# AppArmor profile for the pcloud-rs Rust daemon.
+# Install as /etc/apparmor.d/usr.local.bin.pcloudd
+# Reload:    apparmor_parser -r /etc/apparmor.d/usr.local.bin.pcloudd
+# Enforce:   aa-enforce /usr/local/bin/pcloudd
+#
+# Profile name intentionally matches the binary path convention so tooling
+# (aa-status, aa-logprof) can associate it automatically.
+
+profile pcloudd /usr/local/bin/pcloudd {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/openssl>
+  #include <abstractions/ssl_certs>
+
+  # --- Binary & libraries ---
+  /usr/local/bin/pcloudd  mr,
+  /usr/local/bin/pcloudc         rix,
+  /lib/**                         mr,
+  /usr/lib/**                     mr,
+  /etc/ld.so.cache                r,
+
+  # --- Network (TLS egress only) ---
+  network inet  stream,
+  network inet6 stream,
+  network unix  stream,
+  network unix  dgram,
+  deny network raw,
+  deny network packet,
+
+  # --- Runtime / IPC socket (owner-only) ---
+  owner /run/pcloud-rs/             rw,
+  owner /run/pcloud-rs/daemon.sock  rw,
+  owner /run/user/*/pcloud-rs/             rw,
+  owner /run/user/*/pcloud-rs/daemon.sock  rw,
+
+  # --- Persistent state (SQLite + auth vault, 0700 dir, 0600 files) ---
+  owner /var/lib/pcloud-rs/              rw,
+  owner /var/lib/pcloud-rs/**            rwkl,
+
+  # --- Logs ---
+  owner /var/log/pcloud-rs/              rw,
+  owner /var/log/pcloud-rs/**            rw,
+
+  # --- systemd credentials (read-only) ---
+  /run/credentials/pcloudd.service/*  r,
+
+  # --- FUSE mount (optional, only if mounted drive enabled) ---
+  # Uncomment for Agent A's filesystem parity work:
+  #   /dev/fuse                       rw,
+  #   capability sys_admin,
+  #   mount fstype=fuse.pcloud-rs,
+  #   umount,
+
+  # --- Proc/sys (minimal read-only) ---
+  @{PROC}/sys/kernel/random/uuid  r,
+  @{PROC}/sys/net/core/somaxconn  r,
+  /sys/devices/system/cpu/        r,
+
+  # --- Hard denies ---
+  deny /etc/shadow     rwklx,
+  deny /etc/passwd-    rwklx,
+  deny /root/**        rwklx,
+  deny /home/**        rwklx,
+  deny capability sys_module,
+  deny capability sys_ptrace,
+  deny capability sys_rawio,
+  deny capability net_admin,
+  deny capability net_raw,
+  deny ptrace,
+  deny @{PROC}/*/mem   rwklx,
+}

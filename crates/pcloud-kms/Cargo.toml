@@ -1,0 +1,53 @@
+[package]
+name = "pcloud-kms"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Enterprise KMS / HSM wrapping-key integration for pcloud-rs."
+
+[dependencies]
+thiserror = { workspace = true }
+zeroize = { workspace = true }
+serde = { workspace = true, optional = true }
+pcloud-secret = { path = "../pcloud-secret" }
+
+# `aws` feature — AWS KMS provider. Off by default.
+aws-config = { version = "1", optional = true }
+aws-sdk-kms = { version = "1", optional = true }
+tokio = { version = "1", features = ["rt", "macros"], optional = true }
+
+# `vault` feature — HashiCorp Vault Transit provider. Off by default.
+reqwest = { version = "0.12", features = ["rustls-tls", "json", "blocking"], default-features = false, optional = true }
+base64 = { version = "0.22", optional = true }
+serde_json = { workspace = true, optional = true }
+
+# `pkcs11` feature — opt-in PKCS#11 HSM provider (enterprise deployments).
+#
+# `cryptoki` is the maintained, pure-Rust-friendly binding (Apache-2.0 /
+# MIT) published by Parsec. It wraps the vendor-provided PKCS#11 C
+# library at runtime (the consumer of this feature must supply the
+# `.so` / `.dylib` path via `Pkcs11Hsm::new_from_module`), so there is
+# no build-time linkage against a proprietary HSM SDK.
+cryptoki = { version = "0.10", optional = true }
+# `getrandom` is only needed by the pkcs11 provider (AES-GCM IV).
+getrandom = { workspace = true, optional = true }
+
+[features]
+default = []
+# Opt-in serde for config records. Off by default to keep the scaffold minimal.
+serde = ["dep:serde"]
+# AWS KMS provider. Pulls in aws-sdk-kms + tokio runtime for the sync bridge.
+aws = ["dep:aws-config", "dep:aws-sdk-kms", "dep:tokio"]
+# HashiCorp Vault Transit provider. Pulls in blocking reqwest + base64.
+vault = ["dep:reqwest", "dep:base64", "dep:serde_json", "dep:serde"]
+# PKCS#11 HSM provider. Pulls in `cryptoki`, which wraps the vendor's
+# PKCS#11 C library. The library path is supplied at runtime.
+pkcs11 = ["dep:cryptoki", "dep:getrandom"]
+
+[lints]
+workspace = true

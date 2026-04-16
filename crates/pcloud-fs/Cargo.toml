@@ -1,0 +1,67 @@
+# **PLATFORM MATRIX:**
+# - Linux: full support (tier 1) — FUSE via `fuser`.
+# - FreeBSD: tier 2 (most deps work)
+# - macOS: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.4 (fuse-t via direct C FFI, not a crate dep).
+# - Windows: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.5 (WinFsp).
+
+[package]
+name = "pcloud-fs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Mounted-drive / FUSE integration scaffolding (readdir, staging, journal) for pcloud-rs."
+
+[dependencies]
+pcloud-cache = { path = "../pcloud-cache" }
+pcloud-engine = { path = "../pcloud-engine" }
+pcloud-model = { path = "../pcloud-model" }
+pcloud-observability = { path = "../pcloud-observability", features = ["prometheus-exporter"] }
+pcloud-proto = { path = "../pcloud-proto" }
+pcloud-resilience = { path = "../pcloud-resilience" }
+pcloud-secret = { path = "../pcloud-secret" }
+glob = "0.3"
+log = "0.4"
+notify.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tempfile = "3"
+thiserror.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+fuser.workspace = true
+libc.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# NOTE: fuse-t binding is via direct C FFI in pcloud-fs/src/platform/macos_ffi.rs,
+# not a separate crate. Phase-1 scaffolding; not yet validated on macOS hardware.
+libc = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+# PHASE-1 SCAFFOLDING (bd-1du.4): WinFSP adapter via hand-rolled FFI.
+# We deliberately do NOT depend on the third-party `winfsp` crate; see
+# `src/platform/winfsp_ffi.rs` for rationale (auditable unsafe surface,
+# graceful DLL-missing handling, secret-handling discipline).
+libc = { workspace = true }
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
+
+[[bench]]
+name = "page_cache"
+harness = false
+
+[[bench]]
+name = "chunked_flush"
+harness = false
+
+[lints]
+workspace = true

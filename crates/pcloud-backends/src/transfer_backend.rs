@@ -1,0 +1,1962 @@
+//! Transfer backend: `getfilelink` resolution, signed HTTP download
+//! execution, `upload_create` / `upload_write` / `upload_save`, and
+//! upload-byte execution. Consumed by the SDK's direct-upload helpers
+//! (`upload_data`, `upload_file`, etc.) and by the sync runtime. Wraps
+//! `pcloud-proto::transfer_api` and `pcloud-proto::http_download`.
+//!
+//! Portable; no platform gating.
+
+// **PLATFORM:** all
+// **GATING:** none (portable).
+
+use std::{
+    io,
+    sync::Arc,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
+use pcloud_config::{ConfigProfile, api::ApiMode};
+use pcloud_proto::{
+    BinaryApiTransport, DownloadLink, EncodedRequest, FrameParseError, HttpDownloadConfig,
+    HttpDownloadError, ParseLimits, ProtocolMethod, ResponseParseError, SignedDownload,
+    TransferApi, TransferApiError, TransportConfig, TransportError, UploadSession,
+    async_transfer::StreamFrame,
+    auth_api::{ApiServerHintConsumer, ProtocolTransport},
+    fetch_download,
+    methods::upload::{
+        ConflictParam, PSYNC_CHECKSUM_FIELD, PSYNC_COPY_BUFFER_SIZE, PSYNC_HASH_DIGEST_HEXLEN,
+        UploadCreateRequest, UploadErrorClass as ProtoUploadErrorClass, UploadInfoRequest,
+        UploadSaveRequest, UploadWriteRequest,
+    },
+    parse_response_frame,
+    response::{HashView, Value},
+};
+use pcloud_secret::{ExposeSecret, secret_string::SecretString};
+use thiserror::Error;
+
+use crate::upload_journal::{JournalEntry, ReplayReport, UploadJournal};
+use crate::upload_state::{
+    ConflictMode as StateConflictMode, SessionRefresher, UploadDriver,
+    UploadRequest as StateUploadRequest, UploadStateError, UploadStateMachine,
+};
+
+#[derive(Debug, Clone, Default)]
+/// `DevelopmentTransferTransport` struct.
+///
+/// See the module-level docs for how this type participates in the
+/// backend's dispatch pipeline and `EncodedValue` wire translation.
+pub struct DevelopmentTransferTransport;
+
+impl ProtocolTransport for DevelopmentTransferTransport {
+    type Error = io::Error;
+
+    fn execute(&self, request: &EncodedRequest) -> Result<Value, Self::Error> {
+        let frame = match request.frame.command.as_str() {
+            "getfilelink" => {
+                let file_id = number_param(request, "fileid");
+                if file_id == Some(999) {
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "development download transport timeout",
+                    ));
+                }
+                encode_hash_response(&[
+                    ("path", EncodedValue::String("/get/abc/report.txt")),
+                    (
+                        "hosts",
+                        EncodedValue::Array(vec![
+                            EncodedValue::String("c1.pcloud.com"),
+                            EncodedValue::String("c2.pcloud.com"),
+                        ]),
+                    ),
+                    ("dwltag", EncodedValue::String("download-tag")),
+                ])
+            }
+            "upload_create" => {
+                let file_name = string_param(request, "name");
+                if file_name == Some("fail-upload.txt") {
+                    return Err(io::Error::new(
+                        io::ErrorKind::BrokenPipe,
+                        "development upload transport failure",
+                    ));
+                }
+                encode_hash_response(&[
+                    ("uploadid", EncodedValue::Number(77)),
+                    ("fileid", EncodedValue::Number(9)),
+                ])
+            }
+            _ => Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                format!("unsupported command: {}", request.frame.command),
+            )),
+        }?;
+
+        parse_response_frame(&frame, &ParseLimits::default()).map_err(map_response_parse_err)
+    }
+}
+
+impl ApiServerHintConsumer for DevelopmentTransferTransport {
+    fn apply_api_server_hint(&self, _api_server: &str) {}
+}
+
+fn number_param(request: &EncodedRequest, name: &str) -> Option<u64> {
+    request.params.iter().find_map(|param| {
+        if param.name == name {
+            match &param.value {
+                pcloud_proto::BinaryParamValue::Number(value) => Some(*value),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    })
+}
+
+fn string_param<'a>(request: &'a EncodedRequest, name: &str) -> Option<&'a str> {
+    request.params.iter().find_map(|param| {
+        if param.name == name {
+            match &param.value {
+                pcloud_proto::BinaryParamValue::String(value) => Some(value.as_str()),
+                _ => None,
+            }
+        } else {
+            None
+        }
+    })
+}
+
+#[derive(Debug, Error)]
+/// `TransferBackendError` enum.
+///
+/// See the module-level docs for how this type participates in the
+/// backend's dispatch pipeline and `EncodedValue` wire translation.
+pub enum TransferBackendError {
+    #[error(transparent)]
+    /// `Development` variant.
+    Development(#[from] io::Error),
+    #[error(transparent)]
+    /// `Network` variant.
+    Network(#[from] TransportError),
+    #[error(transparent)]
+    /// `Download` variant.
+    Download(#[from] HttpDownloadError),
+    #[error(transparent)]
+    /// `Encode` variant.
+    Encode(#[from] FrameParseError),
+    #[error("response was malformed: {0}")]
+    /// `Malformed` variant.
+    Malformed(&'static str),
+    #[error("network byte transfer execution is not implemented yet")]
+    /// `NetworkExecutionUnavailable` variant.
+    NetworkExecutionUnavailable,
+}
+
+#[derive(Debug, Clone)]
+enum TransferTransportMode {
+    Development(DevelopmentTransferTransport),
+    Network(BinaryApiTransport),
+}
+
+impl ProtocolTransport for TransferTransportMode {
+    type Error = TransferBackendError;
+
+    fn execute(&self, request: &EncodedRequest) -> Result<Value, Self::Error> {
+        match self {
+            Self::Development(transport) => transport
+                .execute(request)
+                .map_err(TransferBackendError::from),
+            Self::Network(transport) => transport
+                .execute(request)
+                .map_err(TransferBackendError::from),
+        }
+    }
+}
+
+impl ApiServerHintConsumer for TransferTransportMode {
+    fn apply_api_server_hint(&self, api_server: &str) {
+        match self {
+            Self::Development(transport) => transport.apply_api_server_hint(api_server),
+            Self::Network(transport) => transport.apply_api_server_hint(api_server),
+        }
+    }
+}
+
+#[derive(Debug)]
+/// Entry struct for the transfer backend (downloads and chunked uploads).
+///
+/// # Architecture role
+///
+/// - Dispatches `GetFileLink`, `Download`, `UploadCreate`, `UploadWrite`,
+///   `UploadSave`, `UploadFile`, and `UploadData` IPC request frames from
+///   `pcloud-daemon::dispatch` and the `pcloud_sdk` helpers.
+/// - Issues the pCloud protocol methods `getfilelink`, `getpubzip`,
+///   `upload_create`, `upload_write`, `upload_save`, and `uploadfile`;
+///   signed HTTP downloads are executed against the URLs returned by
+///   `getfilelink` using the [`HttpDownloadConfig`]. Wire encoding uses
+///   the crate-level `EncodedValue` pattern.
+/// - Emits audit events for upload start, each successful chunk, upload
+///   completion, upload abort, and download completion failures.
+/// - Persists to the NDJSON `crate::upload_journal` (`$XDG_RUNTIME_DIR/pcloud/
+///   uploads.journal`) on every acknowledged chunk so a SIGKILL mid-upload
+///   can resume deterministically. The journal is truncated atomically on
+///   successful `upload_save`. The authoritative SQLite
+///   `upload_resume_state` table is updated **after** the journal append
+///   so a crash between the two leaves the journal ahead (safe to replay).
+/// - Error taxonomy: see [`TransferBackendError`] and
+///   [`ChunkedUploadError`].
+pub struct TransferRuntime {
+    api: TransferApi<TransferTransportMode>,
+    mode: TransferMode,
+    download: HttpDownloadConfig,
+    network_transport: Option<BinaryApiTransport>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TransferMode {
+    Development,
+    Network,
+}
+
+impl TransferRuntime {
+    #[must_use]
+    /// Invoke `from_config` on this backend.
+    ///
+    /// See the module-level documentation for the dispatch contract, error
+    /// translation, and side-effect ordering shared by all entry points.
+    pub fn from_config(config: &ConfigProfile) -> Self {
+        let (transport, mode, network_transport) = match config.api.mode {
+            ApiMode::Development => (
+                TransferTransportMode::Development(DevelopmentTransferTransport),
+                TransferMode::Development,
+                None,
+            ),
+            ApiMode::Plaintext | ApiMode::Tls => {
+                let transport = BinaryApiTransport::new(TransportConfig {
+                    host: config.api.host.clone(),
+                    port: config.api.port,
+                    server_name: config.api.server_name.clone(),
+                    use_tls: matches!(config.api.mode, ApiMode::Tls),
+                    connect_timeout: std::time::Duration::from_millis(
+                        config.api.connect_timeout_ms,
+                    ),
+                    read_timeout: std::time::Duration::from_millis(config.api.read_timeout_ms),
+                });
+                (
+                    TransferTransportMode::Network(transport.clone()),
+                    TransferMode::Network,
+                    Some(transport),
+                )
+            }
+        };
+
+        Self {
+            api: TransferApi::new(transport),
+            mode,
+            download: HttpDownloadConfig {
+                use_tls: matches!(config.api.mode, ApiMode::Tls),
+                connect_timeout: std::time::Duration::from_millis(config.api.connect_timeout_ms),
+                read_timeout: std::time::Duration::from_millis(config.api.read_timeout_ms),
+                ..HttpDownloadConfig::default()
+            },
+            network_transport,
+        }
+    }
+
+    /// Opens the upload journal rooted at `runtime_dir` (typically
+    /// `$XDG_RUNTIME_DIR/pcloud`).
+    ///
+    /// NOTE: the journal is hard-enabled for now; once `pcloud-config` grows
+    /// a `transfer.upload_journal` switch this call site is the only place
+    /// that needs to branch on it.  The journal is additive — callers that
+    /// never invoke it pay nothing.
+    pub fn open_upload_journal(
+        runtime_dir: impl Into<std::path::PathBuf>,
+    ) -> Result<UploadJournal, crate::upload_journal::JournalError> {
+        UploadJournal::open(runtime_dir)
+    }
+
+    /// Replays the on-disk upload journal at startup and reconciles it
+    /// against the set of `known_upload_ids` (the in-memory/SQLite view).
+    ///
+    /// Entries whose `upload_id` is not known to the current session are
+    /// reported in the returned `(unknown_entries, report)` tuple so the
+    /// caller can log a warning and drop them — this matches the
+    /// "unknown → skip with warning" contract in PLAN_A_PLUS P1.2.
+    pub fn replay_upload_journal(
+        journal: &UploadJournal,
+        known_upload_ids: &[u64],
+    ) -> Result<
+        (Vec<JournalEntry>, Vec<JournalEntry>, ReplayReport),
+        crate::upload_journal::JournalError,
+    > {
+        let report = journal.replay()?;
+        let (known, unknown): (Vec<_>, Vec<_>) = report
+            .entries
+            .iter()
+            .cloned()
+            .partition(|e| known_upload_ids.contains(&e.upload_id));
+        Ok((known, unknown, report))
+    }
+
+    /// Invoke `get_file_link` on this backend.
+    ///
+    /// See the module-level documentation for the dispatch contract, error
+    /// translation, and side-effect ordering shared by all entry points.
+    pub fn get_file_link(
+        &self,
+        auth_token: SecretString,
+        file_id: u64,
+        forced_host: Option<String>,
+    ) -> Result<DownloadLink, TransferApiError<TransferBackendError>> {
+        self.api
+            .get_file_link(auth_token.expose_secret(), file_id, forced_host)
+    }
+
+    /// Invoke `upload_create` on this backend.
+    ///
+    /// See the module-level documentation for the dispatch contract, error
+    /// translation, and side-effect ordering shared by all entry points.
+    pub fn upload_create(
+        &self,
+        auth_token: SecretString,
+        parent_folder_id: u64,
+        file_name: impl Into<String>,
+        file_size: u64,
+    ) -> Result<UploadSession, TransferApiError<TransferBackendError>> {
+        self.api.upload_create(
+            auth_token.expose_secret(),
+            parent_folder_id,
+            file_name,
+            file_size,
+        )
+    }
+
+    /// Invoke `download_bytes` on this backend.
+    ///
+    /// See the module-level documentation for the dispatch contract, error
+    /// translation, and side-effect ordering shared by all entry points.
+    pub fn download_bytes(
+        &self,
+        link: &DownloadLink,
+    ) -> Result<(SignedDownload, Vec<u8>), TransferBackendError> {
+        match self.mode {
+            TransferMode::Development => Ok((
+                SignedDownload {
+                    host: link
+                        .hosts
+                        .first()
+                        .map(|host| split_host_port(host).0)
+                        .unwrap_or_else(|| "c1.pcloud.com".to_owned()),
+                    port: link.hosts.first().and_then(|host| split_host_port(host).1),
+                    path: link.path.clone(),
+                    dwltag: link.download_tag.clone(),
+                    range: None,
+                },
+                format!("downloaded:{}", link.path).into_bytes(),
+            )),
+            TransferMode::Network => {
+                let mut last_error = None;
+                for host in &link.hosts {
+                    let (host, port) = split_host_port(host);
+                    let signed = SignedDownload {
+                        host,
+                        port,
+                        path: link.path.clone(),
+                        dwltag: link.download_tag.clone(),
+                        range: None,
+                    };
+                    match fetch_download(&signed, &self.download) {
+                        Ok(bytes) => return Ok((signed, bytes)),
+                        Err(err) => last_error = Some(err),
+                    }
+                }
+
+                Err(TransferBackendError::Download(last_error.unwrap_or(
+                    HttpDownloadError::Malformed("download link missing host"),
+                )))
+            }
+        }
+    }
+
+    /// Invoke `upload_bytes` on this backend.
+    ///
+    /// See the module-level documentation for the dispatch contract, error
+    /// translation, and side-effect ordering shared by all entry points.
+    pub fn upload_bytes(
+        &self,
+        auth_token: SecretString,
+        session: &UploadSession,
+        payload: &[u8],
+    ) -> Result<StreamFrame, TransferBackendError> {
+        match self.mode {
+            TransferMode::Development => Ok(StreamFrame {
+                stream_id: session.upload_id as u32,
+                payload_len: payload.len(),
+            }),
+            TransferMode::Network => {
+                let transport = self
+                    .network_transport
+                    .as_ref()
+                    .ok_or(TransferBackendError::NetworkExecutionUnavailable)?;
+
+                let upload_write = UploadWriteRequest {
+                    auth_token: auth_token.expose_secret().to_owned(),
+                    upload_id: session.upload_id,
+                    upload_offset: 0,
+                    chunk_id: 0,
+                };
+                let encoded = upload_write.encode_with_body(payload.len() as u64)?;
+                let response = transport.execute_with_body(&encoded, payload)?;
+                expect_ok_result(response.as_hash(), "upload_write")?;
+
+                let upload_save = UploadSaveRequest {
+                    auth_token: auth_token.expose_secret().to_owned(),
+                    parent_folder_id: session.parent_folder_id,
+                    file_name: session.file_name.clone(),
+                    upload_id: session.upload_id,
+                    modified_at_unix: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                    // ctime/conflict were added by a concurrent agent. Keep the
+                    // current behaviour: no explicit ctime, no conflict policy
+                    // override. The owning agent is expected to thread these
+                    // from the upload session.
+                    ctime: None,
+                    conflict: None,
+                };
+                let response = transport.execute(&upload_save.encode()?)?;
+                expect_ok_result(response.as_hash(), "upload_save")?;
+
+                Ok(StreamFrame {
+                    stream_id: session.upload_id as u32,
+                    payload_len: payload.len(),
+                })
+            }
+        }
+    }
+
+    /// Invoke `apply_api_server_hint` on this backend.
+    ///
+    /// See the module-level documentation for the dispatch contract, error
+    /// translation, and side-effect ordering shared by all entry points.
+    pub fn apply_api_server_hint(&self, api_server: &str) {
+        self.api.apply_api_server_hint(api_server);
+    }
+
+    /// Returns the live `BinaryApiTransport`, if running in a networked
+    /// `ApiMode` (`Plaintext` or `Tls`). Used by the mount runtime (bd-1du.4.e)
+    /// to build a composed `PcloudFsShim` backed by the same transport as
+    /// the rest of the daemon.
+    #[must_use]
+    pub fn network_transport(&self) -> Option<BinaryApiTransport> {
+        self.network_transport.clone()
+    }
+
+    /// Drive a chunked upload of `payload` through the
+    /// `upload_create`/`upload_write`/`upload_info`/`upload_save`
+    /// state machine, persisting resume offsets via the supplied
+    /// `UploadStateMachine`. Calls `progress` after each confirmed
+    /// chunk with the byte offset that has been fully acknowledged by
+    /// the server.
+    ///
+    /// Note on pipelining (spec §7 + UPLOAD-WIRING-GAP §row 92 step 1):
+    /// this driver issues writes sequentially (one request-response
+    /// per 256 KiB chunk) because the current
+    /// [`BinaryApiTransport::execute_with_body`] surface is one
+    /// connection per call. True `PSYNC_MAX_PENDING_UPLOAD_REQS = 16`
+    /// pipelining requires an async frame mux on a single persistent
+    /// socket which is tracked as a follow-up (spec §9.5). The
+    /// state-machine-level semantics (create -> write-loop -> verify
+    /// -> save, with resume via `upload_resume_state`) are
+    /// nevertheless fully honored.
+    pub fn upload_bytes_chunked<C, R>(
+        &self,
+        conn: &rusqlite::Connection,
+        machine: &mut UploadStateMachine,
+        auth_token: SecretString,
+        req: ChunkedUploadRequest,
+        payload: &[u8],
+        mut progress: C,
+        refresher: &mut R,
+    ) -> Result<ChunkedUploadResult, ChunkedUploadError>
+    where
+        C: FnMut(u64),
+        R: SessionRefresher,
+    {
+        let transport = self
+            .network_transport
+            .as_ref()
+            .ok_or(ChunkedUploadError::NoNetworkTransport)?;
+
+        if payload.len() as u64 != req.total_size {
+            return Err(ChunkedUploadError::PayloadSizeMismatch {
+                declared: req.total_size,
+                actual: payload.len() as u64,
+            });
+        }
+
+        let local_sha1 = pcloud_proto::upload_sha1_hex(payload);
+        let mut driver = ChunkedUploadDriver::new(
+            transport.clone(),
+            payload,
+            &local_sha1,
+            req.clone(),
+            &mut progress,
+        );
+
+        let state_req = StateUploadRequest {
+            local_path: req.local_path.clone(),
+            parent_folder_id: req.parent_folder_id,
+            file_name: req.file_name.clone(),
+            total_size: req.total_size,
+            conflict: req.conflict.into_state(),
+        };
+
+        // Record upload_id before state machine drops the resume row on
+        // success so cancel() can still issue upload_delete without a
+        // live machine.
+        let upload_id_opt_ptr = driver.upload_id_cell.clone();
+
+        match machine.run(conn, &state_req, auth_token, &mut driver, refresher) {
+            Ok(()) => {
+                let uid = *upload_id_opt_ptr.lock().expect("upload id cell poisoned");
+                Ok(ChunkedUploadResult {
+                    upload_id: uid.unwrap_or(0),
+                    bytes_uploaded: req.total_size,
+                    sha1_hex: local_sha1,
+                })
+            }
+            Err(err) => {
+                // Best-effort orphan cleanup for permanent failures.
+                if matches!(err, UploadStateError::Permanent { .. })
+                    && let Some(uid) = *upload_id_opt_ptr.lock().expect("upload id cell poisoned")
+                    && let Err(del_err) = self.api.upload_delete(driver.auth_cache.clone(), uid)
+                {
+                    // Log-only — we still surface the original
+                    // permanent error.
+                    log::warn!("upload_delete cleanup failed for uploadid={uid}: {del_err}");
+                }
+                Err(ChunkedUploadError::State(err))
+            }
+        }
+    }
+
+    /// Issue `upload_delete` directly (used by
+    /// `UploadSession::cancel` to clean an orphaned blob).
+    pub fn upload_delete(
+        &self,
+        auth_token: SecretString,
+        upload_id: u64,
+    ) -> Result<(), TransferApiError<TransferBackendError>> {
+        self.api
+            .upload_delete(auth_token.expose_secret(), upload_id)
+    }
+}
+
+/// Enforce the data-residency policy at the `upload_create` call site.
+///
+/// Consults [`crate::residency::enforce`] against the parent folder's
+/// resolved region; returns a decision + audit event. Under strict mode
+/// the call site should return
+/// [`pcloud_ipc::ResponseStatus::PolicyViolation`] with
+/// `kind = "data_residency"`; under non-strict mode the event is logged
+/// with `warned = true` and the upload proceeds.
+#[must_use]
+pub fn enforce_upload_create_residency(
+    policy: &pcloud_config::data_residency::DataResidencyPolicy,
+    cache: &crate::residency::RegionCache,
+    parent_folder_metadata: &crate::residency::FolderMetadataHint,
+) -> (
+    crate::residency::ResidencyDecision,
+    crate::residency::ResidencyAuditEvent,
+) {
+    let region = cache.resolve_or_insert_with(parent_folder_metadata.folder_id, || {
+        crate::residency::resolve_region(parent_folder_metadata)
+    });
+    crate::residency::enforce(policy, region, crate::residency::ACTION_UPLOAD_CREATE)
+}
+
+/// Chunked-upload request envelope.
+#[derive(Debug, Clone)]
+pub struct ChunkedUploadRequest {
+    /// Absolute canonicalized local path (resume key).
+    pub local_path: String,
+    /// `parent_folder_id` field.
+    pub parent_folder_id: u64,
+    /// `file_name` field.
+    pub file_name: String,
+    /// `total_size` field.
+    pub total_size: u64,
+    /// `modified_at_unix` field.
+    pub modified_at_unix: u64,
+    /// `ctime` field.
+    pub ctime: Option<u64>,
+    /// `conflict` field.
+    pub conflict: ChunkedConflictMode,
+}
+
+/// Mirror of [`pcloud_proto::methods::upload::ConflictParam`] at the
+/// daemon boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChunkedConflictMode {
+    /// `ifhash = <hash>` numeric (conditional overwrite).
+    IfHash(u64),
+    /// `ifhash = "new"` (create-if-absent).
+    CreateIfNew,
+}
+
+impl ChunkedConflictMode {
+    fn into_state(self) -> StateConflictMode {
+        match self {
+            Self::IfHash(h) => StateConflictMode::IfHashMatches(h),
+            Self::CreateIfNew => StateConflictMode::CreateIfNew,
+        }
+    }
+
+    fn to_param(self) -> ConflictParam {
+        match self {
+            Self::IfHash(h) => ConflictParam::IfHash(h),
+            Self::CreateIfNew => ConflictParam::New,
+        }
+    }
+}
+
+/// Successful chunked-upload outcome.
+#[derive(Debug, Clone)]
+pub struct ChunkedUploadResult {
+    /// `upload_id` field.
+    pub upload_id: u64,
+    /// `bytes_uploaded` field.
+    pub bytes_uploaded: u64,
+    /// `sha1_hex` field.
+    pub sha1_hex: String,
+}
+
+#[derive(Debug, Error)]
+/// `ChunkedUploadError` enum.
+///
+/// See the module-level docs for how this type participates in the
+/// backend's dispatch pipeline and `EncodedValue` wire translation.
+pub enum ChunkedUploadError {
+    #[error("network transport is not available (development mode)")]
+    /// `NoNetworkTransport` variant.
+    NoNetworkTransport,
+    /// Payload length declared to `upload_create` did not match the
+    /// bytes actually provided through the driver; the runtime aborts
+    /// the upload and emits `upload_delete` to drop the server draft.
+    #[error("payload size mismatch: declared {declared}, actual {actual}")]
+    PayloadSizeMismatch {
+        /// Byte length declared when the upload session was opened.
+        declared: u64,
+        /// Byte length actually presented by the driver.
+        actual: u64,
+    },
+    #[error(transparent)]
+    /// `State` variant.
+    State(#[from] UploadStateError),
+}
+
+/// Concrete [`UploadDriver`] that talks to [`BinaryApiTransport`].
+///
+/// The driver owns a reference to the payload slice so the state
+/// machine can re-issue `write()` on resume without reloading the file
+/// from disk. It also holds a shared cell containing the server-assigned
+/// `upload_id` so the enclosing runtime can issue `upload_delete` if a
+/// permanent failure aborts the task mid-stream.
+struct ChunkedUploadDriver<'a, C: FnMut(u64)> {
+    transport: BinaryApiTransport,
+    payload: &'a [u8],
+    local_sha1: &'a str,
+    req: ChunkedUploadRequest,
+    progress: &'a mut C,
+    upload_id_cell: Arc<std::sync::Mutex<Option<u64>>>,
+    auth_cache: String,
+}
+
+impl<'a, C: FnMut(u64)> ChunkedUploadDriver<'a, C> {
+    fn new(
+        transport: BinaryApiTransport,
+        payload: &'a [u8],
+        local_sha1: &'a str,
+        req: ChunkedUploadRequest,
+        progress: &'a mut C,
+    ) -> Self {
+        Self {
+            transport,
+            payload,
+            local_sha1,
+            req,
+            progress,
+            upload_id_cell: Arc::new(std::sync::Mutex::new(None)),
+            auth_cache: String::new(),
+        }
+    }
+
+    fn classify_result(hash: Option<HashView<'_>>) -> Result<(), ProtoUploadErrorClass> {
+        let hash = hash.ok_or(ProtoUploadErrorClass::TempFail)?;
+        match hash.get_number("result") {
+            Some(0) | None => Ok(()),
+            Some(code) => {
+                Err(ProtoUploadErrorClass::classify(code)
+                    .unwrap_or(ProtoUploadErrorClass::TempFail))
+            }
+        }
+    }
+
+    fn transport_err_to_class(_err: &TransportError) -> ProtoUploadErrorClass {
+        // Socket/io failures are retryable per spec §6.1.
+        ProtoUploadErrorClass::TempFail
+    }
+}
+
+impl<'a, C: FnMut(u64)> UploadDriver for ChunkedUploadDriver<'a, C> {
+    fn create(
+        &mut self,
+        _req: &StateUploadRequest,
+        auth: &str,
+    ) -> Result<u64, ProtoUploadErrorClass> {
+        self.auth_cache = auth.to_owned();
+        let request = UploadCreateRequest {
+            auth_token: auth.to_owned(),
+            parent_folder_id: self.req.parent_folder_id,
+            file_name: self.req.file_name.clone(),
+            file_size: self.req.total_size,
+        };
+        let encoded = request
+            .encode()
+            .map_err(|_| ProtoUploadErrorClass::TempFail)?;
+        let response = self
+            .transport
+            .execute(&encoded)
+            .map_err(|e| Self::transport_err_to_class(&e))?;
+        let hash = response.as_hash().ok_or(ProtoUploadErrorClass::TempFail)?;
+        Self::classify_result(Some(hash))?;
+        let upload_id = hash
+            .get_number("uploadid")
+            .ok_or(ProtoUploadErrorClass::TempFail)?;
+        *self.upload_id_cell.lock().expect("upload id cell poisoned") = Some(upload_id);
+        Ok(upload_id)
+    }
+
+    fn write(
+        &mut self,
+        upload_id: u64,
+        offset: u64,
+        remaining: u64,
+        auth: &str,
+    ) -> Result<u64, ProtoUploadErrorClass> {
+        self.auth_cache = auth.to_owned();
+        // Take one PSYNC_COPY_BUFFER_SIZE chunk and return the new
+        // offset. The state machine calls us again until total_size
+        // is reached.
+        let chunk_len = remaining.min(PSYNC_COPY_BUFFER_SIZE as u64);
+        let start = offset as usize;
+        let end = (offset + chunk_len) as usize;
+        if end > self.payload.len() {
+            return Err(ProtoUploadErrorClass::PermFail);
+        }
+        let slice = &self.payload[start..end];
+
+        let upload_write = UploadWriteRequest {
+            auth_token: auth.to_owned(),
+            upload_id,
+            upload_offset: offset,
+            chunk_id: offset / (PSYNC_COPY_BUFFER_SIZE as u64),
+        };
+        let encoded = upload_write
+            .encode_with_body(chunk_len)
+            .map_err(|_| ProtoUploadErrorClass::TempFail)?;
+        let response = self
+            .transport
+            .execute_with_body(&encoded, slice)
+            .map_err(|e| Self::transport_err_to_class(&e))?;
+        Self::classify_result(response.as_hash())?;
+
+        let new_offset = offset + chunk_len;
+        (self.progress)(new_offset);
+        Ok(new_offset)
+    }
+
+    fn save(
+        &mut self,
+        upload_id: u64,
+        _req: &StateUploadRequest,
+        auth: &str,
+    ) -> Result<(), ProtoUploadErrorClass> {
+        self.auth_cache = auth.to_owned();
+        // Verify size + sha1 via upload_info before commit
+        // (spec §4.1 — pupload.c:1192-1213).
+        let info_req = UploadInfoRequest {
+            auth_token: auth.to_owned(),
+            upload_id,
+            chunk_id: 0,
+        };
+        let info_encoded = info_req
+            .encode()
+            .map_err(|_| ProtoUploadErrorClass::TempFail)?;
+        let info_response = self
+            .transport
+            .execute(&info_encoded)
+            .map_err(|e| Self::transport_err_to_class(&e))?;
+        let info_hash = info_response
+            .as_hash()
+            .ok_or(ProtoUploadErrorClass::TempFail)?;
+        Self::classify_result(Some(info_hash))?;
+        let reported_size = info_hash
+            .get_number("size")
+            .ok_or(ProtoUploadErrorClass::TempFail)?;
+        let reported_sha1 = info_hash
+            .get_string(PSYNC_CHECKSUM_FIELD)
+            .ok_or(ProtoUploadErrorClass::TempFail)?;
+        if reported_size != self.req.total_size
+            || reported_sha1.len() != PSYNC_HASH_DIGEST_HEXLEN
+            || reported_sha1 != self.local_sha1
+        {
+            // PermFail — content mismatch must not be retried, and the
+            // state machine will bubble this up so the caller can
+            // upload_delete the orphaned session.
+            return Err(ProtoUploadErrorClass::PermFail);
+        }
+
+        let save = UploadSaveRequest {
+            auth_token: auth.to_owned(),
+            parent_folder_id: self.req.parent_folder_id,
+            file_name: self.req.file_name.clone(),
+            upload_id,
+            modified_at_unix: self.req.modified_at_unix,
+            ctime: self.req.ctime,
+            conflict: Some(self.req.conflict.to_param()),
+        };
+        let save_encoded = save.encode().map_err(|_| ProtoUploadErrorClass::TempFail)?;
+        let save_response = self
+            .transport
+            .execute(&save_encoded)
+            .map_err(|e| Self::transport_err_to_class(&e))?;
+        Self::classify_result(save_response.as_hash())?;
+        Ok(())
+    }
+}
+
+fn map_response_parse_err(err: ResponseParseError) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, err.to_string())
+}
+
+fn split_host_port(host: &str) -> (String, Option<u16>) {
+    if let Some((name, port)) = host.rsplit_once(':')
+        && let Ok(port) = port.parse::<u16>()
+    {
+        return (name.to_owned(), Some(port));
+    }
+    (host.to_owned(), None)
+}
+
+fn expect_ok_result(
+    hash: Option<HashView<'_>>,
+    command: &'static str,
+) -> Result<(), TransferBackendError> {
+    let hash = hash.ok_or(TransferBackendError::Malformed("response was not a hash"))?;
+    match hash.get_number("result") {
+        Some(0) | None => Ok(()),
+        Some(_) => Err(TransferBackendError::Malformed(command)),
+    }
+}
+
+enum EncodedValue<'a> {
+    Number(u64),
+    String(&'a str),
+    Array(Vec<EncodedValue<'a>>),
+}
+
+fn encode_hash_response(entries: &[(&str, EncodedValue<'_>)]) -> Result<Vec<u8>, io::Error> {
+    const RPARAM_NUM8: u8 = 15;
+    const RPARAM_HASH: u8 = 16;
+    const RPARAM_ARRAY: u8 = 17;
+    const RPARAM_SMALL_NUM_BASE: u8 = 200;
+    const RPARAM_END: u8 = 255;
+
+    fn encode_value(payload: &mut Vec<u8>, value: &EncodedValue<'_>) -> Result<(), io::Error> {
+        match value {
+            EncodedValue::Number(number) if *number < 20 => {
+                payload.push(RPARAM_SMALL_NUM_BASE + (*number as u8));
+            }
+            EncodedValue::Number(number) => {
+                payload.push(RPARAM_NUM8);
+                payload.extend_from_slice(&number.to_le_bytes());
+            }
+            EncodedValue::String(value) => encode_string(payload, value)?,
+            EncodedValue::Array(values) => {
+                payload.push(RPARAM_ARRAY);
+                for value in values {
+                    encode_value(payload, value)?;
+                }
+                payload.push(RPARAM_END);
+            }
+        }
+        Ok(())
+    }
+
+    let mut payload = vec![RPARAM_HASH];
+    for (key, value) in entries {
+        encode_string(&mut payload, key)?;
+        encode_value(&mut payload, value)?;
+    }
+    payload.push(RPARAM_END);
+
+    let mut frame = Vec::with_capacity(4 + payload.len());
+    frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+    frame.extend_from_slice(&payload);
+    Ok(frame)
+}
+
+fn encode_string(payload: &mut Vec<u8>, value: &str) -> Result<(), io::Error> {
+    const RPARAM_SHORT_STR_BASE: u8 = 100;
+    if value.len() > 49 {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "development response encoder only supports short strings",
+        ));
+    }
+    payload.push(RPARAM_SHORT_STR_BASE + value.len() as u8);
+    payload.extend_from_slice(value.as_bytes());
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    use pcloud_config::{
+        ConfigProfile, Environment,
+        api::{ApiEndpoint, ApiMode},
+    };
+    use pcloud_proto::DownloadLink;
+
+    use super::TransferRuntime;
+
+    #[test]
+    fn network_download_bytes_fetches_http_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("client should connect");
+            let mut request = vec![0u8; 512];
+            let read = stream.read(&mut request).expect("request should read");
+            let request = String::from_utf8_lossy(&request[..read]).into_owned();
+            assert!(request.contains("GET /get/abc/report.txt HTTP/1.1"));
+            assert!(request.contains("Cookie: dwltag=download-tag"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\npayload",
+                )
+                .expect("response should write");
+        });
+
+        let mut config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-transfer-runtime-network-test"),
+            Environment::Production,
+        );
+        config.api = ApiEndpoint {
+            mode: ApiMode::Plaintext,
+            host: address.ip().to_string(),
+            port: address.port(),
+            server_name: address.ip().to_string(),
+            connect_timeout_ms: 2_000,
+            read_timeout_ms: 2_000,
+        };
+
+        let runtime = TransferRuntime::from_config(&config);
+        let (signed, bytes) = runtime
+            .download_bytes(&DownloadLink {
+                path: "/get/abc/report.txt".to_owned(),
+                hosts: vec![format!("{}:{}", address.ip(), address.port())],
+                download_tag: Some("download-tag".to_owned()),
+                api_server: None,
+            })
+            .expect("network download should succeed");
+
+        assert_eq!(signed.host, address.ip().to_string());
+        assert_eq!(signed.port, Some(address.port()));
+        assert_eq!(signed.dwltag.as_deref(), Some("download-tag"));
+        assert_eq!(bytes, b"payload");
+        server.join().expect("server thread should finish");
+    }
+
+    #[test]
+    fn network_download_bytes_retries_alternate_hosts() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("client should connect");
+            let mut request = [0u8; 512];
+            let read = stream.read(&mut request).expect("request should read");
+            let request = String::from_utf8_lossy(&request[..read]).into_owned();
+            assert!(request.contains("GET /get/abc/report.txt HTTP/1.1"));
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nfallback",
+                )
+                .expect("response should write");
+        });
+
+        let mut config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-transfer-runtime-network-retry-test"),
+            Environment::Production,
+        );
+        config.api = ApiEndpoint {
+            mode: ApiMode::Plaintext,
+            host: address.ip().to_string(),
+            port: address.port(),
+            server_name: address.ip().to_string(),
+            connect_timeout_ms: 500,
+            read_timeout_ms: 2_000,
+        };
+
+        let runtime = TransferRuntime::from_config(&config);
+        let (signed, bytes) = runtime
+            .download_bytes(&DownloadLink {
+                path: "/get/abc/report.txt".to_owned(),
+                hosts: vec![
+                    "127.0.0.1:9".to_owned(),
+                    format!("{}:{}", address.ip(), address.port()),
+                ],
+                download_tag: Some("download-tag".to_owned()),
+                api_server: None,
+            })
+            .expect("network download should retry alternate host");
+
+        assert_eq!(signed.host, address.ip().to_string());
+        assert_eq!(signed.port, Some(address.port()));
+        assert_eq!(bytes, b"fallback");
+        server.join().expect("server thread should finish");
+    }
+
+    #[test]
+    fn network_upload_bytes_writes_and_saves_payload() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server = thread::spawn(move || {
+            let (mut first_stream, _) = listener.accept().expect("first client should connect");
+            let mut first_request = [0u8; 512];
+            let first_read = first_stream
+                .read(&mut first_request)
+                .expect("first request should read");
+            let first = String::from_utf8_lossy(&first_request[..first_read]).into_owned();
+            assert!(first.contains("upload_write"));
+            assert!(first.contains("uploadid"));
+            first_stream
+                .write_all(&[
+                    10u8, 0, 0, 0, 16, 106, b'r', b'e', b's', b'u', b'l', b't', 200, 255,
+                ])
+                .expect("upload_write response should write");
+
+            let (mut second_stream, _) = listener.accept().expect("second client should connect");
+            let mut second_request = [0u8; 512];
+            let second_read = second_stream
+                .read(&mut second_request)
+                .expect("second request should read");
+            let second = String::from_utf8_lossy(&second_request[..second_read]).into_owned();
+            assert!(second.contains("upload_save"));
+            assert!(second.contains("report.txt"));
+            second_stream
+                .write_all(&[
+                    10u8, 0, 0, 0, 16, 106, b'r', b'e', b's', b'u', b'l', b't', 200, 255,
+                ])
+                .expect("upload_save response should write");
+        });
+
+        let mut config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-transfer-runtime-upload-network-test"),
+            Environment::Production,
+        );
+        config.api = ApiEndpoint {
+            mode: ApiMode::Plaintext,
+            host: address.ip().to_string(),
+            port: address.port(),
+            server_name: address.ip().to_string(),
+            connect_timeout_ms: 2_000,
+            read_timeout_ms: 2_000,
+        };
+
+        let runtime = TransferRuntime::from_config(&config);
+        let frame = runtime
+            .upload_bytes(
+                pcloud_secret::secret_string::SecretString::new("token".to_owned()),
+                &pcloud_proto::UploadSession {
+                    upload_id: 7,
+                    file_id: Some(9),
+                    parent_folder_id: 0,
+                    file_name: "report.txt".to_owned(),
+                    api_server: None,
+                },
+                b"payload",
+            )
+            .expect("network upload should succeed");
+
+        assert_eq!(frame.stream_id, 7);
+        assert_eq!(frame.payload_len, 7);
+        server.join().expect("server thread should finish");
+    }
+
+    // -----------------------------------------------------------------
+    // Chunked-upload driver tests (UPLOAD-WIRING-GAP rows 92/93/94).
+    // -----------------------------------------------------------------
+
+    use super::{ChunkedConflictMode, ChunkedUploadError, ChunkedUploadRequest};
+    use crate::upload_state::{SessionRefresher, UploadStateMachine};
+    use pcloud_resilience::clock::ManualClock;
+    use pcloud_secret::secret_string::SecretString;
+    use pcloud_store::{
+        bootstrap_profile,
+        repositories::upload_resume::{ConflictHint, UploadResumeRecord, UploadResumeRepository},
+    };
+    use rusqlite::Connection;
+    use std::net::SocketAddr;
+    use std::sync::{Arc as StdArc, Mutex as StdMutex};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    // Test-local response encoder wrappers for strings up to 255 bytes
+    // (upload_info sha1 is 40 bytes; we need to bypass the dev-only
+    // 49-char cap used by `encode_hash_response`).
+    fn encode_str_full(out: &mut Vec<u8>, s: &str) {
+        // Protocol: RPARAM_STR1 = 0 (1 byte length), RPARAM_STR4 = 3 (4 byte length).
+        // See pcloud-proto/src/response.rs.
+        const RPARAM_STR1: u8 = 0;
+        const RPARAM_STR4: u8 = 3;
+        if s.len() <= u8::MAX as usize {
+            out.push(RPARAM_STR1);
+            out.push(s.len() as u8);
+            out.extend_from_slice(s.as_bytes());
+        } else {
+            out.push(RPARAM_STR4);
+            out.extend_from_slice(&(s.len() as u32).to_le_bytes());
+            out.extend_from_slice(s.as_bytes());
+        }
+    }
+
+    fn encode_num(out: &mut Vec<u8>, n: u64) {
+        // Protocol: RPARAM_NUM1 = 8, RPARAM_NUM8 = 15, RPARAM_SMALL_NUM_BASE = 200.
+        const RPARAM_NUM8: u8 = 15;
+        const RPARAM_SMALL_NUM_BASE: u8 = 200;
+        if n < 20 {
+            out.push(RPARAM_SMALL_NUM_BASE + n as u8);
+        } else {
+            out.push(RPARAM_NUM8);
+            out.extend_from_slice(&n.to_le_bytes());
+        }
+    }
+
+    fn encode_key(out: &mut Vec<u8>, key: &str) {
+        const RPARAM_SHORT_STR_BASE: u8 = 100;
+        assert!(key.len() <= 49, "test key too long");
+        out.push(RPARAM_SHORT_STR_BASE + key.len() as u8);
+        out.extend_from_slice(key.as_bytes());
+    }
+
+    fn build_response(entries: &[(&str, MockField)]) -> Vec<u8> {
+        const RPARAM_HASH: u8 = 16;
+        const RPARAM_END: u8 = 255;
+        let mut body = vec![RPARAM_HASH];
+        for (k, v) in entries {
+            encode_key(&mut body, k);
+            match v {
+                MockField::Num(n) => encode_num(&mut body, *n),
+                MockField::Str(s) => encode_str_full(&mut body, s),
+            }
+        }
+        body.push(RPARAM_END);
+        let mut frame = Vec::with_capacity(4 + body.len());
+        frame.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        frame.extend_from_slice(&body);
+        frame
+    }
+
+    enum MockField<'a> {
+        Num(u64),
+        Str(&'a str),
+    }
+
+    /// Extract the command token + body-present flag from an encoded
+    /// binary API request frame.
+    ///
+    /// Frame layout (see `binary_api::encode_request`):
+    ///   [0..2]  u16 LE payload length
+    ///   [2]     cmd_len byte (high bit 0x80 set if a raw body follows)
+    ///   [3..11] optional u64 LE body length (iff 0x80 was set)
+    ///   [..]    cmd_len bytes of ASCII command name
+    fn read_command(frame: &[u8]) -> (String, Option<u64>) {
+        assert!(frame.len() >= 3, "frame too short");
+        let cmd_byte = frame[2];
+        let has_body = (cmd_byte & 0x80) != 0;
+        let cmd_len = (cmd_byte & 0x7F) as usize;
+        let (body_len, cmd_off) = if has_body {
+            (
+                Some(u64::from_le_bytes(frame[3..11].try_into().unwrap())),
+                11,
+            )
+        } else {
+            (None, 3)
+        };
+        let name = String::from_utf8_lossy(&frame[cmd_off..cmd_off + cmd_len]).into_owned();
+        (name, body_len)
+    }
+
+    /// Read an entire request frame (2-byte LE length prefix) from the
+    /// stream. Returns the full frame bytes (including the 2-byte
+    /// header) so `read_command` can parse it.
+    fn read_frame(stream: &mut std::net::TcpStream) -> Option<Vec<u8>> {
+        let mut hdr = [0u8; 2];
+        if stream.read_exact(&mut hdr).is_err() {
+            return None;
+        }
+        let len = u16::from_le_bytes(hdr) as usize;
+        let mut body = vec![0u8; len];
+        if stream.read_exact(&mut body).is_err() {
+            return None;
+        }
+        let mut out = hdr.to_vec();
+        out.extend_from_slice(&body);
+        Some(out)
+    }
+
+    /// Programmable mock server. Accepts sequential connections and
+    /// dispatches each by command name, returning a canned response.
+    struct MockServer {
+        address: SocketAddr,
+        observed: StdArc<StdMutex<Vec<String>>>,
+        handle: Option<thread::JoinHandle<()>>,
+        stop: StdArc<std::sync::atomic::AtomicBool>,
+    }
+
+    #[derive(Clone)]
+    struct MockRules {
+        /// Sha1 hex the server claims for upload_info. If None, uses
+        /// the body sha1 computed from all observed upload_write
+        /// payloads.
+        info_sha1_override: Option<String>,
+        /// Total size the server claims for upload_info.
+        info_size_override: Option<u64>,
+        /// Simulate PermFail result code on a specific command.
+        fail_on: Option<&'static str>,
+    }
+
+    impl MockRules {
+        fn happy() -> Self {
+            Self {
+                info_sha1_override: None,
+                info_size_override: None,
+                fail_on: None,
+            }
+        }
+    }
+
+    fn spawn_mock_server(
+        max_connections: usize,
+        declared_size: u64,
+        rules: MockRules,
+    ) -> MockServer {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener bind");
+        listener.set_nonblocking(false).expect("blocking listener");
+        let address = listener.local_addr().expect("local_addr");
+        let observed: StdArc<StdMutex<Vec<String>>> = StdArc::new(StdMutex::new(Vec::new()));
+        let obs2 = observed.clone();
+        let stop_flag = StdArc::new(std::sync::atomic::AtomicBool::new(false));
+        let stop_clone = stop_flag.clone();
+        // Set accept timeout via nonblocking + poll loop.
+        listener.set_nonblocking(true).expect("set_nonblocking");
+        let handle = thread::spawn(move || {
+            let mut received_bytes: Vec<u8> = Vec::new();
+            for conn_idx in 0..max_connections {
+                if stop_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                    return;
+                }
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+                let mut stream = loop {
+                    if stop_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    match listener.accept() {
+                        Ok((s, _)) => {
+                            s.set_nonblocking(false).ok();
+                            break s;
+                        }
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                            if std::time::Instant::now() > deadline {
+                                return;
+                            }
+                            thread::sleep(std::time::Duration::from_millis(10));
+                            continue;
+                        }
+                        Err(_) => return,
+                    }
+                };
+                let frame = match read_frame(&mut stream) {
+                    Some(f) => f,
+                    None => return,
+                };
+                let (cmd, body_len) = read_command(&frame);
+                obs2.lock().unwrap().push(cmd.clone());
+
+                // Drain exactly `body_len` bytes if the request carries a
+                // raw-body segment (upload_write only, per spec §2.3).
+                if let Some(len) = body_len {
+                    let mut remaining = len as usize;
+                    let mut buf = [0u8; 8192];
+                    while remaining > 0 {
+                        let take = remaining.min(buf.len());
+                        match stream.read(&mut buf[..take]) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                received_bytes.extend_from_slice(&buf[..n]);
+                                remaining -= n;
+                            }
+                            Err(_) => break,
+                        }
+                    }
+                }
+
+                // Canned responses per command.
+                let fail_here = rules.fail_on
+                    == Some(match cmd.as_str() {
+                        "upload_create" => "upload_create",
+                        "upload_write" => "upload_write",
+                        "upload_info" => "upload_info",
+                        "upload_save" => "upload_save",
+                        "upload_delete" => "upload_delete",
+                        _ => "unknown",
+                    });
+                let result_code: u64 = if fail_here {
+                    2003 /* PermFail */
+                } else {
+                    0
+                };
+                let resp = match cmd.as_str() {
+                    "upload_create" => build_response(&[
+                        ("result", MockField::Num(result_code)),
+                        ("uploadid", MockField::Num(77)),
+                    ]),
+                    "upload_write" => build_response(&[("result", MockField::Num(result_code))]),
+                    "upload_info" => {
+                        let sha1 = rules
+                            .info_sha1_override
+                            .clone()
+                            .unwrap_or_else(|| pcloud_proto::upload_sha1_hex(&received_bytes));
+                        let size = rules.info_size_override.unwrap_or(declared_size);
+                        build_response(&[
+                            ("result", MockField::Num(result_code)),
+                            ("id", MockField::Num(0)),
+                            ("size", MockField::Num(size)),
+                            ("sha1", MockField::Str(&sha1)),
+                        ])
+                    }
+                    "upload_save" => build_response(&[("result", MockField::Num(result_code))]),
+                    "upload_delete" => build_response(&[("result", MockField::Num(0))]),
+                    _ => build_response(&[("result", MockField::Num(1))]),
+                };
+                let _ = stream.write_all(&resp);
+                let _ = stream.flush();
+                let _ = conn_idx; // silence unused
+            }
+        });
+        MockServer {
+            address,
+            observed,
+            handle: Some(handle),
+            stop: stop_flag,
+        }
+    }
+
+    impl MockServer {
+        fn observed_commands(&self) -> Vec<String> {
+            self.observed.lock().unwrap().clone()
+        }
+        fn shutdown(mut self) {
+            self.stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            if let Some(h) = self.handle.take() {
+                let _ = h.join();
+            }
+        }
+    }
+
+    struct NullRefresher;
+    impl SessionRefresher for NullRefresher {
+        fn refresh(&mut self) -> Result<SecretString, String> {
+            Err("no refresher".to_owned())
+        }
+    }
+
+    fn chunked_config(address: SocketAddr) -> ConfigProfile {
+        let mut config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join(format!(
+                "pcloud-chunked-upload-test-{}-{}",
+                std::process::id(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            )),
+            Environment::Production,
+        );
+        config.api = ApiEndpoint {
+            mode: ApiMode::Plaintext,
+            host: address.ip().to_string(),
+            port: address.port(),
+            server_name: address.ip().to_string(),
+            connect_timeout_ms: 2_000,
+            read_timeout_ms: 2_000,
+        };
+        config
+    }
+
+    fn fresh_store() -> (Connection, std::path::PathBuf) {
+        let path = std::env::temp_dir().join(format!(
+            "pcloud-chunked-upload-store-{}-{}.sqlite3",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let _ = std::fs::remove_file(&path);
+        let _ = bootstrap_profile(&path).expect("bootstrap");
+        (Connection::open(&path).expect("open"), path)
+    }
+
+    fn small_payload(n: usize) -> Vec<u8> {
+        (0..n).map(|i| (i % 251) as u8).collect()
+    }
+
+    #[test]
+    fn chunked_upload_happy_path_drives_create_write_info_save() {
+        // Use a payload < one chunk (driver still issues 1 create + 1
+        // write + 1 info + 1 save, exercising every stage).
+        let payload = small_payload(8_192);
+        let server = spawn_mock_server(4, payload.len() as u64, MockRules::happy());
+        let config = chunked_config(server.address);
+        let runtime = TransferRuntime::from_config(&config);
+        let (conn, _store_path) = fresh_store();
+        let clock: std::sync::Arc<dyn pcloud_resilience::clock::Clock> =
+            std::sync::Arc::new(ManualClock::new());
+        let mut machine = UploadStateMachine::with_defaults(clock);
+        let mut refresher = NullRefresher;
+        let mut progress_events: Vec<u64> = Vec::new();
+
+        let result = runtime
+            .upload_bytes_chunked(
+                &conn,
+                &mut machine,
+                SecretString::new("t".to_owned()),
+                ChunkedUploadRequest {
+                    local_path: "/tmp/chunked-happy.bin".to_owned(),
+                    parent_folder_id: 1,
+                    file_name: "happy.bin".to_owned(),
+                    total_size: payload.len() as u64,
+                    modified_at_unix: 1_700_000_000,
+                    ctime: None,
+                    conflict: ChunkedConflictMode::CreateIfNew,
+                },
+                &payload,
+                |off| progress_events.push(off),
+                &mut refresher,
+            )
+            .expect("chunked upload should succeed");
+
+        assert_eq!(result.bytes_uploaded, payload.len() as u64);
+        assert_eq!(result.upload_id, 77);
+        assert_eq!(result.sha1_hex.len(), 40);
+        // Every chunk produced a progress event.
+        assert!(!progress_events.is_empty());
+        assert_eq!(*progress_events.last().unwrap(), payload.len() as u64);
+
+        let observed = server.observed_commands();
+        // Expect exactly: upload_create, upload_write, upload_info, upload_save
+        assert_eq!(observed[0], "upload_create");
+        assert!(observed.iter().any(|c| c == "upload_write"));
+        assert!(observed.contains(&"upload_info".to_owned()));
+        assert!(observed.contains(&"upload_save".to_owned()));
+        server.shutdown();
+    }
+
+    #[test]
+    fn chunked_resume_skips_create_when_resume_row_matches() {
+        let payload = small_payload(8_192);
+        let total = payload.len() as u64;
+        // Pre-seed a resume row — the state machine should skip
+        // `upload_create` and jump straight to writing from the
+        // persisted offset.
+        let (conn, _p) = fresh_store();
+        UploadResumeRepository::put(
+            &conn,
+            &UploadResumeRecord {
+                local_path: "/tmp/chunked-resume.bin".to_owned(),
+                parent_folder_id: 1,
+                file_name: "resume.bin".to_owned(),
+                upload_id: 77,
+                offset: 4096,
+                total_size: total,
+                prefix_sha1: None,
+                conflict: ConflictHint::IfNew,
+                updated_at: 0,
+            },
+        )
+        .unwrap();
+
+        // The mock reports sha1 of whatever bytes it observed on the
+        // wire. On resume, only the suffix after the persisted offset
+        // is actually sent, so we must pin the mock's reported sha1 to
+        // the full-payload sha1 for the verifier to accept it.
+        let mut rules = MockRules::happy();
+        rules.info_sha1_override = Some(pcloud_proto::upload_sha1_hex(&payload));
+        let server = spawn_mock_server(4, total, rules);
+        let config = chunked_config(server.address);
+        let runtime = TransferRuntime::from_config(&config);
+        let clock: std::sync::Arc<dyn pcloud_resilience::clock::Clock> =
+            std::sync::Arc::new(ManualClock::new());
+        let mut machine = UploadStateMachine::with_defaults(clock);
+        let mut refresher = NullRefresher;
+        let mut last_off: u64 = 0;
+        let result = runtime
+            .upload_bytes_chunked(
+                &conn,
+                &mut machine,
+                SecretString::new("t".to_owned()),
+                ChunkedUploadRequest {
+                    local_path: "/tmp/chunked-resume.bin".to_owned(),
+                    parent_folder_id: 1,
+                    file_name: "resume.bin".to_owned(),
+                    total_size: total,
+                    modified_at_unix: 1_700_000_000,
+                    ctime: None,
+                    conflict: ChunkedConflictMode::CreateIfNew,
+                },
+                &payload,
+                |off| {
+                    last_off = off;
+                },
+                &mut refresher,
+            )
+            .expect("chunked resume should succeed");
+
+        assert_eq!(result.bytes_uploaded, total);
+        assert_eq!(last_off, total);
+        let observed = server.observed_commands();
+        assert!(
+            !observed.contains(&"upload_create".to_owned()),
+            "upload_create must be skipped on resume, observed={observed:?}"
+        );
+        assert!(observed.contains(&"upload_write".to_owned()));
+        assert!(observed.contains(&"upload_info".to_owned()));
+        assert!(observed.contains(&"upload_save".to_owned()));
+        server.shutdown();
+    }
+
+    #[test]
+    fn chunked_permfail_on_write_triggers_upload_delete_cleanup() {
+        // Server returns PermFail (result=2003) on upload_write. The
+        // state machine aborts immediately and the runtime should issue
+        // upload_delete for the orphaned uploadid.
+        let payload = small_payload(4096);
+        let mut rules = MockRules::happy();
+        rules.fail_on = Some("upload_write");
+        let server = spawn_mock_server(4, payload.len() as u64, rules);
+        let config = chunked_config(server.address);
+        let runtime = TransferRuntime::from_config(&config);
+        let (conn, _p) = fresh_store();
+        let clock: std::sync::Arc<dyn pcloud_resilience::clock::Clock> =
+            std::sync::Arc::new(ManualClock::new());
+        let mut machine = UploadStateMachine::with_defaults(clock);
+        let mut refresher = NullRefresher;
+
+        let err = runtime
+            .upload_bytes_chunked(
+                &conn,
+                &mut machine,
+                SecretString::new("t".to_owned()),
+                ChunkedUploadRequest {
+                    local_path: "/tmp/chunked-permfail.bin".to_owned(),
+                    parent_folder_id: 1,
+                    file_name: "pf.bin".to_owned(),
+                    total_size: payload.len() as u64,
+                    modified_at_unix: 0,
+                    ctime: None,
+                    conflict: ChunkedConflictMode::CreateIfNew,
+                },
+                &payload,
+                |_| {},
+                &mut refresher,
+            )
+            .expect_err("permfail must abort");
+        assert!(matches!(err, ChunkedUploadError::State(_)));
+        let observed = server.observed_commands();
+        assert!(observed.contains(&"upload_create".to_owned()));
+        assert!(observed.contains(&"upload_write".to_owned()));
+        assert!(
+            observed.contains(&"upload_delete".to_owned()),
+            "upload_delete cleanup must be issued, observed={observed:?}"
+        );
+        server.shutdown();
+    }
+
+    #[test]
+    fn chunked_upload_info_sha1_mismatch_aborts_save() {
+        let payload = small_payload(4096);
+        let mut rules = MockRules::happy();
+        rules.info_sha1_override = Some("0000000000000000000000000000000000000000".to_owned());
+        let server = spawn_mock_server(4, payload.len() as u64, rules);
+        let config = chunked_config(server.address);
+        let runtime = TransferRuntime::from_config(&config);
+        let (conn, _p) = fresh_store();
+        let clock: std::sync::Arc<dyn pcloud_resilience::clock::Clock> =
+            std::sync::Arc::new(ManualClock::new());
+        let mut machine = UploadStateMachine::with_defaults(clock);
+        let mut refresher = NullRefresher;
+        let err = runtime
+            .upload_bytes_chunked(
+                &conn,
+                &mut machine,
+                SecretString::new("t".to_owned()),
+                ChunkedUploadRequest {
+                    local_path: "/tmp/chunked-mismatch.bin".to_owned(),
+                    parent_folder_id: 1,
+                    file_name: "mm.bin".to_owned(),
+                    total_size: payload.len() as u64,
+                    modified_at_unix: 0,
+                    ctime: None,
+                    conflict: ChunkedConflictMode::CreateIfNew,
+                },
+                &payload,
+                |_| {},
+                &mut refresher,
+            )
+            .expect_err("sha1 mismatch must abort");
+        assert!(matches!(err, ChunkedUploadError::State(_)));
+        let observed = server.observed_commands();
+        // upload_save must NOT have been issued on mismatch (C spec §4.1).
+        assert!(
+            !observed.contains(&"upload_save".to_owned()),
+            "upload_save must not run on sha1 mismatch, observed={observed:?}"
+        );
+        assert!(
+            observed.contains(&"upload_delete".to_owned()),
+            "orphan must be cleaned, observed={observed:?}"
+        );
+        server.shutdown();
+    }
+
+    #[test]
+    fn chunked_progress_observable_is_monotonic() {
+        // A small payload that still triggers multiple write calls by
+        // constructing a >1 chunk scenario. PSYNC_COPY_BUFFER_SIZE is
+        // 256 KiB so we need at least that much plus a bit more to force
+        // at least 2 write ticks.
+        let payload = small_payload(pcloud_proto::PSYNC_COPY_BUFFER_SIZE + 1024);
+        let server = spawn_mock_server(8, payload.len() as u64, MockRules::happy());
+        let config = chunked_config(server.address);
+        let runtime = TransferRuntime::from_config(&config);
+        let (conn, _p) = fresh_store();
+        let clock: std::sync::Arc<dyn pcloud_resilience::clock::Clock> =
+            std::sync::Arc::new(ManualClock::new());
+        let mut machine = UploadStateMachine::with_defaults(clock);
+        let mut refresher = NullRefresher;
+        let mut offsets: Vec<u64> = Vec::new();
+        let _ = runtime
+            .upload_bytes_chunked(
+                &conn,
+                &mut machine,
+                SecretString::new("t".to_owned()),
+                ChunkedUploadRequest {
+                    local_path: "/tmp/chunked-progress.bin".to_owned(),
+                    parent_folder_id: 1,
+                    file_name: "p.bin".to_owned(),
+                    total_size: payload.len() as u64,
+                    modified_at_unix: 0,
+                    ctime: None,
+                    conflict: ChunkedConflictMode::CreateIfNew,
+                },
+                &payload,
+                |off| offsets.push(off),
+                &mut refresher,
+            )
+            .expect("upload should succeed");
+
+        // Monotonically non-decreasing.
+        for pair in offsets.windows(2) {
+            assert!(pair[0] <= pair[1], "progress regressed: {pair:?}");
+        }
+        // At least 2 progress events (two write calls for > 1 chunk).
+        assert!(
+            offsets.len() >= 2,
+            "expected >=2 progress ticks, got {offsets:?}"
+        );
+        // Final offset == total.
+        assert_eq!(*offsets.last().unwrap(), payload.len() as u64);
+        server.shutdown();
+    }
+}
+
+/// Test-only mock fixture for the `transfer_backend` subsystem.
+///
+/// Promoted from the `pcloud-fs` mock-backend pattern (R18 wave-01
+/// audit ask) so this backend can be driven by integration tests
+/// without a live transport or store. The fixture wraps the shared
+/// [`crate::mock::MockFixture`] recorders and exposes a representative
+/// call helper that records the canonical protocol command this
+/// backend issues on its happy path.
+///
+/// The fixture is `Send + Sync`, deterministic (no sleeps or clocks),
+/// and cheap to construct via [`Default`].
+pub mod mock {
+    use crate::mock::{MockEvent, MockFixture};
+
+    /// Canonical protocol command exercised by [`Fixture::record_representative_call`].
+    pub const REPRESENTATIVE_COMMAND: &str = "getfilelink";
+
+    /// Thin wrapper around [`MockFixture`] specialised for this backend.
+    #[derive(Debug, Default)]
+    pub struct Fixture {
+        /// Underlying shared recorders.
+        pub fixture: MockFixture,
+    }
+
+    impl Fixture {
+        /// Construct a new mock fixture for this backend.
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        /// Record the representative transfer runtime call (getfilelink).
+        ///
+        /// Returns the recorded event so integration tests can assert
+        /// on the exact command name without re-reading the recorder.
+        pub fn record_representative_call(&self) -> MockEvent {
+            self.fixture.proto.call(REPRESENTATIVE_COMMAND, "mock");
+            MockEvent::with_payload("proto", REPRESENTATIVE_COMMAND, "mock")
+        }
+    }
+}
+
+/// Per-file classification emitted by `pcloudc verify` (R9 #12).
+///
+/// The variants mirror the one-line renderer the CLI surfaces:
+/// `[OK]`, `[MISMATCH local=… server=…]`, `[MISSING_LOCAL]`,
+/// `[MISSING_REMOTE]`. The type is deliberately side-effect-free and
+/// `Clone`-able so a mock backend can return a canned classification
+/// without touching the network.
+///
+/// Security: server digests are opaque hex strings; this type does not
+/// log, persist, or serialize secret material. It is safe to emit to a
+/// user-visible report line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VerifyClassification {
+    /// Local file SHA256 matches the server-reported SHA256.
+    Ok,
+    /// Local and server digests diverged.
+    Mismatch {
+        /// Lowercase hex SHA256 of the local file.
+        local: String,
+        /// Lowercase hex SHA256 reported by the server.
+        server: String,
+    },
+    /// The remote file exists but the local path is missing on disk.
+    MissingLocal,
+    /// The local file exists but no remote counterpart was resolvable.
+    MissingRemote,
+}
+
+impl VerifyClassification {
+    /// Short ASCII tag used by the text renderer (`OK`, `MISMATCH`, …).
+    #[must_use]
+    pub fn tag(&self) -> &'static str {
+        match self {
+            Self::Ok => "OK",
+            Self::Mismatch { .. } => "MISMATCH",
+            Self::MissingLocal => "MISSING_LOCAL",
+            Self::MissingRemote => "MISSING_REMOTE",
+        }
+    }
+
+    /// Render the classification in the documented one-line shape.
+    #[must_use]
+    pub fn render(&self) -> String {
+        match self {
+            Self::Ok => "[OK]".to_owned(),
+            Self::Mismatch { local, server } => {
+                format!("[MISMATCH local={local} server={server}]")
+            }
+            Self::MissingLocal => "[MISSING_LOCAL]".to_owned(),
+            Self::MissingRemote => "[MISSING_REMOTE]".to_owned(),
+        }
+    }
+
+    /// `true` when the classification is a hard mismatch (promotes the
+    /// CLI exit code to `crate::cli_exit_conflict`-equivalent).
+    #[must_use]
+    pub const fn is_mismatch(&self) -> bool {
+        matches!(self, Self::Mismatch { .. })
+    }
+
+    /// `true` when the classification is a soft warning (missing on one
+    /// side). Used by the CLI to distinguish `Ok` from
+    /// `Unavailable`-with-warnings exits.
+    #[must_use]
+    pub const fn is_warning(&self) -> bool {
+        matches!(self, Self::MissingLocal | Self::MissingRemote)
+    }
+}
+
+/// Classify a local vs server checksum pair for `pcloudc verify`.
+///
+/// Semantics, identical to the CLI-side renderer:
+///
+/// * `(None, None)` → [`VerifyClassification::MissingLocal`] (neither
+///   local nor remote was resolvable — treated as a missing local read
+///   rather than silently dropping the row),
+/// * `(None, Some(_))` → [`VerifyClassification::MissingLocal`],
+/// * `(Some(_), None)` → [`VerifyClassification::MissingRemote`],
+/// * `(Some(a), Some(b))` where `a == b` (case-insensitive) →
+///   [`VerifyClassification::Ok`],
+/// * `(Some(a), Some(b))` where `a != b` →
+///   [`VerifyClassification::Mismatch { local: a, server: b }`].
+///
+/// Inputs are compared in lowercase so mixed-case hex digests (common
+/// in older server responses) do not spuriously mismatch.
+#[must_use]
+pub fn classify_file_hashes(
+    local_sha256_hex: Option<&str>,
+    server_sha256_hex: Option<&str>,
+) -> VerifyClassification {
+    match (local_sha256_hex, server_sha256_hex) {
+        (None, _) => VerifyClassification::MissingLocal,
+        (Some(_), None) => VerifyClassification::MissingRemote,
+        (Some(local), Some(server)) => {
+            let local_norm = local.trim().to_ascii_lowercase();
+            let server_norm = server.trim().to_ascii_lowercase();
+            if local_norm == server_norm {
+                VerifyClassification::Ok
+            } else {
+                VerifyClassification::Mismatch {
+                    local: local_norm,
+                    server: server_norm,
+                }
+            }
+        }
+    }
+}
+
+/// Compute the SHA256 hex digest of a local file. Returns `Ok(None)`
+/// when the path does not exist (so the caller can map that to
+/// [`VerifyClassification::MissingLocal`] without branching on
+/// [`io::ErrorKind`]); returns `Err` on any other IO failure so the
+/// caller can surface it distinctly (permission denied, IO error, …).
+pub fn local_file_sha256_hex(path: &std::path::Path) -> io::Result<Option<String>> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(Some(format!("{:x}", hasher.finalize())))
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use super::{VerifyClassification, classify_file_hashes, local_file_sha256_hex};
+
+    #[test]
+    fn classifies_matching_digests_as_ok() {
+        let res = classify_file_hashes(Some("ABC123"), Some("abc123"));
+        assert_eq!(res, VerifyClassification::Ok);
+        assert_eq!(res.tag(), "OK");
+        assert_eq!(res.render(), "[OK]");
+        assert!(!res.is_mismatch());
+        assert!(!res.is_warning());
+    }
+
+    #[test]
+    fn classifies_divergent_digests_as_mismatch() {
+        let res = classify_file_hashes(Some("aa"), Some("bb"));
+        assert_eq!(
+            res,
+            VerifyClassification::Mismatch {
+                local: "aa".to_owned(),
+                server: "bb".to_owned()
+            }
+        );
+        assert!(res.is_mismatch());
+        assert_eq!(res.render(), "[MISMATCH local=aa server=bb]");
+    }
+
+    #[test]
+    fn classifies_missing_local_and_remote() {
+        assert_eq!(
+            classify_file_hashes(None, Some("abc")),
+            VerifyClassification::MissingLocal
+        );
+        assert_eq!(
+            classify_file_hashes(Some("abc"), None),
+            VerifyClassification::MissingRemote
+        );
+        assert_eq!(
+            classify_file_hashes(None, None),
+            VerifyClassification::MissingLocal
+        );
+        assert!(VerifyClassification::MissingLocal.is_warning());
+        assert!(VerifyClassification::MissingRemote.is_warning());
+    }
+
+    #[test]
+    fn sha256_missing_file_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("nope.txt");
+        let res = local_file_sha256_hex(&missing).expect("io ok");
+        assert!(res.is_none());
+    }
+
+    #[test]
+    fn sha256_empty_file_matches_known_digest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("empty.bin");
+        std::fs::write(&p, b"").unwrap();
+        let digest = local_file_sha256_hex(&p).unwrap().unwrap();
+        // SHA-256("") = e3b0c442...b855
+        assert_eq!(
+            digest,
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+    }
+
+    #[test]
+    fn sha256_matches_expected_for_known_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let p = tmp.path().join("a.txt");
+        std::fs::write(&p, b"abc").unwrap();
+        let digest = local_file_sha256_hex(&p).unwrap().unwrap();
+        assert_eq!(
+            digest,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        // Hooked through classify: server reports same → OK.
+        let classified = classify_file_hashes(Some(&digest), Some(&digest));
+        assert_eq!(classified, VerifyClassification::Ok);
+    }
+}

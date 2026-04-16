@@ -1,0 +1,26 @@
+[Unit]
+Description=pCloud Console Client daemon IPC socket
+Documentation=https://github.com/pcloudcom/console-client
+
+[Socket]
+# Owner-only local IPC. Matches pcloud-daemon auth_vault / IPC policy:
+# the socket path must be owner-readable, mode 0600, under a 0700 dir.
+ListenStream=%t/pcloud-rs/daemon.sock
+SocketMode=0600
+DirectoryMode=0700
+# Do not set SocketUser/SocketGroup to a shared group — owner-only by design.
+RemoveOnStop=yes
+PassCredentials=yes
+PassSecurity=yes
+
+# Reject connection storms before they reach the daemon.
+Accept=no
+Backlog=16
+MaxConnections=32
+MaxConnectionsPerSource=8
+
+# No world/group access anywhere, at any time.
+# (Intentionally NO SmackLabelIPIn/Out to avoid accidental relaxation.)
+
+[Install]
+WantedBy=sockets.target
