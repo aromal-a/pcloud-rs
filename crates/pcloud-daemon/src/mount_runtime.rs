@@ -48,8 +48,12 @@
 //! The parity-matrix row remains under Reviewer 19's `bd-1du.10`
 //! discipline — this module does not flip it.
 
-// **PLATFORM:** Linux
-// **GATING:** #[cfg(target_os = "linux")].
+// **PLATFORM:** Linux + macOS.
+// **GATING:** `#[cfg(target_os = "linux")]` around the `PcloudFsShim`
+// wrapper (fuser-only); `#[cfg(target_os = "macos")]` around the bare
+// `ProtoFuseAdapter` wrapper that feeds the fuse-t FFI; shared FS
+// composition (backends, staging, journal, write path) gated to
+// `#[cfg(any(target_os = "linux", target_os = "macos"))]`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -63,21 +67,21 @@ use pcloud_fs::mount_orphan::{
 use pcloud_fs::mount_service::{MountError, MountHandle, MountOptions, MountService};
 use pcloud_ipc::{Response, ResponseStatus};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use pcloud_fs::backend::{ProtoFileBackend, ProtoFolderBackend, ProtoUploadBackend};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use pcloud_fs::fuse_adapter::{AdapterOptions, ProtoFuseAdapter};
 #[cfg(target_os = "linux")]
 use pcloud_fs::fuser_shim::PcloudFsShim;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use pcloud_fs::staging::StagingDir;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use pcloud_fs::write_journal::WriteJournal;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use pcloud_fs::write_path::{WritePathOptions, WritePathService};
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use pcloud_proto::BinaryApiTransport;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use pcloud_secret::secret_string::SecretString;
 
 /// Factory that produces a [`FuseAdapter`] for a given mount request.
@@ -741,13 +745,19 @@ pub fn default_adapter_factory() -> AdapterFactory {
     Box::new(|| Ok(boxed_adapter(NullFuseAdapter)))
 }
 
-/// Parameters needed to build a composed `PcloudFsShim` adapter at mount time.
+/// Parameters needed to build a composed FUSE adapter at mount time.
+///
+/// On Linux the factory wraps the adapter in a [`PcloudFsShim`] and mounts
+/// it via [`MountService::mount_fuser`]. On macOS the factory mounts the
+/// bare [`ProtoFuseAdapter`] via [`MountService::mount`] — the fuse-t FFI
+/// path owns its own translation layer and has no `fuser::Filesystem`
+/// dependency.
 ///
 /// [`SecretString`] is deliberately not `Clone`-derived; the factory clones
 /// it explicitly via `clone_secret` at each adapter construction so every
 /// duplication of the token buffer is auditable in review (matches the
 /// existing pattern in [`crate::runtime::PendingPasswordAuth`]).
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[derive(Debug)]
 pub struct ShimFactoryParams {
     /// Live protocol transport (shared, cheap to clone).
@@ -797,12 +807,56 @@ impl DynFuseAdapter for PcloudShimAdapter {
     }
 }
 
-/// Build an adapter factory that composes a real [`PcloudFsShim`] at mount
-/// time, along with a drain hook that flushes the writer before unmount.
+/// Object-safe adapter that wraps a bare [`ProtoFuseAdapter`] for the
+/// macOS fuse-t path. Dispatches through [`MountService::mount`] (which
+/// routes to `MacosPlatformMount::mount_adapter` and then the fuse-t FFI).
+/// The `fuser` crate is Linux-only, so we deliberately skip the
+/// `PcloudFsShim` wrapper on macOS — the fuse-t FFI thunks in
+/// `pcloud_fs::platform::macos_ffi` speak to `FuseAdapter` directly.
+#[cfg(target_os = "macos")]
+struct PcloudProtoAdapter {
+    writer: Arc<WritePathService<ProtoUploadBackend<BinaryApiTransport>>>,
+    adapter: Option<
+        ProtoFuseAdapter<
+            ProtoFolderBackend<BinaryApiTransport>,
+            ProtoFileBackend<BinaryApiTransport>,
+        >,
+    >,
+}
+
+#[cfg(target_os = "macos")]
+impl DynFuseAdapter for PcloudProtoAdapter {
+    fn mount_with(
+        mut self: Box<Self>,
+        service: &MountService,
+        mountpoint: &Path,
+        options: MountOptions,
+    ) -> Result<MountHandle, MountError> {
+        let adapter = self
+            .adapter
+            .take()
+            .expect("PcloudProtoAdapter adapter already consumed");
+        // The writer is held by the adapter via its internal `Arc` and by
+        // the drain hook closure — dropping the local handle here does
+        // not free the writer; it just removes one reference.
+        let _ = self.writer;
+        service.mount(mountpoint, adapter, options)
+    }
+}
+
+/// Build an adapter factory that composes a real live FUSE adapter at
+/// mount time, along with a drain hook that flushes the writer before
+/// unmount.
+///
+/// On Linux the factory wraps the composed adapter in a [`PcloudFsShim`]
+/// and mounts it via [`MountService::mount_fuser`]. On macOS the factory
+/// mounts the bare [`ProtoFuseAdapter`] via [`MountService::mount`] which
+/// routes through the fuse-t FFI; there is no `fuser::Filesystem` layer
+/// on macOS because the `fuser` crate is Linux-only.
 ///
 /// Returns `(factory, drain_hook)`. The drain hook holds a shared reference
 /// to the writer so the caller can install it into [`MountControl::new`].
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[must_use]
 pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory, DrainHook) {
     let writer_slot: Arc<
@@ -870,20 +924,38 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
 
         // Wire the write-path into the adapter too so adapter-level FUSE
         // ops (setattr/create/etc. that flow through `FuseAdapter`) reach
-        // the real writer. `PcloudFsShim` still calls `self.writer.*`
-        // directly for the hot write/flush/fsync path; this line closes
-        // the alternative entry into the adapter so neither surface
-        // returns ENOSYS once auth + transport are live.
-        let adapter = Arc::new(
-            ProtoFuseAdapter::with_file_backend(folder, files, adapter_options)
-                .with_write_path(Arc::clone(&writer)),
-        );
+        // the real writer.
+        //
+        // Linux: wrap in `Arc` and hand to `PcloudFsShim` which dispatches
+        // `fuser::Filesystem` ops back into the adapter + the writer.
+        //
+        // macOS: hand the bare adapter to `MountService::mount` which
+        // routes through the fuse-t FFI. There is no `fuser` layer; the
+        // FFI thunks in `pcloud_fs::platform::macos_ffi` speak
+        // `FuseAdapter` directly.
+        #[cfg(target_os = "linux")]
+        {
+            let adapter = Arc::new(
+                ProtoFuseAdapter::with_file_backend(folder, files, adapter_options)
+                    .with_write_path(Arc::clone(&writer)),
+            );
 
-        let shim = PcloudFsShim::new(adapter, Arc::clone(&writer));
-        Ok(Box::new(PcloudShimAdapter {
-            writer,
-            shim: Some(shim),
-        }))
+            let shim = PcloudFsShim::new(adapter, Arc::clone(&writer));
+            Ok(Box::new(PcloudShimAdapter {
+                writer,
+                shim: Some(shim),
+            }))
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            let adapter = ProtoFuseAdapter::with_file_backend(folder, files, adapter_options)
+                .with_write_path(Arc::clone(&writer));
+            Ok(Box::new(PcloudProtoAdapter {
+                writer,
+                adapter: Some(adapter),
+            }))
+        }
     });
 
     let drain: DrainHook = Arc::new(move || {

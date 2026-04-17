@@ -353,13 +353,17 @@ mod tests {
     use crate::bootstrap_with_config;
 
     fn bootstrap_test_shell() -> crate::RuntimeShell {
+        // Use `/tmp` (not `std::env::temp_dir()`) so the fully-qualified
+        // Unix-socket path stays under SUN_LEN on macOS, where the
+        // per-user tempdir `/var/folders/.../T/` alone eats 49 chars.
         let nonce = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("clock should be after epoch")
             .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "pcloud-daemon-serve-test-{}-{nonce}",
-            std::process::id()
+        let root = std::path::PathBuf::from("/tmp").join(format!(
+            "pd-srv-{}-{}",
+            std::process::id(),
+            nonce % 1_000_000_000
         ));
         let config = ConfigProfile::secure_defaults(root, Environment::Development);
         bootstrap_with_config(config).expect("runtime bootstrap should succeed")

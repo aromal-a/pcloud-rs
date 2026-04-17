@@ -168,16 +168,23 @@ impl MountService {
 
         Self::validate_mountpoint(mountpoint)?;
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "linux")]
+        {
+            crate::platform::linux::mount_with_fuser(mountpoint, adapter, options)
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            use crate::platform::PlatformMount;
+            let backend = crate::platform::macos::MacosPlatformMount;
+            backend.mount_adapter(Box::new(adapter), mountpoint, options)
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             let _ = adapter;
             let _ = options;
             Err(MountError::UnsupportedPlatform)
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            crate::platform::linux::mount_with_fuser(mountpoint, adapter, options)
         }
     }
 

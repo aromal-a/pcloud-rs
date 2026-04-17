@@ -100,7 +100,7 @@ fn encode_rejects_oversized_payload() {
     let big = "A".repeat(MAX_IPC_PAYLOAD_LEN + 10);
     let request = Request::PasswordSubmission {
         username: "user".to_owned(),
-        value: big,
+        value: big.into(),
     };
     let err = encode_request(&request).expect_err("oversized payload must be rejected");
     assert!(matches!(err, ProtocolError::PayloadTooLarge));

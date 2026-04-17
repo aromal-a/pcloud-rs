@@ -738,13 +738,16 @@ pub struct AdapterOptions {
 
 impl Default for AdapterOptions {
     fn default() -> Self {
-        // SAFETY: getuid/getgid on Linux are always-success libc calls
-        // that take no arguments and never set errno; they read kernel
-        // task creds. Falls back to root only if the libc binding is
-        // missing on a non-linux build.
-        #[cfg(target_os = "linux")]
+        // SAFETY: getuid/getgid are always-success libc calls on
+        // Unix-family platforms; they take no arguments and never set
+        // errno, and return the calling task's real uid/gid. We call
+        // them unconditionally on Unix so the mount reports the
+        // invoking user as owner (fuse-t maps the returned uid/gid
+        // to the NFS export identity; without this, files appear as
+        // root:wheel and non-root writes are rejected).
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
         let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         let (uid, gid) = (0u32, 0u32);
         Self {
             uid,
@@ -776,9 +779,20 @@ impl FileBackend for NoFileBackend {
 /// underlying [`FileHandle`] is what governs the lifetime of the
 /// backend-side resource — `release` drops the last reference.
 #[derive(Debug)]
+enum HandleKind {
+    /// Read-backed by the server-side `FileHandle` (remote file id known).
+    Server(Arc<FileHandle>),
+    /// Read/write-backed by the local staging blob. Used for files that
+    /// exist only in write-path staging (freshly-created via `create`,
+    /// or mid-upload) and therefore have no usable server-side `file_id`
+    /// yet.
+    Staged,
+}
+
+#[derive(Debug)]
 struct HandleSlot {
     ino: Ino,
-    shared: Arc<FileHandle>,
+    kind: HandleKind,
 }
 
 #[derive(Debug, Default)]
@@ -814,6 +828,8 @@ trait WriteDelegate: Send + Sync + 'static {
     fn truncate(&self, ino: u64, new_size: u64) -> Result<(), i32>;
     fn unlink(&self, ino: Option<u64>, path: &str) -> Result<(), i32>;
     fn rename(&self, from: &str, to: &str) -> Result<(), i32>;
+    fn has_open_handle(&self, ino: u64) -> bool;
+    fn read_staged(&self, ino: u64, offset: u64, len: usize) -> Result<Vec<u8>, i32>;
 }
 
 struct WriteDelegateImpl<U: FileUploadBackend> {
@@ -872,6 +888,14 @@ impl<U: FileUploadBackend> WriteDelegate for WriteDelegateImpl<U> {
     fn rename(&self, from: &str, to: &str) -> Result<(), i32> {
         self.inner
             .rename(from, to)
+            .map_err(|e| write_err_to_errno(&e))
+    }
+    fn has_open_handle(&self, ino: u64) -> bool {
+        self.inner.has_open_handle(ino)
+    }
+    fn read_staged(&self, ino: u64, offset: u64, len: usize) -> Result<Vec<u8>, i32> {
+        self.inner
+            .read_staged(ino, offset, len)
             .map_err(|e| write_err_to_errno(&e))
     }
 }
@@ -1285,10 +1309,40 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
     }
 
     fn open(&self, ino: Ino) -> Result<FileHandleId, i32> {
+        // Fast path: if the writer has a live handle for this inode the
+        // file exists only (or also) in local staging — serve the open
+        // from staging instead of requiring a server-side file id. This
+        // is essential for freshly-created files (via `create`) whose
+        // first upload has not completed yet, and for files opened for
+        // write before any bytes have been flushed to the server.
+        if let Some(writer) = self.writer.as_ref() {
+            if writer.has_open_handle(ino) {
+                let mut tbl = self.handles.lock().map_err(|_| crate::errors::EIO)?;
+                let id = tbl.next_id.checked_add(1).unwrap_or(1);
+                tbl.next_id = id;
+                tbl.by_id.insert(
+                    id,
+                    HandleSlot {
+                        ino,
+                        kind: HandleKind::Staged,
+                    },
+                );
+                return Ok(id);
+            }
+        }
+
         // Resolve the pCloud file_id for this inode. If the ino was never
         // populated from a directory listing, try to resolve it on demand
         // by listing the parent and re-visiting the child entry.
-        let file_id = self.resolve_file_id(ino).map_err(|e| e.to_errno())?;
+        let file_id = match self.resolve_file_id(ino) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!(
+                    "[pcloud-adapter] open ino={ino} resolve_file_id FAILED: {e:?}"
+                );
+                return Err(e.to_errno());
+            }
+        };
 
         // Ref-counted per-inode shared FileHandle: multiple concurrent opens
         // on the same inode share one upstream handle. `release` drops the
@@ -1299,7 +1353,15 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
                 Arc::clone(existing)
             } else {
                 drop(tbl);
-                let handle = self.file_backend.open(file_id).map_err(|e| e.to_errno())?;
+                let handle = match self.file_backend.open(file_id) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        eprintln!(
+                            "[pcloud-adapter] open ino={ino} file_id={file_id} backend.open FAILED: {e:?}"
+                        );
+                        return Err(e.to_errno());
+                    }
+                };
                 let shared = Arc::new(handle);
                 let mut tbl = self.handles.lock().map_err(|_| crate::errors::EIO)?;
                 tbl.by_ino.entry(ino).or_insert_with(|| Arc::clone(&shared));
@@ -1310,7 +1372,13 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
         let mut tbl = self.handles.lock().map_err(|_| crate::errors::EIO)?;
         let id = tbl.next_id.checked_add(1).unwrap_or(1);
         tbl.next_id = id;
-        tbl.by_id.insert(id, HandleSlot { ino, shared });
+        tbl.by_id.insert(
+            id,
+            HandleSlot {
+                ino,
+                kind: HandleKind::Server(shared),
+            },
+        );
         Ok(id)
     }
 
@@ -1318,13 +1386,33 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
         if len == 0 {
             return Ok(Vec::new());
         }
-        let shared = {
+        let (ino, shared) = {
             let tbl = self.handles.lock().map_err(|_| crate::errors::EIO)?;
-            tbl.by_id.get(&handle).map(|s| Arc::clone(&s.shared))
-        }
-        .ok_or(EBADF)?;
+            let slot = tbl.by_id.get(&handle).ok_or_else(|| {
+                eprintln!(
+                    "[pcloud-adapter] read handle={handle} off={offset} len={len} EBADF — no slot"
+                );
+                EBADF
+            })?;
+            match &slot.kind {
+                HandleKind::Server(s) => (slot.ino, Arc::clone(s)),
+                HandleKind::Staged => {
+                    let ino = slot.ino;
+                    drop(tbl);
+                    let writer = self.writer.as_ref().ok_or(crate::errors::EIO)?;
+                    return writer.read_staged(ino, offset, len);
+                }
+            }
+        };
+        let _ = ino;
 
         let page_size = self.options.page_cache.page_size as u64;
+        if page_size == 0 {
+            eprintln!(
+                "[pcloud-adapter] read handle={handle} page_size=0 — fatal config"
+            );
+            return Err(crate::errors::EIO);
+        }
         let mut out = Vec::with_capacity(len);
         let mut cursor = offset;
         let end = offset.saturating_add(len as u64);
@@ -1340,10 +1428,19 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
             let page_bytes = if let Some(b) = self.page_cache.get(page_key) {
                 b
             } else {
-                let fetched = self
+                let fetched = match self
                     .file_backend
                     .read(&shared, page_start, page_size as usize)
-                    .map_err(|e| e.to_errno())?;
+                {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!(
+                            "[pcloud-adapter] read file_id={} page_start={page_start} len={page_size} backend.read FAILED: {e:?}",
+                            shared.file_id
+                        );
+                        return Err(e.to_errno());
+                    }
+                };
                 // End-of-file: a short or empty read means we cannot proceed
                 // past this point.
                 if fetched.is_empty() {
@@ -1378,6 +1475,12 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
         let mut tbl = self.handles.lock().map_err(|_| crate::errors::EIO)?;
         let slot = tbl.by_id.remove(&handle).ok_or(EBADF)?;
         let ino = slot.ino;
+        // Staged handles carry no server-side resource to release; the
+        // per-ino `by_ino` entry is only populated for server-backed
+        // opens, so nothing further to do.
+        if matches!(slot.kind, HandleKind::Staged) {
+            return Ok(());
+        }
         drop(slot);
         // If this was the last per-ino reference, drop the shared entry
         // and notify the backend.
@@ -1418,9 +1521,14 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
         };
         let (ino, _gen) = self.inodes.insert_or_get(&full, FsEntryKind::RegularFile);
         writer.create(ino, parent_path, name)?;
-        // Invalidate any stale cached listing for the parent so a
-        // subsequent readdir sees the new child.
-        self.cache.invalidate(parent_path);
+        // Publish the freshly-created entry into the metadata cache + the
+        // parent's cached children list so subsequent `lookup(parent,
+        // name)` / `getattr(new_ino)` / `readdir(parent)` resolve the
+        // new file without a backend round-trip (the file only exists
+        // in local staging at this point; fetching the parent listing
+        // from pCloud would return ENOENT until the first upload_save).
+        let attr = self.build_attr(ino, FsEntryKind::RegularFile, 0);
+        self.publish_local_entry(parent_path, name, attr);
         Ok(ino)
     }
 

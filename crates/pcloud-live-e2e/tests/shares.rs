@@ -115,11 +115,13 @@ fn live_share_folder_invite_and_cancel() {
         .expect("SDK bootstrap");
 
     let auth_resp = if let Some(token) = optional_env(ENV_TOKEN) {
-        sdk.dispatch(Request::AuthTokenSubmission { value: token })
+        sdk.dispatch(Request::AuthTokenSubmission {
+            value: token.into(),
+        })
     } else {
         sdk.dispatch(Request::PasswordSubmission {
             username: optional_env(ENV_USER).unwrap(),
-            value: optional_env(ENV_PASSWORD).unwrap(),
+            value: optional_env(ENV_PASSWORD).unwrap().into(),
         })
     };
     assert_no_secret_leak(&auth_resp);

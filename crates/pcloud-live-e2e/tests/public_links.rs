@@ -89,11 +89,13 @@ fn live_public_link_lifecycle() {
         .build()
         .expect("SDK bootstrap");
     let auth_resp = if let Some(token) = optional_env(ENV_TOKEN) {
-        sdk.dispatch(Request::AuthTokenSubmission { value: token })
+        sdk.dispatch(Request::AuthTokenSubmission {
+            value: token.into(),
+        })
     } else {
         sdk.dispatch(Request::PasswordSubmission {
             username: optional_env(ENV_USER).unwrap(),
-            value: optional_env(ENV_PASSWORD).unwrap(),
+            value: optional_env(ENV_PASSWORD).unwrap().into(),
         })
     };
     if auth_resp.status != ResponseStatus::Ok || !sdk.is_authenticated() {
@@ -187,7 +189,7 @@ fn live_public_link_lifecycle() {
 
         let r3 = sdk.dispatch(Request::ChangePublicLinkPassword {
             link_id: id,
-            password: Some("live-e2e-tmp-pw".to_owned()),
+            password: Some("live-e2e-tmp-pw".to_owned().into()),
         });
         assert_no_secret_leak(&r3);
 

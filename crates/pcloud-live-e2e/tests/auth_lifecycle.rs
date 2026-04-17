@@ -89,7 +89,9 @@ fn live_login_by_token() {
     let token = optional_env(ENV_TOKEN).expect("gate checked token presence");
 
     let mut daemon = TestDaemon::new("auth-token");
-    let resp = daemon.dispatch(Request::AuthTokenSubmission { value: token });
+    let resp = daemon.dispatch(Request::AuthTokenSubmission {
+        value: token.into(),
+    });
     assert_no_secret_leak(&resp);
     assert_eq!(
         resp.status,

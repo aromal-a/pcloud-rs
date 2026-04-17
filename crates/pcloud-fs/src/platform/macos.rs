@@ -40,6 +40,7 @@ use crate::mount_orphan::MountinfoReader;
 use crate::mount_service::{MountError, MountHandle, MountOptions};
 use crate::platform::PlatformMount;
 
+#[path = "macos_ffi.rs"]
 pub mod macos_ffi;
 
 // -----------------------------------------------------------------------------
@@ -79,15 +80,11 @@ impl PlatformMount for MacosPlatformMount {
     /// Returns [`MountError::Unsupported`] with an install hint when
     /// neither check passes.
     fn probe_supported(&self) -> Result<(), MountError> {
-        if Path::new("/Library/Frameworks/fuse-t.framework").exists() {
+        let backend = MacFuseBackend::from_env();
+        if find_libfuse_install_path(backend).is_some() {
             return Ok(());
         }
-        if dlopen_libfuse_succeeds() {
-            return Ok(());
-        }
-        Err(MountError::Unsupported(
-            "fuse-t not installed; install from https://www.fuse-t.org/".to_string(),
-        ))
+        Err(MountError::Unsupported(install_hint(backend)))
     }
 
     /// macOS-flavored defaults: we advertise a pCloud volume name,
@@ -160,6 +157,12 @@ fn mount_with_fuse_t(
     mount_point: &Path,
     opts: MountOptions,
 ) -> Result<MountHandle, MountError> {
+    // Publish fuse-t's `libfuse.dylib` symbols into the process's flat
+    // namespace before the first call to any `fuse_*` extern. Without
+    // this the `-undefined,dynamic_lookup` linker flag will defer the
+    // symbols forever and dyld will abort on first call.
+    ensure_libfuse_loaded()?;
+
     let mount_point_c = path_to_cstring(mount_point)?;
     let argv_owned = build_fuse_args(&opts);
 
@@ -439,6 +442,9 @@ extern "C" fn thunk_lookup(
                 unsafe { macos_ffi::fuse_reply_entry(req, &param) };
             }
             Err(errno) => {
+                eprintln!(
+                    "[pcloud-fuse-t] lookup parent={parent} name={name_str} FAILED errno={errno}"
+                );
                 // SAFETY: `req` is valid; `errno` is a Rust-side i32
                 // forwarded verbatim (already a libc errno).
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
@@ -481,6 +487,9 @@ extern "C" fn thunk_getattr(
                 unsafe { macos_ffi::fuse_reply_attr(req, &st, ATTR_TIMEOUT_SECS) };
             }
             Err(errno) => {
+                eprintln!(
+                    "[pcloud-fuse-t] getattr ino={ino} FAILED errno={errno}"
+                );
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
             }
@@ -521,6 +530,9 @@ extern "C" fn thunk_open(
         };
         match adapter.open(ino) {
             Ok(handle_id) => {
+                eprintln!(
+                    "[pcloud-fuse-t] open ino={ino} -> handle={handle_id}"
+                );
                 // SAFETY: `fi` is writable for this callback per the
                 // libfuse contract; we only store the handle id.
                 unsafe { (*fi).fh = handle_id };
@@ -529,12 +541,16 @@ extern "C" fn thunk_open(
                 unsafe { macos_ffi::fuse_reply_open(req, fi) };
             }
             Err(errno) => {
+                eprintln!(
+                    "[pcloud-fuse-t] open ino={ino} FAILED errno={errno}"
+                );
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
             }
         }
     })
     .unwrap_or_else(|_| {
+        eprintln!("[pcloud-fuse-t] open PANIC ino={ino}");
         // SAFETY: `req` is valid.
         unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
     });
@@ -547,13 +563,16 @@ extern "C" fn thunk_open(
 /// `req` is live; `fi` is non-NULL and valid for this call.
 extern "C" fn thunk_read(
     req: macos_ffi::fuse_req_t,
-    _ino: macos_ffi::fuse_ino_t,
+    ino: macos_ffi::fuse_ino_t,
     size: usize,
     off: i64,
     fi: *mut macos_ffi::fuse_file_info,
 ) {
     let _ = std::panic::catch_unwind(|| {
         if fi.is_null() {
+            eprintln!(
+                "[pcloud-fuse-t] read ino={ino} off={off} size={size} fi=NULL"
+            );
             // SAFETY: `req` is valid.
             unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
             return;
@@ -564,26 +583,68 @@ extern "C" fn thunk_read(
         let adapter = match unsafe { adapter_from_req(req) } {
             Some(a) => a,
             None => {
+                eprintln!(
+                    "[pcloud-fuse-t] read ino={ino} fh={handle_id} adapter=NULL"
+                );
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
                 return;
             }
         };
         let offset = if off < 0 { 0u64 } else { off as u64 };
-        match adapter.read(handle_id, offset, size) {
+        // If fuse-t's NFS bridge did not carry an `fh` across from
+        // `open` (observed on some NFSv4 client flows), fall back to
+        // opening the file on demand keyed on the inode.
+        let effective = if handle_id == 0 {
+            eprintln!(
+                "[pcloud-fuse-t] read ino={ino} off={off} size={size} fh=0 — opening on demand"
+            );
+            match adapter.open(ino) {
+                Ok(h) => {
+                    eprintln!(
+                        "[pcloud-fuse-t] read ino={ino} on-demand handle={h}"
+                    );
+                    // Store so subsequent reads on this `fi` skip the
+                    // fallback. fuse-t-maintained state is best-effort
+                    // and may still be reset per NFS request.
+                    // SAFETY: `fi` is writable for this callback.
+                    unsafe { (*fi).fh = h };
+                    h
+                }
+                Err(errno) => {
+                    eprintln!(
+                        "[pcloud-fuse-t] read ino={ino} on-demand OPEN FAILED errno={errno}"
+                    );
+                    // SAFETY: `req` is valid.
+                    unsafe { macos_ffi::fuse_reply_err(req, errno) };
+                    return;
+                }
+            }
+        } else {
+            handle_id
+        };
+        match adapter.read(effective, offset, size) {
             Ok(bytes) => {
+                eprintln!(
+                    "[pcloud-fuse-t] read ino={ino} fh={effective} off={off} req={size} got={}",
+                    bytes.len()
+                );
                 // SAFETY: `req` is valid; `bytes.as_ptr()` and
                 // `bytes.len()` describe a live slice that libfuse
                 // copies synchronously before returning.
                 unsafe { macos_ffi::fuse_reply_buf(req, bytes.as_ptr(), bytes.len()) };
             }
             Err(errno) => {
+                eprintln!(
+                    "[pcloud-fuse-t] read ino={ino} fh={effective} off={off} size={size} FAILED errno={errno}"
+                );
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
             }
         }
     })
     .unwrap_or_else(|_| {
+        eprintln!("[pcloud-fuse-t] read PANIC ino={ino} off={off} size={size}");
         // SAFETY: `req` is valid.
         unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
     });
@@ -763,13 +824,16 @@ extern "C" fn thunk_write(
             }
         };
         let offset = if off < 0 { 0u64 } else { off as u64 };
+        eprintln!("[pcloud-fuse-t] write ino={ino} off={offset} size={size}");
         match adapter.write(ino, offset, data) {
             Ok(count) => {
+                eprintln!("[pcloud-fuse-t] write ino={ino} off={offset} -> {count} bytes");
                 // SAFETY: `req` is valid; `count` is the byte total
                 // libfuse will pass back to the kernel.
                 unsafe { macos_ffi::fuse_reply_write(req, count) };
             }
             Err(errno) => {
+                eprintln!("[pcloud-fuse-t] write ino={ino} off={offset} FAILED errno={errno}");
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
             }
@@ -828,10 +892,16 @@ extern "C" fn thunk_create(
                 return;
             }
         };
+        eprintln!(
+            "[pcloud-fuse-t] create parent={parent} name={name_str}"
+        );
         // U3: resolve parent ino -> absolute remote path via the trait.
         let parent_buf = match adapter.resolve_ino_to_path(parent) {
             Ok(p) => p,
             Err(errno) => {
+                eprintln!(
+                    "[pcloud-fuse-t] create parent={parent} resolve_ino_to_path FAILED errno={errno}"
+                );
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
                 return;
@@ -841,11 +911,17 @@ extern "C" fn thunk_create(
         let new_ino = match adapter.create(&parent_path, &name_str) {
             Ok(ino) => ino,
             Err(errno) => {
+                eprintln!(
+                    "[pcloud-fuse-t] create parent_path={parent_path} name={name_str} FAILED errno={errno}"
+                );
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
                 return;
             }
         };
+        eprintln!(
+            "[pcloud-fuse-t] create parent_path={parent_path} name={name_str} ok new_ino={new_ino}"
+        );
         // Refresh attrs for the entry reply. On failure we still
         // succeeded at creation, so surface EIO rather than leaking a
         // half-created state.
@@ -1325,25 +1401,150 @@ extern "C" fn thunk_statfs(req: macos_ffi::fuse_req_t, _ino: macos_ffi::fuse_ino
 // Probe helpers.
 // -----------------------------------------------------------------------------
 
-/// Attempt `dlopen("libfuse.dylib", RTLD_LAZY)`; return whether the
-/// symbol resolves. We `dlclose` immediately because we only care
-/// about presence, not a live handle.
-fn dlopen_libfuse_succeeds() -> bool {
-    let Ok(name) = CString::new("libfuse.dylib") else {
-        return false;
-    };
-    // SAFETY: `dlopen` accepts a NUL-terminated C string and an integer
-    // flag; it is documented thread-safe. We immediately pair every
-    // non-null return with `dlclose`. No pointer escapes this function.
-    unsafe {
-        let handle = libc::dlopen(name.as_ptr(), libc::RTLD_LAZY);
-        if handle.is_null() {
-            false
-        } else {
-            libc::dlclose(handle);
-            true
+/// Which userspace libfuse implementation pcloud-rs should bind at
+/// mount time.
+///
+/// Both fuse-t and macFUSE export the libfuse 2.9 low-level ABI, so
+/// our FFI is agnostic once the right dylib is loaded. The default is
+/// [`Self::FuseT`] because it needs no kernel extension and no SIP
+/// carve-out; [`Self::MacFuse`] is available for callers who already
+/// rely on macFUSE. [`Self::Auto`] probes fuse-t first, then macFUSE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MacFuseBackend {
+    FuseT,
+    MacFuse,
+    Auto,
+}
+
+impl MacFuseBackend {
+    /// Read the selector from `PCLOUD_MACOS_FUSE_BACKEND`. Unknown or
+    /// empty values fall back to the default ([`Self::FuseT`]).
+    fn from_env() -> Self {
+        match std::env::var("PCLOUD_MACOS_FUSE_BACKEND")
+            .ok()
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+        {
+            Some("fuse-t") | Some("fuset") | Some("fuse_t") => Self::FuseT,
+            Some("macfuse") | Some("mac-fuse") | Some("mac_fuse") | Some("osxfuse") => {
+                Self::MacFuse
+            }
+            Some("auto") => Self::Auto,
+            _ => Self::FuseT,
         }
     }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::FuseT => "fuse-t",
+            Self::MacFuse => "macFUSE",
+            Self::Auto => "auto",
+        }
+    }
+}
+
+/// Known absolute install paths for **fuse-t**'s userspace libfuse
+/// shim. Separate from [`MACFUSE_CANDIDATES`] because the two stacks
+/// ship under distinct file names so they can coexist on the same
+/// machine. macOS dyld does not search `/usr/local/lib` or
+/// `/opt/homebrew/lib` for bare dlopen names on modern SIP-enforced
+/// systems, so we probe absolute paths.
+const FUSET_CANDIDATES: &[&str] = &[
+    "/usr/local/lib/libfuse-t.dylib",
+    "/opt/homebrew/lib/libfuse-t.dylib",
+    "/Library/Application Support/fuse-t/lib/libfuse-t.dylib",
+];
+
+/// Known absolute install paths for **macFUSE**'s kext-backed libfuse
+/// 2.9-compat shim. macFUSE requires its kernel extension to be
+/// approved in System Settings → Privacy & Security; without that
+/// `fuse_mount` returns `mount_macfuse: the file system is not
+/// available`. This module does not attempt to detect kext-approval
+/// state — the daemon surfaces the libfuse error verbatim.
+const MACFUSE_CANDIDATES: &[&str] = &[
+    "/usr/local/lib/libfuse.dylib",
+    "/opt/homebrew/lib/libfuse.dylib",
+];
+
+/// Return the first existing install candidate for `backend`, if any.
+fn find_libfuse_install_path(backend: MacFuseBackend) -> Option<&'static str> {
+    let probe = |candidates: &[&'static str]| -> Option<&'static str> {
+        candidates.iter().copied().find(|p| Path::new(p).exists())
+    };
+    match backend {
+        MacFuseBackend::FuseT => probe(FUSET_CANDIDATES),
+        MacFuseBackend::MacFuse => probe(MACFUSE_CANDIDATES),
+        MacFuseBackend::Auto => probe(FUSET_CANDIDATES).or_else(|| probe(MACFUSE_CANDIDATES)),
+    }
+}
+
+/// Human-readable install hint used by `probe_supported` / mount
+/// bring-up when no dylib matching the requested backend is present.
+fn install_hint(backend: MacFuseBackend) -> String {
+    match backend {
+        MacFuseBackend::FuseT => {
+            "fuse-t not installed; install from https://www.fuse-t.org/ \
+             (or set PCLOUD_MACOS_FUSE_BACKEND=macfuse to use macFUSE)"
+                .to_string()
+        }
+        MacFuseBackend::MacFuse => {
+            "macFUSE not installed; install from https://macfuse.github.io/ \
+             (or unset PCLOUD_MACOS_FUSE_BACKEND to use fuse-t)"
+                .to_string()
+        }
+        MacFuseBackend::Auto => {
+            "no macOS FUSE backend found; install fuse-t from https://www.fuse-t.org/ \
+             or macFUSE from https://macfuse.github.io/"
+                .to_string()
+        }
+    }
+}
+
+/// Ensure the selected backend's `libfuse*.dylib` is loaded into the
+/// process with `RTLD_GLOBAL` so the `-undefined,dynamic_lookup` extern
+/// symbols declared in [`macos_ffi`] can resolve on first call via
+/// dyld's flat-namespace lookup.
+///
+/// The handle is intentionally leaked (never `dlclose`d) — the mount
+/// session references `fuse_*` symbols for as long as the daemon is
+/// alive, and a `dlclose` would invalidate them. Called once at the
+/// start of every `mount_with_fuse_t`; `dlopen` is idempotent so
+/// repeated calls return the same underlying library.
+fn ensure_libfuse_loaded() -> Result<(), MountError> {
+    let backend = MacFuseBackend::from_env();
+    let path = find_libfuse_install_path(backend)
+        .ok_or_else(|| MountError::Unsupported(install_hint(backend)))?;
+    let Ok(path_c) = CString::new(path) else {
+        return Err(MountError::Unsupported(format!(
+            "libfuse path contains NUL: {path}"
+        )));
+    };
+    // SAFETY: `dlopen` accepts a NUL-terminated C string and an integer
+    // flag; it is documented thread-safe. `RTLD_GLOBAL` publishes the
+    // library's symbols so subsequent flat-namespace lookups (triggered
+    // by our `extern "C"` call sites) can find them. We intentionally
+    // do not call `dlclose`: the library must outlive the mount session.
+    let handle = unsafe { libc::dlopen(path_c.as_ptr(), libc::RTLD_LAZY | libc::RTLD_GLOBAL) };
+    if handle.is_null() {
+        // SAFETY: `dlerror` returns a pointer to a thread-local NUL-
+        // terminated error string owned by libdl; valid until the next
+        // dlopen/dlsym/dlclose call on this thread.
+        let err = unsafe {
+            let e = libc::dlerror();
+            if e.is_null() {
+                "dlopen returned NULL".to_string()
+            } else {
+                std::ffi::CStr::from_ptr(e).to_string_lossy().into_owned()
+            }
+        };
+        return Err(MountError::Unsupported(format!(
+            "failed to load {} backend ({path}): {err}",
+            backend.label()
+        )));
+    }
+    Ok(())
 }
 
 // -----------------------------------------------------------------------------
@@ -1363,19 +1564,46 @@ fn path_to_cstring(path: &Path) -> Result<CString, MountError> {
     })
 }
 
-/// Build a placeholder `fuse_args` representation. Full argv
-/// construction (volname, allow_other, defer_permissions, iosize=...)
-/// lands with the session loop; today we return a placeholder.
-fn build_fuse_args(_opts: &MountOptions) -> Vec<CString> {
-    // The full implementation will materialize:
-    //   ["pcloud-rs",
-    //    "-o", format!("volname={}", volname),
-    //    "-o", "allow_other",
-    //    "-o", "defer_permissions",
-    //    ...]
-    // for now we emit just the argv[0] placeholder so callers can see
-    // the shape.
-    vec![CString::new("pcloud-rs").expect("literal has no NUL")]
+/// Build the `fuse_args` argv for a fuse-t mount.
+///
+/// fuse-t's `fuse_mount` parses these options and forwards them to the
+/// embedded NFS server that macOS mounts as the backing filesystem.
+/// Without at least `-o rw` the NFS server exports read-only and every
+/// create/write fails client-side with `EACCES` before the FUSE thunks
+/// see the request (observed on macOS 14+ where `touch` / `echo >` in
+/// the mountpoint fail with `Permission denied` and no `create` thunk
+/// fires).
+///
+/// Options we emit:
+/// - `rw`              — read-write export,
+/// - `allow_other`     — fuse-t ignores this on the kernel layer
+///                       because NFS already routes by uid, but the
+///                       option is required to make the fuse layer
+///                       accept cross-user ops triggered by
+///                       macOS indexers (Spotlight/mds),
+/// - `defer_permissions` — let FUSE mode/uid/gid bits govern access
+///                         rather than the NFS client's cached perms,
+/// - `volname=<fs_name>` — macOS Finder display name (falls back to
+///                         "pCloud" if the caller did not set one).
+fn build_fuse_args(opts: &MountOptions) -> Vec<CString> {
+    let volname = opts.fs_name.as_deref().unwrap_or("pCloud");
+    let mut argv: Vec<CString> = Vec::with_capacity(8);
+    argv.push(CString::new("pcloud-rs").expect("literal has no NUL"));
+    argv.push(CString::new("-o").expect("literal has no NUL"));
+    argv.push(CString::new("rw").expect("literal has no NUL"));
+    argv.push(CString::new("-o").expect("literal has no NUL"));
+    argv.push(CString::new("allow_other").expect("literal has no NUL"));
+    argv.push(CString::new("-o").expect("literal has no NUL"));
+    argv.push(CString::new("defer_permissions").expect("literal has no NUL"));
+    // `volname=…` may contain arbitrary user-supplied characters;
+    // build through CString which will reject interior NULs (falling
+    // back to the safe default).
+    let volname_opt = format!("volname={volname}");
+    if let Ok(s) = CString::new(volname_opt) {
+        argv.push(CString::new("-o").expect("literal has no NUL"));
+        argv.push(s);
+    }
+    argv
 }
 
 /// Construct the `LowlevelOps` vtable for Phase-3 bring-up. Wires the

@@ -142,8 +142,14 @@ fn sec_10_ipc_socket_is_0600_on_0700_parent() {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let parent =
-        std::env::temp_dir().join(format!("pcloud-sec10-{}-{}", std::process::id(), nonce));
+    // Use `/tmp` directly: macOS SUN_LEN=104 cannot accommodate the
+    // per-user tempdir `/var/folders/.../T/` prefix (49 chars) plus the
+    // rest of the path.
+    let parent = std::path::PathBuf::from("/tmp").join(format!(
+        "pipc-sec10-{}-{}",
+        std::process::id(),
+        nonce % 1_000_000_000
+    ));
     let socket_path = parent.join("daemon.sock");
 
     let server = IpcServer::new(pcloud_ipc::current_effective_uid());
@@ -216,7 +222,7 @@ fn sec_12_encode_rejects_over_one_mib_payload() {
     let big = "A".repeat(MAX_IPC_PAYLOAD_LEN + 512 * 1024);
     let request = Request::PasswordSubmission {
         username: "user".to_owned(),
-        value: big,
+        value: big.into(),
     };
     let err = encode_request_bare(&request).expect_err("1.5 MiB payload must be rejected");
     assert!(matches!(err, ProtocolError::PayloadTooLarge));

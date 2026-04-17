@@ -43,10 +43,13 @@ fn open_fd_count() -> io::Result<usize> {
 #[test]
 #[ignore = "stress: 50 clients x 500 reqs, run with --release --ignored"]
 fn stress_concurrent_ipc_clients_do_not_leak_or_panic() {
-    let socket_path: PathBuf = std::env::temp_dir().join(format!(
-        "pcloud-ipc-stress-{}-{}.sock",
+    // Use `/tmp` directly: macOS SUN_LEN=104 cannot accommodate the
+    // per-user tempdir `/var/folders/.../T/` prefix.
+    let nonce = std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos();
+    let socket_path: PathBuf = std::path::PathBuf::from("/tmp").join(format!(
+        "pipc-st-{}-{}.sock",
         std::process::id(),
-        std::time::UNIX_EPOCH.elapsed().unwrap().as_nanos()
+        nonce % 1_000_000_000
     ));
     let server = IpcServer::new(current_effective_uid());
     let bound = Arc::new(server.bind(&socket_path).expect("bind"));

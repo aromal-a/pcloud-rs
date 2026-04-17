@@ -270,7 +270,7 @@ async fn publinks_create(
                 &state.socket_path,
                 Request::ChangePublicLinkPassword {
                     link_id: id,
-                    password: Some(form.password.clone()),
+                    password: Some(form.password.clone().into()),
                 },
             )
             .await;

@@ -156,7 +156,9 @@ impl Drop for TestDaemon {
 /// Returns `Ok(())` on `SessionState::Authenticated`.
 pub fn authenticate(daemon: &mut TestDaemon) -> Result<(), String> {
     if let Some(token) = optional_env(ENV_TOKEN) {
-        let resp = daemon.dispatch(Request::AuthTokenSubmission { value: token });
+        let resp = daemon.dispatch(Request::AuthTokenSubmission {
+            value: token.into(),
+        });
         if resp.status != ResponseStatus::Ok {
             return Err(format!(
                 "token auth failed: {} ({})",
@@ -178,7 +180,7 @@ pub fn authenticate(daemon: &mut TestDaemon) -> Result<(), String> {
 
     let resp = daemon.dispatch(Request::PasswordSubmission {
         username: user,
-        value: password,
+        value: password.into(),
     });
     if resp.status != ResponseStatus::Ok {
         return Err(format!(

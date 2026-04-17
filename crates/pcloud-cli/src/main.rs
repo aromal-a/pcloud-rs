@@ -1849,7 +1849,7 @@ fn run_interactive_login(
                 }
             };
             let req = Request::CryptoUnlock {
-                password: crypto_pw,
+                password: crypto_pw.into(),
             };
             match client.send(&socket_path, &req) {
                 Ok(r) if flags.verbosity > 0 => eprintln!("crypto: {}", r.message),
@@ -1914,7 +1914,7 @@ fn run_interactive_login(
     let submit_password_and_challenges = |password: &SecretString| -> Result<(), ExitCode> {
         let req = Request::PasswordSubmission {
             username: username.clone(),
-            value: password.expose_secret().to_owned(),
+            value: password.expose_secret().to_owned().into(),
         };
         let response = match client.send(&socket_path, &req) {
             Ok(r) => r,

@@ -18,13 +18,16 @@ use pcloud_ipc::{
 };
 
 fn unique_socket_path(tag: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
-        "pcloud-ipc-test-{}-{}-{}.sock",
+    // Use `/tmp` directly: macOS SUN_LEN=104 cannot accommodate the
+    // per-user tempdir `/var/folders/.../T/` prefix (49 chars).
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    std::path::PathBuf::from("/tmp").join(format!(
+        "pipc-{}-{}-{}.sock",
         std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0),
+        nonce % 1_000_000_000,
         tag,
     ))
 }

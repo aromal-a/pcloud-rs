@@ -3422,7 +3422,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -3445,7 +3445,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -3477,7 +3477,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -3499,7 +3499,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -3530,7 +3530,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -3575,7 +3575,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -3720,7 +3720,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -3746,7 +3746,7 @@ mod tests {
         // Development transport issues a TFA challenge on password login.
         let _ = daemon.dispatch(Request::PasswordSubmission {
             username: "alice@example.com".to_owned(),
-            value: "password".to_owned(),
+            value: "password".to_owned().into(),
         });
 
         let sms = daemon
@@ -3773,7 +3773,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -3822,7 +3822,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -3843,7 +3843,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -3870,7 +3870,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -3924,7 +3924,7 @@ mod tests {
         ));
 
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -4104,7 +4104,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -4121,7 +4121,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 
@@ -4165,7 +4165,7 @@ mod tests {
             .build()
             .expect("embedded daemon should bootstrap");
         let login = daemon.dispatch(Request::AuthTokenSubmission {
-            value: "digest-auth-token".to_owned(),
+            value: "digest-auth-token".to_owned().into(),
         });
         assert_eq!(login.status, ResponseStatus::Ok);
 

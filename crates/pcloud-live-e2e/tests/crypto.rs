@@ -67,7 +67,7 @@ fn live_crypto_setup_unlock_status_mkdir_lock() {
     // 2) Try to unlock first. If the account already has crypto set up,
     //    this succeeds and we proceed. Otherwise we attempt setup.
     let unlock = daemon.dispatch(Request::CryptoUnlock {
-        password: password.clone(),
+        password: password.clone().into(),
     });
     assert_no_secret_leak(&unlock);
 
@@ -78,7 +78,7 @@ fn live_crypto_setup_unlock_status_mkdir_lock() {
         // accounts are pre-provisioned and reject setup with a
         // deterministic Conflict — that is acceptable and we soft-skip.
         let setup = daemon.dispatch(Request::CryptoSetup {
-            password: password.clone(),
+            password: password.clone().into(),
             hint: Some("live-e2e: automated setup".to_owned()),
         });
         assert_no_secret_leak(&setup);
@@ -96,7 +96,7 @@ fn live_crypto_setup_unlock_status_mkdir_lock() {
         // A fresh setup leaves the shell started but typically locked;
         // re-unlock before mkdir.
         let unlock2 = daemon.dispatch(Request::CryptoUnlock {
-            password: password.clone(),
+            password: password.clone().into(),
         });
         assert_no_secret_leak(&unlock2);
         if unlock2.status != ResponseStatus::Ok {
@@ -158,7 +158,9 @@ fn live_crypto_setup_unlock_status_mkdir_lock() {
     );
 
     // 7) Re-unlock to prove we can cycle.
-    let unlock3 = daemon.dispatch(Request::CryptoUnlock { password });
+    let unlock3 = daemon.dispatch(Request::CryptoUnlock {
+        password: password.into(),
+    });
     assert_no_secret_leak(&unlock3);
     assert!(
         matches!(unlock3.status, ResponseStatus::Ok),

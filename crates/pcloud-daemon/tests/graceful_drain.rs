@@ -42,13 +42,17 @@ use pcloud_ipc::{
 };
 
 fn bootstrap_test_shell() -> pcloud_daemon::RuntimeShell {
+    // Use `/tmp` (not `std::env::temp_dir()`) so the Unix-socket path
+    // stays under SUN_LEN on macOS, where the per-user tempdir
+    // `/var/folders/.../T/` alone eats 49 chars.
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock post epoch")
         .as_nanos();
-    let root = std::env::temp_dir().join(format!(
-        "pcloud-daemon-drain-test-{}-{nonce}",
-        std::process::id()
+    let root = std::path::PathBuf::from("/tmp").join(format!(
+        "pd-drn-{}-{}",
+        std::process::id(),
+        nonce % 1_000_000_000
     ));
     let config = ConfigProfile::secure_defaults(root, Environment::Development);
     pcloud_daemon::bootstrap_with_config(config).expect("bootstrap")

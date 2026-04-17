@@ -71,7 +71,7 @@ fn change_and_reunlock_cycle_succeeds() {
     let setup = dispatch(
         &mut runtime,
         Request::CryptoSetup {
-            password: "initial-pass".to_owned(),
+            password: "initial-pass".to_owned().into(),
             hint: Some("initial hint".to_owned()),
         },
     );
@@ -80,7 +80,7 @@ fn change_and_reunlock_cycle_succeeds() {
     let unlock = dispatch(
         &mut runtime,
         Request::CryptoUnlock {
-            password: "initial-pass".to_owned(),
+            password: "initial-pass".to_owned().into(),
         },
     );
     assert_eq!(
@@ -120,7 +120,7 @@ fn change_and_reunlock_cycle_succeeds() {
     let rotate = dispatch(
         &mut runtime,
         Request::CryptoChangePasswordUnlocked {
-            new_password: "second-pass".to_owned(),
+            new_password: "second-pass".to_owned().into(),
             hint: "second hint".to_owned(),
             code: "CONFIRM-1".to_owned(),
             flags: pcloud_crypto::keys::PRIV_KEY_FLAG_TEMP_PASS,
@@ -151,7 +151,7 @@ fn change_and_reunlock_cycle_succeeds() {
     let bad_unlock = dispatch(
         &mut runtime,
         Request::CryptoUnlock {
-            password: "initial-pass".to_owned(),
+            password: "initial-pass".to_owned().into(),
         },
     );
     assert_eq!(
@@ -166,7 +166,7 @@ fn change_and_reunlock_cycle_succeeds() {
     let reunlock = dispatch(
         &mut runtime,
         Request::CryptoUnlock {
-            password: "second-pass".to_owned(),
+            password: "second-pass".to_owned().into(),
         },
     );
     assert_eq!(
@@ -182,8 +182,8 @@ fn change_and_reunlock_cycle_succeeds() {
     let wrong_old = dispatch(
         &mut runtime,
         Request::CryptoChangePassword {
-            old_password: "not-the-right-one".to_owned(),
-            new_password: "third-pass".to_owned(),
+            old_password: "not-the-right-one".to_owned().into(),
+            new_password: "third-pass".to_owned().into(),
             hint: "third hint".to_owned(),
             code: "CONFIRM-2".to_owned(),
             flags: 0,
@@ -194,8 +194,8 @@ fn change_and_reunlock_cycle_succeeds() {
     let rotate_2 = dispatch(
         &mut runtime,
         Request::CryptoChangePassword {
-            old_password: "second-pass".to_owned(),
-            new_password: "third-pass".to_owned(),
+            old_password: "second-pass".to_owned().into(),
+            new_password: "third-pass".to_owned().into(),
             hint: "third hint".to_owned(),
             code: "CONFIRM-2".to_owned(),
             flags: 0,
@@ -220,7 +220,7 @@ fn change_and_reunlock_cycle_succeeds() {
     let final_unlock = dispatch(
         &mut runtime,
         Request::CryptoUnlock {
-            password: "third-pass".to_owned(),
+            password: "third-pass".to_owned().into(),
         },
     );
     assert_eq!(
@@ -248,14 +248,14 @@ fn change_password_without_auth_is_rejected() {
     let _ = dispatch(
         &mut runtime,
         Request::CryptoSetup {
-            password: "p".to_owned(),
+            password: "p".to_owned().into(),
             hint: None,
         },
     );
     let _ = dispatch(
         &mut runtime,
         Request::CryptoUnlock {
-            password: "p".to_owned(),
+            password: "p".to_owned().into(),
         },
     );
     assert!(runtime.crypto.is_started());
@@ -263,7 +263,7 @@ fn change_password_without_auth_is_rejected() {
     let resp = dispatch(
         &mut runtime,
         Request::CryptoChangePasswordUnlocked {
-            new_password: "q".to_owned(),
+            new_password: "q".to_owned().into(),
             hint: "".to_owned(),
             code: "C".to_owned(),
             flags: 0,
@@ -287,21 +287,21 @@ fn change_password_empty_inputs_rejected() {
     let _ = dispatch(
         &mut runtime,
         Request::CryptoSetup {
-            password: "p".to_owned(),
+            password: "p".to_owned().into(),
             hint: None,
         },
     );
     let _ = dispatch(
         &mut runtime,
         Request::CryptoUnlock {
-            password: "p".to_owned(),
+            password: "p".to_owned().into(),
         },
     );
 
     let empty_pw = dispatch(
         &mut runtime,
         Request::CryptoChangePasswordUnlocked {
-            new_password: "".to_owned(),
+            new_password: "".to_owned().into(),
             hint: "".to_owned(),
             code: "C".to_owned(),
             flags: 0,
@@ -312,7 +312,7 @@ fn change_password_empty_inputs_rejected() {
     let empty_code = dispatch(
         &mut runtime,
         Request::CryptoChangePasswordUnlocked {
-            new_password: "q".to_owned(),
+            new_password: "q".to_owned().into(),
             hint: "".to_owned(),
             code: "".to_owned(),
             flags: 0,

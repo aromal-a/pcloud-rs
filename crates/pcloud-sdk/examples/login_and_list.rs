@@ -60,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             let resp = daemon.dispatch(Request::PasswordSubmission {
                 username: user,
-                value: pass,
+                value: pass.into(),
             });
             println!("login:   {:?} :: {}", resp.status, resp.message);
         }

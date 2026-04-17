@@ -1,0 +1,12 @@
+# Cross-platform linker arguments.
+#
+# macOS: the fuse-t `libfuse.dylib` is an optional runtime dependency for
+# the `pcloud-fs` crate's FFI surface (see
+# `crates/pcloud-fs/src/platform/macos_ffi.rs`). We deliberately do not
+# `#[link(name = "fuse")]` so the workspace links on Macs without fuse-t
+# installed; `-undefined dynamic_lookup` defers the fuse_* symbols to
+# dyld at runtime. `MacosPlatformMount::probe_supported` is the
+# authoritative gate that rejects calls into the FFI when fuse-t is
+# absent.
+[target.'cfg(target_os = "macos")']
+rustflags = ["-C", "link-arg=-Wl,-undefined,dynamic_lookup"]

@@ -82,14 +82,16 @@ fn bind_listener_roundtrip_with_owner() {
 
     use pcloud_ipc::current_effective_uid;
 
+    // Use `/tmp` directly: macOS SUN_LEN=104 cannot accommodate the
+    // per-user tempdir `/var/folders/.../T/` prefix.
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock should be after epoch")
         .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "pcloud-platform-ipc-test-{}-{}",
+    let dir = std::path::PathBuf::from("/tmp").join(format!(
+        "pipc-plat-{}-{}",
         std::process::id(),
-        nonce
+        nonce % 1_000_000_000
     ));
     std::fs::create_dir_all(&dir).expect("runtime dir should be created");
     let socket_path = dir.join("ipc.sock");
