@@ -101,9 +101,18 @@ fn stress_concurrent_ipc_clients_do_not_leak_or_panic() {
                 } else {
                     Method::GetStatus
                 };
-                let response = client
-                    .send(&sp, &Request::Plain { method })
-                    .map_err(|e| format!("client {client_idx} req {req_idx}: {e}"))?;
+                let req = Request::Plain { method };
+                // Retry once on ENOTCONN: macOS Unix-domain sockets can
+                // transiently return os error 57 when the server's backlog
+                // races under high concurrency (serve_once is single-threaded).
+                let response = match client.send(&sp, &req) {
+                    Err(e) if e.to_string().contains("os error 57") => {
+                        std::thread::sleep(Duration::from_millis(2));
+                        client.send(&sp, &req)
+                            .map_err(|e2| format!("client {client_idx} req {req_idx} (retry): {e2}"))?
+                    }
+                    result => result.map_err(|e| format!("client {client_idx} req {req_idx}: {e}"))?,
+                };
                 if response.status != ResponseStatus::Ok {
                     return Err(format!(
                         "client {client_idx} req {req_idx} non-ok: {:?}",

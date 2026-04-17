@@ -42,9 +42,11 @@
 //! returns `false`.
 
 // **PLATFORM:** Linux
-// **GATING:** none (portable; uses Linux-only idioms — see TODO(bd-xplat)).
+// **GATING:** Linux-specific helpers gated with #[cfg(target_os = "linux")].
 
+#[cfg(target_os = "linux")]
 use std::fs;
+#[cfg(target_os = "linux")]
 use std::path::Path;
 
 /// Recommended byte-per-second ceiling for metered links (512 KB/s).
@@ -96,6 +98,9 @@ pub fn recommended_limit() -> Option<u64> {
 /// Returns `Ok(true)` if any `nm-dns-*` file contains the literal token
 /// `metered`. Returns `Ok(false)` otherwise, and `Err(())` if the directory
 /// cannot be read.
+///
+/// Linux-only: `/run/NetworkManager` is a Linux-specific path.
+#[cfg(target_os = "linux")]
 fn nm_reports_metered() -> Result<bool, ()> {
     let dir = Path::new("/run/NetworkManager/dnsmasq");
     let entries = fs::read_dir(dir).map_err(|_| ())?;
@@ -114,10 +119,19 @@ fn nm_reports_metered() -> Result<bool, ()> {
     Ok(false)
 }
 
+#[cfg(not(target_os = "linux"))]
+fn nm_reports_metered() -> Result<bool, ()> {
+    Err(())
+}
+
 /// Determine whether the default route interface looks like a WAN (cellular
 /// / tethered) link based on its name prefix.
+///
+/// Linux-only: uses `/proc/net/route` and `/sys/class/net/`.
+/// TODO(bd-xplat): macOS equivalent uses `SCNetworkReachability` or
+/// `NWPathMonitor`; tracked under PLAN_CROSSPLATFORM.md §2.
+#[cfg(target_os = "linux")]
 fn default_route_is_wan() -> Result<bool, ()> {
-    // TODO(bd-xplat): Linux-only — needs cfg gate or platform trait abstraction. See PLAN_CROSSPLATFORM.md §2.
     let route = fs::read_to_string("/proc/net/route").map_err(|_| ())?;
     // /proc/net/route format:
     //   Iface  Destination  Gateway  Flags  ...
@@ -144,6 +158,11 @@ fn default_route_is_wan() -> Result<bool, ()> {
         return Ok(false);
     }
     Ok(false)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn default_route_is_wan() -> Result<bool, ()> {
+    Err(())
 }
 
 #[cfg(test)]

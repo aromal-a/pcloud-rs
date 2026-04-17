@@ -26,12 +26,11 @@ use pcloud_daemon::bootstrap_with_config;
 use pcloud_ipc::{Request, ResponseStatus, UploadConflictMode};
 
 fn unique_root(tag: &str) -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after epoch")
-        .as_nanos();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let seq = COUNTER.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "pcloud-daemon-upload-sess-{tag}-{}-{nonce}",
+        "pcloud-daemon-upload-sess-{tag}-{}-{seq}",
         std::process::id()
     ))
 }

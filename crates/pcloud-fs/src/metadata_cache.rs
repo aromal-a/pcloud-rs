@@ -227,6 +227,7 @@ mod tests {
             uid: 1000,
             gid: 1000,
             mtime_epoch: None,
+            mtime_nsec: 0,
         }
     }
 

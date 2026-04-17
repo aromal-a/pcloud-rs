@@ -61,9 +61,12 @@ use std::time::Duration;
 
 use pcloud_fs::fuse_adapter::{FuseAdapter, NullFuseAdapter};
 use pcloud_fs::mount_orphan::{
-    MountinfoReader, ProcMountinfoReader, detect_orphans, fusermount_unmount,
-    mountpoint_is_already_mounted,
+    MountinfoReader, detect_orphans, fusermount_unmount, mountpoint_is_already_mounted,
 };
+#[cfg(not(target_os = "macos"))]
+use pcloud_fs::mount_orphan::ProcMountinfoReader;
+#[cfg(target_os = "macos")]
+use pcloud_fs::platform::macos::MacosMountinfoReader;
 use pcloud_fs::mount_service::{MountError, MountHandle, MountOptions, MountService};
 use pcloud_ipc::{Response, ResponseStatus};
 
@@ -244,9 +247,20 @@ impl MountControl {
             factory,
             drain,
             journal_sync: Arc::new(|| Ok(())),
-            mountinfo_reader: Box::new(ProcMountinfoReader),
+            mountinfo_reader: Self::default_mountinfo_reader(),
             force_umount: force_umount_from_env(),
             state_dir: None,
+        }
+    }
+
+    fn default_mountinfo_reader() -> Box<dyn MountinfoReader> {
+        #[cfg(target_os = "macos")]
+        {
+            Box::new(MacosMountinfoReader)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            Box::new(ProcMountinfoReader)
         }
     }
 
@@ -503,9 +517,13 @@ impl MountControl {
             return Response {
                 status: ResponseStatus::Conflict,
                 message: format!(
-                    "{} is already mounted as {fs_type}; unmount it first (fusermount3 -u {})",
+                    "{} is already mounted as {fs_type}; unmount it first ({})",
                     mountpoint.display(),
-                    mountpoint.display()
+                    if cfg!(target_os = "macos") {
+                        format!("diskutil unmount force {}", mountpoint.display())
+                    } else {
+                        format!("fusermount3 -u {}", mountpoint.display())
+                    }
                 ),
             };
         }
@@ -662,9 +680,17 @@ fn ordered_shutdown(
         Ok(()) => summary.push_str("session: released; "),
         Err(e) => summary.push_str(&format!("session unmount failed: {e}; ")),
     }
+    // Belt-and-suspenders unmount: on Linux this calls fusermount3/fusermount
+    // to clean up libfuse auxiliary state; on macOS this calls umount(2).
+    // On macOS the primary unmount already ran through the fuse-t session
+    // teardown above, so a ENOENT / EINVAL here is expected and non-fatal.
     match fusermount_unmount(mountpoint, SHUTDOWN_UNMOUNT_WAIT) {
-        Ok(()) => summary.push_str("fusermount: ok; "),
-        Err(e) => summary.push_str(&format!("fusermount failed: {e}; ")),
+        Ok(()) => summary.push_str("platform-unmount: ok; "),
+        Err(e) if cfg!(target_os = "macos") => {
+            // Expected after fuse-t session teardown already released the mount.
+            summary.push_str(&format!("platform-unmount: already released ({e}); "));
+        }
+        Err(e) => summary.push_str(&format!("platform-unmount failed: {e}; ")),
     }
     // Wait for the kernel to release the mount. We poll mountinfo because
     // `fusermount -u` returns after libfuse removes the userspace end,

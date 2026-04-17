@@ -30,10 +30,8 @@ class Pcloudcc < Formula
            "--root", prefix,
            "--path", "crates/pcloud-daemon"
 
-    plist_src = "packaging/macos/homebrew.mxcl.pcloud-rs.plist"
-    if File.exist?(plist_src)
-      (prefix/"homebrew.mxcl.pcloud-rs.plist").write(File.read(plist_src))
-    end
+    # The brew service stanza below provides the launchd integration for
+    # `brew services start/stop`. No separate plist copy is needed.
   end
 
   service do

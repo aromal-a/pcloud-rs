@@ -31,6 +31,17 @@ use crate::{
 
 const IPC_REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5);
 
+// macOS `launch_activate_socket` — available in libSystem since macOS 10.9.
+// Not exposed by the `libc` crate, so we declare it manually.
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn launch_activate_socket(
+        name: *const std::os::raw::c_char,
+        fds: *mut *mut std::os::raw::c_int,
+        cnt: *mut usize,
+    ) -> std::os::raw::c_int;
+}
+
 /// Errors raised by the Unix-socket transport. All variants are safe to
 /// surface to the peer except when the framing is already broken
 /// (in which case the transport layer closes the connection instead).
@@ -236,6 +247,79 @@ impl Drop for BoundIpcServer {
 }
 
 impl IpcServer {
+    /// Try to receive a pre-activated socket from launchd (macOS only).
+    ///
+    /// Returns `Ok(Some(BoundIpcServer))` if launchd provided a socket for
+    /// `socket_name`. Returns `Ok(None)` if no launchd socket is available
+    /// (normal startup without launchd socket activation). Returns `Err` only
+    /// on unexpected failures (e.g. an invalid socket name containing NUL).
+    ///
+    /// `socket_name` must match the `Sockets` key in the launchd plist.
+    /// By convention we use `"pcloud-ipc"`.
+    ///
+    /// `socket_path` is recorded in the returned `BoundIpcServer` so that
+    /// the [`Drop`] impl can unlink it on shutdown (launchd does not do this
+    /// automatically).
+    #[cfg(target_os = "macos")]
+    pub fn try_launchd_socket(
+        &self,
+        socket_name: &str,
+        socket_path: &std::path::Path,
+    ) -> Result<Option<BoundIpcServer>, IpcTransportError> {
+        use std::ffi::CString;
+        use std::os::fd::FromRawFd;
+        use std::os::unix::net::UnixListener;
+
+        let name = CString::new(socket_name).map_err(|_| {
+            IpcTransportError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "launchd socket name contains NUL byte",
+            ))
+        })?;
+
+        let mut fds: *mut std::os::raw::c_int = std::ptr::null_mut();
+        let mut count: usize = 0;
+
+        // SAFETY: `launch_activate_socket` writes into `fds`/`count` only on
+        // success (return value 0). The returned fd array is heap-allocated by
+        // launchd and must be freed with `free(3)`.
+        let rc = unsafe { launch_activate_socket(name.as_ptr(), &mut fds, &mut count) };
+
+        if rc != 0 {
+            // ENOENT (2)  — no such socket in the launchd plist: normal.
+            // ESRCH (3)   — not running under launchd: normal.
+            // Any other errno is unexpected but still non-fatal: fall through
+            // to the regular bind path.
+            return Ok(None);
+        }
+
+        if count == 0 || fds.is_null() {
+            // SAFETY: fds was set by launchd and may need to be freed even if
+            // count is 0; free(NULL) is always safe.
+            unsafe { libc::free(fds as *mut libc::c_void) };
+            return Ok(None);
+        }
+
+        // Take the first fd; we only configure one socket per plist entry.
+        let fd = unsafe { *fds };
+        unsafe { libc::free(fds as *mut libc::c_void) };
+
+        // SAFETY: launchd hands us a valid, pre-bound, pre-listening socket fd.
+        let listener = unsafe { UnixListener::from_raw_fd(fd) };
+
+        // Ensure the socket is in blocking mode (launchd may deliver it
+        // non-blocking depending on activation flags).
+        listener
+            .set_nonblocking(false)
+            .map_err(IpcTransportError::Io)?;
+
+        Ok(Some(BoundIpcServer {
+            listener,
+            owner_uid: self.owner_uid(),
+            socket_path: socket_path.to_path_buf(),
+        }))
+    }
+
     /// Bind an IPC listener at `socket_path`.
     ///
     /// The daemon's runtime directory (`socket_path.parent()`) is

@@ -72,11 +72,12 @@ pub const VIRTUAL_FS_TYPES: &[&str] = &[
 /// location.
 pub const PCLOUD_FS_TYPES: &[&str] = &["fuse.pcloud", "fuse.pclsync", "fuse.pcloud-rs"];
 
-/// Ignore-path prefixes installed by default.
+/// Ignore-path prefixes installed by default on Linux.
 ///
 /// The C client's shipped `ignorepaths` default plus conservative
 /// additions for snap/flatpak/systemd runtime trees. A sync candidate
 /// nested under any of these is rejected up front.
+#[cfg(target_os = "linux")]
 pub const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
     "/proc",
     "/sys",
@@ -93,6 +94,33 @@ pub const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
     "/boot",
     "/lost+found",
 ];
+
+/// Ignore-path prefixes installed by default on macOS.
+///
+/// Covers macOS system volumes, virtual filesystems, and paths that should
+/// never be selected as sync roots. `/Volumes` contains all mounted drives
+/// (including the pCloud FUSE mount itself); `/System` is SIP-protected.
+/// `/private/tmp` and `/private/var/vm` are transient system paths.
+/// Note: `/private/var/folders` (temp files) and user home dirs are NOT
+/// blocked here — they are valid sync root candidates.
+#[cfg(target_os = "macos")]
+pub const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
+    "/System",
+    "/Volumes",
+    "/private/tmp",
+    "/private/var/db",
+    "/private/var/vm",
+    "/private/var/run",
+    "/private/etc",
+    "/dev",
+    "/cores",
+    "/Network",
+    "/automount",
+];
+
+/// Ignore-path prefixes installed by default on platforms other than Linux and macOS.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+pub const DEFAULT_IGNORE_PATTERNS: &[&str] = &[];
 
 /// One entry parsed from `/proc/self/mountinfo`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -383,7 +411,14 @@ mod tests {
     #[test]
     fn default_ignore_patterns_contain_system_dirs() {
         let patterns = default_ignore_patterns();
-        for expected in ["/proc", "/sys", "/dev", "/run", "/snap"] {
+        // Platform-specific expected entries.
+        #[cfg(target_os = "linux")]
+        let expected_entries = ["/proc", "/sys", "/dev", "/run", "/snap"];
+        #[cfg(target_os = "macos")]
+        let expected_entries = ["/System", "/Volumes", "/dev", "/cores", "/automount"];
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        let expected_entries: [&str; 0] = [];
+        for expected in expected_entries {
             assert!(
                 patterns.iter().any(|p| p == expected),
                 "missing default ignore {expected}"

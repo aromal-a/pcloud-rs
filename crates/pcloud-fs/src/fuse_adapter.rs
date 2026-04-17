@@ -76,6 +76,9 @@ pub struct EntryAttr {
     /// Last-modified epoch seconds from the backend, when known. The
     /// fuser shim uses this for `mtime`/`ctime`; `None` means "use now".
     pub mtime_epoch: Option<u64>,
+    /// Sub-second component of `mtime_epoch`, in nanoseconds (0–999_999_999).
+    /// Zero when the backend does not supply sub-second precision.
+    pub mtime_nsec: u32,
 }
 
 /// One entry returned by a `readdir` reply.
@@ -1039,6 +1042,7 @@ impl<B: FolderBackend, F: FileBackend> ProtoFuseAdapter<B, F> {
             uid: self.options.uid,
             gid: self.options.gid,
             mtime_epoch,
+            mtime_nsec: 0,
         }
     }
 

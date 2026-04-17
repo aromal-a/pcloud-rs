@@ -32,10 +32,9 @@ use pcloud_model::ids::UserId;
 use pcloud_secret::secret_string::SecretString;
 
 fn bootstrap_authenticated_shell() -> pcloud_daemon::RuntimeShell {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_nanos();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
         "pcloud-daemon-crypto-change-pass-{}-{nonce}",
         std::process::id()
@@ -233,10 +232,9 @@ fn change_and_reunlock_cycle_succeeds() {
 
 #[test]
 fn change_password_without_auth_is_rejected() {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
         "pcloud-daemon-crypto-noauth-{}-{nonce}",
         std::process::id()

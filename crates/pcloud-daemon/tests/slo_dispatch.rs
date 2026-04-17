@@ -20,10 +20,9 @@ use pcloud_daemon::{bootstrap_with_config, dispatch};
 use pcloud_ipc::{Method, Request, ResponseStatus, SloReportPayload};
 
 fn unique_root(tag: &str) -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after epoch")
-        .as_nanos();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
         "pcloud-daemon-slo-{tag}-{}-{nonce}",
         std::process::id()

@@ -59,13 +59,14 @@ pub fn apply_schema_v1(conn: &Connection) -> Result<(), rusqlite::Error> {
 }
 
 /// Apply schema version 2: adds `audit_events.details TEXT` for structured payloads.
+///
+/// Idempotent: skips the `ALTER TABLE` if the column already exists (same
+/// guard used by the v8 hash-chain migration).
 pub fn apply_schema_v2(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute_batch(
-        "
-        ALTER TABLE audit_events ADD COLUMN details TEXT;
-        PRAGMA user_version = 2;
-        ",
-    )
+    if !column_exists(conn, "audit_events", "details")? {
+        conn.execute_batch("ALTER TABLE audit_events ADD COLUMN details TEXT;")?;
+    }
+    conn.execute_batch("PRAGMA user_version = 2;")
 }
 
 /// Apply schema version 3: creates `sync_root_records` with `(sync_id, local_path, remote_path, paused)`.

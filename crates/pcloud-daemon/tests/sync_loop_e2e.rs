@@ -22,10 +22,9 @@ use pcloud_daemon::sync_loop_runtime::spawn_daemon_sync_loop;
 use pcloud_secret::secret_string::SecretString;
 
 fn bootstrap_test_runtime() -> (pcloud_daemon::RuntimeShell, std::path::PathBuf) {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_nanos();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
         "pcloud-sync-loop-e2e-{}-{nonce}",
         std::process::id()
