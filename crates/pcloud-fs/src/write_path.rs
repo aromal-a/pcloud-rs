@@ -728,6 +728,44 @@ impl<B: FileUploadBackend> WritePathService<B> {
         self.handles.lock().map(|h| h.len()).unwrap_or(0)
     }
 
+    /// Whether `ino` has a live write handle (i.e. the inode is
+    /// currently staged locally). Used by the FUSE adapter to route
+    /// `open`/`read` for freshly-created files through the staging blob
+    /// rather than requiring a server-side file id.
+    #[must_use]
+    pub fn has_open_handle(&self, ino: u64) -> bool {
+        self.handles
+            .lock()
+            .map(|h| h.contains_key(&ino))
+            .unwrap_or(false)
+    }
+
+    /// Read a slice of the staging blob backing `ino`. Returns an empty
+    /// `Vec` if `offset` is at or beyond the blob's current length.
+    /// Errors with `WritePathError::NotOpen` if `ino` has no live
+    /// write handle.
+    pub fn read_staged(
+        &self,
+        ino: u64,
+        offset: u64,
+        len: usize,
+    ) -> Result<Vec<u8>, WritePathError> {
+        let handle = self.get_handle(ino)?;
+        let blob_name = {
+            let h = handle
+                .lock()
+                .map_err(|_| WritePathError::Internal("write handle mutex poisoned"))?;
+            h.blob_name.clone()
+        };
+        let bytes = self.stage.read_blob(&blob_name)?;
+        if offset >= bytes.len() as u64 {
+            return Ok(Vec::new());
+        }
+        let start = offset as usize;
+        let end = start.saturating_add(len).min(bytes.len());
+        Ok(bytes[start..end].to_vec())
+    }
+
     /// Replay any pending records from the on-disk journal. Returns the
     /// recovered records so the caller can re-drive backend uploads on
     /// remount.

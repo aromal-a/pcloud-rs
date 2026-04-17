@@ -235,6 +235,30 @@ pub struct LowlevelOps {
         extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, datasync: c_int, fi: *mut fuse_file_info),
     >,
     pub statfs: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t)>,
+    // Upstream `fuse_lowlevel_ops` interposes these 5 extended-attribute
+    // and access slots between `statfs` and `create`. We do not wire
+    // them (libfuse returns `ENOSYS` automatically when `None`), but we
+    // must keep them in the Rust struct so the `create` slot lands at
+    // the exact offset fuse-t's `libfuse.dylib` reads. Without these
+    // placeholders our `create` thunk is installed at the `setxattr`
+    // offset and kernel CREATEs appear unimplemented (observed as
+    // `touch ~/mount/f` returning EACCES/EPERM with no FUSE callback
+    // firing).
+    pub setxattr: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            name: *const c_char,
+            value: *const c_char,
+            size: usize,
+            flags: c_int,
+        ),
+    >,
+    pub getxattr:
+        Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, name: *const c_char, size: usize)>,
+    pub listxattr: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, size: usize)>,
+    pub removexattr: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, name: *const c_char)>,
+    pub access: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, mask: c_int)>,
     pub create: Option<
         extern "C" fn(
             req: fuse_req_t,

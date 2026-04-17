@@ -242,10 +242,24 @@ where
     T: ProtocolTransport + ApiServerHintConsumer + Send + Sync + 'static,
 {
     fn open(&self, file_id: u64) -> Result<FileHandle, FsError> {
-        let link = self
+        let link = match self
             .api
             .get_file_link(self.auth_token.expose_secret(), file_id, None)
-            .map_err(transfer_error_to_fs)?;
+        {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!(
+                    "[pcloud-backend] getfilelink file_id={file_id} FAILED: {e:?}"
+                );
+                return Err(transfer_error_to_fs(e));
+            }
+        };
+        eprintln!(
+            "[pcloud-backend] getfilelink file_id={file_id} hosts={:?} path={} has_dwltag={}",
+            link.hosts,
+            link.path,
+            link.download_tag.is_some()
+        );
         let host = link
             .hosts
             .into_iter()
@@ -280,7 +294,23 @@ where
             dwltag: handle.dwltag.clone(),
             range: Some((offset, end)),
         };
-        fetch_download(&download, &self.http).map_err(http_error_to_fs)
+        match fetch_download(&download, &self.http) {
+            Ok(v) => {
+                eprintln!(
+                    "[pcloud-backend] fetch host={} off={offset} len={len} got={}",
+                    handle.host,
+                    v.len()
+                );
+                Ok(v)
+            }
+            Err(e) => {
+                eprintln!(
+                    "[pcloud-backend] fetch host={} off={offset} len={len} FAILED: {e:?}",
+                    handle.host
+                );
+                Err(http_error_to_fs(e))
+            }
+        }
     }
 }
 
