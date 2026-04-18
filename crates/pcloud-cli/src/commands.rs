@@ -550,6 +550,22 @@ pub enum Command {
     /// `pcloudc backup delete <BACKUP_ID>` — delete a backup by folder id.
     /// Daemon handler: `Request::DeleteBackup`.
     BackupDelete,
+    /// `pcloudc backup create <NAME> <ROOT_FOLDER_ID> <LOCAL_PATH>` — create
+    /// a new backup and register the local folder as an upload-only sync root.
+    /// Daemon handler: `Request::CreateBackup`.
+    BackupCreate,
+    /// `pcloudc backup stop-device <DEVICE_FOLDER_ID>` — stop a device backup
+    /// and remove the matching local sync root.
+    /// Daemon handler: `Request::StopDevice`.
+    BackupStopDevice,
+    /// `pcloudc backup delete-device` — clear the local device backup
+    /// registration (local-only, no network call).
+    /// Daemon handler: `Request::DeleteBackupDevice`.
+    BackupDeleteDevice,
+    /// `pcloudc publink create-tree-from-paths <NAME> <PATHS...>` — create a
+    /// tree link by resolving paths to ids via the daemon path resolver.
+    /// Daemon handler: `Request::CreateTreePublicLink` (after path resolution).
+    CreateTreeLinkFromPaths,
 }
 
 /// CLI-side secret-bearing state held for the duration of the interactive
@@ -745,6 +761,19 @@ pub struct SecretInputs {
     // ── Backup ────────────────────────────────────────────────────────────
     /// Backup folder id for `Command::BackupDelete`.
     pub backup_delete_id: u64,
+    /// Display name for `Command::BackupCreate`.
+    pub backup_create_name: String,
+    /// Remote root folder id for `Command::BackupCreate`.
+    pub backup_create_root_folder_id: u64,
+    /// Absolute local path for `Command::BackupCreate`.
+    pub backup_create_local_path: String,
+    /// Optional parent folder name for `Command::BackupCreate`.
+    pub backup_create_parent_folder_name: Option<String>,
+    /// Device folder id for `Command::BackupStopDevice`.
+    pub backup_device_folder_id: u64,
+    // ── Tree link from paths ──────────────────────────────────────────────
+    /// Paths to resolve for `Command::CreateTreeLinkFromPaths`.
+    pub tree_link_paths: Vec<String>,
 }
 
 impl Command {
@@ -1217,7 +1246,11 @@ impl Command {
             },
             Self::AccountChangePassword => Request::AccountChangePassword {
                 current_password: inputs.password.expose_secret().to_owned().into(),
-                new_password: inputs.account_new_password.expose_secret().to_owned().into(),
+                new_password: inputs
+                    .account_new_password
+                    .expose_secret()
+                    .to_owned()
+                    .into(),
             },
             Self::AccountRegister => Request::AccountRegister {
                 email: inputs.username.clone(),
@@ -1248,6 +1281,25 @@ impl Command {
             // ── Backup (Group B) ─────────────────────────────────────────
             Self::BackupDelete => Request::DeleteBackup {
                 backup_id: inputs.backup_delete_id,
+            },
+            Self::BackupCreate => Request::CreateBackup {
+                name: inputs.backup_create_name.clone(),
+                root_folder_id: inputs.backup_create_root_folder_id,
+                local_path: inputs.backup_create_local_path.clone(),
+                parent_folder_name: inputs.backup_create_parent_folder_name.clone(),
+            },
+            Self::BackupStopDevice => Request::StopDevice {
+                device_folder_id: inputs.backup_device_folder_id,
+            },
+            Self::BackupDeleteDevice => Request::DeleteBackupDevice,
+            // ── Tree link from paths ──────────────────────────────────────
+            // Resolves each pCloud-drive path to a remote folder id on the
+            // daemon side via the authenticated path resolver, then creates
+            // the tree public link. bd-1du row 149.
+            Self::CreateTreeLinkFromPaths => Request::CreateTreePublicLinkFromPaths {
+                name: inputs.tree_link_name.clone(),
+                paths: inputs.tree_link_paths.clone(),
+                expires: inputs.tree_link_expire,
             },
         }
     }
@@ -1388,6 +1440,12 @@ mod tests {
             api_server_location_id: 0,
             api_server_binapi: String::new(),
             backup_delete_id: 0,
+            backup_create_name: String::new(),
+            backup_create_root_folder_id: 0,
+            backup_create_local_path: String::new(),
+            backup_create_parent_folder_name: None,
+            backup_device_folder_id: 0,
+            tree_link_paths: Vec::new(),
         }
     }
 

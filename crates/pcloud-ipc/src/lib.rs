@@ -84,10 +84,10 @@ pub use methods::{
     SessionStatusPayload, SloReportEntry, SloReportPayload, SnapshotAction, StatPathPayload,
     UploadConflictMode, ValueKvKind, ValueKvPayload,
 };
-pub use redacted::RedactedString;
 pub use protocol::{
     Frame, FrameHeader, MessageKind, decode_request, decode_response, encode_request,
     encode_request_bare, encode_response,
 };
+pub use redacted::RedactedString;
 pub use server::{IpcError, IpcServer, MAX_REQUEST_BYTES};
 pub use transport::{BoundIpcServer, IpcTransportError};

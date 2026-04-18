@@ -47,10 +47,12 @@
 
 pub mod circuit_breaker;
 pub mod clock;
+pub mod global_budget;
 pub mod metered;
 pub mod pacing;
 pub mod rate_limit;
 pub mod retry;
+pub mod transport;
 
 #[cfg(feature = "tokio-timeout")]
 pub mod timeout;
@@ -59,7 +61,9 @@ pub use circuit_breaker::{
     BreakerState, CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError,
 };
 pub use clock::{Clock, SystemClock};
+pub use global_budget::GlobalRetryBudget;
 pub use metered::{is_metered_network, recommended_limit};
 pub use pacing::BandwidthPacer;
 pub use rate_limit::{RateLimitError, TokenBucket, TokenBucketConfig};
 pub use retry::{BackoffSchedule, MethodRetryPolicy, RetryClass, RetryDecision, RetryPolicy};
+pub use transport::ResilientTransport;

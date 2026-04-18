@@ -2,7 +2,7 @@
 // **GATING:** none (portable; uses Linux-only idioms — see TODO(bd-xplat)).
 
 use crate::commands::{Command, SecretInputs};
-use crate::prompt::{PromptError, SecretPrompt};
+use crate::prompt::{prompt_line, PromptError, SecretPrompt};
 use pcloud_model::public_links::PublicLinkUploadPolicy;
 use pcloud_secret::secret_string::SecretString;
 use thiserror::Error;
@@ -289,6 +289,11 @@ pub fn help_text() -> &'static str {
         "    create-upload-link ...            Create an upload-only link.\n",
         "    delete-upload-link <ID>           Delete an upload-only link.\n",
         "    create-tree-link <PATHS...>       Selective tree link (mixed files).\n",
+        "    create-tree-link-from-paths <NAME> <PCLOUD-PATH>...\n",
+        "                                      Create a tree public link by resolving\n",
+        "                                      one or more absolute pCloud-drive paths\n",
+        "                                      to ids on the daemon (authenticated path\n",
+        "                                      resolver). At least one path required.\n",
         "    list-link-access <ID>             List upload-link access grants.\n",
         "    add-link-access / remove-link-access <ID> <EMAIL>\n",
         "                                      Manage upload-link access list.\n",
@@ -742,13 +747,16 @@ pub fn normalize_args(args: &[String]) -> Result<(Command, Vec<String>), Command
             "snapshot-verify" => (Command::BackupSnapshotVerify, 2),
             "snapshot-prune" => (Command::BackupSnapshotPrune, 2),
             "delete" | "rm" => (Command::BackupDelete, 2),
+            "create" => (Command::BackupCreate, 2),
+            "stop-device" => (Command::BackupStopDevice, 2),
+            "delete-device" => (Command::BackupDeleteDevice, 2),
             other => {
                 return Err(CommandParseError::UnknownCommand(format!("backup {other}")));
             }
         },
         (Some("backup"), None) => {
             return Err(CommandParseError::UnknownCommand(
-                "backup (missing subcommand: delete|snapshot-create|snapshot-restore|snapshot-verify|snapshot-prune)"
+                "backup (missing subcommand: create|delete|stop-device|delete-device|snapshot-create|snapshot-restore|snapshot-verify|snapshot-prune)"
                     .to_owned(),
             ));
         }
@@ -938,7 +946,11 @@ fn allowed_flags_for(command: &Command) -> &'static [&'static str] {
         ],
         // `submit-password` accepts the password-source flags because
         // it shares the credential-reading path with `login`.
-        Command::SubmitPassword => &["--password-stdin", "--password-env"],
+        Command::SubmitPassword => &[
+            "--password-stdin",
+            "--password-env",
+            "--allow-argv-password",
+        ],
         // TFA submission accepts `--trust-device` to ask pCloud to
         // remember this device for future logins.
         Command::SubmitTwoFactorCode | Command::SubmitRecoveryCode => &["--trust-device", "-r"],
@@ -1096,8 +1108,11 @@ fn command_display(command: &Command) -> &'static str {
         // Download subcommands
         Command::DownloadLink => "download link",
         Command::DownloadFile => "download file",
-        // Backup delete
+        // Backup subcommands
         Command::BackupDelete => "backup delete",
+        Command::BackupCreate => "backup create",
+        Command::BackupStopDevice => "backup stop-device",
+        Command::BackupDeleteDevice => "backup delete-device",
         // Fall back to the canonical single-token name for everything
         // else (handled by the caller via `canonical_token_for`).
         _ => "",
@@ -1295,6 +1310,11 @@ fn canonical_token_for(command: &Command) -> String {
         Command::DownloadFile => "download-file",
         // ── Backup (Group B) ────────────────────────────────────────────
         Command::BackupDelete => "backup-delete",
+        Command::BackupCreate => "backup-create",
+        Command::BackupStopDevice => "backup-stop-device",
+        Command::BackupDeleteDevice => "backup-delete-device",
+        // ── Tree link from paths ─────────────────────────────────────────
+        Command::CreateTreeLinkFromPaths => "create-tree-link-from-paths",
     }
     .to_owned()
 }
@@ -1467,6 +1487,11 @@ fn parse_single_token(token: &str) -> Result<Command, CommandParseError> {
         "download-file" => Command::DownloadFile,
         // ── Backup (Group B) single-token aliases ────────────────────────
         "backup-delete" => Command::BackupDelete,
+        "backup-create" => Command::BackupCreate,
+        "backup-stop-device" => Command::BackupStopDevice,
+        "backup-delete-device" => Command::BackupDeleteDevice,
+        // ── Tree link from paths single-token alias ───────────────────────
+        "create-tree-link-from-paths" => Command::CreateTreeLinkFromPaths,
         other => return Err(CommandParseError::UnknownCommand(other.to_owned())),
     })
 }
@@ -1507,7 +1532,7 @@ pub fn parse_inputs_for_command(
         Command::SubmitPassword => {
             let username = match args.get(2) {
                 Some(username) => username.clone(),
-                None => SecretPrompt::new("Username").read_line()?,
+                None => prompt_line("Username")?,
             };
             // Security: argv-password is visible to every process on the host
             // via `/proc/<pid>/cmdline` until this process exits. Preferred
@@ -1525,7 +1550,21 @@ pub fn parse_inputs_for_command(
         }
         Command::SubmitAuthToken => {
             let auth_token = match args.get(2) {
-                Some(token) => token.clone(),
+                Some(token) => {
+                    // Hard failure unless the caller explicitly acknowledged the risk.
+                    if !args.iter().any(|a| a == "--allow-argv-password") {
+                        eprintln!(
+                            "Error: Passing secrets as command-line arguments leaks them via \
+                             /proc/*/cmdline and shell history. Use --allow-argv-password to override."
+                        );
+                        std::process::exit(2);
+                    }
+                    eprintln!(
+                        "warning: passing an auth token on the command line is insecure \
+                         (visible via /proc/<pid>/cmdline). --allow-argv-password acknowledged."
+                    );
+                    token.clone()
+                }
                 None => SecretPrompt::new("Auth token").read_secret()?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
@@ -1534,7 +1573,21 @@ pub fn parse_inputs_for_command(
         }
         Command::SubmitTwoFactorCode | Command::SubmitRecoveryCode => {
             let two_factor_code = match args.get(2) {
-                Some(code) => code.clone(),
+                Some(code) => {
+                    // Hard failure unless the caller explicitly acknowledged the risk.
+                    if !args.iter().any(|a| a == "--allow-argv-password") {
+                        eprintln!(
+                            "Error: Passing secrets as command-line arguments leaks them via \
+                             /proc/*/cmdline and shell history. Use --allow-argv-password to override."
+                        );
+                        std::process::exit(2);
+                    }
+                    eprintln!(
+                        "warning: passing a TFA/recovery code on the command line is insecure \
+                         (visible via /proc/<pid>/cmdline). --allow-argv-password acknowledged."
+                    );
+                    code.clone()
+                }
                 None => SecretPrompt::new("2FA code").read_secret()?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
@@ -1543,7 +1596,21 @@ pub fn parse_inputs_for_command(
         }
         Command::SubmitCryptoPassword => {
             let crypto_password = match args.get(2) {
-                Some(password) => password.clone(),
+                Some(password) => {
+                    // Hard failure unless the caller explicitly acknowledged the risk.
+                    if !args.iter().any(|a| a == "--allow-argv-password") {
+                        eprintln!(
+                            "Error: Passing secrets as command-line arguments leaks them via \
+                             /proc/*/cmdline and shell history. Use --allow-argv-password to override."
+                        );
+                        std::process::exit(2);
+                    }
+                    eprintln!(
+                        "warning: passing a crypto password on the command line is insecure \
+                         (visible via /proc/<pid>/cmdline). --allow-argv-password acknowledged."
+                    );
+                    password.clone()
+                }
                 None => SecretPrompt::new("Crypto password").read_secret()?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
@@ -1573,11 +1640,11 @@ pub fn parse_inputs_for_command(
             }
             let local_path = match positionals.first() {
                 Some(path) => path.clone(),
-                None => SecretPrompt::new("Local path").read_line()?,
+                None => prompt_line("Local path")?,
             };
             let remote_path = match positionals.get(1) {
                 Some(path) => path.clone(),
-                None => SecretPrompt::new("Remote path").read_line()?,
+                None => prompt_line("Remote path")?,
             };
             let sync_type = match parse_flag_string(raw_args, "--type")? {
                 Some(raw) => Some(parse_sync_type_alias(&raw)?),
@@ -1597,14 +1664,13 @@ pub fn parse_inputs_for_command(
                 Some(id) => id
                     .parse()
                     .map_err(|_| invalid_input("sync id must be numeric"))?,
-                None => SecretPrompt::new("Sync ID")
-                    .read_line()?
+                None => prompt_line("Sync ID")?
                     .parse()
                     .map_err(|_| invalid_input("sync id must be numeric"))?,
             };
             let flavor_raw = match args.get(3) {
                 Some(raw) => raw.clone(),
-                None => SecretPrompt::new("Sync flavor (bilateral|mirror|backup)").read_line()?,
+                None => prompt_line("Sync flavor (bilateral|mirror|backup)")?,
             };
             let flavor = parse_sync_type_alias(&flavor_raw)?;
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
@@ -1617,8 +1683,7 @@ pub fn parse_inputs_for_command(
                 Some(id) => id
                     .parse()
                     .map_err(|_| invalid_input("sync id must be numeric"))?,
-                None => SecretPrompt::new("Sync ID")
-                    .read_line()?
+                None => prompt_line("Sync ID")?
                     .parse()
                     .map_err(|_| invalid_input("sync id must be numeric"))?,
             };
@@ -1629,7 +1694,7 @@ pub fn parse_inputs_for_command(
         Command::ShowLink => {
             let public_link_code = match args.get(2) {
                 Some(code) => code.clone(),
-                None => SecretPrompt::new("Public link code").read_line()?,
+                None => prompt_line("Public link code")?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.public_link_code = public_link_code;
@@ -1642,7 +1707,7 @@ pub fn parse_inputs_for_command(
             // daemon resolves the id by scanning `list_public_links`.
             let raw = match args.get(2) {
                 Some(value) => value.clone(),
-                None => SecretPrompt::new("Public link id or code").read_line()?,
+                None => prompt_line("Public link id or code")?,
             };
             let trimmed = raw.trim();
             if trimmed.is_empty() {
@@ -1660,7 +1725,7 @@ pub fn parse_inputs_for_command(
         Command::CreateFileLink | Command::CreateFolderLink => {
             let public_link_path = match args.get(2) {
                 Some(path) => path.clone(),
-                None => SecretPrompt::new("Public link path").read_line()?,
+                None => prompt_line("Public link path")?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.public_link_path = public_link_path;
@@ -1671,8 +1736,7 @@ pub fn parse_inputs_for_command(
                 Some(id) => id
                     .parse()
                     .map_err(|_| invalid_input("public link id must be numeric"))?,
-                None => SecretPrompt::new("Public link ID")
-                    .read_line()?
+                None => prompt_line("Public link ID")?
                     .parse()
                     .map_err(|_| invalid_input("public link id must be numeric"))?,
             };
@@ -1699,8 +1763,7 @@ pub fn parse_inputs_for_command(
                 Some(id) => id
                     .parse()
                     .map_err(|_| invalid_input("public link id must be numeric"))?,
-                None => SecretPrompt::new("Public link ID")
-                    .read_line()?
+                None => prompt_line("Public link ID")?
                     .parse()
                     .map_err(|_| invalid_input("public link id must be numeric"))?,
             };
@@ -1726,8 +1789,7 @@ pub fn parse_inputs_for_command(
                 Some(id) => id
                     .parse()
                     .map_err(|_| invalid_input("public link id must be numeric"))?,
-                None => SecretPrompt::new("Public link ID")
-                    .read_line()?
+                None => prompt_line("Public link ID")?
                     .parse()
                     .map_err(|_| invalid_input("public link id must be numeric"))?,
             };
@@ -1740,7 +1802,7 @@ pub fn parse_inputs_for_command(
                 Some(_) => return Err(invalid_input("upload policy must be everyone|chosen|off")),
                 None => {
                     let value =
-                        SecretPrompt::new("Upload policy (everyone/chosen/off)").read_line()?;
+                        prompt_line("Upload policy (everyone/chosen/off)")?;
                     match value.to_ascii_lowercase().as_str() {
                         "everyone" => PublicLinkUploadPolicy::Everyone,
                         "chosen" => PublicLinkUploadPolicy::ChosenUsers,
@@ -1759,7 +1821,7 @@ pub fn parse_inputs_for_command(
         Command::CreateUploadLink => {
             let public_link_path = match args.get(2) {
                 Some(path) => path.clone(),
-                None => SecretPrompt::new("Upload link path").read_line()?,
+                None => prompt_line("Upload link path")?,
             };
             // Bare `create-upload-link <PATH>` (no comment) is the form
             // documented in the manpage recipe; default to an empty
@@ -1807,7 +1869,7 @@ pub fn parse_inputs_for_command(
         Command::CreateTreeLink => {
             let tree_link_name = match args.get(2) {
                 Some(name) => name.clone(),
-                None => SecretPrompt::new("Tree link name").read_line()?,
+                None => prompt_line("Tree link name")?,
             };
             let tree_root_folder_id = match args.get(3) {
                 Some(value) if value.eq_ignore_ascii_case("none") => None,
@@ -1870,8 +1932,7 @@ pub fn parse_inputs_for_command(
                 Some(id) => id
                     .parse()
                     .map_err(|_| invalid_input("upload link id must be numeric"))?,
-                None => SecretPrompt::new("Upload link ID")
-                    .read_line()?
+                None => prompt_line("Upload link ID")?
                     .parse()
                     .map_err(|_| invalid_input("upload link id must be numeric"))?,
             };
@@ -1884,8 +1945,7 @@ pub fn parse_inputs_for_command(
                 Some(id) => id
                     .parse()
                     .map_err(|_| invalid_input("public link id must be numeric"))?,
-                None => SecretPrompt::new("Public link ID")
-                    .read_line()?
+                None => prompt_line("Public link ID")?
                     .parse()
                     .map_err(|_| invalid_input("public link id must be numeric"))?,
             };
@@ -1898,14 +1958,13 @@ pub fn parse_inputs_for_command(
                 Some(id) => id
                     .parse()
                     .map_err(|_| invalid_input("public link id must be numeric"))?,
-                None => SecretPrompt::new("Public link ID")
-                    .read_line()?
+                None => prompt_line("Public link ID")?
                     .parse()
                     .map_err(|_| invalid_input("public link id must be numeric"))?,
             };
             let public_link_email = match args.get(3) {
                 Some(email) => email.clone(),
-                None => SecretPrompt::new("Email").read_line()?,
+                None => prompt_line("Email")?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.public_link_id = public_link_id;
@@ -1917,8 +1976,7 @@ pub fn parse_inputs_for_command(
                 Some(id) => id
                     .parse()
                     .map_err(|_| invalid_input("public link id must be numeric"))?,
-                None => SecretPrompt::new("Public link ID")
-                    .read_line()?
+                None => prompt_line("Public link ID")?
                     .parse()
                     .map_err(|_| invalid_input("public link id must be numeric"))?,
             };
@@ -1926,8 +1984,7 @@ pub fn parse_inputs_for_command(
                 Some(id) => id
                     .parse()
                     .map_err(|_| invalid_input("receiver id must be numeric"))?,
-                None => SecretPrompt::new("Receiver ID")
-                    .read_line()?
+                None => prompt_line("Receiver ID")?
                     .parse()
                     .map_err(|_| invalid_input("receiver id must be numeric"))?,
             };
@@ -1940,14 +1997,13 @@ pub fn parse_inputs_for_command(
         Command::RemoveBookmark => {
             let bookmark_code = match args.get(2) {
                 Some(code) => code.clone(),
-                None => SecretPrompt::new("Bookmark code").read_line()?,
+                None => prompt_line("Bookmark code")?,
             };
             let bookmark_location_id = match args.get(3) {
                 Some(id) => id
                     .parse()
                     .map_err(|_| invalid_input("bookmark location id must be numeric"))?,
-                None => SecretPrompt::new("Bookmark location ID")
-                    .read_line()?
+                None => prompt_line("Bookmark location ID")?
                     .parse()
                     .map_err(|_| invalid_input("bookmark location id must be numeric"))?,
             };
@@ -1959,24 +2015,23 @@ pub fn parse_inputs_for_command(
         Command::ChangeBookmark => {
             let bookmark_code = match args.get(2) {
                 Some(code) => code.clone(),
-                None => SecretPrompt::new("Bookmark code").read_line()?,
+                None => prompt_line("Bookmark code")?,
             };
             let bookmark_location_id = match args.get(3) {
                 Some(id) => id
                     .parse()
                     .map_err(|_| invalid_input("bookmark location id must be numeric"))?,
-                None => SecretPrompt::new("Bookmark location ID")
-                    .read_line()?
+                None => prompt_line("Bookmark location ID")?
                     .parse()
                     .map_err(|_| invalid_input("bookmark location id must be numeric"))?,
             };
             let bookmark_name = match args.get(4) {
                 Some(name) => name.clone(),
-                None => SecretPrompt::new("Bookmark name").read_line()?,
+                None => prompt_line("Bookmark name")?,
             };
             let bookmark_description = match args.get(5) {
                 Some(description) => description.clone(),
-                None => SecretPrompt::new("Bookmark description").read_line()?,
+                None => prompt_line("Bookmark description")?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.bookmark_code = bookmark_code;
@@ -2130,7 +2185,7 @@ pub fn parse_inputs_for_command(
             let positional_path = args.iter().skip(2).find(|a| !a.starts_with('-')).cloned();
             let effective_path = match flag_mountpoint.clone().or(positional_path) {
                 Some(p) => p,
-                None => SecretPrompt::new("Mountpoint path").read_line()?,
+                None => prompt_line("Mountpoint path")?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.mount_path = std::path::PathBuf::from(effective_path);
@@ -2146,7 +2201,7 @@ pub fn parse_inputs_for_command(
             let path = args.iter().skip(2).find(|a| !a.starts_with('-')).cloned();
             let path = match path {
                 Some(p) => p,
-                None => SecretPrompt::new("Orphan mountpoint path").read_line()?,
+                None => prompt_line("Orphan mountpoint path")?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.mount_path = std::path::PathBuf::from(path);
@@ -2175,11 +2230,11 @@ pub fn parse_inputs_for_command(
             // Mirrors C psync_send_publink (pclsync/psynclib.c:2217).
             let code = match args.get(2) {
                 Some(value) => value.clone(),
-                None => SecretPrompt::new("Public link code").read_line()?,
+                None => prompt_line("Public link code")?,
             };
             let mails = match parse_flag_string(raw_args, "--to")? {
                 Some(value) => value,
-                None => SecretPrompt::new("Recipient emails (comma-separated)").read_line()?,
+                None => prompt_line("Recipient emails (comma-separated)")?,
             };
             let message = parse_flag_string(raw_args, "--message")?.unwrap_or_default();
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
@@ -2516,7 +2571,7 @@ pub fn parse_inputs_for_command(
             // `sync is-syncable <LOCAL_PATH>`
             let path = match args.get(2) {
                 Some(value) => value.clone(),
-                None => SecretPrompt::new("Local path to classify").read_line()?,
+                None => prompt_line("Local path to classify")?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.local_path = path;
@@ -2526,7 +2581,7 @@ pub fn parse_inputs_for_command(
         Command::AccountVerifyEmailRestricted => {
             let token = match args.get(2) {
                 Some(value) => value.clone(),
-                None => SecretPrompt::new("Verify token").read_line()?,
+                None => prompt_line("Verify token")?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.account_verify_token = token;
@@ -2535,7 +2590,7 @@ pub fn parse_inputs_for_command(
         Command::AccountLostPassword => {
             let email = match args.get(2) {
                 Some(value) => value.clone(),
-                None => SecretPrompt::new("Account email").read_line()?,
+                None => prompt_line("Account email")?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.username = email;
@@ -2552,7 +2607,7 @@ pub fn parse_inputs_for_command(
         Command::AccountRegister => {
             let email = match args.get(2) {
                 Some(value) => value.clone(),
-                None => SecretPrompt::new("New account email").read_line()?,
+                None => prompt_line("New account email")?,
             };
             let password = read_password_securely(args)?;
             let terms_accepted = raw_args.iter().any(|a| a == "--accept-terms");
@@ -2567,14 +2622,13 @@ pub fn parse_inputs_for_command(
                 Some(value) => value
                     .parse::<u32>()
                     .map_err(|_| invalid_input("location_id must be numeric"))?,
-                None => SecretPrompt::new("Location ID")
-                    .read_line()?
+                None => prompt_line("Location ID")?
                     .parse::<u32>()
                     .map_err(|_| invalid_input("location_id must be numeric"))?,
             };
             let binapi = match args.get(3) {
                 Some(value) => value.clone(),
-                None => SecretPrompt::new("Binary API hostname").read_line()?,
+                None => prompt_line("Binary API hostname")?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.api_server_location_id = location_id;
@@ -2584,7 +2638,7 @@ pub fn parse_inputs_for_command(
         Command::AccountSetLanguage => {
             let language = match args.get(2) {
                 Some(value) => value.clone(),
-                None => SecretPrompt::new("Language tag (e.g. en, de, fr)").read_line()?,
+                None => prompt_line("Language tag (e.g. en, de, fr)")?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.account_language = language;
@@ -2596,8 +2650,7 @@ pub fn parse_inputs_for_command(
                 Some(value) => value
                     .parse::<u64>()
                     .map_err(|_| invalid_input("file_id must be numeric"))?,
-                None => SecretPrompt::new("Remote file ID")
-                    .read_line()?
+                None => prompt_line("Remote file ID")?
                     .parse::<u64>()
                     .map_err(|_| invalid_input("file_id must be numeric"))?,
             };
@@ -2622,13 +2675,79 @@ pub fn parse_inputs_for_command(
                 Some(value) => value
                     .parse::<u64>()
                     .map_err(|_| invalid_input("backup_id must be numeric"))?,
-                None => SecretPrompt::new("Backup folder ID")
-                    .read_line()?
+                None => prompt_line("Backup folder ID")?
                     .parse::<u64>()
                     .map_err(|_| invalid_input("backup_id must be numeric"))?,
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.backup_delete_id = backup_id;
+            }))
+        }
+        // ── Backup create ─────────────────────────────────────────────────
+        Command::BackupCreate => {
+            let name = match args.get(2) {
+                Some(v) => v.clone(),
+                None => prompt_line("Backup name")?,
+            };
+            let root_folder_id: u64 = match args.get(3) {
+                Some(v) => v
+                    .parse::<u64>()
+                    .map_err(|_| invalid_input("root_folder_id must be numeric"))?,
+                None => prompt_line("Remote root folder ID")?
+                    .parse::<u64>()
+                    .map_err(|_| invalid_input("root_folder_id must be numeric"))?,
+            };
+            let local_path = match args.get(4) {
+                Some(v) => v.clone(),
+                None => prompt_line("Local path")?,
+            };
+            let parent_folder_name = args.get(5).cloned();
+            Ok(build_inputs(trust_device, recovery_code, |inputs| {
+                inputs.backup_create_name = name;
+                inputs.backup_create_root_folder_id = root_folder_id;
+                inputs.backup_create_local_path = local_path;
+                inputs.backup_create_parent_folder_name = parent_folder_name;
+            }))
+        }
+        // ── Backup stop-device ────────────────────────────────────────────
+        Command::BackupStopDevice => {
+            let device_folder_id: u64 = match args.get(2) {
+                Some(v) => v
+                    .parse::<u64>()
+                    .map_err(|_| invalid_input("device_folder_id must be numeric"))?,
+                None => prompt_line("Device folder ID")?
+                    .parse::<u64>()
+                    .map_err(|_| invalid_input("device_folder_id must be numeric"))?,
+            };
+            Ok(build_inputs(trust_device, recovery_code, |inputs| {
+                inputs.backup_device_folder_id = device_folder_id;
+            }))
+        }
+        // ── Backup delete-device (local-only) ─────────────────────────────
+        Command::BackupDeleteDevice => Ok(build_inputs(trust_device, recovery_code, |_| {})),
+        // ── Create tree link from paths ───────────────────────────────────
+        Command::CreateTreeLinkFromPaths => {
+            // `create-tree-link-from-paths <NAME> <PATH>...`
+            // NAME is not a secret; use arg_or_prompt (plain echo).
+            let name = match args.get(2) {
+                Some(v) => v.clone(),
+                None => {
+                    return Err(invalid_input(
+                        "create-tree-link-from-paths: <NAME> is required",
+                    ));
+                }
+            };
+            // args[3..] are pCloud-drive paths resolved daemon-side via
+            // the authenticated path resolver (Request::CreateTreePublicLinkFromPaths).
+            let paths: Vec<String> = args.get(3..).map(<[String]>::to_vec).unwrap_or_default();
+            if paths.is_empty() {
+                return Err(invalid_input(
+                    "create-tree-link-from-paths: at least one pCloud-drive path is required",
+                ));
+            }
+            Ok(build_inputs(trust_device, recovery_code, |inputs| {
+                inputs.tree_link_name = name;
+                inputs.tree_link_paths = paths;
             }))
         }
         _ => Ok(build_inputs(trust_device, recovery_code, |_| {})),
@@ -2897,6 +3016,12 @@ fn build_inputs(
         api_server_location_id: 0,
         api_server_binapi: String::new(),
         backup_delete_id: 0,
+        backup_create_name: String::new(),
+        backup_create_root_folder_id: 0,
+        backup_create_local_path: String::new(),
+        backup_create_parent_folder_name: None,
+        backup_device_folder_id: 0,
+        tree_link_paths: Vec::new(),
     };
     update(&mut inputs);
     inputs
@@ -2996,10 +3121,20 @@ fn read_password_securely(args: &[String]) -> Result<SecretString, PromptError> 
 
     match args.get(3) {
         Some(password_arg) => {
+            // Hard failure unless the caller explicitly acknowledged the risk.
+            // `--allow-argv-password` must be present in args; without it we
+            // refuse so that process-listing exposure is opt-in, not silent.
+            if !args.iter().any(|a| a == "--allow-argv-password") {
+                eprintln!(
+                    "Error: passing passwords on the command line exposes them to process \
+                     listing. Use --password-stdin, --password-env VAR, or add \
+                     --allow-argv-password to acknowledge this risk."
+                );
+                std::process::exit(2);
+            }
             eprintln!(
                 "warning: passing the password on the command line is insecure \
-                 (visible via /proc/<pid>/cmdline). Prefer `--password-stdin` \
-                 or `--password-env <VAR>`, or omit to prompt interactively."
+                 (visible via /proc/<pid>/cmdline). --allow-argv-password acknowledged."
             );
             let secret = SecretString::new(password_arg.clone());
             // Best-effort argv scrub: rewrite the bytes of the caller's
@@ -3024,8 +3159,7 @@ fn parse_u64_arg(arg: Option<&String>, label: &'static str) -> Result<u64, Promp
         Some(value) => value
             .parse()
             .map_err(|_| invalid_input(numeric_error(label))),
-        None => SecretPrompt::new(label)
-            .read_line()?
+        None => prompt_line(label)?
             .parse()
             .map_err(|_| invalid_input(numeric_error(label))),
     }
@@ -3038,7 +3172,7 @@ fn numeric_error(_label: &'static str) -> &'static str {
 fn arg_or_prompt(arg: Option<&String>, label: &'static str) -> Result<String, PromptError> {
     match arg {
         Some(value) => Ok(value.clone()),
-        None => SecretPrompt::new(label).read_line(),
+        None => prompt_line(label),
     }
 }
 
@@ -3072,11 +3206,14 @@ mod tests {
 
     #[test]
     fn submit_password_uses_provided_args_without_defaults() {
+        // --allow-argv-password must be present or the function calls
+        // process::exit(2). Add it here to exercise the non-interactive path.
         let args = vec![
             "pcloud-cli".to_owned(),
             "submit-password".to_owned(),
             "alice@example.com".to_owned(),
             "correct-horse".to_owned(),
+            "--allow-argv-password".to_owned(),
         ];
 
         let inputs =
@@ -4184,7 +4321,8 @@ mod tests {
     #[test]
     fn legacy_auth_alias_routes_to_submit_password() {
         // `auth <password>` is single-positional: password only, no username.
-        let args = argv(&["auth", "hunter2"]);
+        // --allow-argv-password is required since the password is on argv.
+        let args = argv(&["auth", "hunter2", "--allow-argv-password"]);
         let cmd = parse_command(&args).unwrap();
         assert_eq!(cmd, Command::SubmitPassword);
         // `submit-password` expects username at args[2], password at args[3].

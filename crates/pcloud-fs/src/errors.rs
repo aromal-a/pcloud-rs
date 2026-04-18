@@ -45,6 +45,11 @@ pub enum FsError {
     /// Generic input/output failure; maps to [`EIO`].
     #[error("i/o error")]
     Io,
+    /// The 64-bit inode number space is exhausted. This should never occur in
+    /// practice (would require 2^64 allocations), but must not panic the daemon.
+    /// Maps to [`EIO`].
+    #[error("inode number space exhausted")]
+    InodeSpaceExhausted,
     /// Transport-level failure with a diagnostic message. Reported to the
     /// kernel as [`EIO`]; the string is kept for logging only and is not
     /// surfaced via the errno surface.
@@ -87,7 +92,7 @@ impl FsError {
             Self::PermissionDenied => EACCES,
             Self::NotDirectory => ENOTDIR,
             Self::Invalid => EINVAL,
-            Self::Io | Self::Transport(_) => EIO,
+            Self::Io | Self::Transport(_) | Self::InodeSpaceExhausted => EIO,
         }
     }
 }

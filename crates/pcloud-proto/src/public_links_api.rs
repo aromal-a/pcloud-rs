@@ -207,7 +207,7 @@ where
         auth_token: impl Into<String>,
     ) -> Result<Vec<PublicLinkSummary>, PublicLinksApiError<T::Error>> {
         let request = ListPublicLinksRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
         };
         let response = self
             .transport
@@ -240,7 +240,7 @@ where
         code: impl Into<String>,
     ) -> Result<PublicLinkContents, PublicLinksApiError<T::Error>> {
         let request = ShowPublicLinkRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             code: code.into(),
         };
         let response = self
@@ -284,7 +284,7 @@ where
         link_id: u64,
     ) -> Result<(), PublicLinksApiError<T::Error>> {
         let request = DeletePublicLinkRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             link_id,
         };
         let response = self
@@ -308,7 +308,7 @@ where
         path: impl Into<String>,
     ) -> Result<CreatedPublicLink, PublicLinksApiError<T::Error>> {
         let request = CreateFilePublicLinkRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             path: path.into(),
         };
         let response = self
@@ -333,7 +333,7 @@ where
         path: impl Into<String>,
     ) -> Result<CreatedPublicLink, PublicLinksApiError<T::Error>> {
         let request = CreateFolderPublicLinkRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             path: path.into(),
         };
         let response = self
@@ -359,7 +359,7 @@ where
         expire: Option<u64>,
     ) -> Result<(), PublicLinksApiError<T::Error>> {
         let request = ChangePublicLinkExpireRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             link_id,
             expire,
         };
@@ -385,9 +385,9 @@ where
         password: Option<String>,
     ) -> Result<(), PublicLinksApiError<T::Error>> {
         let request = ChangePublicLinkPasswordRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             link_id,
-            password,
+            password: password.map(crate::redacted::RedactedProtoString::from),
         };
         let response = self
             .transport
@@ -411,7 +411,7 @@ where
         policy: PublicLinkUploadPolicy,
     ) -> Result<(), PublicLinksApiError<T::Error>> {
         let request = ChangePublicLinkUploadRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             link_id,
             policy,
         };
@@ -435,7 +435,7 @@ where
         auth_token: impl Into<String>,
     ) -> Result<Vec<UploadLinkSummary>, PublicLinksApiError<T::Error>> {
         let request = ListUploadLinksRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
         };
         let response = self
             .transport
@@ -472,7 +472,7 @@ where
         maxfiles: Option<u64>,
     ) -> Result<CreatedUploadLink, PublicLinksApiError<T::Error>> {
         let request = CreateUploadLinkRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             path: path.into(),
             comment: comment.into(),
             expire,
@@ -511,7 +511,7 @@ where
         upload_link_id: u64,
     ) -> Result<(), PublicLinksApiError<T::Error>> {
         let request = DeleteUploadLinkRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             upload_link_id,
         };
         let response = self
@@ -542,7 +542,7 @@ where
         maxtraffic: Option<u64>,
     ) -> Result<CreatedTreePublicLink, PublicLinksApiError<T::Error>> {
         let request = CreateTreePublicLinkRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             name: name.into(),
             root_folder_id,
             folder_ids_csv,
@@ -586,7 +586,7 @@ where
         link_id: u64,
     ) -> Result<Vec<PublicLinkAccessEntry>, PublicLinksApiError<T::Error>> {
         let request = ListPublicLinkAccessRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             link_id,
         };
         let response = self
@@ -620,7 +620,7 @@ where
         email: impl Into<String>,
     ) -> Result<(), PublicLinksApiError<T::Error>> {
         let request = AddPublicLinkAccessRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             link_id,
             email: email.into(),
         };
@@ -646,7 +646,7 @@ where
         receiver_id: u64,
     ) -> Result<(), PublicLinksApiError<T::Error>> {
         let request = RemovePublicLinkAccessRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             link_id,
             receiver_id,
         };
@@ -670,7 +670,7 @@ where
         auth_token: impl Into<String>,
     ) -> Result<Vec<PublicLinkBookmark>, PublicLinksApiError<T::Error>> {
         let request = ListBookmarksRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
         };
         let response = self
             .transport
@@ -703,7 +703,7 @@ where
         location_id: u64,
     ) -> Result<(), PublicLinksApiError<T::Error>> {
         let request = RemoveBookmarkRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             code: code.into(),
             location_id,
         };
@@ -731,7 +731,7 @@ where
         description: impl Into<String>,
     ) -> Result<(), PublicLinksApiError<T::Error>> {
         let request = ChangeBookmarkRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             code: code.into(),
             location_id,
             name: name.into(),
@@ -763,7 +763,7 @@ where
         maxtraffic: Option<u64>,
     ) -> Result<CreatedPublicLink, PublicLinksApiError<T::Error>> {
         let request = CreateFilePublicLinkOptionsRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             path: path.into(),
             expire,
             maxdownloads,
@@ -793,12 +793,12 @@ where
         password: Option<String>,
     ) -> Result<CreatedPublicLink, PublicLinksApiError<T::Error>> {
         let request = CreateFolderPublicLinkOptionsRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             path: path.into(),
             expire,
             maxdownloads,
             maxtraffic,
-            password,
+            password: password.map(crate::redacted::RedactedProtoString::from),
         };
         let response = self
             .transport
@@ -853,7 +853,7 @@ where
         can_upload: bool,
     ) -> Result<(), PublicLinksApiError<T::Error>> {
         let request = CreateFolderUpDownLinkRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             folder_id,
             mail: mail.into(),
             can_upload,
@@ -880,7 +880,7 @@ where
         message: impl Into<String>,
     ) -> Result<(), PublicLinksApiError<T::Error>> {
         let request = SendPublinkRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             code: code.into(),
             mails: mails.into(),
             message: message.into(),

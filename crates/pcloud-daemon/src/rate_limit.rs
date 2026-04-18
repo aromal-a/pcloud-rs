@@ -37,6 +37,7 @@ pub struct SessionRateLimiter {
     enabled: bool,
     medium: Option<TokenBucket>,
     expensive: Option<TokenBucket>,
+    auth_attempt: Option<TokenBucket>,
     // Cheap category is unconditionally allowed; no bucket is materialized.
 }
 
@@ -65,10 +66,12 @@ impl SessionRateLimiter {
         let enabled = policy.enabled;
         let medium = Self::build_bucket(policy.medium, enabled);
         let expensive = Self::build_bucket(policy.expensive, enabled);
+        let auth_attempt = Self::build_bucket(policy.auth_attempt, enabled);
         Self {
             enabled,
             medium,
             expensive,
+            auth_attempt,
         }
     }
 
@@ -95,6 +98,7 @@ impl SessionRateLimiter {
             RateCategory::Cheap => return RateDecision::Allow,
             RateCategory::Medium => self.medium.as_ref(),
             RateCategory::Expensive => self.expensive.as_ref(),
+            RateCategory::AuthAttempt => self.auth_attempt.as_ref(),
         };
         let Some(bucket) = bucket else {
             return RateDecision::Allow;
@@ -122,6 +126,7 @@ impl SessionRateLimiter {
             RateCategory::Cheap => false,
             RateCategory::Medium => self.medium.is_some(),
             RateCategory::Expensive => self.expensive.is_some(),
+            RateCategory::AuthAttempt => self.auth_attempt.is_some(),
         }
     }
 }
@@ -155,6 +160,7 @@ pub fn category_label(category: RateCategory) -> &'static str {
         RateCategory::Cheap => "cheap",
         RateCategory::Medium => "medium",
         RateCategory::Expensive => "expensive",
+        RateCategory::AuthAttempt => "auth_attempt",
     }
 }
 
@@ -164,6 +170,8 @@ pub fn category_label(category: RateCategory) -> &'static str {
 ///
 /// - **Cheap**: status / health probes, userinfo, field selectors
 ///   (`ValueGet`/`ValueHas`), session status.
+/// - **AuthAttempt**: credential submissions, TFA, crypto unlock, account
+///   password change — strict per-session burst to limit brute-force.
 /// - **Expensive**: snapshot create, integrity run-once, integrity
 ///   skip, bulk public-link listing, tree-link create, change-crypto-
 ///   password, send-crypto-change-user-private, audit verify-chain.
@@ -173,10 +181,26 @@ pub fn category_label(category: RateCategory) -> &'static str {
 pub fn categorize(request: &Request) -> RateCategory {
     match request {
         Request::Plain { method } => categorize_plain(*method),
+        // Auth-attempt: credential submissions and crypto unlock.
+        Request::PasswordSubmission { .. } => RateCategory::AuthAttempt,
+        Request::AuthTokenSubmission { .. } => RateCategory::AuthAttempt,
+        Request::TwoFactorCodeSubmission { .. } => RateCategory::AuthAttempt,
+        Request::CryptoUnlock { .. } => RateCategory::AuthAttempt,
+        Request::CryptoSetup { .. } => RateCategory::AuthAttempt,
+        Request::AccountChangePassword { .. } => RateCategory::AuthAttempt,
         // Expensive: bulk/heavy operations.
         Request::BackupSnapshot { .. } => RateCategory::Expensive,
         Request::AuditVerifyChain { .. } => RateCategory::Expensive,
         Request::CreateTreePublicLink { .. } => RateCategory::Expensive,
+        // Sibling path-based variant performs N sequential path->id
+        // resolutions before the tree-link create, so it is at least as
+        // expensive as the id-based form.
+        Request::CreateTreePublicLinkFromPaths { .. } => RateCategory::Expensive,
+        // Server-side copy from a remote fileid drives an upload_create
+        // + multi-chunk upload_write sequence and is bulk/heavy once
+        // the real wiring lands (bd-1du). Classify now so the stub and
+        // the eventual implementation share the same bucket.
+        Request::UploadWriteFromFile { .. } => RateCategory::Expensive,
         Request::IntegrityRunOnce | Request::IntegritySkip { .. } => RateCategory::Expensive,
         Request::CryptoChangePassword { .. } | Request::CryptoChangePasswordUnlocked { .. } => {
             RateCategory::Expensive
@@ -199,33 +223,37 @@ fn categorize_plain(method: Method) -> RateCategory {
         | Method::GetUserInfo
         | Method::SessionStatus
         | Method::GetCryptoStatus => RateCategory::Cheap,
-        // Expensive: bulk listings and heavy mutations.
+        // Auth-attempt: login begin triggers the auth state machine.
+        Method::LoginBegin
+        | Method::SubmitPassword
+        | Method::SubmitTwoFactorCode
+        | Method::UnlockCrypto => RateCategory::AuthAttempt,
+        // Expensive: bulk listings, heavy mutations, and privileged
+        // lifecycle control. Shutdown is placed in the expensive bucket
+        // (low capacity) so a chatty or hostile client cannot spam the
+        // daemon into restarting. A legitimate operator rarely needs
+        // more than a handful of shutdown signals per minute.
         Method::ListPublicLinks
         | Method::ListUploadLinks
         | Method::IntegrityStatus
-        | Method::SendCryptoChangeUserPrivate => RateCategory::Expensive,
-        // Everything else (auth flows, pause/resume, list-shares, ...)
+        | Method::SendCryptoChangeUserPrivate
+        | Method::Shutdown => RateCategory::Expensive,
+        // Everything else (pause/resume, list-shares, ...)
         // sits in the medium bucket.
         _ => RateCategory::Medium,
     }
 }
 
 /// Compute a "retry after" hint for a bucket that just rejected a
-/// request. We use the refill rate to report the minimum duration
-/// before at least one full token is available again.
+/// request. Uses `peek_wait_for`, which does **not** consume a token —
+/// the client has already been rejected by `try_acquire`, so burning a
+/// second reservation here would double-count the rejection (audit-04
+/// §7-opus M-2 / FIX-PLAN P3).
+///
+/// We cap the reported wait so the message stays legible for
+/// very slow refills (e.g. 1 token / 10 min).
 fn retry_after_for(bucket: &TokenBucket) -> Duration {
-    // The bucket does not expose its refill rate directly; we call
-    // `acquire(1)` to reserve a token and read the returned wait
-    // duration. This *does* deduct the token, so we need to replenish
-    // by calling `acquire(0)` afterwards — but `acquire(0)` is a no-op,
-    // so instead we simply rely on the reservation semantics: the
-    // client is being told to wait at least that long before retrying
-    // anyway. This matches the reserving-acquire contract in
-    // `pcloud_resilience::rate_limit::TokenBucket::acquire`.
-    //
-    // We cap the reported wait so the message stays legible for
-    // very slow refills (e.g. 1 token / 10 min).
-    match bucket.acquire(1) {
+    match bucket.peek_wait_for(1) {
         Ok(d) => d.min(Duration::from_secs(600)),
         Err(_) => Duration::from_secs(1),
     }
@@ -259,6 +287,10 @@ mod tests {
                     capacity: expensive,
                     refill_per_sec: 0.1,
                 }
+            },
+            auth_attempt: RateBucket {
+                capacity: 10,
+                refill_per_sec: 0.1,
             },
         }
     }
@@ -296,13 +328,42 @@ mod tests {
     #[test]
     fn categorize_medium_default() {
         let r = Request::Plain {
-            method: Method::LoginBegin,
-        };
-        assert_eq!(categorize(&r), RateCategory::Medium);
-        let r = Request::Plain {
             method: Method::ListIncomingShares,
         };
         assert_eq!(categorize(&r), RateCategory::Medium);
+        let r = Request::Plain {
+            method: Method::PauseSync,
+        };
+        assert_eq!(categorize(&r), RateCategory::Medium);
+    }
+
+    #[test]
+    fn categorize_auth_attempt_plain_methods() {
+        let r = Request::Plain {
+            method: Method::LoginBegin,
+        };
+        assert_eq!(categorize(&r), RateCategory::AuthAttempt);
+        let r = Request::Plain {
+            method: Method::SubmitPassword,
+        };
+        assert_eq!(categorize(&r), RateCategory::AuthAttempt);
+        let r = Request::Plain {
+            method: Method::UnlockCrypto,
+        };
+        assert_eq!(categorize(&r), RateCategory::AuthAttempt);
+    }
+
+    #[test]
+    fn categorize_auth_attempt_structured_variants() {
+        let r = Request::PasswordSubmission {
+            username: "user@example.com".to_owned(),
+            value: pcloud_ipc::RedactedString::new("pass"),
+        };
+        assert_eq!(categorize(&r), RateCategory::AuthAttempt);
+        let r = Request::CryptoUnlock {
+            password: pcloud_ipc::RedactedString::new("pass"),
+        };
+        assert_eq!(categorize(&r), RateCategory::AuthAttempt);
     }
 
     #[test]
@@ -322,8 +383,9 @@ mod tests {
     fn burst_up_to_capacity_is_accepted() {
         let policy = policy_for_test(3, 2);
         let limiter = SessionRateLimiter::new(&policy);
+        // Use a genuinely Medium method (not an AuthAttempt one).
         let req = Request::Plain {
-            method: Method::LoginBegin,
+            method: Method::ListIncomingShares,
         };
         for _ in 0..3 {
             assert_eq!(limiter.check(&req), RateDecision::Allow);
@@ -334,8 +396,9 @@ mod tests {
     fn over_capacity_is_rejected_with_conflict_response() {
         let policy = policy_for_test(2, 1);
         let limiter = SessionRateLimiter::new(&policy);
+        // Use a genuinely Medium method (not an AuthAttempt one).
         let req = Request::Plain {
-            method: Method::LoginBegin,
+            method: Method::ListIncomingShares,
         };
         assert_eq!(limiter.check(&req), RateDecision::Allow);
         assert_eq!(limiter.check(&req), RateDecision::Allow);
@@ -398,10 +461,12 @@ mod tests {
                 refill_per_sec: 1000.0, // fast refill for the test
             },
             expensive: RateBucket::disabled(),
+            auth_attempt: RateBucket::disabled(),
         };
         let limiter = SessionRateLimiter::new(&policy);
+        // Use a genuinely Medium method (LoginBegin is now AuthAttempt).
         let req = Request::Plain {
-            method: Method::LoginBegin,
+            method: Method::ListIncomingShares,
         };
         assert_eq!(limiter.check(&req), RateDecision::Allow);
         // Second immediate check may reject (bucket drained).

@@ -26,13 +26,14 @@
 
 use crate::binary_api::BinaryParam;
 use crate::methods::ProtocolMethod;
+use crate::redacted::RedactedProtoString;
 
 /// Parameters for the `listnotifications` method used by
 /// `psync_get_notifications`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListNotificationsRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// Optional thumbnail size hint (matches the C
     /// `pnotify_set_callback(... thumbsize)` contract). Passed verbatim to
     /// the backend as the `thumbsize` parameter when present.
@@ -59,7 +60,7 @@ impl ListNotificationsRequest {
     pub fn params(&self) -> Vec<BinaryParam> {
         let cap = 2 + usize::from(self.thumb_size.is_some());
         let mut params = Vec::with_capacity(cap);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("timeformat", "timestamp"));
         if let Some(size) = self.thumb_size.as_deref() {
             params.push(BinaryParam::string("thumbsize", size));
@@ -83,7 +84,7 @@ impl ProtocolMethod for ListNotificationsRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MarkNotificationsReadRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// Highest notification id that should be marked read. Matches the C
     /// parameter name `notificationid`.
     pub notification_id: u64,
@@ -108,7 +109,7 @@ impl MarkNotificationsReadRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(2);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("notificationid", self.notification_id));
         params
     }
@@ -131,7 +132,7 @@ mod tests {
     #[test]
     fn list_notifications_encodes_with_auth_and_timeformat() {
         let request = ListNotificationsRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             thumb_size: None,
         };
         let encoded = request.encode().expect("listnotifications should encode");
@@ -142,7 +143,7 @@ mod tests {
     #[test]
     fn list_notifications_includes_thumb_size_when_present() {
         let request = ListNotificationsRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             thumb_size: Some("128x128".to_owned()),
         };
         let encoded = request
@@ -155,7 +156,7 @@ mod tests {
     #[test]
     fn mark_notifications_read_encodes_notificationid() {
         let request = MarkNotificationsReadRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             notification_id: 42,
         };
         let encoded = request.encode().expect("readnotifications should encode");

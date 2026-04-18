@@ -1,0 +1,23 @@
+[package]
+name = "pcloud-crypto-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[[bin]]
+name = "fuzz_open_sector"
+path = "fuzz_targets/fuzz_open_sector.rs"
+test = false
+doc = false
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.pcloud-crypto]
+path = ".."

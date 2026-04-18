@@ -10,21 +10,24 @@
 
 use std::path::PathBuf;
 
-use pcloud_web::{WebConfig, bind_for_test};
+use pcloud_web::{WebConfig, bind_for_test, generate_web_token};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-/// Fire up the server, return (addr, join_handle). Handle is aborted
-/// by the caller at end of test.
-async fn start() -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+/// Fire up the server, return (addr, web_token, join_handle).
+/// Handle is aborted by the caller at end of test.
+async fn start() -> (std::net::SocketAddr, String, tokio::task::JoinHandle<()>) {
+    let token = generate_web_token().expect("getrandom unavailable in test");
     let cfg = WebConfig {
         socket_path: PathBuf::new(),
         bind_addr: "127.0.0.1:0".parse().unwrap(),
+        web_token: token.clone(),
+        ..WebConfig::default()
     };
     let (listener, addr, app) = bind_for_test(cfg).await.expect("bind");
     let handle = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
     });
-    (addr, handle)
+    (addr, token, handle)
 }
 
 async fn raw_request(addr: std::net::SocketAddr, req: &str) -> String {
@@ -55,7 +58,7 @@ fn extract_csrf_cookie(resp: &str) -> String {
 
 #[tokio::test]
 async fn sync_list_renders_html_with_csrf_token() {
-    let (addr, handle) = start().await;
+    let (addr, _token, handle) = start().await;
 
     let resp = raw_request(
         addr,
@@ -81,8 +84,9 @@ async fn sync_list_renders_html_with_csrf_token() {
 }
 
 #[tokio::test]
-async fn sync_add_rejects_request_without_csrf() {
-    let (addr, handle) = start().await;
+async fn sync_add_rejects_request_without_web_token() {
+    // Without the X-PCloud-Web-Token header, the server must return 401.
+    let (addr, _token, handle) = start().await;
 
     let body = "local_path=%2Ftmp%2Fa&remote_path=%2Fa&sync_type=full";
     let req = format!(
@@ -95,8 +99,32 @@ async fn sync_add_rejects_request_without_csrf() {
     );
     let resp = raw_request(addr, &req).await;
     assert!(
+        resp.starts_with("HTTP/1.1 401 "),
+        "expected 401 (missing web token), got: {resp}"
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn sync_add_rejects_request_without_csrf() {
+    // With valid web token but no CSRF, the server must return 403.
+    let (addr, token, handle) = start().await;
+
+    let body = "local_path=%2Ftmp%2Fa&remote_path=%2Fa&sync_type=full";
+    let req = format!(
+        "POST /sync HTTP/1.1\r\n\
+         Host: localhost\r\n\
+         Content-Type: application/x-www-form-urlencoded\r\n\
+         X-PCloud-Web-Token: {token}\r\n\
+         Content-Length: {len}\r\n\
+         Connection: close\r\n\r\n{body}",
+        len = body.len()
+    );
+    let resp = raw_request(addr, &req).await;
+    assert!(
         resp.starts_with("HTTP/1.1 403 "),
-        "expected 403, got: {resp}"
+        "expected 403 (missing CSRF), got: {resp}"
     );
 
     handle.abort();
@@ -104,12 +132,10 @@ async fn sync_add_rejects_request_without_csrf() {
 
 #[tokio::test]
 async fn publink_create_then_delete_round_trip() {
-    // With no daemon wired, the CSRF-gated handler itself is what we
-    // test here: a valid double-submit pair must reach the handler
-    // (i.e. we do NOT get a 403), and the upstream IPC error surfaces
-    // as a 502 Bad Gateway. A missing header must still 403. Finally,
-    // DELETE with the same cookie must likewise pass the CSRF gate.
-    let (addr, handle) = start().await;
+    // With no daemon wired, we test the HTTP/CSRF/token plumbing only.
+    // Valid token+CSRF reaches the handler → IPC fails → 502.
+    // Missing token → 401. Missing CSRF (but valid token) → 403.
+    let (addr, web_token, handle) = start().await;
 
     // First grab a CSRF cookie from GET /publinks.
     let get_resp = raw_request(
@@ -118,17 +144,18 @@ async fn publink_create_then_delete_round_trip() {
     )
     .await;
     assert!(get_resp.starts_with("HTTP/1.1 200 "));
-    let token = extract_csrf_cookie(&get_resp);
+    let csrf = extract_csrf_cookie(&get_resp);
 
-    // CREATE with matching cookie+header: must reach handler, IPC
+    // CREATE with matching cookie+header+web_token: must reach handler, IPC
     // fails → 502.
     let body = "path=%2Ffoo.txt&expiry=&password=";
     let create = format!(
         "POST /publinks HTTP/1.1\r\n\
          Host: localhost\r\n\
          Content-Type: application/x-www-form-urlencoded\r\n\
-         Cookie: pcw_csrf={token}\r\n\
-         X-CSRF-Token: {token}\r\n\
+         Cookie: pcw_csrf={csrf}\r\n\
+         X-CSRF-Token: {csrf}\r\n\
+         X-PCloud-Web-Token: {web_token}\r\n\
          Content-Length: {len}\r\n\
          Connection: close\r\n\r\n{body}",
         len = body.len()
@@ -136,11 +163,11 @@ async fn publink_create_then_delete_round_trip() {
     let create_resp = raw_request(addr, &create).await;
     assert!(
         create_resp.starts_with("HTTP/1.1 502 "),
-        "expected 502 after CSRF pass, got: {create_resp}"
+        "expected 502 after token+CSRF pass, got: {create_resp}"
     );
 
-    // CREATE without header: must 403.
-    let create_no_csrf = format!(
+    // CREATE without any headers: must 401 (token missing first).
+    let create_no_token = format!(
         "POST /publinks HTTP/1.1\r\n\
          Host: localhost\r\n\
          Content-Type: application/x-www-form-urlencoded\r\n\
@@ -148,18 +175,19 @@ async fn publink_create_then_delete_round_trip() {
          Connection: close\r\n\r\n{body}",
         len = body.len()
     );
-    let no_csrf_resp = raw_request(addr, &create_no_csrf).await;
+    let no_token_resp = raw_request(addr, &create_no_token).await;
     assert!(
-        no_csrf_resp.starts_with("HTTP/1.1 403 "),
-        "expected 403, got: {no_csrf_resp}"
+        no_token_resp.starts_with("HTTP/1.1 401 "),
+        "expected 401, got: {no_token_resp}"
     );
 
-    // DELETE with matching cookie+header: passes CSRF, IPC 502.
+    // DELETE with matching cookie+header+token: passes, IPC 502.
     let del = format!(
         "DELETE /publinks/42 HTTP/1.1\r\n\
          Host: localhost\r\n\
-         Cookie: pcw_csrf={token}\r\n\
-         X-CSRF-Token: {token}\r\n\
+         Cookie: pcw_csrf={csrf}\r\n\
+         X-CSRF-Token: {csrf}\r\n\
+         X-PCloud-Web-Token: {web_token}\r\n\
          Connection: close\r\n\r\n"
     );
     let del_resp = raw_request(addr, &del).await;
@@ -173,7 +201,7 @@ async fn publink_create_then_delete_round_trip() {
 
 #[tokio::test]
 async fn activity_returns_json_when_accept_is_application_json() {
-    let (addr, handle) = start().await;
+    let (addr, _token, handle) = start().await;
 
     let resp = raw_request(
         addr,
@@ -209,7 +237,7 @@ async fn activity_returns_json_when_accept_is_application_json() {
 
 #[tokio::test]
 async fn settings_redacts_secret_fields() {
-    let (addr, handle) = start().await;
+    let (addr, _token, handle) = start().await;
     let resp = raw_request(
         addr,
         "GET /settings HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",

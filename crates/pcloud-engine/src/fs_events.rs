@@ -9,21 +9,20 @@ use pcloud_model::{
 };
 
 /// Ingests raw local filesystem events (from notify/inotify) and
-/// coalesces rapid same-path events before handing them to the planner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FsEventIngestor {
-    /// Time window (in milliseconds) within which repeated events for
-    /// the same path are coalesced into a single candidate.
-    pub coalesce_window_ms: u64,
-}
-
-impl Default for FsEventIngestor {
-    fn default() -> Self {
-        Self {
-            coalesce_window_ms: 250,
-        }
-    }
-}
+/// dedupes same-path events before handing them to the planner.
+///
+/// # Semantics
+///
+/// This ingestor performs **batch-local deduplication only** (last-writer
+/// wins within a single `normalize_events` call). Time-window debouncing
+/// across batches is performed upstream by
+/// [`pcloud_fs::fs_watcher::FsWatcher::debounce_loop`], which is the
+/// component that has access to wall-clock timing of inotify / FSEvents
+/// deliveries. Duplicating that logic here with an unused
+/// `coalesce_window_ms` field would have been misleading; the audit-04
+/// P2-6 fix removed the phantom field.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsEventIngestor;
 
 /// Kind of local filesystem event observed at a path.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -95,19 +94,14 @@ impl FsEventIngestor {
     }
 }
 
+/// Thin wrapper over [`crate::is_valid_relative_path`] that maps the
+/// shared boolean predicate to the local typed error.
 fn validate_relative_path(path: &str) -> Result<(), FsEventError> {
-    let trimmed = path.trim();
-    if trimmed.is_empty()
-        || trimmed.starts_with('/')
-        || trimmed.starts_with("./")
-        || trimmed.contains('\\')
-        || trimmed
-            .split('/')
-            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
-    {
-        return Err(FsEventError::InvalidPath(path.to_owned()));
+    if crate::is_valid_relative_path(path) {
+        Ok(())
+    } else {
+        Err(FsEventError::InvalidPath(path.to_owned()))
     }
-    Ok(())
 }
 
 #[cfg(test)]

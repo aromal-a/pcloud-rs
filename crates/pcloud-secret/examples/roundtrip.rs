@@ -21,6 +21,10 @@ fn main() {
     let token = SecretString::new(String::from("hunter2-auth-token"));
 
     // Debug output is redacted: the inner bytes never hit stdout.
+    // CAUTION: This is the correct usage — printing `{token:?}` is safe
+    // *only* because `SecretString` implements a redacting `Debug`. Do NOT
+    // copy this pattern with a raw `String` or `Vec<u8>`. If you need to
+    // log that a secret was present, use `pcloud_secret::redact::redact_field`.
     println!("debug:   {token:?}");
     println!("length:  {}", token.expose_len());
 

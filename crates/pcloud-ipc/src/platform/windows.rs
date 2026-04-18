@@ -106,9 +106,26 @@ impl Drop for WindowsListener {
 /// Contains the accepted `HANDLE` and the audit-friendly SID string of
 /// the peer (populated once we have positively authenticated the
 /// client). `Drop` closes the handle.
+///
+/// # Security: `peer_sid` rationale
+///
+/// `peer_sid` is a Windows SID in SDDL string form (e.g.
+/// `S-1-5-21-…-1001`). SIDs are public identity tokens — they contain
+/// no secret material and are safe to store as plain `String`, log in
+/// audit events, and use for display. This is fundamentally different
+/// from an auth token or password: we are merely recording *who* the
+/// peer is, not storing *how to authenticate as* them.
+///
+/// The owner-only gate is enforced by `peer_uid`: the server compares
+/// `peer_sid` against the SID of the process owner before dispatching
+/// any request. Connections whose SID does not match are rejected with
+/// [`IpcTransportError::PeerCredentialsUnavailable`] before any command
+/// is processed.
 #[derive(Debug)]
 pub struct WindowsStream {
     handle: HANDLE,
+    /// SID string of the authenticated peer. Not a secret; safe to log.
+    /// See struct-level docs for security rationale.
     peer_sid: String,
 }
 

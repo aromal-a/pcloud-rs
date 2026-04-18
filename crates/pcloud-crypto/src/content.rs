@@ -125,6 +125,9 @@ pub enum ContentCryptoError {
 #[must_use]
 pub fn derive_file_key(master: &SecretBytes, file_seed: &[u8]) -> SecretBytes {
     const LABEL: &[u8] = b"pcloud-crypto/file-key/v1";
+    // INVARIANT: HMAC-SHA256 accepts keys of any non-zero length per RFC 2104;
+    // `new_from_slice` only fails for a zero-length key, which `SecretBytes`
+    // never produces (callers always derive from a 32-byte master key).
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(master.expose_secret())
         .expect("HMAC-SHA256 accepts any key length");
     mac.update(LABEL);
@@ -166,14 +169,13 @@ pub fn derive_file_key(master: &SecretBytes, file_seed: &[u8]) -> SecretBytes {
 ///
 /// # Errors
 /// * [`ContentCryptoError::SectorTooLarge`] if `plaintext.len() > sector_size`.
-/// * [`ContentCryptoError::InvalidFrame`] if the key length is not 32 bytes.
+/// * [`ContentCryptoError::InvalidFrame`] if the key length is not 32 bytes or if
+///   the OS CSPRNG cannot supply randomness for the nonce.
 /// * [`ContentCryptoError::AuthFailed`] if the AEAD rejects the inputs
 ///   (should not happen on the encrypt path in practice).
 ///
 /// # Panics
-/// Does not panic in normal operation. If the OS cannot supply randomness
-/// for the nonce the function calls `expect("OS randomness must be
-/// available")` — this is treated as an unrecoverable host fault.
+/// Does not panic.
 pub fn seal_sector(
     file_key: &SecretBytes,
     sector_index: u32,
@@ -186,7 +188,7 @@ pub fn seal_sector(
     let cipher = <Aes256Gcm as AesKeyInit>::new_from_slice(file_key.expose_secret())
         .map_err(|_| ContentCryptoError::InvalidFrame)?;
     let mut nonce_bytes = [0u8; NONCE_LEN];
-    getrandom(&mut nonce_bytes).expect("OS randomness must be available");
+    getrandom(&mut nonce_bytes).map_err(|_| ContentCryptoError::InvalidFrame)?;
     let nonce = Nonce::from_slice(&nonce_bytes);
     let aad = sector_index.to_be_bytes();
     let ct = cipher

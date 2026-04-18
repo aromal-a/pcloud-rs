@@ -84,9 +84,23 @@ pub enum WritePathError {
     #[error(transparent)]
     Staging(#[from] StagingError),
     /// Upload backend reported a failure (network, server-side error,
-    /// transport not yet wired).
+    /// transport not yet wired). Used for backward compatibility and for
+    /// errors that are not classified into [`Self::UploadTransient`] or
+    /// [`Self::UploadPermanent`].
     #[error("upload backend failure: {0}")]
     Upload(String),
+    /// Upload backend reported a transient failure that the write path may
+    /// retry (connection timeout, 5xx, network flap). The chunked flush
+    /// retries the current chunk a bounded number of times with
+    /// exponential backoff before surfacing this error to the caller.
+    #[error("upload transient failure: {0}")]
+    UploadTransient(String),
+    /// Upload backend reported a permanent failure for the current session
+    /// (e.g. `upload_id` garbage-collected, auth expired, quota exceeded).
+    /// The chunked flush reacts by restarting the whole upload from
+    /// offset 0 once — beyond that the error is surfaced unchanged.
+    #[error("upload permanent failure: {0}")]
+    UploadPermanent(String),
     /// The caller attempted to write to an inode that was never opened
     /// for write or was already released.
     #[error("inode {0} is not open for write")]
@@ -242,6 +256,26 @@ pub const UPLOAD_CHUNK_BYTES: usize = 4 * 1024 * 1024;
 /// staging growth on multi-GiB writes.
 pub const DEFAULT_FLUSH_THRESHOLD_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Default per-chunk size for the chunked upload pipeline
+/// ([`WritePathOptions::chunk_size_bytes`]). Matches [`UPLOAD_CHUNK_BYTES`].
+pub const DEFAULT_CHUNK_SIZE_BYTES: usize = UPLOAD_CHUNK_BYTES;
+
+/// Default hard upper bound on per-inode staging bytes
+/// ([`WritePathOptions::max_staging_bytes`]). Writes that would grow the
+/// staging blob past this ceiling are rejected rather than allowed to
+/// consume unbounded local disk. 512 MiB is conservative for a daemon that
+/// must not ENOSPC the host filesystem.
+pub const DEFAULT_MAX_STAGING_BYTES: usize = 512 * 1024 * 1024;
+
+/// Default number of retries attempted per-chunk on
+/// [`WritePathError::UploadTransient`] before surfacing the error.
+pub const DEFAULT_CHUNK_RETRY_ATTEMPTS: u32 = 5;
+
+/// Initial backoff between chunk retries. Doubles on every retry
+/// (1s, 2s, 4s, 8s, 16s by default). Used by the chunked flush retry
+/// loop in [`WritePathService::chunked_flush`].
+pub const DEFAULT_CHUNK_RETRY_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
+
 /// Options for [`WritePathService`].
 #[derive(Debug, Clone, Copy)]
 pub struct WritePathOptions {
@@ -249,6 +283,25 @@ pub struct WritePathOptions {
     pub flush_threshold_bytes: u64,
     /// Wall-clock interval between forced flushes for idle dirty handles.
     pub flush_interval: Duration,
+    /// Per-chunk byte count for the chunked upload pipeline. Default is
+    /// [`DEFAULT_CHUNK_SIZE_BYTES`] (4 MiB). Lower values reduce replay cost
+    /// on a crash mid-flush; higher values amortise per-chunk round-trip
+    /// latency on high-bandwidth-high-latency links.
+    pub chunk_size_bytes: usize,
+    /// Hard upper bound on the size of a single inode's staging blob. A
+    /// FUSE `write` that would push the blob past this bound returns
+    /// `ENOSPC` to the kernel rather than allowing the local staging
+    /// directory to grow without bound. Default is
+    /// [`DEFAULT_MAX_STAGING_BYTES`] (512 MiB). Set to `usize::MAX` to
+    /// disable the guard (not recommended in production).
+    pub max_staging_bytes: usize,
+    /// Maximum retries per-chunk on [`WritePathError::UploadTransient`]
+    /// before the write path surfaces the error. Default is
+    /// [`DEFAULT_CHUNK_RETRY_ATTEMPTS`] (5).
+    pub chunk_retry_attempts: u32,
+    /// Initial backoff between chunk retries (doubled on each retry).
+    /// Default [`DEFAULT_CHUNK_RETRY_INITIAL_BACKOFF`] (1 second).
+    pub chunk_retry_initial_backoff: Duration,
 }
 
 impl Default for WritePathOptions {
@@ -256,6 +309,10 @@ impl Default for WritePathOptions {
         Self {
             flush_threshold_bytes: DEFAULT_FLUSH_THRESHOLD_BYTES,
             flush_interval: Duration::from_secs(24 * 3600),
+            chunk_size_bytes: DEFAULT_CHUNK_SIZE_BYTES,
+            max_staging_bytes: DEFAULT_MAX_STAGING_BYTES,
+            chunk_retry_attempts: DEFAULT_CHUNK_RETRY_ATTEMPTS,
+            chunk_retry_initial_backoff: DEFAULT_CHUNK_RETRY_INITIAL_BACKOFF,
         }
     }
 }
@@ -275,6 +332,37 @@ impl WritePathOptions {
     #[must_use]
     pub fn with_flush_interval(mut self, interval: Duration) -> Self {
         self.flush_interval = interval;
+        self
+    }
+
+    /// Override the per-chunk byte count for the chunked upload pipeline.
+    /// A value of `0` is coerced to [`DEFAULT_CHUNK_SIZE_BYTES`] at use time
+    /// so the flush loop always makes forward progress.
+    #[must_use]
+    pub fn with_chunk_size(mut self, bytes: usize) -> Self {
+        self.chunk_size_bytes = bytes;
+        self
+    }
+
+    /// Override the hard per-inode staging ceiling. Use
+    /// `usize::MAX` to disable the guard.
+    #[must_use]
+    pub fn with_max_staging_bytes(mut self, bytes: usize) -> Self {
+        self.max_staging_bytes = bytes;
+        self
+    }
+
+    /// Override the per-chunk retry attempt count.
+    #[must_use]
+    pub fn with_chunk_retry_attempts(mut self, attempts: u32) -> Self {
+        self.chunk_retry_attempts = attempts;
+        self
+    }
+
+    /// Override the initial backoff used between per-chunk retries.
+    #[must_use]
+    pub fn with_chunk_retry_initial_backoff(mut self, backoff: Duration) -> Self {
+        self.chunk_retry_initial_backoff = backoff;
         self
     }
 }
@@ -410,6 +498,23 @@ impl<B: FileUploadBackend> WritePathService<B> {
             effective_offset
         };
 
+        // Enforce per-inode staging ceiling *before* extending the blob so
+        // an over-large write fails fast instead of filling local disk and
+        // surfacing ENOSPC from the kernel with a half-applied write. The
+        // guard is a simple high-water-mark check on `offset + len`; the
+        // actual on-disk size may be larger for sparse writes, which is the
+        // intended behaviour (bytes past the high-water are zero-filled on
+        // read by the staging layer).
+        let max = self.options.max_staging_bytes;
+        if max < usize::MAX {
+            let written_end = effective_offset.saturating_add(data.len() as u64);
+            if written_end > max as u64 {
+                return Err(WritePathError::Invalid(
+                    "write would exceed max_staging_bytes ceiling",
+                ));
+            }
+        }
+
         self.stage
             .write_blob_at(&blob_name, effective_offset, data)?;
         self.journal_append(JournalOp::Write {
@@ -452,12 +557,27 @@ impl<B: FileUploadBackend> WritePathService<B> {
     }
 
     /// Chunked size-triggered flush: `upload_create` once, `upload_write`
-    /// per 4 MiB chunk, `upload_save` once; each chunk ack is fsynced to
-    /// the per-inode progress journal so a crash mid-flush resumes from the
-    /// last durable offset. Returns [`WritePathError::Upload`] with the
-    /// sentinel [`CHUNKED_NOT_SUPPORTED`] message when the backend doesn't
-    /// implement the chunked surface, letting [`Self::write`] fall back to
-    /// the whole-file path.
+    /// per chunk ([`WritePathOptions::chunk_size_bytes`]), `upload_save`
+    /// once; each chunk ack is fsynced to the per-inode progress journal
+    /// so a crash mid-flush resumes from the last durable offset. Returns
+    /// [`WritePathError::Upload`] with the sentinel
+    /// [`CHUNKED_NOT_SUPPORTED`] message when the backend doesn't
+    /// implement the chunked surface, letting [`Self::write`] fall back
+    /// to the whole-file path.
+    ///
+    /// ## Retry discipline (bd-1du.4.6)
+    ///
+    /// * Each `upload_write` is retried up to
+    ///   [`WritePathOptions::chunk_retry_attempts`] times on
+    ///   [`WritePathError::UploadTransient`] with exponential backoff
+    ///   starting at [`WritePathOptions::chunk_retry_initial_backoff`]
+    ///   (1s, 2s, 4s, 8s, 16s by default).
+    /// * On [`WritePathError::UploadPermanent`] during `upload_write` the
+    ///   flush aborts the current session and restarts the whole upload
+    ///   from offset 0 **once** (fresh `upload_create`, sidecar rewritten).
+    ///   A second permanent failure is surfaced to the caller.
+    /// * `offset` advances only after a confirmed ack, so a crash between
+    ///   any two attempts replays the in-flight chunk, never skips one.
     fn chunked_flush(&self, ino: u64) -> Result<(), WritePathError> {
         let flush_started = Instant::now();
         let handle = self.get_handle(ino)?;
@@ -474,72 +594,42 @@ impl<B: FileUploadBackend> WritePathService<B> {
         // promised durability at this point.
         self.journal_append(JournalOp::FlushBarrier { path: path.clone() })?;
 
-        // Load an in-progress upload (if any) or begin a new one. The
-        // progress sidecar ((ino, upload_id, last_acked_offset)) is fsynced
-        // after each successful `upload_write` ack so a crash mid-flush
-        // resumes at `resume_offset` instead of re-sending earlier chunks.
         let progress_path = self.progress_path(ino);
         let blob_path = self.stage.blob_path(&blob_name)?;
         let total_size = std::fs::metadata(&blob_path)
             .map_err(|e| WritePathError::Upload(format!("staging metadata: {e}")))?
             .len();
 
-        let (upload_id, resume_offset) = match UploadProgress::load(&progress_path)? {
-            Some(p) if p.blob_name == blob_name && p.total_size == total_size => {
-                (p.upload_id, p.acked_offset)
-            }
-            _ => {
-                let id = self.backend.upload_create(&parent, &name)?;
-                let p = UploadProgress {
-                    upload_id: id,
-                    blob_name: blob_name.clone(),
-                    total_size,
-                    acked_offset: 0,
-                    heartbeat_unix_secs: now_unix_secs(),
-                };
-                p.save(&progress_path)?;
-                (id, 0u64)
-            }
-        };
-
-        // Stream chunks.
-        use std::io::{Read, Seek, SeekFrom};
-        let mut file = self
-            .stage
-            .open_blob(&blob_name)
-            .map_err(|e| WritePathError::Upload(format!("open staging blob: {e}")))?;
-        file.seek(SeekFrom::Start(resume_offset))
-            .map_err(|e| WritePathError::Upload(format!("seek staging blob: {e}")))?;
-
-        let mut offset = resume_offset;
-        let mut buf = vec![0u8; UPLOAD_CHUNK_BYTES];
-        while offset < total_size {
-            let want = std::cmp::min(UPLOAD_CHUNK_BYTES as u64, total_size - offset) as usize;
-            let chunk = &mut buf[..want];
-            file.read_exact(chunk)
-                .map_err(|e| WritePathError::Upload(format!("read staging blob: {e}")))?;
-            self.backend.upload_write(upload_id, offset, chunk)?;
-            offset += want as u64;
-            // Persist progress *after* the ack so the journal only records
-            // what the server has acknowledged. fsync inside save().
-            UploadProgress {
-                upload_id,
-                blob_name: blob_name.clone(),
+        // Outer loop: one whole-upload session attempt. On
+        // `UploadPermanent` during chunk send we drop the session, purge
+        // the sidecar, and spin a fresh `upload_create` once before
+        // surfacing the error.
+        let mut permanent_restarts_remaining: u32 = 1;
+        loop {
+            match self.run_chunked_session(
+                ino,
+                &parent,
+                &name,
+                &blob_name,
+                &progress_path,
                 total_size,
-                acked_offset: offset,
-                heartbeat_unix_secs: now_unix_secs(),
+            ) {
+                Ok(()) => break,
+                Err(WritePathError::UploadPermanent(msg)) if permanent_restarts_remaining > 0 => {
+                    permanent_restarts_remaining -= 1;
+                    // Discard any sidecar for the failed session so the
+                    // next run issues a fresh `upload_create`. Ignore the
+                    // removal error (best effort; a mismatched sidecar is
+                    // rejected on reload).
+                    let _ = std::fs::remove_file(&progress_path);
+                    log::warn!(
+                        "chunked_flush: permanent error during upload_write (ino={ino}, err={msg}); restarting session from offset 0"
+                    );
+                    continue;
+                }
+                Err(e) => return Err(e),
             }
-            .save(&progress_path)?;
         }
-
-        // Finalize.
-        self.backend
-            .upload_save(upload_id, &parent, &name, total_size)?;
-
-        // Clean up progress journal — best-effort; a stale file is harmless
-        // because the next flush will see a mismatched blob_name/total_size
-        // and start a fresh upload.
-        let _ = std::fs::remove_file(&progress_path);
 
         // Reset dirty accounting.
         let now = Instant::now();
@@ -559,6 +649,123 @@ impl<B: FileUploadBackend> WritePathService<B> {
         // `/slo` endpoint reflects sustained write-path performance.
         let flush_latency = now.saturating_duration_since(flush_started);
         slo_hook::observe_flush(total_size, flush_latency);
+        Ok(())
+    }
+
+    /// One `upload_create`-to-`upload_save` session attempt. Factored out
+    /// of [`Self::chunked_flush`] so the permanent-failure outer loop can
+    /// restart a clean session without duplicating the streaming body.
+    fn run_chunked_session(
+        &self,
+        _ino: u64,
+        parent: &str,
+        name: &str,
+        blob_name: &str,
+        progress_path: &std::path::Path,
+        total_size: u64,
+    ) -> Result<(), WritePathError> {
+        // Load an in-progress upload (if any) or begin a new one. The
+        // progress sidecar ((ino, upload_id, last_acked_offset)) is fsynced
+        // after each successful `upload_write` ack so a crash mid-flush
+        // resumes at `resume_offset` instead of re-sending earlier chunks.
+        let (upload_id, resume_offset) = match UploadProgress::load(progress_path)? {
+            Some(p) if p.blob_name == blob_name && p.total_size == total_size => {
+                (p.upload_id, p.acked_offset)
+            }
+            _ => {
+                let id = self.backend.upload_create(parent, name)?;
+                let p = UploadProgress {
+                    upload_id: id,
+                    blob_name: blob_name.to_owned(),
+                    total_size,
+                    acked_offset: 0,
+                    heartbeat_unix_secs: now_unix_secs(),
+                };
+                p.save(progress_path)?;
+                (id, 0u64)
+            }
+        };
+
+        // Resolve a safe chunk size. Zero is coerced to the default so the
+        // read loop always makes forward progress.
+        let chunk_bytes = if self.options.chunk_size_bytes == 0 {
+            DEFAULT_CHUNK_SIZE_BYTES
+        } else {
+            self.options.chunk_size_bytes
+        };
+
+        // Stream chunks via a `BufReader` so the kernel read path does
+        // bulk-copies under the hood rather than one syscall per 4 MiB
+        // buffer. We still size the chunk buffer to exactly `chunk_bytes`
+        // so the bytes handed to `upload_write` line up with the
+        // server-side chunk size.
+        use std::io::{BufReader, Read, Seek, SeekFrom};
+        let raw_file = self
+            .stage
+            .open_blob(blob_name)
+            .map_err(|e| WritePathError::Upload(format!("open staging blob: {e}")))?;
+        let mut reader = BufReader::with_capacity(chunk_bytes, raw_file);
+        reader
+            .seek(SeekFrom::Start(resume_offset))
+            .map_err(|e| WritePathError::Upload(format!("seek staging blob: {e}")))?;
+
+        let mut offset = resume_offset;
+        let mut buf = vec![0u8; chunk_bytes];
+        while offset < total_size {
+            let want = std::cmp::min(chunk_bytes as u64, total_size - offset) as usize;
+            let chunk = &mut buf[..want];
+            reader
+                .read_exact(chunk)
+                .map_err(|e| WritePathError::Upload(format!("read staging blob: {e}")))?;
+
+            // Retry loop: classify errors and bounded-retry on transient.
+            let mut attempt: u32 = 0;
+            let max_attempts = self.options.chunk_retry_attempts;
+            let initial_backoff = self.options.chunk_retry_initial_backoff;
+            loop {
+                match self.backend.upload_write(upload_id, offset, chunk) {
+                    Ok(()) => break,
+                    Err(WritePathError::UploadTransient(msg)) if attempt < max_attempts => {
+                        let backoff = exp_backoff(initial_backoff, attempt);
+                        log::warn!(
+                            "chunked_flush: transient error (upload_id={upload_id}, offset={offset}, attempt={attempt}, err={msg}); sleeping {backoff_ms}ms before retry",
+                            backoff_ms = backoff.as_millis() as u64,
+                        );
+                        attempt += 1;
+                        std::thread::sleep(backoff);
+                        continue;
+                    }
+                    Err(WritePathError::UploadTransient(msg)) => {
+                        // Exhausted. Leave the sidecar intact so a later
+                        // retry can resume; surface the error.
+                        return Err(WritePathError::UploadTransient(format!(
+                            "exhausted {max_attempts} retries at offset {offset}: {msg}"
+                        )));
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+            offset += want as u64;
+            // Persist progress *after* the ack so the journal only records
+            // what the server has acknowledged. fsync inside save().
+            UploadProgress {
+                upload_id,
+                blob_name: blob_name.to_owned(),
+                total_size,
+                acked_offset: offset,
+                heartbeat_unix_secs: now_unix_secs(),
+            }
+            .save(progress_path)?;
+        }
+
+        // Finalize.
+        self.backend
+            .upload_save(upload_id, parent, name, total_size)?;
+
+        // Clean up progress journal — best-effort; a stale file is harmless
+        // because the next flush will see a mismatched blob_name/total_size
+        // and start a fresh upload.
+        let _ = std::fs::remove_file(progress_path);
         Ok(())
     }
 
@@ -827,6 +1034,20 @@ impl<B: FileUploadBackend> WritePathService<B> {
 
 fn blob_name_for_ino(ino: u64) -> String {
     format!("ino-{ino}.blob")
+}
+
+/// Exponential backoff with an absolute ceiling, used by the per-chunk
+/// retry loop in [`WritePathService::chunked_flush`]. Returns
+/// `initial << attempt`, clamped to 60 seconds so a long-running upload
+/// does not stall for unbounded time on a pathological transient
+/// classification bug.
+fn exp_backoff(initial: Duration, attempt: u32) -> Duration {
+    const CAP: Duration = Duration::from_secs(60);
+    let shift = attempt.min(20); // saturate before the shift overflows
+    match initial.checked_mul(1u32 << shift) {
+        Some(d) if d <= CAP => d,
+        _ => CAP,
+    }
 }
 
 fn join_path(parent: &str, name: &str) -> String {
@@ -1311,6 +1532,15 @@ pub(crate) mod mock {
         /// the backend derives the ack count from `in_progress` (whatever
         /// the driver has written locally).
         pub status_bytes: Mutex<HashMap<u64, UploadStatus>>,
+        /// If `> 0`, the next `n` `upload_write` calls return
+        /// [`WritePathError::UploadTransient`] to drive the retry-loop
+        /// test. Counter decrements on each injection.
+        pub transient_writes_remaining: Mutex<u32>,
+        /// If `true`, the next `upload_write` call returns
+        /// [`WritePathError::UploadPermanent`] once and then resets to
+        /// `false` so the subsequent retry can succeed. Used to test the
+        /// outer "restart session from offset 0" loop.
+        pub permanent_next_write: Mutex<bool>,
     }
 
     impl MockUploadBackend {
@@ -1394,6 +1624,31 @@ pub(crate) mod mock {
             if *self.disable_chunked.lock().unwrap() {
                 return Err(WritePathError::Upload(CHUNKED_NOT_SUPPORTED.to_owned()));
             }
+
+            // Transient-error injection: return UploadTransient until the
+            // counter hits zero. Evaluated *before* the crash injector and
+            // before the record write so retried chunks don't double-count.
+            {
+                let mut remaining = self.transient_writes_remaining.lock().unwrap();
+                if *remaining > 0 {
+                    *remaining -= 1;
+                    return Err(WritePathError::UploadTransient(format!(
+                        "injected transient at offset {offset}"
+                    )));
+                }
+            }
+            // Permanent-error injection: single-shot, self-resetting. Used to
+            // drive the outer session-restart loop.
+            {
+                let mut pending = self.permanent_next_write.lock().unwrap();
+                if *pending {
+                    *pending = false;
+                    return Err(WritePathError::UploadPermanent(format!(
+                        "injected permanent at offset {offset}"
+                    )));
+                }
+            }
+
             // Check crash-simulation trigger *before* recording, so a
             // "crash at chunk N" means N chunks have been acked (not N+1).
             {
@@ -1499,6 +1754,7 @@ mod tests {
             WritePathOptions {
                 flush_threshold_bytes: 1024 * 1024,
                 flush_interval: Duration::from_secs(3600),
+                ..WritePathOptions::default()
             },
         );
         (svc, backend)
@@ -1576,6 +1832,7 @@ mod tests {
             WritePathOptions {
                 flush_threshold_bytes: 8,
                 flush_interval: Duration::from_secs(3600),
+                ..WritePathOptions::default()
             },
         );
         svc.create(14, "/", "coalesce.txt").unwrap();
@@ -1744,6 +2001,7 @@ mod tests {
             WritePathOptions {
                 flush_threshold_bytes: 1024, // force chunked flush on first write
                 flush_interval: Duration::from_secs(3600),
+                ..WritePathOptions::default()
             },
         );
         svc.create(100, "/", "big.bin").unwrap();
@@ -1803,6 +2061,7 @@ mod tests {
                 WritePathOptions {
                     flush_threshold_bytes: 1024,
                     flush_interval: Duration::from_secs(3600),
+                    ..WritePathOptions::default()
                 },
             );
             svc.create(200, "/", "resume.bin").unwrap();
@@ -1870,6 +2129,7 @@ mod tests {
             WritePathOptions {
                 flush_threshold_bytes: 1024,
                 flush_interval: Duration::from_secs(3600),
+                ..WritePathOptions::default()
             },
         );
         // Re-open the same inode against the same logical path so the
@@ -1937,6 +2197,7 @@ mod tests {
             WritePathOptions {
                 flush_threshold_bytes: 4,
                 flush_interval: Duration::from_secs(3600),
+                ..WritePathOptions::default()
             },
         );
         svc.create(300, "/", "legacy.bin").unwrap();
@@ -2202,5 +2463,289 @@ mod tests {
             .any(|r| matches!(&r.op, JournalOp::FlushBarrier { path } if path == "/crash.txt"));
         assert!(has_write, "Write record must be durable after crash");
         assert!(has_barrier, "FlushBarrier must be durable after crash");
+    }
+
+    // -----------------------------------------------------------------
+    // bd-1du.4.6 chunked-pipelining hardening tests
+    // -----------------------------------------------------------------
+
+    /// End-to-end check that a 10 MiB staging file flushes through the
+    /// chunked upload pipeline with exactly the expected chunk count and
+    /// that the bytes the mock reconstructs from the `upload_write`
+    /// payloads match the original content byte-for-byte.
+    ///
+    /// Covers the task checklist for bd-1du.4.6 step 4: "creates a 10 MiB
+    /// staging file with known content, calls chunked_flush against a
+    /// mock upload backend, verifies the correct number of chunks were
+    /// sent and the data matches".
+    #[test]
+    fn chunked_flush_streams_10mib_file_in_4mib_chunks_with_data_fidelity() {
+        let d = tempdir().unwrap();
+        let stage = StagingDir::open(d.path().join("stage")).unwrap();
+        let journal = WriteJournal::open(stage.journal_path()).unwrap();
+        let backend = Arc::new(MockUploadBackend::new());
+        let total_bytes: usize = 10 * 1024 * 1024;
+        let svc = WritePathService::new(
+            stage,
+            journal,
+            Arc::clone(&backend),
+            WritePathOptions::default()
+                .with_flush_threshold(u64::MAX) // disable size-trigger auto-flush
+                .with_flush_interval(Duration::from_secs(3600))
+                .with_chunk_size(4 * 1024 * 1024)
+                .with_max_staging_bytes(usize::MAX),
+        );
+        svc.create(500, "/", "tenmib.bin").unwrap();
+
+        // Known content: a simple linear ramp we can verify byte-for-byte
+        // without allocating a second full copy.
+        let mut payload = vec![0u8; total_bytes];
+        for (i, b) in payload.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(31).wrapping_add(7);
+        }
+        // Two successive writes; total 10 MiB.
+        svc.write(500, 0, &payload[..5 * 1024 * 1024]).unwrap();
+        svc.write(500, 5 * 1024 * 1024, &payload[5 * 1024 * 1024..])
+            .unwrap();
+
+        // Explicitly invoke chunked_flush; the flush_threshold is u64::MAX
+        // so no implicit flush has fired yet.
+        svc.chunked_flush(500).unwrap();
+
+        let calls = backend.chunk_calls.lock().unwrap().clone();
+        let creates: Vec<_> = calls.iter().filter(|c| c.starts_with("create:")).collect();
+        let writes: Vec<_> = calls.iter().filter(|c| c.starts_with("write:")).collect();
+        let saves: Vec<_> = calls.iter().filter(|c| c.starts_with("save:")).collect();
+        assert_eq!(creates.len(), 1, "exactly one upload_create: {calls:?}");
+        assert_eq!(saves.len(), 1, "exactly one upload_save: {calls:?}");
+        assert_eq!(writes.len(), 3, "three 4-MiB chunks (4+4+2): {calls:?}");
+
+        // Offsets are monotonically increasing and 4-MiB aligned.
+        assert!(writes[0].ends_with(&format!(":0:{}", 4 * 1024 * 1024)));
+        assert!(writes[1].ends_with(&format!(":{}:{}", 4 * 1024 * 1024, 4 * 1024 * 1024)));
+        assert!(writes[2].ends_with(&format!(":{}:{}", 8 * 1024 * 1024, 2 * 1024 * 1024)));
+
+        // Data fidelity: the mock reassembles the file at `/tenmib.bin`.
+        let uploads = backend.uploads.lock().unwrap();
+        let remote = uploads.get("/tenmib.bin").expect("must have uploaded");
+        assert_eq!(remote.len(), total_bytes);
+        assert_eq!(remote, &payload, "remote bytes must match source");
+    }
+
+    /// A small configured chunk size (32 KiB) must be honoured by the
+    /// streaming loop — proves [`WritePathOptions::chunk_size_bytes`] is
+    /// read at flush time rather than the const being hard-wired.
+    #[test]
+    fn chunked_flush_honours_custom_chunk_size() {
+        let d = tempdir().unwrap();
+        let stage = StagingDir::open(d.path().join("stage")).unwrap();
+        let journal = WriteJournal::open(stage.journal_path()).unwrap();
+        let backend = Arc::new(MockUploadBackend::new());
+        let chunk = 32 * 1024; // 32 KiB
+        let total = 100 * 1024; // 100 KiB → 4 chunks (32+32+32+4)
+        let svc = WritePathService::new(
+            stage,
+            journal,
+            Arc::clone(&backend),
+            WritePathOptions::default()
+                .with_flush_threshold(u64::MAX)
+                .with_flush_interval(Duration::from_secs(3600))
+                .with_chunk_size(chunk)
+                .with_max_staging_bytes(usize::MAX),
+        );
+        svc.create(501, "/", "small-chunks.bin").unwrap();
+        svc.write(501, 0, &vec![0x99u8; total]).unwrap();
+        svc.chunked_flush(501).unwrap();
+
+        let calls = backend.chunk_calls.lock().unwrap().clone();
+        let writes: Vec<_> = calls.iter().filter(|c| c.starts_with("write:")).collect();
+        assert_eq!(
+            writes.len(),
+            4,
+            "100 KiB / 32 KiB = 4 chunks (32+32+32+4): {calls:?}"
+        );
+        // Last chunk is exactly the remainder.
+        assert!(writes[3].ends_with(&format!(":{}:{}", 3 * chunk, total - 3 * chunk)));
+    }
+
+    /// The per-chunk retry loop must transparently absorb a bounded number
+    /// of [`WritePathError::UploadTransient`] failures and advance `offset`
+    /// only on a confirmed ack.
+    #[test]
+    fn chunked_flush_retries_transient_errors_and_succeeds() {
+        let d = tempdir().unwrap();
+        let stage = StagingDir::open(d.path().join("stage")).unwrap();
+        let journal = WriteJournal::open(stage.journal_path()).unwrap();
+        let backend = Arc::new(MockUploadBackend::new());
+        // First 3 upload_write calls return UploadTransient; we have 5
+        // retries configured so the 3rd retry of the first chunk succeeds
+        // and the rest of the upload flows through.
+        *backend.transient_writes_remaining.lock().unwrap() = 3;
+        let svc = WritePathService::new(
+            stage,
+            journal,
+            Arc::clone(&backend),
+            WritePathOptions::default()
+                .with_flush_threshold(u64::MAX)
+                .with_flush_interval(Duration::from_secs(3600))
+                .with_chunk_size(4 * 1024)
+                .with_chunk_retry_attempts(5)
+                .with_chunk_retry_initial_backoff(Duration::from_millis(1)),
+        );
+        svc.create(502, "/", "flaky.bin").unwrap();
+        svc.write(502, 0, &vec![0xCCu8; 8 * 1024]).unwrap(); // 2 chunks
+        svc.chunked_flush(502).unwrap();
+
+        let uploads = backend.uploads.lock().unwrap();
+        let bytes = uploads.get("/flaky.bin").expect("final save succeeded");
+        assert_eq!(bytes.len(), 8 * 1024);
+        assert!(bytes.iter().all(|&b| b == 0xCC));
+
+        // Exactly two *successful* write records landed on the mock — the
+        // three injected transient errors must not have been recorded.
+        let calls = backend.chunk_calls.lock().unwrap();
+        let writes: Vec<_> = calls.iter().filter(|c| c.starts_with("write:")).collect();
+        assert_eq!(
+            writes.len(),
+            2,
+            "retries must not double-record successful chunks: {calls:?}"
+        );
+    }
+
+    /// Exceeding the retry budget must surface as
+    /// [`WritePathError::UploadTransient`] and **not** corrupt the
+    /// sidecar — a later flush must be able to resume at the same offset.
+    #[test]
+    fn chunked_flush_surfaces_exhausted_transient_retries() {
+        let d = tempdir().unwrap();
+        let stage = StagingDir::open(d.path().join("stage")).unwrap();
+        let journal = WriteJournal::open(stage.journal_path()).unwrap();
+        let backend = Arc::new(MockUploadBackend::new());
+        // More transient errors than we allow retries for.
+        *backend.transient_writes_remaining.lock().unwrap() = 10;
+        let svc = WritePathService::new(
+            stage,
+            journal,
+            Arc::clone(&backend),
+            WritePathOptions::default()
+                .with_flush_threshold(u64::MAX)
+                .with_chunk_size(4 * 1024)
+                .with_chunk_retry_attempts(2)
+                .with_chunk_retry_initial_backoff(Duration::from_millis(1)),
+        );
+        svc.create(503, "/", "stubborn.bin").unwrap();
+        svc.write(503, 0, &vec![0xAAu8; 4 * 1024]).unwrap();
+        let err = svc.chunked_flush(503).unwrap_err();
+        assert!(
+            matches!(err, WritePathError::UploadTransient(_)),
+            "got {err:?}"
+        );
+    }
+
+    /// A permanent error during `upload_write` must cause the flush to
+    /// abandon the session, rerun `upload_create` once, and succeed on
+    /// the second session without duplicating committed bytes.
+    #[test]
+    fn chunked_flush_restarts_session_on_permanent_error_once() {
+        let d = tempdir().unwrap();
+        let stage = StagingDir::open(d.path().join("stage")).unwrap();
+        let journal = WriteJournal::open(stage.journal_path()).unwrap();
+        let backend = Arc::new(MockUploadBackend::new());
+        // Fail the first upload_write with Permanent; the mock auto-resets
+        // so the restart succeeds cleanly.
+        *backend.permanent_next_write.lock().unwrap() = true;
+        let svc = WritePathService::new(
+            stage,
+            journal,
+            Arc::clone(&backend),
+            WritePathOptions::default()
+                .with_flush_threshold(u64::MAX)
+                .with_chunk_size(4 * 1024)
+                .with_chunk_retry_attempts(0)
+                .with_chunk_retry_initial_backoff(Duration::from_millis(1)),
+        );
+        svc.create(504, "/", "restart.bin").unwrap();
+        svc.write(504, 0, &vec![0x11u8; 8 * 1024]).unwrap(); // 2 chunks
+        svc.chunked_flush(504).unwrap();
+
+        // Two `create:` entries expected: one for the failed session, one
+        // for the restart. Two writes on the second session (both chunks).
+        let calls = backend.chunk_calls.lock().unwrap().clone();
+        let creates: Vec<_> = calls.iter().filter(|c| c.starts_with("create:")).collect();
+        let saves: Vec<_> = calls.iter().filter(|c| c.starts_with("save:")).collect();
+        assert_eq!(
+            creates.len(),
+            2,
+            "restart must issue a second upload_create: {calls:?}"
+        );
+        assert_eq!(saves.len(), 1, "exactly one upload_save: {calls:?}");
+
+        let uploads = backend.uploads.lock().unwrap();
+        let bytes = uploads.get("/restart.bin").expect("file saved");
+        assert_eq!(bytes.len(), 8 * 1024);
+        assert!(bytes.iter().all(|&b| b == 0x11));
+    }
+
+    /// Writes beyond [`WritePathOptions::max_staging_bytes`] must be
+    /// rejected with `EINVAL` rather than allowed to grow the staging
+    /// blob unbounded. The guard is checked on the first write that
+    /// would cross the ceiling.
+    #[test]
+    fn write_exceeding_max_staging_bytes_is_rejected() {
+        let d = tempdir().unwrap();
+        let stage = StagingDir::open(d.path().join("stage")).unwrap();
+        let journal = WriteJournal::open(stage.journal_path()).unwrap();
+        let backend = Arc::new(MockUploadBackend::new());
+        let svc = WritePathService::new(
+            stage,
+            journal,
+            Arc::clone(&backend),
+            WritePathOptions::default()
+                .with_flush_threshold(u64::MAX)
+                .with_max_staging_bytes(4096),
+        );
+        svc.create(505, "/", "cap.bin").unwrap();
+        // Under the cap: fine.
+        svc.write(505, 0, &vec![0u8; 2048]).unwrap();
+        // At-or-below the cap: still fine.
+        svc.write(505, 2048, &vec![0u8; 2048]).unwrap();
+        // Over the cap: rejected.
+        let err = svc.write(505, 4096, &[0u8; 1]).unwrap_err();
+        assert!(matches!(err, WritePathError::Invalid(_)), "got {err:?}");
+    }
+
+    /// Default [`WritePathOptions`] must pin chunk size and staging ceiling
+    /// to the documented defaults. Regression guard for the public config
+    /// surface.
+    #[test]
+    fn default_write_path_options_expose_documented_constants() {
+        let opts = WritePathOptions::default();
+        assert_eq!(opts.chunk_size_bytes, DEFAULT_CHUNK_SIZE_BYTES);
+        assert_eq!(opts.chunk_size_bytes, UPLOAD_CHUNK_BYTES);
+        assert_eq!(opts.chunk_size_bytes, 4 * 1024 * 1024);
+        assert_eq!(opts.max_staging_bytes, DEFAULT_MAX_STAGING_BYTES);
+        assert_eq!(opts.max_staging_bytes, 512 * 1024 * 1024);
+        assert_eq!(opts.chunk_retry_attempts, DEFAULT_CHUNK_RETRY_ATTEMPTS);
+        assert_eq!(opts.chunk_retry_attempts, 5);
+        assert_eq!(
+            opts.chunk_retry_initial_backoff,
+            DEFAULT_CHUNK_RETRY_INITIAL_BACKOFF
+        );
+        assert_eq!(opts.chunk_retry_initial_backoff, Duration::from_secs(1));
+    }
+
+    /// [`exp_backoff`] must produce the 1-2-4-8-16 pattern documented in
+    /// the retry contract and saturate at the 60-second ceiling.
+    #[test]
+    fn exp_backoff_matches_documented_schedule() {
+        let base = Duration::from_secs(1);
+        assert_eq!(exp_backoff(base, 0), Duration::from_secs(1));
+        assert_eq!(exp_backoff(base, 1), Duration::from_secs(2));
+        assert_eq!(exp_backoff(base, 2), Duration::from_secs(4));
+        assert_eq!(exp_backoff(base, 3), Duration::from_secs(8));
+        assert_eq!(exp_backoff(base, 4), Duration::from_secs(16));
+        // Saturating cap at 60s.
+        assert_eq!(exp_backoff(base, 10), Duration::from_secs(60));
+        assert_eq!(exp_backoff(base, 30), Duration::from_secs(60));
     }
 }

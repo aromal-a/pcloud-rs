@@ -93,7 +93,7 @@ where
         code: &str,
     ) -> Result<(), CryptoApiError<T::Error>> {
         let request = ChangeUserPrivateRequest {
-            auth_token: auth_token.to_owned(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token),
             private_key: private_key.to_owned(),
             signature: signature.to_owned(),
             hint: hint.to_owned(),
@@ -113,7 +113,7 @@ where
         auth_token: &str,
     ) -> Result<(), CryptoApiError<T::Error>> {
         let request = SendChangeUserPrivateRequest {
-            auth_token: auth_token.to_owned(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token),
         };
         execute_unit(
             &self.transport,

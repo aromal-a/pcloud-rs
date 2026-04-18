@@ -564,9 +564,11 @@ impl RuntimeShell {
                     Err(err) => map_auth_flow_error(err),
                 }
             }
-            Request::CryptoUnlock { password } => self.unlock_crypto(password.into_string()),
+            Request::CryptoUnlock { password } => {
+                self.unlock_crypto(SecretString::new(password.into_string()))
+            }
             Request::CryptoSetup { password, hint } => {
-                self.setup_crypto(password.into_string(), hint)
+                self.setup_crypto(SecretString::new(password.into_string()), hint)
             }
             Request::CryptoChangePassword {
                 old_password,
@@ -575,8 +577,8 @@ impl RuntimeShell {
                 code,
                 flags,
             } => self.change_crypto_password(
-                old_password.into_string(),
-                new_password.into_string(),
+                SecretString::new(old_password.into_string()),
+                SecretString::new(new_password.into_string()),
                 hint,
                 code,
                 flags,
@@ -587,7 +589,7 @@ impl RuntimeShell {
                 code,
                 flags,
             } => self.change_crypto_password_unlocked(
-                new_password.into_string(),
+                SecretString::new(new_password.into_string()),
                 hint,
                 code,
                 flags,
@@ -791,14 +793,18 @@ impl RuntimeShell {
                 current_password,
                 new_password,
             } => self.account_change_password(
-                current_password.into_string(),
-                new_password.into_string(),
+                SecretString::new(current_password.into_string()),
+                SecretString::new(new_password.into_string()),
             ),
             Request::AccountRegister {
                 email,
                 password,
                 terms_accepted,
-            } => self.account_register(email, password.into_string(), terms_accepted),
+            } => self.account_register(
+                email,
+                SecretString::new(password.into_string()),
+                terms_accepted,
+            ),
             Request::GetFileLink { file_id } => self.get_file_link_ipc(file_id),
             Request::DownloadFile {
                 file_id,
@@ -810,6 +816,16 @@ impl RuntimeShell {
                 binapi,
             } => self.set_api_server_ipc(location_id, binapi),
             Request::SetLanguage { language } => self.set_language_ipc(language),
+            Request::UploadWriteFromFile {
+                upload_session_id,
+                local_path,
+                offset,
+            } => self.upload_write_from_file_ipc(upload_session_id, local_path, offset),
+            Request::CreateTreePublicLinkFromPaths {
+                name,
+                paths,
+                expires,
+            } => self.create_tree_public_link_from_paths_ipc(name, paths, expires),
             // `Request` is `#[non_exhaustive]`: unknown variants from a
             // newer client build are reported rather than silently matched.
             _ => Response {
@@ -1180,6 +1196,11 @@ impl RuntimeShell {
     /// Mount the pCloud FUSE filesystem at `mountpoint`. Delegates to
     /// [`crate::mount_runtime::MountControl::mount`] after refreshing
     /// the adapter factory with the current auth state.
+    ///
+    // Mounts a fully wired ProtoFuseAdapter that serves pCloud files via
+    // the pCloud binary protocol. All FUSE operations (lookup, readdir,
+    // read, write, flush, fsync, create, unlink, rename, mkdir, rmdir)
+    // are forwarded through the adapter to the pCloud API.
     pub fn mount_filesystem(&mut self, mountpoint: &Path) -> Response {
         #[cfg(any(target_os = "linux", target_os = "macos"))]
         self.try_install_pcloud_shim_factory();
@@ -1989,7 +2010,13 @@ impl RuntimeShell {
         location_id: u32,
     ) -> Result<(), pcloud_store::StoreError> {
         let binapi = binapi.into();
-        self.config.api.apply_api_server_hint(&binapi);
+        if let Err(reason) = self.config.api.apply_api_server_hint(&binapi) {
+            log::error!(
+                "set_api_server: rejecting binapi hint '{}' — {}",
+                binapi,
+                reason
+            );
+        }
         self.auth_runtime.apply_api_server_hint(&binapi);
         self.account_runtime.apply_api_server_hint(&binapi);
         self.backup_runtime.apply_api_server_hint(&binapi);
@@ -2168,8 +2195,8 @@ impl RuntimeShell {
     /// Requires an authenticated session. Mirrors C `psync_change_password`.
     fn account_change_password(
         &mut self,
-        current_password: String,
-        new_password: String,
+        current_password: SecretString,
+        new_password: SecretString,
     ) -> Response {
         let auth_token = match self
             .auth
@@ -2194,8 +2221,8 @@ impl RuntimeShell {
         }
         match self.account_runtime.change_password(
             auth_token,
-            &current_password,
-            &new_password,
+            current_password.expose_secret(),
+            new_password.expose_secret(),
             "pcloudc",
         ) {
             Ok(result) => {
@@ -2229,7 +2256,12 @@ impl RuntimeShell {
 
     /// `AccountRegister` IPC handler — register a new pCloud account.
     /// No auth required. Mirrors C `psync_register`.
-    fn account_register(&self, email: String, password: String, terms_accepted: bool) -> Response {
+    fn account_register(
+        &self,
+        email: String,
+        password: SecretString,
+        terms_accepted: bool,
+    ) -> Response {
         if email.trim().is_empty() {
             return Response {
                 status: ResponseStatus::InvalidRequest,
@@ -2251,7 +2283,7 @@ impl RuntimeShell {
         }
         match self
             .account_runtime
-            .register(&email, SecretString::new(password), terms_accepted, 3)
+            .register(&email, password, terms_accepted, 3)
         {
             Ok(()) => Response {
                 status: ResponseStatus::Ok,
@@ -2452,6 +2484,121 @@ impl RuntimeShell {
         }
     }
 
+    /// `UploadWriteFromFile` IPC handler — stub.
+    ///
+    /// The C `upload_writefromfile` primitive is a **server-side copy**
+    /// from a remote pCloud `fileid` into an in-progress upload session
+    /// (see `pcloud_proto::methods::upload::UploadWriteFromFileRequest`
+    /// with params `fileid`, `hash`, `offset`, `count`). Audit 04 found
+    /// that the previous implementation of this handler instead read a
+    /// **local file** from disk and drove a fresh `upload_create` +
+    /// `upload_bytes` sequence — a semantically different operation,
+    /// with an OOM vector (`std::fs::read` without size cap or symlink
+    /// rejection) and a silently-discarded `offset` parameter.
+    ///
+    /// The local-file shim was intentionally removed after audit 04
+    /// flagged the semantic mismatch. The IPC variant schema and
+    /// proptest round-trip are intentionally retained so the wire
+    /// contract stays stable while the real server-side-copy wiring is
+    /// landed under `bd-1du`.
+    #[allow(clippy::unused_self)]
+    fn upload_write_from_file_ipc(
+        &mut self,
+        _upload_session_id: u64,
+        _local_path: String,
+        _offset: u64,
+    ) -> Response {
+        Response {
+            status: ResponseStatus::InternalError,
+            message:
+                "not yet wired: requires server-side copy via UploadWriteFromFileRequest (bd-1du)"
+                    .to_owned(),
+        }
+    }
+
+    /// `CreateTreePublicLinkFromPaths` IPC handler — resolve a list of
+    /// absolute pCloud-drive paths to their remote folder ids on the
+    /// daemon side, then create a tree public link.  Mirrors the C
+    /// `ptree_public_link` path-based variant (row 149, bd-1du).
+    fn create_tree_public_link_from_paths_ipc(
+        &mut self,
+        name: String,
+        paths: Vec<String>,
+        expires: Option<u64>,
+    ) -> Response {
+        if name.trim().is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "create_tree_public_link_from_paths: name must not be empty".to_owned(),
+            };
+        }
+        if paths.is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "create_tree_public_link_from_paths: at least one path is required"
+                    .to_owned(),
+            };
+        }
+        let auth_token = match self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        {
+            Some(token) => token,
+            None => {
+                return Response {
+                    status: ResponseStatus::Unauthorized,
+                    message: "create_tree_public_link_from_paths requires an authenticated session"
+                        .to_owned(),
+                };
+            }
+        };
+
+        // Resolve each path to a remote folder id using the path resolver.
+        let resolver = self
+            .public_link_runtime
+            .path_resolver(auth_token.clone_secret());
+        let mut folder_ids: Vec<u64> = Vec::with_capacity(paths.len());
+        for path in &paths {
+            match resolver.get_folder_id_by_path(path) {
+                Ok(id) => folder_ids.push(id.get()),
+                Err(err) => {
+                    return map_path_resolve_error(err);
+                }
+            }
+        }
+        let folder_ids_csv = folder_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        match self.public_link_runtime.create_tree_public_link(
+            auth_token,
+            name.clone(),
+            None,
+            Some(folder_ids_csv.clone()),
+            None,
+            expires,
+            None,
+            None,
+        ) {
+            Ok(created) => self.audited_response(
+                "publinks.create_tree_from_paths",
+                Some(format!(
+                    "name={name} paths={paths:?} resolved_folder_ids={folder_ids_csv}",
+                )),
+                format!(
+                    "tree public link created from paths: id={}, name=\"{}\", link=\"{}\"",
+                    created.link_id, created.name, created.link,
+                ),
+            ),
+            Err(err) => map_public_link_error(err),
+        }
+    }
+
     fn pause_sync(&mut self) -> Response {
         self.engine.sync_state = SyncState::Paused;
         if let Some(shared) = &self.sync_loop_shared {
@@ -2533,14 +2680,14 @@ impl RuntimeShell {
         }
     }
 
-    fn unlock_crypto(&mut self, password: String) -> Response {
+    fn unlock_crypto(&mut self, password: SecretString) -> Response {
         if password.is_empty() {
             return Response {
                 status: ResponseStatus::InvalidRequest,
                 message: "crypto password must not be empty".to_owned(),
             };
         }
-        let secret = SecretString::new(password);
+        let secret = password;
         let result = if self.crypto.is_setup() {
             self.crypto.start(secret)
         } else {
@@ -2568,15 +2715,14 @@ impl RuntimeShell {
         }
     }
 
-    fn setup_crypto(&mut self, password: String, hint: Option<String>) -> Response {
+    fn setup_crypto(&mut self, password: SecretString, hint: Option<String>) -> Response {
         if password.is_empty() {
             return Response {
                 status: ResponseStatus::InvalidRequest,
                 message: "crypto password must not be empty".to_owned(),
             };
         }
-        let secret = SecretString::new(password);
-        let result = self.crypto.setup(secret, hint);
+        let result = self.crypto.setup(password, hint);
         self.metric_sync_crypto_state();
         match result {
             Ok(()) => self.audited_response(
@@ -2703,8 +2849,8 @@ impl RuntimeShell {
 
     fn change_crypto_password(
         &mut self,
-        old_password: String,
-        new_password: String,
+        old_password: SecretString,
+        new_password: SecretString,
         hint: String,
         code: String,
         flags: u64,
@@ -2737,9 +2883,10 @@ impl RuntimeShell {
             }
         };
 
-        let old_secret = SecretString::new(old_password);
-        let new_secret = SecretString::new(new_password);
-        let rekeyed = match self.crypto.change_password(old_secret, new_secret, flags) {
+        let rekeyed = match self
+            .crypto
+            .change_password(old_password, new_password, flags)
+        {
             Ok(out) => out,
             Err(pcloud_crypto::CryptoError::WrongPassword) => {
                 return Response {
@@ -2760,7 +2907,7 @@ impl RuntimeShell {
 
     fn change_crypto_password_unlocked(
         &mut self,
-        new_password: String,
+        new_password: SecretString,
         hint: String,
         code: String,
         flags: u64,
@@ -2793,8 +2940,7 @@ impl RuntimeShell {
             }
         };
 
-        let new_secret = SecretString::new(new_password);
-        let rekeyed = match self.crypto.change_password_unlocked(new_secret, flags) {
+        let rekeyed = match self.crypto.change_password_unlocked(new_password, flags) {
             Ok(out) => out,
             Err(pcloud_crypto::CryptoError::Locked) => {
                 return Response {
@@ -6059,6 +6205,8 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::DeleteBackup { .. } => "DeleteBackup",
         Request::SetApiServer { .. } => "SetApiServer",
         Request::SetLanguage { .. } => "SetLanguage",
+        Request::UploadWriteFromFile { .. } => "UploadWriteFromFile",
+        Request::CreateTreePublicLinkFromPaths { .. } => "CreateTreePublicLinkFromPaths",
         _ => "Other",
     }
 }
@@ -6072,6 +6220,8 @@ pub(crate) fn status_label(status: &ResponseStatus) -> &'static str {
         ResponseStatus::Conflict => "conflict",
         ResponseStatus::Unavailable => "unavailable",
         ResponseStatus::InternalError => "error",
+        ResponseStatus::PolicyViolation { .. } => "policy_violation",
+        _ => "unknown",
     }
 }
 

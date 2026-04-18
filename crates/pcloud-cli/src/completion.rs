@@ -148,6 +148,10 @@ pub fn build_cli() -> Command {
         .subcommand(sub("create-upload-link", "Create upload link"))
         .subcommand(sub("delete-upload-link", "Delete upload link"))
         .subcommand(sub("create-tree-link", "Create tree public link"))
+        .subcommand(sub(
+            "create-tree-link-from-paths",
+            "Create a tree public link by resolving pCloud-drive paths daemon-side",
+        ))
         .subcommand(sub("list-link-access", "List public link access"))
         .subcommand(sub("add-link-access", "Add public link access"))
         .subcommand(sub("remove-link-access", "Remove public link access"))
@@ -175,6 +179,118 @@ pub fn build_cli() -> Command {
         .subcommand(sub("account-stopshare", "Account-level stop share"))
         .subcommand(sub("account-modifyshare", "Account-level modify share"))
         .subcommand(sub("account-teamshare", "Account-level team share"))
+        .subcommand(sub("stat", "Stat an absolute pCloud-drive path"))
+        .subcommand(sub("reload", "Send SIGHUP to daemon for hot-reload"))
+        .subcommand(sub(
+            "drain",
+            "Graceful-drain: flush pending uploads, then stop",
+        ))
+        .subcommand(sub(
+            "slo",
+            "Fetch canonical Service-Level Objective snapshot",
+        ))
+        .subcommand(
+            Command::new("integrity")
+                .about("Background integrity sweeper controls")
+                .subcommand(sub("status", "Fetch sweeper progress JSON"))
+                .subcommand(sub("run-once", "Trigger one sweeper cycle synchronously"))
+                .subcommand(sub(
+                    "skip",
+                    "Append a glob pattern to the sweeper skip list",
+                )),
+        )
+        .subcommand(
+            Command::new("ha")
+                .about("High-availability posture helpers")
+                .subcommand(sub("status", "Return the Tier-2 HA posture")),
+        )
+        .subcommand(
+            Command::new("audit-verifier")
+                .about("Scheduled audit-verifier helpers")
+                .subcommand(sub("status", "Return scheduled audit-verifier status")),
+        )
+        .subcommand(
+            Command::new("upload")
+                .about("Resumable upload session management")
+                .subcommand(
+                    sub("create", "Create a new upload session").arg(
+                        Arg::new("local-path")
+                            .required(true)
+                            .help("Local file to upload"),
+                    ),
+                )
+                .subcommand(sub("pause", "Pause an in-progress upload session"))
+                .subcommand(sub("resume", "Resume a paused upload session"))
+                .subcommand(sub("cancel", "Cancel and discard an upload session"))
+                .subcommand(sub("list", "List active upload sessions")),
+        )
+        .subcommand(
+            Command::new("conflict")
+                .about("Sync conflict resolution helpers")
+                .subcommand(sub("list", "List unresolved sync conflicts"))
+                .subcommand(
+                    sub("resolve", "Resolve a conflict").arg(
+                        Arg::new("path")
+                            .required(true)
+                            .help("Conflicting local path"),
+                    ),
+                ),
+        )
+        .subcommand(
+            Command::new("snapshot")
+                .about("Daemon state snapshot helpers")
+                .subcommand(
+                    sub("create", "Create a GPG-encrypted snapshot")
+                        .arg(Arg::new("path").required(true).help("Output path")),
+                )
+                .subcommand(
+                    sub("restore", "Restore a snapshot")
+                        .arg(Arg::new("path").required(true).help("Snapshot path")),
+                )
+                .subcommand(
+                    sub("verify", "Verify a snapshot")
+                        .arg(Arg::new("path").required(true).help("Snapshot path")),
+                )
+                .subcommand(
+                    sub("prune", "Prune old snapshots in a directory").arg(
+                        Arg::new("dir")
+                            .required(true)
+                            .help("Directory containing snapshots"),
+                    ),
+                ),
+        )
+        .subcommand(
+            Command::new("verify")
+                .about("Verify local sync state")
+                .arg(Arg::new("path").required(true).help("Local path to verify"))
+                .arg(
+                    Arg::new("recursive")
+                        .long("recursive")
+                        .action(ArgAction::SetTrue)
+                        .help("Recurse into subdirectories"),
+                )
+                .arg(
+                    Arg::new("fix")
+                        .long("fix")
+                        .action(ArgAction::SetTrue)
+                        .help("Attempt to repair inconsistencies"),
+                ),
+        )
+        .subcommand(Command::new("migrate-from-c").about("Migrate state from the legacy C client"))
+        .subcommand(
+            Command::new("backup")
+                .about("Backup and device helpers")
+                .subcommand(sub("create", "Register a new backup"))
+                .subcommand(sub("delete", "Delete a backup registration"))
+                .subcommand(sub("stop-device", "Stop a backup device"))
+                .subcommand(sub("delete-device", "Delete backup device local state"))
+                .subcommand(
+                    Command::new("snapshot-create").about("Create a GPG-encrypted backup snapshot"),
+                )
+                .subcommand(Command::new("snapshot-restore").about("Restore a backup snapshot"))
+                .subcommand(Command::new("snapshot-verify").about("Verify a backup snapshot"))
+                .subcommand(Command::new("snapshot-prune").about("Prune old backup snapshots")),
+        )
         .subcommand(sub("mount", "Mount the pCloud filesystem"))
         .subcommand(sub("unmount", "Unmount the pCloud filesystem"))
         .subcommand(sub("start", "Spawn pcloudd in the background"))
@@ -233,6 +349,19 @@ mod tests {
             "crypto",
             "completion",
             "finalize",
+            "stat",
+            "reload",
+            "drain",
+            "slo",
+            "integrity",
+            "ha",
+            "audit-verifier",
+            "upload",
+            "conflict",
+            "snapshot",
+            "verify",
+            "migrate-from-c",
+            "backup",
         ] {
             assert!(names.contains(&expected), "missing subcommand: {expected}");
         }

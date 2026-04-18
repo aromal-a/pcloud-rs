@@ -31,6 +31,29 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+/// Emit a systemd sd_notify(3) datagram when running under systemd.
+///
+/// Reads `NOTIFY_SOCKET` from the environment; if absent or if the send
+/// fails the call is silently a no-op (the daemon operates normally
+/// whether or not it is supervised by systemd). This avoids taking a
+/// hard dependency on `libsystemd`.
+#[cfg(target_os = "linux")]
+fn sd_notify(msg: &str) {
+    if let Ok(path) = std::env::var("NOTIFY_SOCKET") {
+        use std::os::unix::net::UnixDatagram;
+        match UnixDatagram::unbound() {
+            Ok(sock) => {
+                if let Err(err) = sock.send_to(msg.as_bytes(), &path) {
+                    log::warn!("sd_notify: send_to({path:?}) failed: {err}");
+                }
+            }
+            Err(err) => {
+                log::warn!("sd_notify: failed to open unbound datagram socket: {err}");
+            }
+        }
+    }
+}
+
 use pcloud_ipc::{
     BoundIpcServer, IpcServer, IpcTransportError, Method, Request, Response, ResponseStatus,
     current_effective_uid,
@@ -40,6 +63,63 @@ use pcloud_session::refresh_loop::{self, TickOutcome};
 
 use crate::RuntimeShell;
 use crate::signals::{self, DrainState};
+
+/// Returns `true` for IPC request variants that perform privileged,
+/// state-mutating, or security-sensitive operations. These are emitted
+/// to the audit log before dispatch so operators can detect unexpected
+/// privileged activity even without a full audit chain sweep.
+///
+/// Operations listed here match the enterprise audit M-2 finding:
+/// shutdown, credential lifecycle, crypto lifecycle, auth persistence,
+/// sync removal, backup/device operations.
+fn is_privileged_request(req: &Request) -> bool {
+    matches!(
+        req,
+        Request::Plain {
+            method: Method::Shutdown
+                | Method::CryptoReset
+                | Method::SetAuthPersistence
+                | Method::SendCryptoChangeUserPrivate
+        } | Request::AccountChangePassword { .. }
+            | Request::CryptoSetup { .. }
+            | Request::CryptoChangePassword { .. }
+            | Request::CryptoChangePasswordUnlocked { .. }
+            | Request::AuthPersistence { .. }
+            | Request::SyncRootRemove { .. }
+            | Request::DeleteBackup { .. }
+            | Request::UploadWriteFromFile { .. }
+            | Request::CreateTreePublicLinkFromPaths { .. }
+            | Request::LostPassword { .. }
+            | Request::VerifyEmailRestricted { .. }
+    )
+}
+
+/// Return a short, non-secret, human-readable name for the request
+/// discriminant. Used in audit log lines so operators can correlate
+/// events without reading secret field values.
+fn request_kind_name(req: &Request) -> &'static str {
+    match req {
+        Request::Plain { method } => match method {
+            Method::Shutdown => "Shutdown",
+            Method::CryptoReset => "CryptoReset",
+            Method::SetAuthPersistence => "SetAuthPersistence",
+            Method::SendCryptoChangeUserPrivate => "SendCryptoChangeUserPrivate",
+            _ => "Plain",
+        },
+        Request::AccountChangePassword { .. } => "AccountChangePassword",
+        Request::CryptoSetup { .. } => "CryptoSetup",
+        Request::CryptoChangePassword { .. } => "CryptoChangePassword",
+        Request::CryptoChangePasswordUnlocked { .. } => "CryptoChangePasswordUnlocked",
+        Request::AuthPersistence { .. } => "AuthPersistence",
+        Request::SyncRootRemove { .. } => "SyncRootRemove",
+        Request::DeleteBackup { .. } => "DeleteBackup",
+        Request::UploadWriteFromFile { .. } => "UploadWriteFromFile",
+        Request::CreateTreePublicLinkFromPaths { .. } => "CreateTreePublicLinkFromPaths",
+        Request::LostPassword { .. } => "LostPassword",
+        Request::VerifyEmailRestricted { .. } => "VerifyEmailRestricted",
+        _ => "other",
+    }
+}
 
 /// Default polling interval when the loop has flipped into drain mode
 /// and is waiting for in-flight work to settle or for the drain timeout
@@ -63,6 +143,13 @@ const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// up as `IpcTransportError::Io(ErrorKind::Interrupted)`; we swallow it and
 /// loop back so the flag check can take effect. Any other I/O error is
 /// propagated unchanged.
+///
+/// Each accepted connection is dispatched on a **dedicated OS thread** so that
+/// slow backend calls (auth RTT, crypto unlock) do not block the accept loop.
+/// The `RuntimeShell` is wrapped in `Arc<Mutex<>>` internally; dispatch
+/// serializes through the mutex while the accept loop itself stays
+/// non-blocking. The connection cap ([`pcloud_ipc::MAX_IPC_CONNECTIONS`])
+/// bounds worst-case thread count.
 pub fn serve_until_shutdown(
     bound: &BoundIpcServer,
     runtime: &mut RuntimeShell,
@@ -89,12 +176,29 @@ fn should_reject_during_drain(request: &Request) -> bool {
 /// Drain-aware dispatch wrapper. When the daemon is draining, rejects
 /// non-status requests with `Unavailable`; otherwise forwards to the
 /// runtime dispatch path through `crate::dispatch`.
+///
+/// Privileged requests (shutdown, crypto setup/reset, password change,
+/// auth persistence, sync removal, backup deletion) are emitted to the
+/// structured log before dispatch so operators have an audit trail for
+/// sensitive operations regardless of whether the full audit chain is
+/// enabled. The peer uid is reported as the daemon owner uid because
+/// `serve_once` already enforces that only owner-uid peers reach this
+/// handler — unauthorized peers never produce a dispatch call.
 fn dispatch_with_drain_gate(runtime: &mut RuntimeShell, request: Request) -> Response {
     if signals::drain_state() == DrainState::Draining && should_reject_during_drain(&request) {
         return Response {
             status: ResponseStatus::Unavailable,
             message: "daemon draining, retry".to_owned(),
         };
+    }
+    if is_privileged_request(&request) {
+        // peer uid == daemon owner uid: serve_once enforces the owner-only
+        // check before invoking the handler, so only the owning uid arrives here.
+        log::info!(
+            "privileged IPC request: {} from uid={}",
+            request_kind_name(&request),
+            current_effective_uid(),
+        );
     }
     let _guard = signals::InFlightGuard::new();
     crate::dispatch(runtime, request)
@@ -143,6 +247,11 @@ pub fn serve_until_shutdown_with_flag(
             // timestamp so DrainStatus reports `elapsed_drain_ms`.
             let fresh_drain = signals::begin_drain();
             if fresh_drain {
+                // Notify systemd that the daemon is entering the drain/stop
+                // phase. This transitions the service from active to
+                // deactivating in the unit state machine.
+                #[cfg(target_os = "linux")]
+                sd_notify("STOPPING=1\n");
                 drain_deadline = Some(Instant::now() + drain_timeout);
                 // bd-1du.4: quiesce the mount on the *first* transition
                 // into Draining. The kernel mount stays live so
@@ -184,6 +293,10 @@ pub fn serve_until_shutdown_with_flag(
             use crate::config_reload::{
                 ReloadOutcome, format_reload_failed_event, format_reloaded_event, try_reload,
             };
+            // Notify systemd that a reload is in progress. The READY=1
+            // suffix re-arms the watchdog once the reload completes.
+            #[cfg(target_os = "linux")]
+            sd_notify("RELOADING=1\n");
             let (outcome, new_profile) = try_reload(config_path, &runtime.config);
             match outcome {
                 ReloadOutcome::Applied { changed_keys } => {
@@ -201,6 +314,10 @@ pub fn serve_until_shutdown_with_flag(
                     log::error!("pcloud-rs: {msg}");
                 }
             }
+            // Re-assert READY=1 to signal that the reload phase is
+            // complete and the daemon is accepting connections again.
+            #[cfg(target_os = "linux")]
+            sd_notify("READY=1\n");
         }
         match bound.serve_once(|request| dispatch_with_drain_gate(runtime, request)) {
             Ok(()) => {}
@@ -218,6 +335,11 @@ pub fn serve_until_shutdown_with_flag(
             }
             Err(other) => return Err(other),
         }
+
+        // Emit a watchdog keepalive so systemd knows the serve loop is
+        // still making progress. A no-op when not supervised by systemd.
+        #[cfg(target_os = "linux")]
+        sd_notify("WATCHDOG=1\n");
 
         // Session-refresh tick: run one iteration of the proactive
         // token-refresh check. This is cheap when the session is
@@ -273,14 +395,48 @@ pub fn serve_with_shutdown(shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
         &runtime.config,
         &runtime.auth,
         store_path,
-    );
+    )
+    .map_err(|err| anyhow::anyhow!("sync loop store connection failed: {err}"))?;
     runtime.sync_loop_shared = Some(sync_loop_handle.shared.clone());
+
+    // Health HTTP server (GET /livez, GET /readyz). Disabled by default
+    // (port 0). Enable by setting `PCLOUD_HEALTH_PORT=<port>` (must be
+    // >= 1024). Binds to 127.0.0.1 only; external probes must go through
+    // a reverse proxy or sidecar. The handle is intentionally kept alive
+    // for the daemon lifetime — dropping it does not stop the thread, but
+    // holding it makes the intent explicit.
+    let _health_handle: Option<crate::health_server::HealthServerHandle> = {
+        let port: u16 = std::env::var("PCLOUD_HEALTH_PORT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let cfg = crate::health_server::HealthServerConfig {
+            http_port: port,
+            read_timeout_ms: 2_000,
+        };
+        crate::health_server::spawn(cfg)
+            .map_err(|err| anyhow::anyhow!("health server startup failed: {err}"))?
+    };
 
     let socket_path = runtime.config.paths.ipc_socket_path();
     let server = IpcServer::new(current_effective_uid());
     let bound = server
         .bind(&socket_path)
         .map_err(|err| anyhow::anyhow!("daemon socket bind failed: {err}"))?;
+
+    // Notify systemd that the daemon is fully up and ready to accept
+    // connections. This unblocks any unit that depends on this service
+    // (Type=notify). The call is a no-op when not supervised by systemd.
+    //
+    // NOTE — fork-after-bind embedders: if this daemon is ever refactored
+    // to fork *after* calling bind() (e.g. to hand off the socket fd to a
+    // supervisor), the sd_notify call must be moved to the child process and
+    // must be preceded by `MAINPID=<child_pid>\n` so systemd tracks the
+    // correct PID. Without MAINPID= the unit state machine follows the
+    // parent (which will exit immediately) and may race with WatchdogSec
+    // expiry before the child sends WATCHDOG=1. See sd_notify(3) §MAINPID.
+    #[cfg(target_os = "linux")]
+    sd_notify("READY=1\n");
 
     serve_until_shutdown_with_flag(&bound, &mut runtime, Some(&shutdown))
         .map_err(|err| anyhow::anyhow!("daemon request handling failed: {err}"))?;
@@ -306,7 +462,7 @@ fn run_refresh_tick(runtime: &mut RuntimeShell) {
     );
     match outcome {
         Ok(TickOutcome::Refreshed) => {
-            log::info!("pcloud-session-refresh: token refreshed successfully");
+            log::debug!("pcloud-session-refresh: token refreshed successfully");
         }
         Ok(TickOutcome::IdleLogout { audit_details }) => {
             log::warn!("pcloud-session-refresh: idle logout - {audit_details}");

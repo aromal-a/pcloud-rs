@@ -43,7 +43,8 @@ fn bootstrap_test_runtime() -> (pcloud_daemon::RuntimeShell, std::path::PathBuf)
 fn sync_loop_starts_runs_and_shuts_down() {
     let (runtime, store_path) = bootstrap_test_runtime();
 
-    let (handle, _token) = spawn_daemon_sync_loop(&runtime.config, &runtime.auth, store_path);
+    let (handle, _token) = spawn_daemon_sync_loop(&runtime.config, &runtime.auth, store_path)
+        .expect("failed to open sync loop store connection");
 
     // The loop should be alive.
     assert!(handle.is_alive(), "sync loop should be running");
@@ -76,7 +77,8 @@ fn sync_loop_starts_runs_and_shuts_down() {
 fn sync_loop_observes_auth_token_update() {
     let (runtime, store_path) = bootstrap_test_runtime();
 
-    let (handle, token) = spawn_daemon_sync_loop(&runtime.config, &runtime.auth, store_path);
+    let (handle, token) = spawn_daemon_sync_loop(&runtime.config, &runtime.auth, store_path)
+        .expect("failed to open sync loop store connection");
 
     // Initially the runtime has no auth, so the loop should skip
     // cycles (no roots and no auth).
@@ -112,7 +114,8 @@ fn sync_loop_observes_auth_token_update() {
 fn sync_loop_pause_and_resume() {
     let (runtime, store_path) = bootstrap_test_runtime();
 
-    let (handle, _token) = spawn_daemon_sync_loop(&runtime.config, &runtime.auth, store_path);
+    let (handle, _token) = spawn_daemon_sync_loop(&runtime.config, &runtime.auth, store_path)
+        .expect("failed to open sync loop store connection");
 
     // Wait for the loop to become idle after one cycle.
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -165,7 +168,8 @@ fn disabled_sync_loop_returns_disabled_state() {
     let (mut runtime, store_path) = bootstrap_test_runtime();
     runtime.config.sync_loop.enabled = false;
 
-    let (handle, _token) = spawn_daemon_sync_loop(&runtime.config, &runtime.auth, store_path);
+    let (handle, _token) = spawn_daemon_sync_loop(&runtime.config, &runtime.auth, store_path)
+        .expect("failed to open sync loop store connection");
 
     assert!(!handle.is_alive(), "disabled loop should not have a thread");
     assert_eq!(

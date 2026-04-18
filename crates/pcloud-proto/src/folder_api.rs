@@ -199,7 +199,7 @@ where
         path: impl Into<String>,
     ) -> Result<RemoteFolderInfo, FolderApiError<T::Error>> {
         let request = ListFolderByPathRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             path: path.into(),
         };
         let encoded = request.encode()?;
@@ -245,7 +245,7 @@ where
         path: impl Into<String>,
     ) -> Result<RemoteFolderListing, FolderApiError<T::Error>> {
         let request = ListFolderByPathRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             path: path.into(),
         };
         let encoded = request.encode()?;
@@ -340,7 +340,7 @@ where
         name: impl Into<String>,
     ) -> Result<CreateFolderResponse, FolderApiError<T::Error>> {
         let request = CreateFolderRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             parent_folder_id: Some(parent_folder_id),
             name: name.into(),
             path: String::new(),
@@ -358,7 +358,7 @@ where
         path: impl Into<String>,
     ) -> Result<CreateFolderResponse, FolderApiError<T::Error>> {
         let request = CreateFolderRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             parent_folder_id: None,
             name: String::new(),
             path: path.into(),
@@ -378,7 +378,7 @@ where
         path: impl Into<String>,
     ) -> Result<CreateFolderResponse, FolderApiError<T::Error>> {
         let request = CreateFolderRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             parent_folder_id,
             name: name.into(),
             path: path.into(),
@@ -396,7 +396,7 @@ where
         folder_id: u64,
     ) -> Result<RenamedFolderResponse, FolderApiError<T::Error>> {
         let request = DeleteFolderRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             folder_id,
         };
         let encoded = request.encode()?;
@@ -419,7 +419,7 @@ where
         folder_id: u64,
     ) -> Result<RenamedFolderResponse, FolderApiError<T::Error>> {
         let request = DeleteFolderRecursiveRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             folder_id,
         };
         let encoded = request.encode()?;
@@ -445,7 +445,7 @@ where
         to_name: impl Into<String>,
     ) -> Result<RenamedFolderResponse, FolderApiError<T::Error>> {
         let request = RenameFolderRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             folder_id,
             to_folder_id,
             to_name: to_name.into(),

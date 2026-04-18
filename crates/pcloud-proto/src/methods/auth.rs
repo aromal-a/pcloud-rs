@@ -4,6 +4,7 @@
 
 use crate::binary_api::BinaryParam;
 use crate::methods::ProtocolMethod;
+use crate::redacted::RedactedProtoString;
 use sha1::{Digest, Sha1};
 
 /// `AuthRequestContext` — auth request context.
@@ -170,7 +171,7 @@ impl ProtocolMethod for LoginRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserInfoRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `context` field (context).
     pub context: AuthRequestContext,
 }
@@ -194,7 +195,7 @@ impl UserInfoRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(1 + 10);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.extend(self.context.standard_params());
         params
     }
@@ -214,9 +215,9 @@ impl ProtocolMethod for UserInfoRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TwoFactorLoginRequest {
     /// The `token` field (token).
-    pub token: String,
+    pub token: RedactedProtoString,
     /// The `code` field (code).
-    pub code: String,
+    pub code: RedactedProtoString,
     /// The `trust_device` field (trust device).
     pub trust_device: bool,
     /// The `recovery_code` field (recovery code).
@@ -248,8 +249,8 @@ impl TwoFactorLoginRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(3 + 10);
-        params.push(BinaryParam::string("token", self.token.as_str()));
-        params.push(BinaryParam::string("code", self.code.as_str()));
+        params.push(BinaryParam::string("token", self.token.expose_secret()));
+        params.push(BinaryParam::string("code", self.code.expose_secret()));
         params.push(BinaryParam::bool("trustdevice", self.trust_device));
         params.extend(self.context.standard_params());
         params
@@ -270,7 +271,7 @@ impl ProtocolMethod for TwoFactorLoginRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TwoFactorSendSmsRequest {
     /// The `token` field (token).
-    pub token: String,
+    pub token: RedactedProtoString,
 }
 
 impl TwoFactorSendSmsRequest {
@@ -292,7 +293,7 @@ impl TwoFactorSendSmsRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(1);
-        params.push(BinaryParam::string("token", self.token.as_str()));
+        params.push(BinaryParam::string("token", self.token.expose_secret()));
         params
     }
 }
@@ -311,7 +312,7 @@ impl ProtocolMethod for TwoFactorSendSmsRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TwoFactorSendNotificationRequest {
     /// The `token` field (token).
-    pub token: String,
+    pub token: RedactedProtoString,
 }
 
 impl TwoFactorSendNotificationRequest {
@@ -333,7 +334,7 @@ impl TwoFactorSendNotificationRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(1);
-        params.push(BinaryParam::string("token", self.token.as_str()));
+        params.push(BinaryParam::string("token", self.token.expose_secret()));
         params
     }
 }
@@ -354,11 +355,11 @@ pub struct LoginDigestRequest {
     /// The `username` field (username).
     pub username: String,
     /// The `digest_token` field (digest token).
-    pub digest_token: String,
+    pub digest_token: RedactedProtoString,
     /// The `password_digest` field (password digest).
-    pub password_digest: String,
+    pub password_digest: RedactedProtoString,
     /// The `code` field (code).
-    pub code: Option<String>,
+    pub code: Option<RedactedProtoString>,
     /// The `context` field (context).
     pub context: AuthRequestContext,
 }
@@ -384,13 +385,16 @@ impl LoginDigestRequest {
         let base = 3 + usize::from(self.code.is_some());
         let mut params = Vec::with_capacity(base + 10);
         params.push(BinaryParam::string("username", self.username.as_str()));
-        params.push(BinaryParam::string("digest", self.digest_token.as_str()));
+        params.push(BinaryParam::string(
+            "digest",
+            self.digest_token.expose_secret(),
+        ));
         params.push(BinaryParam::string(
             "passworddigest",
-            self.password_digest.as_str(),
+            self.password_digest.expose_secret(),
         ));
         if let Some(code) = &self.code {
-            params.push(BinaryParam::string("code", code.as_str()));
+            params.push(BinaryParam::string("code", code.expose_secret()));
         }
         params.extend(self.context.standard_params());
         params

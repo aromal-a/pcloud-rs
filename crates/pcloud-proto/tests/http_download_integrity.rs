@@ -72,8 +72,10 @@ fn test_config() -> HttpDownloadConfig {
         use_tls: false,
         connect_timeout: Duration::from_secs(2),
         read_timeout: Duration::from_secs(2),
+        total_request_timeout: Duration::from_secs(30),
         max_header_bytes: 4096,
         max_body_bytes: 4096,
+        bandwidth_pacer: None,
     }
 }
 
@@ -141,8 +143,10 @@ fn large_config(max_body: usize) -> HttpDownloadConfig {
         use_tls: false,
         connect_timeout: Duration::from_secs(5),
         read_timeout: Duration::from_secs(5),
+        total_request_timeout: Duration::from_secs(60),
         max_header_bytes: 4096,
         max_body_bytes: max_body,
+        bandwidth_pacer: None,
     }
 }
 

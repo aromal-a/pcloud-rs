@@ -57,6 +57,7 @@ use sha2::Sha256;
 use subtle::ConstantTimeEq;
 use thiserror::Error;
 
+use crate::crypto_util::{base64_decode as b64_crate_decode, base64_encode as b64_crate_encode};
 use crate::keys::KeyManager;
 use crate::{CryptoError, CryptoShell};
 
@@ -211,6 +212,8 @@ impl TemppassBlob {
     /// `prsa_sign_sha256_hash(crypto_privkey, …)` until the Rust active
     /// path gains an RSA-4096 keypair under bd-1du.5.
     fn sign(&self, master: &SecretBytes) -> [u8; TEMPPASS_HMAC_LEN] {
+        // INVARIANT: HMAC-SHA256 accepts keys of any non-zero length per RFC 2104;
+        // callers always pass a 32-byte derived master key.
         let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(master.expose_secret())
             .expect("HMAC-SHA256 accepts any key length");
         mac.update(TEMPPASS_SIG_LABEL);
@@ -335,8 +338,8 @@ pub fn derive_temppass_wire(
 
     // 5. Base64 on the way out.
     Ok(TemppassWire {
-        private_key_b64: b64_encode(&blob.encode()),
-        signature_b64: b64_encode(&signature),
+        private_key_b64: b64_crate_encode(&blob.encode()),
+        signature_b64: b64_crate_encode(&signature),
     })
 }
 
@@ -382,8 +385,8 @@ pub fn accept_temppass_wire(
     if temppass.is_empty() {
         return Err(TemppassError::EmptyPassword);
     }
-    let blob_bytes = b64_decode(&wire.private_key_b64)?;
-    let signature = b64_decode(&wire.signature_b64)?;
+    let blob_bytes = b64_crate_decode(&wire.private_key_b64).map_err(|_| TemppassError::Base64)?;
+    let signature = b64_crate_decode(&wire.signature_b64).map_err(|_| TemppassError::Base64)?;
     let blob = TemppassBlob::decode(&blob_bytes)?;
     blob.verify(verifier_master, &signature)?;
 
@@ -402,93 +405,9 @@ pub fn accept_temppass_wire(
     Ok(SecretBytes::new(plaintext))
 }
 
-// --- base64 (hand-rolled; the crate already has zero external base64
-// deps and we don't want to pull one in for a single helper) ---
-
-const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-fn b64_encode(input: &[u8]) -> String {
-    let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
-    let mut chunks = input.chunks_exact(3);
-    for chunk in &mut chunks {
-        let n = (u32::from(chunk[0]) << 16) | (u32::from(chunk[1]) << 8) | u32::from(chunk[2]);
-        out.push(B64_ALPHABET[((n >> 18) & 0x3f) as usize] as char);
-        out.push(B64_ALPHABET[((n >> 12) & 0x3f) as usize] as char);
-        out.push(B64_ALPHABET[((n >> 6) & 0x3f) as usize] as char);
-        out.push(B64_ALPHABET[(n & 0x3f) as usize] as char);
-    }
-    let rem = chunks.remainder();
-    match rem.len() {
-        0 => {}
-        1 => {
-            let n = u32::from(rem[0]) << 16;
-            out.push(B64_ALPHABET[((n >> 18) & 0x3f) as usize] as char);
-            out.push(B64_ALPHABET[((n >> 12) & 0x3f) as usize] as char);
-            out.push('=');
-            out.push('=');
-        }
-        2 => {
-            let n = (u32::from(rem[0]) << 16) | (u32::from(rem[1]) << 8);
-            out.push(B64_ALPHABET[((n >> 18) & 0x3f) as usize] as char);
-            out.push(B64_ALPHABET[((n >> 12) & 0x3f) as usize] as char);
-            out.push(B64_ALPHABET[((n >> 6) & 0x3f) as usize] as char);
-            out.push('=');
-        }
-        _ => unreachable!(),
-    }
-    out
-}
-
-fn b64_decode(input: &str) -> Result<Vec<u8>, TemppassError> {
-    fn val(c: u8) -> Result<u32, TemppassError> {
-        match c {
-            b'A'..=b'Z' => Ok(u32::from(c - b'A')),
-            b'a'..=b'z' => Ok(u32::from(c - b'a' + 26)),
-            b'0'..=b'9' => Ok(u32::from(c - b'0' + 52)),
-            b'+' => Ok(62),
-            b'/' => Ok(63),
-            _ => Err(TemppassError::Base64),
-        }
-    }
-    let bytes = input.as_bytes();
-    if !bytes.len().is_multiple_of(4) {
-        return Err(TemppassError::Base64);
-    }
-    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
-    let mut i = 0;
-    while i < bytes.len() {
-        let b0 = bytes[i];
-        let b1 = bytes[i + 1];
-        let b2 = bytes[i + 2];
-        let b3 = bytes[i + 3];
-        let v0 = val(b0)?;
-        let v1 = val(b1)?;
-        let n_hi = (v0 << 18) | (v1 << 12);
-        if b2 == b'=' {
-            if b3 != b'=' || i + 4 != bytes.len() {
-                return Err(TemppassError::Base64);
-            }
-            out.push(((n_hi >> 16) & 0xff) as u8);
-        } else if b3 == b'=' {
-            if i + 4 != bytes.len() {
-                return Err(TemppassError::Base64);
-            }
-            let v2 = val(b2)?;
-            let n = n_hi | (v2 << 6);
-            out.push(((n >> 16) & 0xff) as u8);
-            out.push(((n >> 8) & 0xff) as u8);
-        } else {
-            let v2 = val(b2)?;
-            let v3 = val(b3)?;
-            let n = n_hi | (v2 << 6) | v3;
-            out.push(((n >> 16) & 0xff) as u8);
-            out.push(((n >> 8) & 0xff) as u8);
-            out.push((n & 0xff) as u8);
-        }
-        i += 4;
-    }
-    Ok(out)
-}
+// base64 encode/decode now delegated to crate::crypto_util (which wraps the
+// `base64` workspace dependency). The hand-rolled implementation was removed
+// in audit-04 fix P3/M5.
 
 #[cfg(test)]
 mod tests {
@@ -579,9 +498,9 @@ mod tests {
             .clone_secret();
         let mut wire = derive_temppass_wire(&shell, &SecretString::new("temp")).unwrap();
         // Flip a single character in the blob.
-        let mut bytes = b64_decode(&wire.private_key_b64).unwrap();
+        let mut bytes = b64_crate_decode(&wire.private_key_b64).unwrap();
         bytes[20] ^= 0x01;
-        wire.private_key_b64 = b64_encode(&bytes);
+        wire.private_key_b64 = b64_crate_encode(&bytes);
         let err =
             accept_temppass_wire(&wire, &SecretString::new("temp"), &master_clone).unwrap_err();
         assert_eq!(err, TemppassError::BadSignature);
@@ -608,8 +527,8 @@ mod tests {
             .unwrap()
             .clone_secret();
         let bad = TemppassWire {
-            private_key_b64: b64_encode(&[1, 2, 3]),
-            signature_b64: b64_encode(&[0u8; 32]),
+            private_key_b64: b64_crate_encode(&[1, 2, 3]),
+            signature_b64: b64_crate_encode(&[0u8; 32]),
         };
         let err =
             accept_temppass_wire(&bad, &SecretString::new("temp"), &master_clone).unwrap_err();
@@ -632,6 +551,7 @@ mod tests {
 
     #[test]
     fn base64_round_trip() {
+        // Exercises the crypto_util wrappers that replaced the hand-rolled impl.
         for sample in [
             &[][..],
             &[0][..],
@@ -639,8 +559,8 @@ mod tests {
             &[0, 1, 2][..],
             b"hello, world",
         ] {
-            let enc = b64_encode(sample);
-            let dec = b64_decode(&enc).unwrap();
+            let enc = b64_crate_encode(sample);
+            let dec = b64_crate_decode(&enc).unwrap();
             assert_eq!(dec, sample);
         }
     }

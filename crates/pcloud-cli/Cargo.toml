@@ -19,7 +19,7 @@ pcloud-ipc = { path = "../pcloud-ipc" }
 pcloud-model = { path = "../pcloud-model" }
 pcloud-secret = { path = "../pcloud-secret" }
 pcloud-store = { path = "../pcloud-store" }
-rpassword = "7.3"
+rpassword = { workspace = true }
 libc = "0.2"
 thiserror.workspace = true
 serde.workspace = true

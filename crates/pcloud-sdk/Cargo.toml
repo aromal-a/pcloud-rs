@@ -6,6 +6,19 @@ license.workspace = true
 publish.workspace = true
 description = "Embeddable high-level SDK surface for pcloud-rs (auth, upload/download helpers)."
 
+# TODO(bd-1du): tls-native feature flag not implemented; pcloud-proto hard-pins
+# rustls + ring with no way for SDK consumers to opt into native-tls.  To add
+# native-tls support: (1) add `native-tls = { version = "0.2", optional = true }`
+# to pcloud-proto/Cargo.toml and gate the TcpStream TLS wrapping in
+# pcloud-proto/src/transport.rs behind `#[cfg(feature = "tls-native")]`; (2)
+# proxy the feature here as:
+#
+#   [features]
+#   tls-rustls = ["pcloud-proto/tls-rustls"]
+#   tls-native = ["pcloud-proto/tls-native"]
+#
+# Until then, rustls + webpki-roots is the only supported transport backend.
+
 [dependencies]
 pcloud-config = { path = "../pcloud-config" }
 pcloud-daemon = { path = "../pcloud-daemon" }
@@ -25,6 +38,22 @@ proptest = "1"
 tempfile = "3"
 pcloud-backends = { path = "../pcloud-backends" }
 criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
+
+[[example]]
+name = "login_and_list"
+path = "examples/login_and_list.rs"
+
+[[example]]
+name = "upload_and_download"
+path = "examples/upload_and_download.rs"
+
+[[example]]
+name = "public_link"
+path = "examples/public_link.rs"
+
+[[example]]
+name = "crypto_lifecycle"
+path = "examples/crypto_lifecycle.rs"
 
 [[bench]]
 name = "upload_session"

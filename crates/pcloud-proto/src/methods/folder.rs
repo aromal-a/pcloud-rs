@@ -3,12 +3,13 @@
 
 use crate::binary_api::BinaryParam;
 use crate::methods::ProtocolMethod;
+use crate::redacted::RedactedProtoString;
 
 /// `ListFolderByPathRequest` — list folder by path request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListFolderByPathRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `path` field (path).
     pub path: String,
 }
@@ -32,7 +33,7 @@ impl ListFolderByPathRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(2);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("path", self.path.as_str()));
         params
     }
@@ -61,7 +62,7 @@ impl ProtocolMethod for ListFolderByPathRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateFolderRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// `Some(parent_id)` selects the `folderid` + `name` shape;
     /// `None` selects the absolute-`path` shape.
     pub parent_folder_id: Option<u64>,
@@ -104,7 +105,7 @@ impl CreateFolderRequest {
             1
         };
         let mut params = Vec::with_capacity(cap);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         match self.parent_folder_id {
             Some(parent) => {
                 params.push(BinaryParam::number("folderid", parent));
@@ -144,7 +145,7 @@ impl ProtocolMethod for CreateFolderRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteFileRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `file_id` field (file id).
     pub file_id: u64,
 }
@@ -168,7 +169,7 @@ impl DeleteFileRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(3);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("fileid", self.file_id));
         params.push(BinaryParam::string("timeformat", "timestamp"));
         params
@@ -191,7 +192,7 @@ impl ProtocolMethod for DeleteFileRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenameFileRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `file_id` field (file id).
     pub file_id: u64,
     /// The `to_folder_id` field (to folder id).
@@ -219,7 +220,7 @@ impl RenameFileRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(5);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("fileid", self.file_id));
         params.push(BinaryParam::number("tofolderid", self.to_folder_id));
         params.push(BinaryParam::string("toname", self.to_name.as_str()));
@@ -244,7 +245,7 @@ impl ProtocolMethod for RenameFileRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteFolderRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `folder_id` field (folder id).
     pub folder_id: u64,
 }
@@ -268,7 +269,7 @@ impl DeleteFolderRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(3);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("folderid", self.folder_id));
         params.push(BinaryParam::string("timeformat", "timestamp"));
         params
@@ -290,7 +291,7 @@ impl ProtocolMethod for DeleteFolderRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteFolderRecursiveRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `folder_id` field (folder id).
     pub folder_id: u64,
 }
@@ -314,7 +315,7 @@ impl DeleteFolderRecursiveRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(2);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("folderid", self.folder_id));
         params
     }
@@ -335,7 +336,7 @@ impl ProtocolMethod for DeleteFolderRecursiveRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenameFolderRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `folder_id` field (folder id).
     pub folder_id: u64,
     /// The `to_folder_id` field (to folder id).
@@ -363,7 +364,7 @@ impl RenameFolderRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(5);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("folderid", self.folder_id));
         params.push(BinaryParam::number("tofolderid", self.to_folder_id));
         params.push(BinaryParam::string("toname", self.to_name.as_str()));
@@ -423,7 +424,7 @@ mod tests {
     #[test]
     fn create_folder_by_parent_emits_folderid_name() {
         let request = CreateFolderRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             parent_folder_id: Some(11),
             name: "Reports".to_owned(),
             path: String::new(),
@@ -437,7 +438,7 @@ mod tests {
     #[test]
     fn create_folder_by_path_emits_path() {
         let request = CreateFolderRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             parent_folder_id: None,
             name: String::new(),
             path: "/Docs/Reports".to_owned(),
@@ -451,7 +452,7 @@ mod tests {
     #[test]
     fn create_folder_if_not_exists_uses_idempotent_command() {
         let request = CreateFolderRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             parent_folder_id: Some(0),
             name: "Reports".to_owned(),
             path: String::new(),
@@ -466,7 +467,7 @@ mod tests {
     #[test]
     fn delete_file_request_emits_fileid_and_timeformat() {
         let request = DeleteFileRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             file_id: 42,
         };
         let encoded = request.encode().expect("deletefile should encode");
@@ -478,7 +479,7 @@ mod tests {
     #[test]
     fn rename_file_request_emits_target_parent_and_name() {
         let request = RenameFileRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             file_id: 42,
             to_folder_id: 7,
             to_name: "renamed.txt".to_owned(),
@@ -492,7 +493,7 @@ mod tests {
     #[test]
     fn delete_folder_request_emits_folderid_and_timeformat() {
         let request = DeleteFolderRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             folder_id: 11,
         };
         let encoded = request.encode().expect("deletefolder should encode");
@@ -506,7 +507,7 @@ mod tests {
         // `task_deletefolderrec` (`pclsync/pupload.c:1663-1675`) sends
         // only `auth` + `folderid`. No `timeformat`.
         let request = DeleteFolderRecursiveRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             folder_id: 11,
         };
         let encoded = request
@@ -519,7 +520,7 @@ mod tests {
     #[test]
     fn rename_folder_request_emits_target_parent_and_name() {
         let request = RenameFolderRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             folder_id: 11,
             to_folder_id: 3,
             to_name: "Renamed".to_owned(),

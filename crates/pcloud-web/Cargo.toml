@@ -12,10 +12,14 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"]
 tower = "0.5"
 pcloud-ipc = { path = "../pcloud-ipc" }
 pcloud-model = { path = "../pcloud-model" }
+pcloud-secret = { path = "../pcloud-secret" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 getrandom.workspace = true
+subtle.workspace = true
+zeroize.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util"] }

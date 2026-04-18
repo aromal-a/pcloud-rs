@@ -39,7 +39,11 @@
 //! account surfaces are ready.
 
 #![deny(missing_docs)]
-#![allow(clippy::pedantic)]
+// The crate-level pedantic blanket was removed by audit-04 P3/LOW. Narrowly-scoped
+// allows are added at the specific call sites where clippy::pedantic fires to keep
+// the suppression surface minimal and auditable.
+#![allow(clippy::module_name_repetitions)] // `CryptoShell`, `CryptoError`, `CryptoMode` etc. repeat the crate name by design.
+#![allow(clippy::doc_markdown)] // ADR refs / doc links don't need backtick formatting in prose.
 
 // **PLATFORM:** all
 // **GATING:** none (portable).
@@ -84,6 +88,10 @@ pub mod share_temppass;
 /// Lifecycle state machine (`NotSetup` / `Locked` / `Unlocking` / `Unlocked`).
 pub mod state;
 
+/// Shared base64 encode/decode helpers (consolidates hand-rolled base64 from
+/// `password_scorer` and `share_temppass`). See LOW-3.Q in the crypto audit.
+pub(crate) mod crypto_util;
+
 pub use password_scorer::{
     psync_derive_password_from_passphrase, psync_password_quality, psync_password_quality10000,
 };
@@ -92,6 +100,7 @@ pub use share_temppass::{TemppassError, TemppassWire, accept_temppass_wire, deri
 use std::collections::BTreeMap;
 use std::fmt;
 
+use pcloud_secret::ExposeSecret as _;
 use pcloud_secret::secret_string::SecretString;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
@@ -103,6 +112,24 @@ use thiserror::Error;
 /// assert_eq!(pcloud_crypto::CRATE_NAME, "pcloud-crypto");
 /// ```
 pub const CRATE_NAME: &str = "pcloud-crypto";
+
+/// Profile-format epoch for all on-wire and on-disk crypto labels.
+///
+/// Each versioned label (`"pcloud-crypto/file-key/v1"`,
+/// `"pcloud-crypto/filename/v1"`, `"pcloud-crypto/fingerprint/v1"`, etc.)
+/// embeds this version as a decimal suffix. When any label's semantics change
+/// in a non-backwards-compatible way:
+///
+/// 1. Increment this constant.
+/// 2. Update every label string that carries the old version.
+/// 3. Add a migration note to `docs/enterprise/crypto-compat.md` explaining
+///    what changed and how to re-derive or migrate existing blobs.
+/// 4. Gate old-label compatibility behind a `LEGACY_C_COMPAT` feature so
+///    production builds only accept the current epoch.
+///
+/// **Current epoch:** `1`. Corresponds to all `v1` labels introduced in the
+/// initial Rust rewrite. (audit-04 LOW §3-opus L-4)
+pub const PROFILE_VERSION: u32 = 1;
 
 /// Remote folder identifier. Keeps the ids local to this crate so that the
 /// crypto runtime does not pull in higher-level model types.
@@ -182,6 +209,19 @@ pub enum CryptoError {
     /// a provider bug, a tampered wrapped blob, or a mismatched CMK.
     #[error("KMS returned a DEK of the wrong length")]
     KmsDekLen,
+    /// Too many consecutive failed unlock attempts. The shell refuses
+    /// further unlock calls until [`CryptoShell::reset`] is called.
+    /// Protects against automated brute-force of the crypto password.
+    #[error("brute-force lockout: too many consecutive failed unlock attempts")]
+    BruteForceLockedOut,
+    /// Per-session AES-256-GCM nonce budget exhausted. With 96-bit random
+    /// nonces, the safe encryption budget for a single key is ~2^32
+    /// operations. The shell refuses further [`CryptoShell::seal_sector`]
+    /// calls when the counter approaches `u32::MAX` minus a safety margin
+    /// so the daemon rotates the per-file / master key before nonce
+    /// collision becomes non-negligible.
+    #[error("nonce budget exhausted: key rotation required before further sector seals")]
+    NonceBudgetExhausted,
 }
 
 impl From<pcloud_kms::KmsError> for CryptoError {
@@ -234,6 +274,25 @@ pub fn default_kms_provider() -> Box<dyn pcloud_kms::KmsProvider> {
 
 /// Length of a KMS-wrapped DEK's plaintext material (32 bytes for AES-256).
 pub const KMS_DEK_LEN: usize = 32;
+
+/// Safety margin subtracted from `u32::MAX` when enforcing the per-session
+/// AES-256-GCM nonce budget in [`CryptoShell::seal_sector`]. Once the
+/// `sectors_sealed` counter exceeds `u32::MAX - NONCE_BUDGET_SAFETY_MARGIN`
+/// the shell returns [`CryptoError::NonceBudgetExhausted`] rather than
+/// issuing another sector nonce. See H-2 in the crypto audit plan.
+pub const NONCE_BUDGET_SAFETY_MARGIN: u64 = 64;
+
+/// Maximum consecutive failed unlock attempts before the shell refuses
+/// further [`CryptoShell::start`] calls (brute-force lockout). Persisted
+/// across daemon restarts via serde so an attacker cannot reset the
+/// counter by killing the process.
+pub const MAX_CONSECUTIVE_FAILURES: u32 = 10;
+
+/// Upper bound on the exponential-backoff wait applied after consecutive
+/// failed unlock attempts (30 minutes). Backoff doubles on each failure
+/// up to this cap; the shell returns [`CryptoError::BruteForceLockedOut`]
+/// if [`CryptoShell::start`] is called within the backoff window.
+pub const MAX_LOCKOUT_BACKOFF_SECS: u64 = 30 * 60;
 
 /// Active DEK-sourcing mode for the sector-encryption path.
 ///
@@ -348,6 +407,88 @@ pub struct CryptoShell {
     /// `[crypto.kms]` is configured and a real provider is injected.
     #[serde(default)]
     pub mode: CryptoMode,
+    /// Monotonic count of sectors successfully sealed in this session.
+    ///
+    /// Used to detect nonce-space exhaustion: AES-256-GCM with a 96-bit
+    /// random nonce is safe up to roughly 2^32 encryptions per key before
+    /// collision probability becomes non-negligible. When this counter
+    /// exceeds `u32::MAX` the daemon must rotate to a new per-file key or
+    /// master key before sealing further sectors.
+    ///
+    /// Not serialised — resets to zero on each daemon restart (the count
+    /// only needs to guard the in-process session).
+    #[serde(skip)]
+    pub sectors_sealed: std::sync::atomic::AtomicU64,
+    /// Consecutive failed unlock attempts. Incremented on each wrong-password
+    /// call to [`Self::start`]; reset to zero on a successful unlock.
+    ///
+    /// When this reaches [`MAX_CONSECUTIVE_FAILURES`] the shell returns
+    /// [`CryptoError::BruteForceLockedOut`] for subsequent unlock attempts
+    /// until the shell is reset.
+    ///
+    /// **Persisted across restarts** via the `atomic_u32_serde` shim so an
+    /// attacker cannot reset the lockout counter by killing the daemon.
+    /// The counter is zeroized on every successful unlock.
+    #[serde(with = "atomic_u32_serde", default = "default_atomic_u32")]
+    pub consecutive_failures: std::sync::atomic::AtomicU32,
+    /// Wall-clock timestamp (seconds since UNIX epoch) of the most recent
+    /// failed unlock attempt, or `0` if there has never been a failure or
+    /// the counter has been zeroized.
+    ///
+    /// Used together with [`consecutive_failures`](Self::consecutive_failures)
+    /// to enforce exponential backoff: each failure roughly doubles the
+    /// required wait (base = 1s, `wait = 2^failures`) up to
+    /// [`MAX_LOCKOUT_BACKOFF_SECS`] (30 minutes). Persisted across
+    /// restarts so crash-then-retry loops cannot sidestep the backoff.
+    #[serde(with = "atomic_u64_serde", default = "default_atomic_u64")]
+    pub last_fail_at: std::sync::atomic::AtomicU64,
+}
+
+/// Default constructor used by serde for [`CryptoShell::consecutive_failures`]
+/// when the field is absent from the serialized representation.
+fn default_atomic_u32() -> std::sync::atomic::AtomicU32 {
+    std::sync::atomic::AtomicU32::new(0)
+}
+
+/// Default constructor used by serde for [`CryptoShell::last_fail_at`] when
+/// the field is absent from the serialized representation.
+fn default_atomic_u64() -> std::sync::atomic::AtomicU64 {
+    std::sync::atomic::AtomicU64::new(0)
+}
+
+/// Serde shim for [`std::sync::atomic::AtomicU32`] used by
+/// [`CryptoShell::consecutive_failures`]. Snapshots the value with
+/// `Relaxed` ordering on serialize and reconstructs a fresh atomic on
+/// deserialize. Used so the brute-force lockout counter survives daemon
+/// restart (H-5 in the crypto audit plan).
+mod atomic_u32_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    pub fn serialize<S: Serializer>(a: &AtomicU32, s: S) -> Result<S::Ok, S::Error> {
+        a.load(Ordering::Relaxed).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<AtomicU32, D::Error> {
+        Ok(AtomicU32::new(u32::deserialize(d)?))
+    }
+}
+
+/// Serde shim for [`std::sync::atomic::AtomicU64`] used by
+/// [`CryptoShell::last_fail_at`]. Same posture as
+/// [`atomic_u32_serde`] — `Relaxed` snapshot on serialize, fresh atomic on
+/// deserialize.
+mod atomic_u64_serde {
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    pub fn serialize<S: Serializer>(a: &AtomicU64, s: S) -> Result<S::Ok, S::Error> {
+        a.load(Ordering::Relaxed).serialize(s)
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<AtomicU64, D::Error> {
+        Ok(AtomicU64::new(u64::deserialize(d)?))
+    }
 }
 
 impl fmt::Debug for CryptoShell {
@@ -380,8 +521,47 @@ impl Default for CryptoShell {
             hint: None,
             kms: default_kms_provider(),
             mode: CryptoMode::Raw,
+            sectors_sealed: std::sync::atomic::AtomicU64::new(0),
+            consecutive_failures: std::sync::atomic::AtomicU32::new(0),
+            last_fail_at: std::sync::atomic::AtomicU64::new(0),
         }
     }
+}
+
+/// Normalize a password to Unicode NFC before key derivation.
+///
+/// Ensures that visually-identical passwords typed on different platforms
+/// (macOS default NFD vs. Linux/Windows default NFC) derive to the same
+/// master key. Returns a new [`SecretString`]; the normalized form is
+/// zeroized on drop just like any other [`SecretString`] (H-4 in the
+/// crypto audit plan).
+fn normalize_password_nfc(pw: &SecretString) -> SecretString {
+    use unicode_normalization::UnicodeNormalization;
+    let s: String = pw.expose_secret().nfc().collect();
+    SecretString::new(s)
+}
+
+/// Seconds since the UNIX epoch, clamped to `u64::MAX` on the (unreachable
+/// in practice) pre-1970 / clock-rewound case. Used by the brute-force
+/// lockout to timestamp the most recent failed unlock attempt.
+fn unix_now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Exponential backoff window (seconds) given `failures` prior consecutive
+/// failed unlocks. `failures == 0 or 1` → 0s; otherwise `2^failures`
+/// seconds, capped at [`MAX_LOCKOUT_BACKOFF_SECS`]. Deterministic and
+/// side-effect-free; unit-tested.
+fn lockout_backoff_secs(failures: u32) -> u64 {
+    if failures <= 1 {
+        return 0;
+    }
+    let shift = failures.min(40); // guard against shift overflow; 2^40 > 30min cap anyway
+    let wait = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+    wait.min(MAX_LOCKOUT_BACKOFF_SECS)
 }
 
 impl CryptoShell {
@@ -536,6 +716,8 @@ impl CryptoShell {
         let key_id_s: String = key_id.into();
         // Generate a fresh DEK from the OS CSPRNG.
         let mut dek_bytes = vec![0u8; KMS_DEK_LEN];
+        // INVARIANT: see keys::KeyManager::default — getrandom is always
+        // available on supported targets (Linux/macOS/Windows).
         getrandom::getrandom(&mut dek_bytes)
             .expect("OS randomness should be available for DEK generation");
         let dek = pcloud_kms::PlaintextDek(dek_bytes);
@@ -564,6 +746,14 @@ impl CryptoShell {
                 wrapped_dek,
                 context,
             } => {
+                // `KeyId` and `WrappedDek` are newtype wrappers the KMS trait
+                // takes by shared reference. One clone of `key_id` (short
+                // string) and one clone of `wrapped_dek` (Vec<u8>) are
+                // structurally required: `CryptoMode::Kms` persists
+                // `wrapped_dek: Vec<u8>` for serde compatibility; changing
+                // to `WrappedDek` would require an on-disk schema migration.
+                // (audit-04 P3/MEDIUM: documented — cannot eliminate without
+                // schema change.)
                 let kid = pcloud_kms::KeyId(key_id.clone());
                 let blob = pcloud_kms::WrappedDek(wrapped_dek.clone());
                 let pt = self.kms.unwrap_cached(
@@ -670,7 +860,11 @@ impl CryptoShell {
         if self.is_setup() {
             return Err(CryptoError::AlreadySetup);
         }
-        let derived = self.keys.derive_key_material(&password);
+        // Normalize to NFC so the same visual password typed on NFD (macOS)
+        // vs NFC (Linux/Windows) platforms produces the same fingerprint
+        // (H-4 in the crypto audit plan).
+        let normalized = normalize_password_nfc(&password);
+        let derived = self.keys.derive_key_material(&normalized);
         self.keys.setup_fingerprint = Some(keys::KeyManager::fingerprint_for(&derived));
         // Intentionally do NOT retain the key material from setup; the user
         // must explicitly `start` to activate a session.
@@ -723,17 +917,49 @@ impl CryptoShell {
         if self.is_started() {
             return Err(CryptoError::AlreadyStarted);
         }
+        // Brute-force guard: hard cap on total consecutive failures plus
+        // an exponential backoff window enforced against the persisted
+        // `last_fail_at` timestamp. Both counters survive daemon restart
+        // via serde so an attacker cannot reset the lockout by killing
+        // the process (H-5 in the crypto audit plan).
+        let failures = self
+            .consecutive_failures
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if failures >= MAX_CONSECUTIVE_FAILURES {
+            return Err(CryptoError::BruteForceLockedOut);
+        }
+        let backoff = lockout_backoff_secs(failures);
+        if backoff > 0 {
+            let last = self.last_fail_at.load(std::sync::atomic::Ordering::Relaxed);
+            let now = unix_now_secs();
+            if last > 0 && now.saturating_sub(last) < backoff {
+                return Err(CryptoError::BruteForceLockedOut);
+            }
+        }
+
+        // Normalize password bytes to Unicode NFC (H-4) so the same
+        // human-visible password entered on macOS (NFD) vs Linux (NFC)
+        // derives to the same master key.
+        let normalized = normalize_password_nfc(&password);
 
         self.unlock_state = state::UnlockState::Unlocking;
-        let derived = self.keys.derive_key_material(&password);
+        let derived = self.keys.derive_key_material(&normalized);
         if !self.keys.matches_setup(&derived) {
             // Wipe the derived material before returning.
             drop(derived);
             self.unlock_state = state::UnlockState::Locked;
+            self.consecutive_failures
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            self.last_fail_at
+                .store(unix_now_secs(), std::sync::atomic::Ordering::Relaxed);
             return Err(CryptoError::WrongPassword);
         }
         self.keys.active_key_material = Some(derived);
         self.unlock_state = state::UnlockState::Unlocked;
+        self.consecutive_failures
+            .store(0, std::sync::atomic::Ordering::Relaxed);
+        self.last_fail_at
+            .store(0, std::sync::atomic::Ordering::Relaxed);
         Ok(())
     }
 
@@ -857,6 +1083,8 @@ impl CryptoShell {
 
         // Derive new key material under a fresh salt.
         let mut new_salt = vec![0u8; keys::DERIVATION_SALT_LEN];
+        // INVARIANT: see keys::KeyManager::default — getrandom is always
+        // available on supported targets (Linux/macOS/Windows).
         getrandom::getrandom(&mut new_salt)
             .expect("OS randomness should be available for crypto salt rotation");
         let new_key = keys::KeyManager::derive_key_material_with_salt(&new_password, &new_salt);
@@ -883,15 +1111,108 @@ impl CryptoShell {
         // Signature: HMAC-SHA256(blob) under the *current* master key.
         let signature = hmac_sha256(&current_key, blob.as_bytes());
 
-        // Apply the rotation locally.
+        // Stage a re-wrap of every outstanding KMS-wrapped DEK blob held
+        // by this shell BEFORE we mutate any local state. This is the
+        // "all-or-nothing" rewrap commit (bead pcloud-rs-a8j): if any
+        // single unwrap/wrap fails, we return the KMS error and the
+        // shell state is untouched — the caller sees a clean failure
+        // and may safely retry with the same old-password context.
+        //
+        // Storage reality: `CryptoMode::Kms` persists a single master
+        // wrapped DEK per shell (plus AAD `context`). There are no
+        // per-folder wrapped blobs in the current serde shape, so
+        // "outstanding blobs" is either zero (Raw mode) or one (Kms
+        // mode). The staging vector is kept Vec-shaped so that a
+        // future per-folder-DEK schema can extend this call site
+        // without re-plumbing the atomicity envelope.
+        let staged_mode = match &self.mode {
+            CryptoMode::Raw => None,
+            CryptoMode::Kms {
+                key_id,
+                wrapped_dek,
+                context,
+            } => Some(Self::rewrap_single_kms_blob(
+                self.kms.as_ref(),
+                key_id,
+                wrapped_dek,
+                context.as_deref(),
+            )?),
+        };
+
+        // All rewraps succeeded (or there were none). Commit the new
+        // key material and any re-wrapped KMS mode atomically.
         self.keys.derivation_salt = new_salt;
         self.keys.setup_fingerprint = Some(new_fingerprint);
         self.keys.private_flags = flags;
         self.keys.active_key_material = Some(new_key);
+        if let Some(new_mode) = staged_mode {
+            // Evict the process-local cache entry keyed on the OLD
+            // wrapped blob so the stale plaintext DEK does not outlive
+            // the rotation. The `PlaintextDek` held in the cache
+            // zeroizes on drop.
+            if let CryptoMode::Kms {
+                key_id,
+                wrapped_dek,
+                context,
+            } = &self.mode
+            {
+                let old_kid = pcloud_kms::KeyId(key_id.clone());
+                let old_blob = pcloud_kms::WrappedDek(wrapped_dek.clone());
+                let _ = pcloud_kms::evict_cached_dek(
+                    self.kms.name(),
+                    &old_kid,
+                    &old_blob,
+                    context.as_deref(),
+                );
+            }
+            self.mode = new_mode;
+        }
 
         Ok(ReencodedPrivateKey {
             private_key_hex: blob,
             signature_hex: hex_encode(&signature),
+        })
+    }
+
+    /// Unwrap + re-wrap a single `(key_id, wrapped_dek, context)` tuple
+    /// through the injected KMS provider and return a fresh
+    /// [`CryptoMode::Kms`] carrying the new wrapped blob.
+    ///
+    /// Used by [`Self::change_password_unlocked`] to rotate outstanding
+    /// KMS-wrapped DEK blobs atomically: the caller stages the returned
+    /// value and only commits it once every blob has been re-wrapped
+    /// successfully. The plaintext DEK is held in a
+    /// [`pcloud_kms::PlaintextDek`] for the duration of this call and
+    /// zeroizes on drop — it is never returned to the caller.
+    ///
+    /// Rewrap primitive: the [`pcloud_kms::KmsProvider`] trait does not
+    /// expose a vendor-level `rewrap(blob, new_kek)`. We synthesise one
+    /// via `decrypt_dek` followed by `encrypt_dek`. Both AWS KMS and
+    /// Vault Transit produce a fresh ciphertext (new IV / version) even
+    /// when the CMK is unchanged, so calling this on a shell whose KMS
+    /// configuration has not moved still rotates the stored blob — a
+    /// defence-in-depth property on password rotation.
+    fn rewrap_single_kms_blob(
+        kms: &dyn pcloud_kms::KmsProvider,
+        key_id: &str,
+        wrapped_dek: &[u8],
+        context: Option<&str>,
+    ) -> Result<CryptoMode, CryptoError> {
+        let kid = pcloud_kms::KeyId(key_id.to_string());
+        let old_blob = pcloud_kms::WrappedDek(wrapped_dek.to_vec());
+        // Direct unwrap (not unwrap_cached): we want the fresh
+        // plaintext, and we are about to evict the cache entry anyway.
+        let plaintext = kms.decrypt_dek(&kid, &old_blob, context)?;
+        if plaintext.expose().len() != KMS_DEK_LEN {
+            return Err(CryptoError::KmsDekLen);
+        }
+        let new_wrapped = kms.encrypt_dek(&kid, &plaintext, context)?;
+        // `plaintext` zeroizes on drop here.
+        drop(plaintext);
+        Ok(CryptoMode::Kms {
+            key_id: key_id.to_string(),
+            wrapped_dek: new_wrapped.0,
+            context: context.map(str::to_owned),
         })
     }
 
@@ -906,6 +1227,12 @@ impl CryptoShell {
     /// setup fingerprint (constant-time); this prevents a caller that merely
     /// has a handle on a running daemon from rotating the crypto password
     /// without proving it knows the current one.
+    ///
+    /// WARNING: This operation re-derives the key from the new password without
+    /// a key-encryption-key (KEK) layer. All existing ciphertext becomes
+    /// inaccessible without the new password. There is no migration of existing
+    /// encrypted data — callers must ensure all data is accessible before
+    /// rotating.
     ///
     /// # Errors
     /// - [`CryptoError::WrongPassword`] if the old password fails the
@@ -982,6 +1309,8 @@ fn hmac_sha256(key: &pcloud_secret::secret_bytes::SecretBytes, msg: &[u8]) -> [u
     use hmac::{Hmac, Mac};
     use pcloud_secret::ExposeSecret;
     use sha2::Sha256;
+    // INVARIANT: HMAC-SHA256 accepts keys of any non-zero length per RFC 2104;
+    // callers always pass a 32-byte derived key.
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key.expose_secret())
         .expect("HMAC-SHA256 accepts any key length");
     mac.update(msg);
@@ -1121,6 +1450,18 @@ impl CryptoShell {
         sector_index: u32,
         plaintext: &[u8],
     ) -> Result<Vec<u8>, CryptoError> {
+        // Enforce per-session AES-256-GCM 96-bit random-nonce budget
+        // (H-2). Refuse new seals once the counter approaches
+        // `u32::MAX - NONCE_BUDGET_SAFETY_MARGIN` — before birthday-bound
+        // collision probability becomes non-negligible. The daemon must
+        // rotate the per-file / master key and reset before proceeding.
+        let budget_cap = u64::from(u32::MAX) - NONCE_BUDGET_SAFETY_MARGIN;
+        let pre = self
+            .sectors_sealed
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if pre >= budget_cap {
+            return Err(CryptoError::NonceBudgetExhausted);
+        }
         let file_key = self.derive_sector_file_key(file_seed)?;
         let frame = content::seal_sector(
             &file_key,
@@ -1128,6 +1469,9 @@ impl CryptoShell {
             plaintext,
             self.content.sector_size_bytes,
         )?;
+        // Bump after success so a mid-seal error does not burn nonce budget.
+        self.sectors_sealed
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(frame)
     }
 
@@ -1489,6 +1833,167 @@ mod tests {
         let b = c.change_password_unlocked(pw("p2"), 0).unwrap();
         assert_ne!(a.private_key_hex, b.private_key_hex);
         assert_ne!(a.signature_hex, b.signature_hex);
+    }
+
+    // ---- KMS re-wrap on password rotation (bead pcloud-rs-a8j) ----
+
+    use super::{CryptoMode, KMS_DEK_LEN};
+    use pcloud_kms::{KeyId, KmsError, KmsProvider, PlaintextDek, WrappedDek};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Minimal in-memory KMS provider used to exercise the rewrap path.
+    ///
+    /// Wrapped layout: 4-byte LE `sequence` || plaintext bytes. Each
+    /// call to `encrypt_dek` bumps `sequence` so successive wraps of
+    /// the same plaintext produce distinct ciphertexts — exactly as
+    /// AWS KMS and Vault Transit do in production.
+    struct SeqMockKms {
+        name: &'static str,
+        seq: AtomicUsize,
+        fail_encrypt_after: AtomicUsize,
+        fail_decrypt: AtomicUsize,
+    }
+    impl SeqMockKms {
+        fn new(name: &'static str) -> Self {
+            Self {
+                name,
+                seq: AtomicUsize::new(0),
+                fail_encrypt_after: AtomicUsize::new(usize::MAX),
+                fail_decrypt: AtomicUsize::new(0),
+            }
+        }
+        /// Fail the Nth `encrypt_dek` call (0-indexed).
+        fn fail_encrypt_at(&self, n: usize) {
+            self.fail_encrypt_after.store(n, Ordering::SeqCst);
+        }
+    }
+    impl KmsProvider for SeqMockKms {
+        fn name(&self) -> &'static str {
+            self.name
+        }
+        fn encrypt_dek(
+            &self,
+            _k: &KeyId,
+            dek: &PlaintextDek,
+            _c: Option<&str>,
+        ) -> Result<WrappedDek, KmsError> {
+            let n = self.seq.fetch_add(1, Ordering::SeqCst);
+            if n >= self.fail_encrypt_after.load(Ordering::SeqCst) {
+                return Err(KmsError::Unreachable("mock-encrypt-fail".into()));
+            }
+            let mut out = Vec::with_capacity(4 + dek.expose().len());
+            out.extend_from_slice(&(n as u32).to_le_bytes());
+            out.extend_from_slice(dek.expose());
+            Ok(WrappedDek(out))
+        }
+        fn decrypt_dek(
+            &self,
+            _k: &KeyId,
+            wrapped: &WrappedDek,
+            _c: Option<&str>,
+        ) -> Result<PlaintextDek, KmsError> {
+            if self.fail_decrypt.load(Ordering::SeqCst) != 0 {
+                return Err(KmsError::PolicyDenied);
+            }
+            if wrapped.0.len() < 4 {
+                return Err(KmsError::Malformed);
+            }
+            Ok(PlaintextDek(wrapped.0[4..].to_vec()))
+        }
+        fn health_check(&self) -> Result<(), KmsError> {
+            Ok(())
+        }
+    }
+
+    /// Extract the wrapped-DEK bytes from a `CryptoMode::Kms` shell.
+    fn kms_wrapped_bytes(c: &CryptoShell) -> Vec<u8> {
+        match &c.mode {
+            CryptoMode::Kms { wrapped_dek, .. } => wrapped_dek.clone(),
+            CryptoMode::Raw => panic!("expected CryptoMode::Kms"),
+        }
+    }
+
+    #[test]
+    fn kms_rewrap_rewraps_outstanding_deks_on_password_change() {
+        let mut c = CryptoShell::default().with_kms_provider(Box::new(SeqMockKms::new("mock-ok")));
+        c.setup(pw("orig"), None).unwrap();
+        c.start(pw("orig")).unwrap();
+        c.enable_kms_mode("mock-cmk", Some("tenant-a".into()))
+            .expect("enable kms");
+        let before = kms_wrapped_bytes(&c);
+        assert!(matches!(c.mode, CryptoMode::Kms { .. }));
+
+        c.change_password_unlocked(pw("next"), 0)
+            .expect("rotation ok");
+
+        // Mode must still be Kms with the same key_id/context but a
+        // freshly re-wrapped blob distinct from the pre-rotation one.
+        match &c.mode {
+            CryptoMode::Kms {
+                key_id,
+                wrapped_dek,
+                context,
+            } => {
+                assert_eq!(key_id, "mock-cmk");
+                assert_eq!(context.as_deref(), Some("tenant-a"));
+                assert_ne!(
+                    wrapped_dek, &before,
+                    "wrapped DEK must rotate on password change"
+                );
+                // Same DEK plaintext preserved (mock layout: 4-byte seq || dek).
+                assert_eq!(&wrapped_dek[4..], &before[4..]);
+                assert_eq!(wrapped_dek.len(), 4 + KMS_DEK_LEN);
+            }
+            CryptoMode::Raw => panic!("mode must stay Kms after rewrap"),
+        }
+
+        // New password must unlock through a full stop/start cycle.
+        c.stop();
+        c.start(pw("next")).expect("new password unlocks");
+    }
+
+    #[test]
+    fn kms_rewrap_rollback_on_mid_operation_failure() {
+        let mock = Box::new(SeqMockKms::new("mock-rollback"));
+        // The first encrypt (enable_kms_mode) must succeed; the second
+        // encrypt (the rewrap) must fail so change_password_unlocked
+        // has to roll back.
+        mock.fail_encrypt_at(1);
+        let mut c = CryptoShell::default().with_kms_provider(mock);
+        c.setup(pw("orig"), None).unwrap();
+        c.start(pw("orig")).unwrap();
+        c.enable_kms_mode("cmk-rb", Some("ctx-rb".into()))
+            .expect("enable kms");
+
+        // Snapshot pre-rotation state.
+        let before_wrapped = kms_wrapped_bytes(&c);
+        let before_salt = c.keys.derivation_salt.clone();
+        let before_fp = c.keys.setup_fingerprint.clone();
+        let before_flags = c.priv_key_flags();
+
+        // Rewrap must fail.
+        let err = c
+            .change_password_unlocked(pw("next"), 0x1234)
+            .expect_err("rewrap must fail and roll the whole op back");
+        assert!(matches!(err, CryptoError::Kms));
+
+        // EVERY piece of state must be unchanged: key material, salt,
+        // fingerprint, flags, and the wrapped DEK blob.
+        assert_eq!(c.keys.derivation_salt, before_salt);
+        assert_eq!(
+            c.keys.setup_fingerprint.as_ref().unwrap().0,
+            before_fp.unwrap().0
+        );
+        assert_eq!(c.priv_key_flags(), before_flags);
+        assert_eq!(kms_wrapped_bytes(&c), before_wrapped);
+
+        // The OLD password must still unlock. The new one must not.
+        c.stop();
+        assert_eq!(
+            c.start(pw("next")).unwrap_err(),
+            CryptoError::WrongPassword
+        );
+        c.start(pw("orig")).expect("old password still works");
     }
 
     #[test]

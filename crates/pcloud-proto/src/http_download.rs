@@ -36,13 +36,16 @@ use std::{
     net::{TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
+use pcloud_resilience::BandwidthPacer;
 use rustls::pki_types::ServerName;
-use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+use rustls::{ClientConnection, StreamOwned};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+
+use crate::tls::shared_config;
 
 /// `SignedDownload` — signed download.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,19 +66,66 @@ pub struct SignedDownload {
 }
 
 /// `HttpDownloadConfig` — http download config.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct HttpDownloadConfig {
     /// The `use_tls` field (use tls).
     pub use_tls: bool,
     /// The `connect_timeout` field (connect timeout).
     pub connect_timeout: Duration,
-    /// The `read_timeout` field (read timeout).
+    /// Per-syscall read/write timeout applied to the underlying
+    /// `TcpStream`. Bounds any single kernel-level I/O call but does
+    /// not bound the overall lifetime of a download — see
+    /// [`Self::total_request_timeout`] for the whole-request deadline.
     pub read_timeout: Duration,
+    /// Hard upper bound on the entire download — from the first byte
+    /// written on the GET to the last body byte read. If exceeded,
+    /// [`HttpDownloadError::TotalTimeoutExceeded`] is returned and the
+    /// connection is dropped. This guards against a slow-loris server
+    /// that drip-feeds bytes slowly enough to never trip
+    /// [`Self::read_timeout`] but fast enough to hold the caller
+    /// indefinitely (audit-04 H-5).
+    pub total_request_timeout: Duration,
     /// The `max_header_bytes` field (max header bytes).
     pub max_header_bytes: usize,
     /// The `max_body_bytes` field (max body bytes).
     pub max_body_bytes: usize,
+    /// Optional download-side bandwidth pacer.
+    ///
+    /// When `Some`, the streaming read loop calls
+    /// [`BandwidthPacer::acquire_blocking`] before emitting each chunk of
+    /// body bytes so the observed throughput converges on the configured
+    /// limit. When `None` (the default), no pacing is applied and the
+    /// download runs at link speed.
+    ///
+    /// The pacer is held in an [`Arc`] so a single instance can be shared
+    /// across concurrent downloads to enforce a global daemon-wide cap.
+    ///
+    /// Bead: pcloud-rs-6mx.
+    pub bandwidth_pacer: Option<Arc<BandwidthPacer>>,
 }
+
+impl PartialEq for HttpDownloadConfig {
+    fn eq(&self, other: &Self) -> bool {
+        // Pacer identity is not part of semantic equality: two configs with
+        // the same limits but different `Arc` instances are functionally
+        // equivalent. Compare pacer *limits* so tests that build a config
+        // from defaults can still be compared.
+        let pacer_eq = match (&self.bandwidth_pacer, &other.bandwidth_pacer) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.limit() == b.limit(),
+            _ => false,
+        };
+        self.use_tls == other.use_tls
+            && self.connect_timeout == other.connect_timeout
+            && self.read_timeout == other.read_timeout
+            && self.total_request_timeout == other.total_request_timeout
+            && self.max_header_bytes == other.max_header_bytes
+            && self.max_body_bytes == other.max_body_bytes
+            && pacer_eq
+    }
+}
+
+impl Eq for HttpDownloadConfig {}
 
 impl Default for HttpDownloadConfig {
     fn default() -> Self {
@@ -83,8 +133,13 @@ impl Default for HttpDownloadConfig {
             use_tls: true,
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(15),
+            // 10 min: generous enough for multi-GiB downloads over slow
+            // residential links, still bounded so a wedged server cannot
+            // pin a caller forever.
+            total_request_timeout: Duration::from_secs(600),
             max_header_bytes: 16 * 1024,
             max_body_bytes: 64 * 1024 * 1024,
+            bandwidth_pacer: None,
         }
     }
 }
@@ -124,6 +179,22 @@ pub enum HttpDownloadError {
     /// `HttpStatus` variant (http status).
     #[error("http response status was not successful: {0}")]
     HttpStatus(u16),
+    /// Server requested a retry delay (429 Too Many Requests or 503 Service
+    /// Unavailable with `Retry-After` header). The embedded duration is
+    /// capped at 300 s and should be honored by the caller before retrying.
+    #[error("server requested retry after {0:?}")]
+    RetryAfter(Duration),
+    /// Whole-request deadline from
+    /// [`HttpDownloadConfig::total_request_timeout`] expired before the
+    /// body was fully received. Dropping the connection here is
+    /// intentional: a retry will open a fresh one (audit-04 H-5).
+    #[error("total request timeout of {elapsed:?} exceeded {limit:?}")]
+    TotalTimeoutExceeded {
+        /// Time elapsed since the first byte of the request was written.
+        elapsed: Duration,
+        /// Configured whole-request budget.
+        limit: Duration,
+    },
     /// `Malformed` variant (malformed).
     #[error("http response was malformed: {0}")]
     Malformed(&'static str),
@@ -154,7 +225,18 @@ impl HttpDownloadError {
             HttpDownloadError::Io(_)
                 | HttpDownloadError::Connect(_)
                 | HttpDownloadError::IntegrityMismatch { .. }
+                // RetryAfter is retryable after honoring the indicated delay.
+                | HttpDownloadError::RetryAfter(_)
         )
+    }
+
+    /// When this error carries a server-mandated retry delay, return it.
+    /// Callers should sleep for this duration before retrying.
+    pub fn retry_after(&self) -> Option<Duration> {
+        match self {
+            HttpDownloadError::RetryAfter(d) => Some(*d),
+            _ => None,
+        }
     }
 }
 
@@ -203,21 +285,32 @@ pub fn fetch_download_verified_streaming<W: Write>(
         .unwrap_or(if config.use_tls { 443 } else { 80 });
     let stream = connect_socket(&download.host, port, config)?;
     let mut hasher = expected_sha256.map(|_| Sha256::new());
+    let deadline = request_deadline(config);
 
     let written = if config.use_tls {
-        let mut roots = RootCertStore::empty();
-        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let tls_config = ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+        let tls_config = shared_config();
         let server_name = ServerName::try_from(download.host.clone())
             .map_err(|_| HttpDownloadError::InvalidServerName(download.host.clone()))?;
-        let connection = ClientConnection::new(Arc::new(tls_config), server_name)?;
+        let connection = ClientConnection::new(tls_config, server_name)?;
         let mut tls_stream = StreamOwned::new(connection, stream);
-        request_and_stream(&mut tls_stream, download, config, sink, hasher.as_mut())?
+        request_and_stream(
+            &mut tls_stream,
+            download,
+            config,
+            sink,
+            hasher.as_mut(),
+            deadline,
+        )?
     } else {
         let mut plain_stream = stream;
-        request_and_stream(&mut plain_stream, download, config, sink, hasher.as_mut())?
+        request_and_stream(
+            &mut plain_stream,
+            download,
+            config,
+            sink,
+            hasher.as_mut(),
+            deadline,
+        )?
     };
 
     if let (Some(expected), Some(h)) = (expected_sha256, hasher) {
@@ -237,37 +330,94 @@ pub fn fetch_download_verified_streaming<W: Write>(
 /// overhead without pinning large allocations.
 const STREAM_READ_BUF: usize = 64 * 1024;
 
+/// Compute the whole-request deadline from the configured
+/// `total_request_timeout` (audit-04 H-5). Anchored on "now" so the
+/// deadline is relative to the start of each call — a caller that
+/// invokes `fetch_download*` three times gets three independent
+/// budgets, which is the intended semantics (one deadline per HTTP
+/// request, not per logical operation).
+#[inline]
+fn request_deadline(config: &HttpDownloadConfig) -> Instant {
+    Instant::now() + config.total_request_timeout
+}
+
+/// Returns `Err(TotalTimeoutExceeded)` when the process clock has
+/// passed the supplied `deadline`. Called at every boundary inside
+/// the streaming read loops so a slow-loris server cannot drip-feed
+/// bytes slowly enough to hold the caller forever.
+#[inline]
+fn check_deadline(deadline: Instant, limit: Duration) -> Result<(), HttpDownloadError> {
+    let now = Instant::now();
+    if now >= deadline {
+        let elapsed = limit + now.saturating_duration_since(deadline);
+        return Err(HttpDownloadError::TotalTimeoutExceeded { elapsed, limit });
+    }
+    Ok(())
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
     let mut s = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        s.push_str(&format!("{:02x}", byte));
+    for b in bytes {
+        write!(s, "{:02x}", b).unwrap();
     }
     s
 }
 
+/// Parse a `Retry-After: N` header value (integer seconds) from raw HTTP
+/// response headers. Returns `None` when the header is absent or the value
+/// is not a valid unsigned integer. The returned duration is capped at 300 s
+/// to prevent indefinite blocking from a misbehaving or malicious server.
+fn parse_retry_after(headers: &str) -> Option<Duration> {
+    headers
+        .lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("retry-after:"))
+        .and_then(|l| l.splitn(2, ':').nth(1))
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(|secs| Duration::from_secs(secs.min(300)))
+}
+
+/// Attempt a TCP connect to each resolved address in turn (happy-eyeballs
+/// sequential fallback). Returns the first successful stream, or the last
+/// connection error if all addresses fail.
 fn connect_socket(
     host: &str,
     port: u16,
     config: &HttpDownloadConfig,
 ) -> Result<TcpStream, HttpDownloadError> {
-    let mut addresses = (host, port)
+    let addresses: Vec<_> = (host, port)
         .to_socket_addrs()
-        .map_err(HttpDownloadError::Connect)?;
-    let address = addresses
-        .next()
-        .ok_or_else(|| HttpDownloadError::InvalidAddress {
+        .map_err(HttpDownloadError::Connect)?
+        .collect();
+
+    if addresses.is_empty() {
+        return Err(HttpDownloadError::InvalidAddress {
             host: host.to_owned(),
             port,
-        })?;
-    let stream = TcpStream::connect_timeout(&address, config.connect_timeout)
-        .map_err(HttpDownloadError::Connect)?;
-    stream
-        .set_read_timeout(Some(config.read_timeout))
-        .map_err(HttpDownloadError::SocketConfig)?;
-    stream
-        .set_write_timeout(Some(config.read_timeout))
-        .map_err(HttpDownloadError::SocketConfig)?;
-    Ok(stream)
+        });
+    }
+
+    let mut last_err: Option<io::Error> = None;
+    for address in &addresses {
+        match TcpStream::connect_timeout(address, config.connect_timeout) {
+            Ok(stream) => {
+                stream
+                    .set_read_timeout(Some(config.read_timeout))
+                    .map_err(HttpDownloadError::SocketConfig)?;
+                stream
+                    .set_write_timeout(Some(config.read_timeout))
+                    .map_err(HttpDownloadError::SocketConfig)?;
+                return Ok(stream);
+            }
+            Err(e) => {
+                last_err = Some(e);
+            }
+        }
+    }
+
+    Err(HttpDownloadError::Connect(last_err.unwrap_or_else(|| {
+        io::Error::new(io::ErrorKind::AddrNotAvailable, "no addresses resolved")
+    })))
 }
 
 fn request_and_stream<S, W>(
@@ -276,19 +426,29 @@ fn request_and_stream<S, W>(
     config: &HttpDownloadConfig,
     sink: &mut W,
     mut hasher: Option<&mut Sha256>,
+    deadline: Instant,
 ) -> Result<u64, HttpDownloadError>
 where
     S: Read + Write,
     W: Write,
 {
+    let limit = config.total_request_timeout;
     let request = build_request(download);
     stream.write_all(request.as_bytes())?;
     stream.flush()?;
+    check_deadline(deadline, limit)?;
 
     let (status, headers, leftover) = read_headers(stream, config.max_header_bytes)?;
+    check_deadline(deadline, limit)?;
     // Accept 200 OK and 206 Partial Content (the latter when a `Range`
     // header was sent on the request). Any other 2xx is passed through.
     if status / 100 != 2 {
+        // Surface Retry-After delay for 429 / 503 so callers can back off
+        // for exactly the server-requested duration instead of using the
+        // default exponential schedule.
+        if (status == 429 || status == 503) && headers.retry_after.is_some() {
+            return Err(HttpDownloadError::RetryAfter(headers.retry_after.unwrap()));
+        }
         return Err(HttpDownloadError::HttpStatus(status));
     }
     if let Some(length) = headers.content_length
@@ -304,12 +464,20 @@ where
         if leftover.len() > config.max_body_bytes {
             return Err(HttpDownloadError::BodyTooLarge);
         }
+        pace(config, leftover.len() as u64);
         emit(sink, hasher.as_deref_mut(), &leftover)?;
         written = leftover.len() as u64;
     }
 
     if headers.transfer_chunked {
-        written = stream_chunked_body(stream, sink, hasher.as_deref_mut(), written, config)?;
+        written = stream_chunked_body(
+            stream,
+            sink,
+            hasher.as_deref_mut(),
+            written,
+            config,
+            deadline,
+        )?;
         return Ok(written);
     }
 
@@ -318,6 +486,7 @@ where
         Some(length) => {
             let length_u64 = length as u64;
             while written < length_u64 {
+                check_deadline(deadline, limit)?;
                 let remaining = length_u64 - written;
                 let want = remaining.min(buffer.len() as u64) as usize;
                 let read = stream.read(&mut buffer[..want])?;
@@ -326,11 +495,13 @@ where
                         "unexpected eof while reading body",
                     ));
                 }
+                pace(config, read as u64);
                 emit(sink, hasher.as_deref_mut(), &buffer[..read])?;
                 written += read as u64;
             }
         }
         None => loop {
+            check_deadline(deadline, limit)?;
             let read = stream.read(&mut buffer)?;
             if read == 0 {
                 break;
@@ -338,6 +509,7 @@ where
             if written.saturating_add(read as u64) > config.max_body_bytes as u64 {
                 return Err(HttpDownloadError::BodyTooLarge);
             }
+            pace(config, read as u64);
             emit(sink, hasher.as_deref_mut(), &buffer[..read])?;
             written += read as u64;
         },
@@ -438,13 +610,28 @@ pub fn fetch_download_resumable(
             Err(ResumeAttempt::NoRangeSupport) => {
                 // Fall through to full redownload below.
             }
+            Err(ResumeAttempt::Fatal(HttpDownloadError::RetryAfter(wait))) => {
+                // Server requested back-off — honour it before falling
+                // through to the full redownload attempt so we do not
+                // hammer the endpoint immediately.
+                std::thread::sleep(wait);
+            }
             Err(ResumeAttempt::Fatal(e)) => return Err(e),
         }
     }
 
     // Full download path: truncate/create the staging file, stream body,
     // verify SHA-256, rename on success, delete on mismatch.
-    let bytes_written = full_download_to_part(download, config, expected_sha256, &part_path)?;
+    // If the server returns Retry-After on the initial attempt, honour
+    // the delay and retry once before surfacing the error to the caller.
+    let bytes_written = match full_download_to_part(download, config, expected_sha256, &part_path) {
+        Ok(n) => n,
+        Err(HttpDownloadError::RetryAfter(wait)) => {
+            std::thread::sleep(wait);
+            full_download_to_part(download, config, expected_sha256, &part_path)?
+        }
+        Err(e) => return Err(e),
+    };
     fs::rename(&part_path, dest_path)?;
     Ok(ResumableOutcome::FullDownload { bytes_written })
 }
@@ -554,6 +741,7 @@ fn range_stream(
         .port
         .unwrap_or(if config.use_tls { 443 } else { 80 });
     let stream = connect_socket(&download.host, port, config)?;
+    let deadline = request_deadline(config);
 
     // Build request with open-ended range header.
     let mut request = format!(
@@ -568,19 +756,25 @@ fn range_stream(
     request.push_str("\r\n");
 
     if config.use_tls {
-        let mut roots = RootCertStore::empty();
-        roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let tls_config = ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+        let tls_config = shared_config();
         let server_name = ServerName::try_from(download.host.clone())
             .map_err(|_| HttpDownloadError::InvalidServerName(download.host.clone()))?;
-        let connection = ClientConnection::new(Arc::new(tls_config), server_name)?;
+        let connection = ClientConnection::new(tls_config, server_name)?;
         let mut tls_stream = StreamOwned::new(connection, stream);
-        range_do(&mut tls_stream, &request, config, part_path, offset, hasher)
+        range_do(
+            &mut tls_stream,
+            &request,
+            config,
+            part_path,
+            offset,
+            hasher,
+            deadline,
+        )
     } else {
         let mut plain = stream;
-        range_do(&mut plain, &request, config, part_path, offset, hasher)
+        range_do(
+            &mut plain, &request, config, part_path, offset, hasher, deadline,
+        )
     }
 }
 
@@ -591,14 +785,18 @@ fn range_do<S>(
     part_path: &Path,
     offset: u64,
     hasher: &mut Sha256,
+    deadline: Instant,
 ) -> Result<(u16, bool, u64), HttpDownloadError>
 where
     S: Read + Write,
 {
+    let limit = config.total_request_timeout;
     stream.write_all(request.as_bytes())?;
     stream.flush()?;
+    check_deadline(deadline, limit)?;
 
     let (_status, headers, leftover) = read_headers(stream, config.max_header_bytes)?;
+    check_deadline(deadline, limit)?;
     let status = headers.status;
     // Non-2xx → error.
     if status / 100 != 2 {
@@ -620,6 +818,7 @@ where
 
     let mut written: u64 = 0;
     if !leftover.is_empty() {
+        pace(config, leftover.len() as u64);
         sink.write_all(&leftover)?;
         hasher.update(&leftover);
         written = leftover.len() as u64;
@@ -628,7 +827,7 @@ where
     let mut buffer = vec![0u8; STREAM_READ_BUF];
     if headers.transfer_chunked {
         // Rare for Range responses, but handle gracefully.
-        written = stream_chunked_body(stream, &mut sink, Some(hasher), written, config)?;
+        written = stream_chunked_body(stream, &mut sink, Some(hasher), written, config, deadline)?;
     } else {
         match headers.content_length {
             Some(length) => {
@@ -638,6 +837,7 @@ where
                     return Err(HttpDownloadError::BodyTooLarge);
                 }
                 while written < length_u64 {
+                    check_deadline(deadline, limit)?;
                     let remaining = length_u64 - written;
                     let want = remaining.min(buffer.len() as u64) as usize;
                     let read = stream.read(&mut buffer[..want])?;
@@ -646,12 +846,14 @@ where
                             "unexpected eof while reading body",
                         ));
                     }
+                    pace(config, read as u64);
                     sink.write_all(&buffer[..read])?;
                     hasher.update(&buffer[..read]);
                     written += read as u64;
                 }
             }
             None => loop {
+                check_deadline(deadline, limit)?;
                 let read = stream.read(&mut buffer)?;
                 if read == 0 {
                     break;
@@ -661,6 +863,7 @@ where
                 {
                     return Err(HttpDownloadError::BodyTooLarge);
                 }
+                pace(config, read as u64);
                 sink.write_all(&buffer[..read])?;
                 hasher.update(&buffer[..read]);
                 written += read as u64;
@@ -710,6 +913,21 @@ fn full_download_to_part(
     }
 }
 
+/// Pace `bytes` against the configured [`BandwidthPacer`] (if any).
+///
+/// This is a zero-overhead no-op when `config.bandwidth_pacer` is `None`.
+/// When a pacer is configured, the calling thread blocks just long enough
+/// for the token bucket to accumulate `bytes` before returning, so the
+/// download loop's observed throughput converges on the configured limit.
+///
+/// Bead: pcloud-rs-6mx.
+#[inline]
+fn pace(config: &HttpDownloadConfig, bytes: u64) {
+    if let Some(pacer) = config.bandwidth_pacer.as_ref() {
+        pacer.acquire_blocking(bytes);
+    }
+}
+
 fn emit<W: Write>(
     sink: &mut W,
     hasher: Option<&mut Sha256>,
@@ -728,15 +946,18 @@ fn stream_chunked_body<S, W>(
     mut hasher: Option<&mut Sha256>,
     mut written: u64,
     config: &HttpDownloadConfig,
+    deadline: Instant,
 ) -> Result<u64, HttpDownloadError>
 where
     S: Read,
     W: Write,
 {
+    let limit = config.total_request_timeout;
     let max = config.max_body_bytes as u64;
     let mut buffer = vec![0u8; STREAM_READ_BUF];
 
     loop {
+        check_deadline(deadline, limit)?;
         let size_line = read_line(stream)?;
         let size_text = size_line
             .split(';')
@@ -761,6 +982,7 @@ where
 
         let mut remaining = chunk_size;
         while remaining > 0 {
+            check_deadline(deadline, limit)?;
             let want = remaining.min(buffer.len() as u64) as usize;
             let read = stream.read(&mut buffer[..want])?;
             if read == 0 {
@@ -768,6 +990,7 @@ where
                     "unexpected eof while reading chunked body",
                 ));
             }
+            pace(config, read as u64);
             emit(sink, hasher.as_deref_mut(), &buffer[..read])?;
             written += read as u64;
             remaining -= read as u64;
@@ -837,6 +1060,8 @@ struct HeaderParse {
     transfer_chunked: bool,
     accept_ranges_bytes: bool,
     status: u16,
+    /// Duration parsed from a `Retry-After: N` header, if present and valid.
+    retry_after: Option<Duration>,
 }
 
 fn read_headers<S>(
@@ -875,6 +1100,8 @@ where
     let mut content_length = None;
     let mut transfer_chunked = false;
     let mut accept_ranges_bytes = false;
+    // Parse Retry-After from the raw header block before splitting lines.
+    let retry_after = parse_retry_after(text);
     for line in lines {
         if line.is_empty() {
             continue;
@@ -902,6 +1129,7 @@ where
             transfer_chunked,
             accept_ranges_bytes,
             status,
+            retry_after,
         },
         Vec::new(),
     ))
@@ -971,7 +1199,9 @@ mod tests {
                 connect_timeout: Duration::from_secs(2),
                 read_timeout: Duration::from_secs(2),
                 max_header_bytes: 4096,
+                total_request_timeout: Duration::from_secs(30),
                 max_body_bytes: 1024,
+                bandwidth_pacer: None,
             },
         )
         .expect("download should succeed");
@@ -1010,7 +1240,9 @@ mod tests {
                 connect_timeout: Duration::from_secs(2),
                 read_timeout: Duration::from_secs(2),
                 max_header_bytes: 4096,
+                total_request_timeout: Duration::from_secs(30),
                 max_body_bytes: 4,
+                bandwidth_pacer: None,
             },
         )
         .expect_err("oversized body should fail");
@@ -1050,7 +1282,9 @@ mod tests {
                 connect_timeout: Duration::from_secs(2),
                 read_timeout: Duration::from_secs(2),
                 max_header_bytes: 4096,
+                total_request_timeout: Duration::from_secs(30),
                 max_body_bytes: 1024,
+                bandwidth_pacer: None,
             },
         )
         .expect("chunked download should succeed");
@@ -1090,7 +1324,9 @@ mod tests {
                 connect_timeout: Duration::from_secs(2),
                 read_timeout: Duration::from_secs(2),
                 max_header_bytes: 4096,
+                total_request_timeout: Duration::from_secs(30),
                 max_body_bytes: 4,
+                bandwidth_pacer: None,
             },
         )
         .expect_err("oversized chunked body should fail");

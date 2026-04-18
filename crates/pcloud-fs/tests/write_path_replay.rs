@@ -62,6 +62,7 @@ fn mount_write_fsync_unmount_remount_preserves_pending_records() {
             WritePathOptions {
                 flush_threshold_bytes: 1024 * 1024,
                 flush_interval: Duration::from_secs(3600),
+                ..WritePathOptions::default()
             },
         );
         svc.create(42, "/", "doc.txt").unwrap();

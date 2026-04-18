@@ -43,13 +43,12 @@ fn unique_root(tag: &str) -> std::path::PathBuf {
 }
 
 fn dummy_binary_transport() -> BinaryApiTransport {
-    BinaryApiTransport::new(TransportConfig {
-        host: "127.0.0.1".to_string(),
-        port: 65535,
-        server_name: "localhost".to_string(),
-        use_tls: false,
-        connect_timeout: std::time::Duration::from_millis(10),
-        read_timeout: std::time::Duration::from_millis(10),
+    BinaryApiTransport::new({
+        let mut cfg = TransportConfig::dev_plaintext("127.0.0.1", 65535u16, "localhost");
+        cfg.connect_timeout = std::time::Duration::from_millis(10);
+        cfg.read_timeout = std::time::Duration::from_millis(10);
+        cfg.total_request_timeout = std::time::Duration::from_secs(30);
+        cfg
     })
 }
 

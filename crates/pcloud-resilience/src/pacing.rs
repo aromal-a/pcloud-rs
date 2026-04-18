@@ -70,6 +70,16 @@ pub struct BandwidthPacer {
     state: Mutex<PacerState>,
 }
 
+impl std::fmt::Debug for BandwidthPacer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Don't touch the mutex in `Debug`: it may be held by a hot-path
+        // pacer call and blocking for formatting would be a surprise.
+        f.debug_struct("BandwidthPacer")
+            .field("state", &"<locked>")
+            .finish()
+    }
+}
+
 impl BandwidthPacer {
     /// Create a new pacer with the given limit in bytes per second.
     ///
@@ -178,6 +188,69 @@ impl BandwidthPacer {
             st.last_refill = Instant::now();
         }
     }
+
+    /// Compute how long the caller should wait before consuming `bytes`
+    /// from the bucket, and atomically reserve the budget.
+    ///
+    /// Unlike [`Self::pace`], this does not actually sleep — it returns the
+    /// [`Duration`] the caller should sleep (typically by handing it to an
+    /// async runtime via `tokio::time::sleep`). A return value of
+    /// [`Duration::ZERO`] means the request fits entirely within the current
+    /// bucket and the caller can proceed immediately.
+    ///
+    /// Returns [`Duration::ZERO`] when the pacer is configured with
+    /// [`None`] (unlimited) or a zero limit.
+    ///
+    /// Bead: pcloud-rs-6mx — `BandwidthLimiter::acquire(bytes) -> Duration`.
+    pub fn acquire(&self, bytes: u64) -> Duration {
+        if bytes == 0 {
+            return Duration::ZERO;
+        }
+        let mut st = self.state.lock().expect("pacer mutex poisoned");
+        let Some(limit) = st.limit else {
+            return Duration::ZERO;
+        };
+        if limit == 0 {
+            return Duration::ZERO;
+        }
+
+        let now = Instant::now();
+        let elapsed = now.saturating_duration_since(st.last_refill);
+        let refill = (elapsed.as_secs_f64() * limit as f64).floor() as u64;
+        if refill > 0 {
+            st.tokens = st.tokens.saturating_add(refill).min(limit);
+            st.last_refill = now;
+        }
+
+        if st.tokens >= bytes {
+            st.tokens -= bytes;
+            Duration::ZERO
+        } else {
+            let deficit = bytes - st.tokens;
+            let secs = deficit as f64 / limit as f64;
+            st.tokens = 0;
+            // Advance last_refill optimistically so back-to-back callers
+            // do not double-count the same sleep window.
+            st.last_refill = now + Duration::from_secs_f64(secs);
+            Duration::from_secs_f64(secs)
+        }
+    }
+
+    /// Reserve budget for `bytes` and, if a wait is required, block the
+    /// current thread until the budget is available.
+    ///
+    /// Equivalent to `thread::sleep(self.acquire(bytes))`. Use this in
+    /// synchronous byte loops (HTTP download `read()` loops, upload
+    /// `write()` loops). Use [`Self::acquire`] when the caller is async and
+    /// wants to hand the returned [`Duration`] to an async sleep.
+    ///
+    /// Bead: pcloud-rs-6mx — `BandwidthLimiter::acquire_blocking(bytes)`.
+    pub fn acquire_blocking(&self, bytes: u64) {
+        let wait = self.acquire(bytes);
+        if !wait.is_zero() {
+            thread::sleep(wait);
+        }
+    }
 }
 
 impl Default for BandwidthPacer {
@@ -240,6 +313,63 @@ mod tests {
             elapsed < 1.0,
             "test should run in under 1s of wall time; took {elapsed}s"
         );
+    }
+
+    #[test]
+    fn bandwidth_limiter_none_is_unlimited() {
+        // Bead pcloud-rs-6mx: `acquire` on an unlimited pacer must return
+        // Duration::ZERO for any request, no matter how large.
+        let pacer = BandwidthPacer::new(None);
+        assert_eq!(pacer.acquire(0), Duration::ZERO);
+        assert_eq!(pacer.acquire(1), Duration::ZERO);
+        assert_eq!(pacer.acquire(u64::MAX / 2), Duration::ZERO);
+
+        let start = Instant::now();
+        pacer.acquire_blocking(10_000_000_000);
+        assert!(start.elapsed() < Duration::from_millis(50));
+    }
+
+    #[test]
+    fn bandwidth_limiter_throttles_to_configured_rate() {
+        // Bead pcloud-rs-6mx: with a 100 KB/s limit, requesting 1 MB from
+        // an empty bucket must return a sleep duration that matches the
+        // deficit / rate ratio within tight tolerance, WITHOUT any real
+        // sleeping (mock-time style: inspect `acquire`, not `pace`).
+        let limit: u64 = 100 * 1024; // 100 KB/s
+        let pacer = BandwidthPacer::new(Some(limit));
+
+        // Drain the initial bucket (one full second worth of tokens).
+        let first = pacer.acquire(limit);
+        assert_eq!(
+            first,
+            Duration::ZERO,
+            "first request should fit in the initial burst"
+        );
+
+        // Immediately request another 1 MB — must require ~10 s of wait.
+        let request: u64 = 1_024 * 1_024; // 1 MB
+        let wait = pacer.acquire(request);
+        let expected_secs = request as f64 / limit as f64; // ~10.24 s
+        let observed = wait.as_secs_f64();
+
+        // ±5 % tolerance around the analytic expected wait.
+        let upper = expected_secs * 1.05;
+        let lower = expected_secs * 0.95;
+        assert!(
+            observed <= upper && observed >= lower,
+            "observed wait {observed:.3}s not within ±5% of expected {expected_secs:.3}s"
+        );
+
+        // A request of zero bytes must never block and must not drain tokens.
+        assert_eq!(pacer.acquire(0), Duration::ZERO);
+    }
+
+    #[test]
+    fn acquire_blocking_respects_unlimited() {
+        let pacer = BandwidthPacer::new(None);
+        let start = Instant::now();
+        pacer.acquire_blocking(1_000_000);
+        assert!(start.elapsed() < Duration::from_millis(20));
     }
 
     #[test]

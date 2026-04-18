@@ -22,13 +22,38 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use pcloud_model::sync::PlannedOperation;
 use pcloud_model::transfer::TransferTask;
+use pcloud_resilience::{BackoffSchedule, RetryDecision, RetryPolicy};
 use pcloud_secret::{ExposeSecret, secret_string::SecretString};
 use thiserror::Error;
 
 use crate::transfer_backend::TransferRuntime;
+
+/// Seed for the jitter PRNG used in transfer retry backoff.
+/// "pcloud_x" encoded as ASCII bytes in little-endian u64.
+const XFER_JITTER_SEED: u64 = 0x70636c6f_75645f78;
+
+/// Default retry policy for transient upload/download failures.
+///
+/// Exponential backoff starting at 1 s, capped at 60 s, with jitter.
+/// Up to 5 total attempts (4 retries). This covers transient network
+/// failures such as connection resets, 5xx responses, and DNS hiccups.
+/// Permanent errors (auth failure, invalid path) are not retried — the
+/// caller must detect those and surface them as terminal failures.
+fn default_transfer_retry_policy() -> RetryPolicy {
+    RetryPolicy::new(
+        5,
+        BackoffSchedule::ExponentialJittered {
+            base: Duration::from_secs(1),
+            factor: 2.0,
+            max: Duration::from_secs(60),
+            seed: XFER_JITTER_SEED,
+        },
+    )
+}
 
 /// Errors that can occur during transfer bridge execution.
 #[derive(Debug, Error)]
@@ -179,15 +204,42 @@ pub fn execute_upload_with_chunk_size(
 
     let file_size = file_bytes.len() as u64;
 
-    // Open upload session
-    let session = transfer
-        .upload_create(
-            SecretString::new(auth_token.expose_secret().to_owned()),
-            parent_folder_id,
-            &remote_name,
-            file_size,
-        )
-        .map_err(|e| TransferBridgeError::UploadFailed(e.to_string()))?;
+    let retry = default_transfer_retry_policy();
+
+    // Open upload session — retry on transient failure.
+    //
+    // TODO(bd-1du): upload resumption from upload_resume_state is not yet
+    // implemented; orphaned sessions accumulate until manual cleanup or the
+    // periodic 24-hour stale-session purge below. A full resume path would
+    // call UploadResumeRepository::get here, reuse the existing upload_id
+    // when found, and only call upload_create when no resume row exists.
+    let session = {
+        let mut attempt: u32 = 1;
+        loop {
+            match transfer.upload_create(
+                SecretString::new(auth_token.expose_secret().to_owned()),
+                parent_folder_id,
+                &remote_name,
+                file_size,
+            ) {
+                Ok(s) => break s,
+                Err(e) => match retry.next(attempt) {
+                    RetryDecision::Retry { wait } => {
+                        log::warn!(
+                            "upload_create transient error (attempt {attempt}): {e}; retrying in {wait:?}"
+                        );
+                        std::thread::sleep(wait);
+                        attempt += 1;
+                    }
+                    RetryDecision::GiveUp => {
+                        return Err(TransferBridgeError::UploadFailed(format!(
+                            "upload_create failed after {attempt} attempts: {e}"
+                        )));
+                    }
+                },
+            }
+        }
+    };
 
     // Decide: single-shot or chunked upload.
     let use_chunked = chunk_size
@@ -195,6 +247,8 @@ pub fn execute_upload_with_chunk_size(
         .unwrap_or(false);
 
     if use_chunked {
+        // INVARIANT: `use_chunked` is only true when `chunk_size.map(...)` evaluates
+        // to Some with a positive value, so chunk_size is guaranteed to be Some here.
         let cs = chunk_size.expect("chunk_size is Some when use_chunked is true");
         let mut tracker = pcloud_engine::transfers::uploads::ChunkedUploadTracker::new(
             session.upload_id,
@@ -207,41 +261,77 @@ pub fn execute_upload_with_chunk_size(
             let chunk_len = tracker.next_chunk_size();
             let chunk = &file_bytes[offset..offset + chunk_len];
 
-            transfer
-                .upload_bytes(
+            let mut attempt: u32 = 1;
+            loop {
+                match transfer.upload_bytes(
                     SecretString::new(auth_token.expose_secret().to_owned()),
                     &session,
                     chunk,
-                )
-                .map_err(|e| {
-                    // On error mid-chunk, persist the offset in a sidecar
-                    // for future resume. Best-effort; we surface the
-                    // original error regardless.
-                    let sidecar = local_path.with_extension("pcloud-resume");
-                    let _ = fs::write(
-                        &sidecar,
-                        format!(
-                            "upload_id={}\nacked_offset={}\n",
-                            session.upload_id, tracker.acked_offset
-                        ),
-                    );
-                    TransferBridgeError::UploadFailed(format!(
-                        "chunk upload failed at offset {}: {e}",
-                        tracker.acked_offset
-                    ))
-                })?;
+                ) {
+                    Ok(_) => break,
+                    Err(e) => {
+                        match retry.next(attempt) {
+                            RetryDecision::Retry { wait } => {
+                                log::warn!(
+                                    "upload_bytes transient error at offset {} (attempt {attempt}): {e}; retrying in {wait:?}",
+                                    tracker.acked_offset
+                                );
+                                std::thread::sleep(wait);
+                                attempt += 1;
+                            }
+                            RetryDecision::GiveUp => {
+                                // TODO(bd-1du): upload resumption from upload_resume_state is not
+                                // yet implemented; orphaned sessions accumulate until manual cleanup.
+                                // On permanent failure, write a best-effort sidecar so operators can
+                                // identify the stuck upload_id. The upload_resume_state DB table
+                                // (UploadResumeRepository) should be written here instead once the
+                                // full resume path is implemented.
+                                let sidecar = local_path.with_extension("pcloud-resume");
+                                let _ = fs::write(
+                                    &sidecar,
+                                    format!(
+                                        "upload_id={}\nacked_offset={}\n",
+                                        session.upload_id, tracker.acked_offset
+                                    ),
+                                );
+                                return Err(TransferBridgeError::UploadFailed(format!(
+                                    "chunk upload failed at offset {} after {attempt} attempts: {e}",
+                                    tracker.acked_offset
+                                )));
+                            }
+                        }
+                    }
+                }
+            }
 
             tracker.advance(chunk_len as u64);
         }
     } else {
-        // Single-shot upload
-        transfer
-            .upload_bytes(
+        // Single-shot upload — retry on transient failure.
+        let mut attempt: u32 = 1;
+        loop {
+            match transfer.upload_bytes(
                 SecretString::new(auth_token.expose_secret().to_owned()),
                 &session,
                 &file_bytes,
-            )
-            .map_err(|e| TransferBridgeError::UploadFailed(e.to_string()))?;
+            ) {
+                Ok(_) => break,
+                Err(e) => match retry.next(attempt) {
+                    RetryDecision::Retry { wait } => {
+                        log::warn!(
+                            "upload_bytes transient error (attempt {attempt}): {e}; retrying in {wait:?}"
+                        );
+                        std::thread::sleep(wait);
+                        attempt += 1;
+                    }
+                    RetryDecision::GiveUp => {
+                        return Err(TransferBridgeError::UploadFailed(format!(
+                            "upload_bytes failed after {attempt} attempts: {e}"
+                        )));
+                    }
+                },
+            }
+        }
     }
 
     Ok(TransferResult {
@@ -281,19 +371,77 @@ pub fn execute_download(
         }
     };
 
-    // Resolve download link
-    let link = transfer
-        .get_file_link(
-            SecretString::new(auth_token.expose_secret().to_owned()),
-            remote_file_id,
-            None,
-        )
-        .map_err(|e| TransferBridgeError::DownloadFailed(e.to_string()))?;
+    let retry = default_transfer_retry_policy();
 
-    // Fetch bytes
-    let (_signed, bytes) = transfer
-        .download_bytes(&link)
-        .map_err(|e| TransferBridgeError::DownloadFailed(e.to_string()))?;
+    // Resolve download link — retry on transient failure.
+    let link = {
+        let mut attempt: u32 = 1;
+        loop {
+            match transfer.get_file_link(
+                SecretString::new(auth_token.expose_secret().to_owned()),
+                remote_file_id,
+                None,
+            ) {
+                Ok(l) => break l,
+                Err(e) => match retry.next(attempt) {
+                    RetryDecision::Retry { wait } => {
+                        log::warn!(
+                            "get_file_link transient error (attempt {attempt}): {e}; retrying in {wait:?}"
+                        );
+                        std::thread::sleep(wait);
+                        attempt += 1;
+                    }
+                    RetryDecision::GiveUp => {
+                        return Err(TransferBridgeError::DownloadFailed(format!(
+                            "get_file_link failed after {attempt} attempts: {e}"
+                        )));
+                    }
+                },
+            }
+        }
+    };
+
+    // Fetch bytes — retry on transient failure.
+    //
+    // TODO(bd-1du): large file downloads should use streaming IO rather than
+    // full-file buffering. Currently download_bytes() buffers the entire
+    // response body into a Vec<u8>, causing ~3x peak memory consumption
+    // (response buffer + intermediate Vec + write buffer). For files above
+    // 512 MiB this is a memory hazard. A streaming path using chunked range
+    // requests or tokio::io::copy into the .part file should be implemented.
+    let (_signed, bytes) = {
+        let mut attempt: u32 = 1;
+        loop {
+            match transfer.download_bytes(&link) {
+                Ok(result) => break result,
+                Err(e) => match retry.next(attempt) {
+                    RetryDecision::Retry { wait } => {
+                        log::warn!(
+                            "download_bytes transient error (attempt {attempt}): {e}; retrying in {wait:?}"
+                        );
+                        std::thread::sleep(wait);
+                        attempt += 1;
+                    }
+                    RetryDecision::GiveUp => {
+                        return Err(TransferBridgeError::DownloadFailed(format!(
+                            "download_bytes failed after {attempt} attempts: {e}"
+                        )));
+                    }
+                },
+            }
+        }
+    };
+
+    // Fix 3: guard against large-file memory exhaustion.
+    const LARGE_FILE_WARN_BYTES: u64 = 512 * 1024 * 1024;
+    let downloaded_size = bytes.len() as u64;
+    if downloaded_size > LARGE_FILE_WARN_BYTES {
+        log::warn!(
+            "downloading large file {} ({} bytes) — buffered download may exhaust memory",
+            path,
+            downloaded_size
+        );
+    }
 
     let local_path = sync_root_path.join(&path);
 
@@ -332,6 +480,54 @@ pub fn execute_download(
         direction: TransferDirection::Download,
         bytes_transferred,
     })
+}
+
+/// Purge stale rows from the `upload_resume_state` table.
+///
+/// Rows whose `updated_at` Unix timestamp is older than `max_age_secs`
+/// seconds are deleted. This prevents orphaned server upload sessions from
+/// accumulating indefinitely when uploads fail permanently and the normal
+/// per-task cleanup path is not reached.
+///
+/// Call this on daemon startup and periodically (e.g. every 24 hours via
+/// the sync loop runtime) to keep the table bounded.
+///
+/// # TODO(bd-1du)
+///
+/// Upload resumption from `upload_resume_state` is not yet implemented;
+/// orphaned sessions accumulate until this cleanup runs. When resumption
+/// is implemented, stale cleanup should only remove rows whose server-side
+/// upload session has expired (confirmed via a `GET /upload_info` API call),
+/// not all rows older than `max_age_secs`.
+pub fn purge_stale_upload_resume_rows(
+    conn: &rusqlite::Connection,
+    max_age_secs: i64,
+) -> Result<usize, rusqlite::Error> {
+    use pcloud_store::repositories::upload_resume::UploadResumeRepository;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let cutoff = now.saturating_sub(max_age_secs);
+
+    let rows = UploadResumeRepository::list_all(conn)?;
+    let mut deleted = 0usize;
+    for row in &rows {
+        if row.updated_at < cutoff {
+            log::info!(
+                "purging stale upload_resume_state row: path={} upload_id={} updated_at={}",
+                row.local_path,
+                row.upload_id,
+                row.updated_at
+            );
+            if UploadResumeRepository::delete(conn, &row.local_path)? {
+                deleted += 1;
+            }
+        }
+    }
+    Ok(deleted)
 }
 
 /// Execute all active uploads from the engine's upload coordinator.

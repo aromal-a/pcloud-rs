@@ -89,8 +89,8 @@ impl Default for MetricsRegistry {
 
 #[cfg(feature = "prometheus-exporter")]
 pub use families::{
-    AuthResult, CryptoLockState, HistogramHandle, MetricFamilies, TransferDirection,
-    register_histogram,
+    AuthResult, CryptoLockState, DEFAULT_LATENCY_BUCKETS, HistogramHandle, MetricFamilies,
+    TransferDirection, register_histogram,
 };
 
 #[cfg(feature = "prometheus-exporter")]

@@ -217,11 +217,17 @@ impl WriteJournal {
     }
 
     /// Explicit commit point. Flushes and (by default) fsyncs the journal
-    /// file.
+    /// file, then syncs the parent directory so the rename (or creation) of
+    /// the journal file itself is durable on the containing directory entry.
     pub fn commit(&mut self) -> Result<(), WriteJournalError> {
         self.file.flush()?;
         if self.fsync_on_commit {
             self.file.sync_data()?;
+            // Sync parent directory so the rename is durable (C-1 audit fix).
+            let parent = self.path.parent().unwrap_or(std::path::Path::new("."));
+            if let Ok(dir) = std::fs::File::open(parent) {
+                let _ = dir.sync_all();
+            }
         }
         Ok(())
     }

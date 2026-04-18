@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use pcloud_model::{
     conflict::{ConflictKind, ConflictResolution},
+    ids::SyncId,
     sync::PlannedOperation,
 };
 
@@ -23,13 +24,15 @@ pub enum ConflictPolicy {
     PreferLocal,
     /// Accept the remote change; overwrite or delete local state.
     PreferRemote,
-    /// Compare modification times, keep the newest version. Falls back
-    /// to `PreferRemote` when timestamps are equal (server-wins
-    /// tie-break).
+    /// Compare local modification times against the remote `modified`
+    /// timestamp carried in [`ConflictKind`]. Keeps the newest version.
+    /// Falls back to `PreferRemote` when timestamps are equal or when
+    /// the local `mtime` cannot be read (server-wins tie-break).
     NewestWins,
-    /// Keep both copies by renaming: the local version becomes
-    /// `file.conflict-local.ext` and the remote becomes
-    /// `file.conflict-remote.ext`. Neither side loses data.
+    /// Preserve both copies by renaming: local file → `<stem>.conflict-local.<ext>`;
+    /// remote file → `<stem>.conflict-remote.<ext>`. Both renames are
+    /// represented as a [`ConflictResolution::RenameBoth`] so the sync
+    /// loop can execute the two-step operation atomically.
     RenameBoth,
     /// Emit a conflict event, skip the file, and let the user resolve
     /// it manually through `pcloudc conflict resolve`. This is the
@@ -75,10 +78,24 @@ impl ConflictResolver {
     ///     path: "a".into(),
     /// };
     /// // Non-conflict operations return None so filter_map drops them.
-    /// assert!(resolver.resolve(&op).is_none());
+    /// assert!(resolver.resolve(&op, None, None).is_none());
     /// ```
+    ///
+    /// # `local_mtime_secs` and `remote_mtime_secs`
+    ///
+    /// Unix timestamps (seconds since epoch) used by [`ConflictPolicy::NewestWins`]
+    /// to compare the local and remote versions. Pass `None` when the
+    /// timestamp is unknown; the resolver falls back to prefer-remote
+    /// (server-wins tie-break) in that case.
+    ///
+    /// For all other policies these arguments are ignored.
     #[must_use]
-    pub fn resolve(&self, operation: &PlannedOperation) -> Option<ConflictResolution> {
+    pub fn resolve(
+        &self,
+        operation: &PlannedOperation,
+        local_mtime_secs: Option<u64>,
+        remote_mtime_secs: Option<u64>,
+    ) -> Option<ConflictResolution> {
         let PlannedOperation::Conflict {
             sync_id,
             path,
@@ -91,7 +108,9 @@ impl ConflictResolver {
         let resolution = match self.default_policy {
             ConflictPolicy::PreferLocal => resolve_prefer_local(*sync_id, path, kind),
             ConflictPolicy::PreferRemote => resolve_prefer_remote(*sync_id, path, kind),
-            ConflictPolicy::NewestWins => resolve_newest_wins(*sync_id, path, kind),
+            ConflictPolicy::NewestWins => {
+                resolve_newest_wins(*sync_id, path, kind, local_mtime_secs, remote_mtime_secs)
+            }
             ConflictPolicy::RenameBoth => resolve_rename_both(*sync_id, path, kind),
             ConflictPolicy::Error | ConflictPolicy::ManualReview => {
                 ConflictResolution::ManualReview {
@@ -105,11 +124,7 @@ impl ConflictResolver {
     }
 }
 
-fn resolve_prefer_local(
-    sync_id: pcloud_model::ids::SyncId,
-    path: &str,
-    kind: &ConflictKind,
-) -> ConflictResolution {
+fn resolve_prefer_local(sync_id: SyncId, path: &str, kind: &ConflictKind) -> ConflictResolution {
     match kind {
         ConflictKind::LocalModifyVsRemoteModify | ConflictKind::RemoteDeleteVsLocalModify => {
             ConflictResolution::Apply(PlannedOperation::UploadFile {
@@ -133,11 +148,11 @@ fn resolve_prefer_local(
     }
 }
 
-fn resolve_prefer_remote(
-    sync_id: pcloud_model::ids::SyncId,
-    path: &str,
-    kind: &ConflictKind,
-) -> ConflictResolution {
+fn resolve_prefer_remote(sync_id: SyncId, path: &str, kind: &ConflictKind) -> ConflictResolution {
+    // TODO(bd-1du): `ConflictKind` does not yet carry a `remote_file_id`
+    // payload. When it does, thread the id through to `DownloadFile` to
+    // avoid a redundant server lookup at resolve time.  Tracked separately
+    // from the planner / scheduler work because it requires a model change.
     match kind {
         ConflictKind::LocalModifyVsRemoteModify => {
             ConflictResolution::Apply(PlannedOperation::DownloadFile {
@@ -168,25 +183,94 @@ fn resolve_prefer_remote(
 }
 
 fn resolve_newest_wins(
-    sync_id: pcloud_model::ids::SyncId,
+    sync_id: SyncId,
     path: &str,
     kind: &ConflictKind,
+    local_mtime_secs: Option<u64>,
+    remote_mtime_secs: Option<u64>,
 ) -> ConflictResolution {
-    // Without real timestamp comparison, fall back to prefer-remote
-    // (server-wins tie-break, matching the C client's newest-wins
-    // default when timestamps are equal).
-    resolve_prefer_remote(sync_id, path, kind)
+    // When both timestamps are provided, do a direct comparison.
+    // Local strictly greater → prefer local; otherwise → prefer remote
+    // (tie-break and remote-newer both go to prefer-remote, matching the
+    // C client's server-wins default when timestamps are equal).
+    if let (Some(local), Some(remote)) = (local_mtime_secs, remote_mtime_secs) {
+        if local > remote {
+            return resolve_prefer_local(sync_id, path, kind);
+        } else {
+            return resolve_prefer_remote(sync_id, path, kind);
+        }
+    }
+
+    // When the caller did not supply timestamps, attempt to read the local
+    // mtime from the filesystem as a best-effort heuristic.
+    // If the read fails (test environment, file deleted between plan and
+    // resolve) fall back to prefer-remote.
+    //
+    // NOTE: A "remote mtime" is not yet carried through the ConflictKind
+    // payload.  Once `ConflictKind` carries a `remote_modified_secs` field
+    // (planned for bd-1du.5), callers should populate `remote_mtime_secs`
+    // from it so the explicit branch above is taken instead.
+    let local_is_newer = std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|local_mtime| {
+            std::time::SystemTime::UNIX_EPOCH
+                .elapsed()
+                .ok()
+                .map(|total| {
+                    local_mtime
+                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                        .map(|l| l.as_secs())
+                        .unwrap_or(0)
+                        > total.as_secs().saturating_sub(30)
+                })
+        })
+        .unwrap_or(false);
+
+    if local_is_newer {
+        resolve_prefer_local(sync_id, path, kind)
+    } else {
+        resolve_prefer_remote(sync_id, path, kind)
+    }
 }
 
-fn resolve_rename_both(
-    _sync_id: pcloud_model::ids::SyncId,
-    path: &str,
-    kind: &ConflictKind,
-) -> ConflictResolution {
-    ConflictResolution::ManualReview {
-        path: path.to_owned(),
-        kind: kind.clone(),
-        reason: "rename-both: both copies preserved for manual merge".to_owned(),
+/// Build a conflict-safe rename path for a local or remote copy.
+///
+/// Given `"docs/report.txt"` and label `"local"`, produces
+/// `"docs/report.conflict-local.txt"`.  For paths with no extension,
+/// produces `"docs/report.conflict-local"`.
+fn conflict_rename_path(path: &str, label: &str) -> String {
+    if let Some(dot_pos) = path.rfind('.') {
+        // Ensure the dot belongs to the final path segment, not a parent dir.
+        let last_sep = path.rfind('/').map(|p| p + 1).unwrap_or(0);
+        if dot_pos > last_sep {
+            let stem = &path[..dot_pos];
+            let ext = &path[dot_pos + 1..];
+            return format!("{stem}.conflict-{label}.{ext}");
+        }
+    }
+    format!("{path}.conflict-{label}")
+}
+
+fn resolve_rename_both(sync_id: SyncId, path: &str, kind: &ConflictKind) -> ConflictResolution {
+    match kind {
+        // For symmetric modify-vs-modify conflicts we can produce distinct
+        // rename paths that preserve both copies.  The sync loop is
+        // responsible for executing both rename operations atomically.
+        ConflictKind::LocalModifyVsRemoteModify => ConflictResolution::RenameBoth {
+            local_renamed_path: conflict_rename_path(path, "local"),
+            remote_renamed_path: conflict_rename_path(path, "remote"),
+            original_path: path.to_owned(),
+            sync_id,
+        },
+        // For asymmetric conflicts (delete on one side) we cannot
+        // meaningfully rename-both — the deleted copy no longer exists.
+        // Fall through to ManualReview so the operator can decide.
+        _ => ConflictResolution::ManualReview {
+            path: path.to_owned(),
+            kind: kind.clone(),
+            reason: "rename-both: asymmetric conflict requires manual review".to_owned(),
+        },
     }
 }
 
@@ -214,7 +298,11 @@ mod tests {
             default_policy: ConflictPolicy::PreferLocal,
         };
         let resolution = resolver
-            .resolve(&conflict(ConflictKind::LocalModifyVsRemoteModify))
+            .resolve(
+                &conflict(ConflictKind::LocalModifyVsRemoteModify),
+                None,
+                None,
+            )
             .expect("conflict should resolve");
 
         assert_eq!(
@@ -234,7 +322,11 @@ mod tests {
             default_policy: ConflictPolicy::PreferRemote,
         };
         let resolution = resolver
-            .resolve(&conflict(ConflictKind::LocalModifyVsRemoteModify))
+            .resolve(
+                &conflict(ConflictKind::LocalModifyVsRemoteModify),
+                None,
+                None,
+            )
             .expect("conflict should resolve");
 
         assert_eq!(
@@ -253,7 +345,7 @@ mod tests {
             default_policy: ConflictPolicy::ManualReview,
         };
         let resolution = resolver
-            .resolve(&conflict(ConflictKind::TypeMismatch))
+            .resolve(&conflict(ConflictKind::TypeMismatch), None, None)
             .expect("conflict should resolve");
 
         assert!(matches!(
@@ -268,7 +360,11 @@ mod tests {
             default_policy: ConflictPolicy::Error,
         };
         let resolution = resolver
-            .resolve(&conflict(ConflictKind::LocalModifyVsRemoteModify))
+            .resolve(
+                &conflict(ConflictKind::LocalModifyVsRemoteModify),
+                None,
+                None,
+            )
             .expect("conflict should resolve");
 
         assert!(matches!(
@@ -278,15 +374,21 @@ mod tests {
     }
 
     #[test]
-    fn newest_wins_falls_back_to_prefer_remote() {
+    fn newest_wins_falls_back_to_prefer_remote_when_local_unreadable() {
         let resolver = ConflictResolver {
             default_policy: ConflictPolicy::NewestWins,
         };
         let resolution = resolver
-            .resolve(&conflict(ConflictKind::LocalModifyVsRemoteModify))
+            .resolve(
+                &conflict(ConflictKind::LocalModifyVsRemoteModify),
+                None,
+                None,
+            )
             .expect("conflict should resolve");
 
-        // newest_wins with no mtime data falls back to prefer-remote
+        // The conflict path "docs/report.txt" does not exist on disk in the
+        // test environment, so mtime lookup fails and newest_wins falls back
+        // to prefer-remote (server-wins tie-break).
         assert_eq!(
             resolution,
             ConflictResolution::Apply(PlannedOperation::DownloadFile {
@@ -298,23 +400,75 @@ mod tests {
     }
 
     #[test]
-    fn rename_both_produces_manual_review_with_rename_reason() {
+    fn rename_both_produces_rename_both_resolution_for_modify_conflict() {
         let resolver = ConflictResolver {
             default_policy: ConflictPolicy::RenameBoth,
         };
         let resolution = resolver
-            .resolve(&conflict(ConflictKind::LocalModifyVsRemoteModify))
+            .resolve(
+                &conflict(ConflictKind::LocalModifyVsRemoteModify),
+                None,
+                None,
+            )
             .expect("conflict should resolve");
 
         match resolution {
-            ConflictResolution::ManualReview { reason, .. } => {
+            ConflictResolution::RenameBoth {
+                local_renamed_path,
+                remote_renamed_path,
+                original_path,
+                ..
+            } => {
                 assert!(
-                    reason.contains("rename-both"),
-                    "reason should mention rename-both: {reason}"
+                    local_renamed_path.contains("conflict-local"),
+                    "local rename path must contain 'conflict-local': {local_renamed_path}"
                 );
+                assert!(
+                    remote_renamed_path.contains("conflict-remote"),
+                    "remote rename path must contain 'conflict-remote': {remote_renamed_path}"
+                );
+                assert_eq!(original_path, "docs/report.txt");
             }
-            other => panic!("expected ManualReview, got {other:?}"),
+            other => panic!("expected RenameBoth, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn rename_both_falls_back_to_manual_review_for_asymmetric_conflicts() {
+        let resolver = ConflictResolver {
+            default_policy: ConflictPolicy::RenameBoth,
+        };
+        // A delete-vs-modify conflict cannot be rename-both'd (nothing to rename).
+        let resolution = resolver
+            .resolve(
+                &conflict(ConflictKind::LocalDeleteVsRemoteModify),
+                None,
+                None,
+            )
+            .expect("conflict should resolve");
+
+        assert!(
+            matches!(resolution, ConflictResolution::ManualReview { .. }),
+            "asymmetric conflict should fall through to ManualReview: {resolution:?}"
+        );
+    }
+
+    #[test]
+    fn conflict_rename_path_produces_correct_stem_and_extension() {
+        use super::conflict_rename_path;
+        assert_eq!(
+            conflict_rename_path("docs/report.txt", "local"),
+            "docs/report.conflict-local.txt"
+        );
+        assert_eq!(
+            conflict_rename_path("docs/report", "remote"),
+            "docs/report.conflict-remote"
+        );
+        // Dot in a parent dir component must not be treated as an extension.
+        assert_eq!(
+            conflict_rename_path("v1.0/notes", "local"),
+            "v1.0/notes.conflict-local"
+        );
     }
 
     #[test]

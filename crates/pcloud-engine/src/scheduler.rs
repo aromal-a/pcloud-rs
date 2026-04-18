@@ -86,6 +86,52 @@ impl Scheduler {
         self.queued_operations = operations;
     }
 
+    /// Replace the queued operations belonging to `sync_id` with
+    /// `operations`, preserving every queued item whose `sync_id` differs.
+    ///
+    /// This is the primary entry point for per-root re-planning: each
+    /// sync root independently re-plans its own `PlannedOperation` list
+    /// without clobbering work that other roots have already enqueued.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pcloud_engine::scheduler::Scheduler;
+    /// use pcloud_model::ids::SyncId;
+    /// use pcloud_model::sync::PlannedOperation;
+    ///
+    /// let mut s = Scheduler::default();
+    /// s.replace_queue(vec![
+    ///     PlannedOperation::DeleteLocal { sync_id: SyncId::new(1), path: "a".into() },
+    ///     PlannedOperation::DeleteLocal { sync_id: SyncId::new(2), path: "b".into() },
+    /// ]);
+    /// // Replan only root 1. Root 2's entry survives.
+    /// s.replace_queue_for_sync_id(
+    ///     SyncId::new(1),
+    ///     vec![PlannedOperation::DeleteLocal { sync_id: SyncId::new(1), path: "c".into() }],
+    /// );
+    /// assert_eq!(s.queued_operations.len(), 2);
+    /// assert!(s.queued_operations.iter().any(|op| op.sync_id() == SyncId::new(2)));
+    /// ```
+    pub fn replace_queue_for_sync_id(
+        &mut self,
+        sync_id: SyncId,
+        operations: Vec<PlannedOperation>,
+    ) {
+        let mut merged: Vec<PlannedOperation> = self
+            .queued_operations
+            .drain(..)
+            .filter(|op| op.sync_id() != sync_id)
+            .collect();
+        merged.extend(operations);
+        merged.sort_by(|left, right| {
+            left.priority()
+                .cmp(&right.priority())
+                .then(left.path().cmp(right.path()))
+        });
+        self.queued_operations = merged;
+    }
+
     /// Remove all queued operations belonging to `sync_id`.
     ///
     /// # Example
@@ -108,22 +154,224 @@ impl Scheduler {
             .retain(|operation| operation.sync_id() != sync_id);
     }
 
-    /// Peek at the next batch of operations that should be dispatched,
-    /// bounded by the combined upload/download parallelism limit.
+    /// Drain and return the next fair batch of operations, removing the
+    /// dispatched items from the queue.
+    ///
+    /// The batch width is bounded by `max_parallel_uploads +
+    /// max_parallel_downloads`. Per-root fairness is enforced: at most
+    /// `(max_parallel_uploads + max_parallel_downloads) / 2` (min 1)
+    /// operations from any single [`SyncId`] are included, so a
+    /// high-throughput root cannot starve sibling roots.
+    ///
+    /// Items removed by `next_batch` will not appear in subsequent calls
+    /// until they are re-enqueued (e.g. on retry).
     ///
     /// # Example
     ///
     /// ```
     /// use pcloud_engine::scheduler::Scheduler;
-    /// let s = Scheduler::default();
+    /// use pcloud_model::ids::SyncId;
+    /// use pcloud_model::sync::PlannedOperation;
+    ///
+    /// let mut s = Scheduler::default();
     /// // An empty scheduler returns an empty batch (never a panic).
     /// assert!(s.next_batch().is_empty());
+    ///
+    /// s.replace_queue(vec![PlannedOperation::DeleteLocal {
+    ///     sync_id: SyncId::new(1),
+    ///     path: "a.txt".into(),
+    /// }]);
+    /// let batch = s.next_batch();
+    /// assert_eq!(batch.len(), 1);
+    /// assert_eq!(s.total_queued(), 0, "items drained after next_batch");
+    /// ```
+    pub fn next_batch(&mut self) -> Vec<PlannedOperation> {
+        let global_limit = (self.max_parallel_uploads + self.max_parallel_downloads).max(1);
+        if self.queued_operations.is_empty() {
+            return Vec::new();
+        }
+
+        // Count distinct roots present in the queue so we can compute a
+        // fair per-root cap. Scanning the whole queue is O(N) but N is
+        // bounded by the planner's per-tick cap (~1000 items) in practice.
+        let distinct_roots: std::collections::HashSet<SyncId> = self
+            .queued_operations
+            .iter()
+            .map(|op| op.sync_id())
+            .collect();
+        let num_roots = distinct_roots.len().max(1);
+        // Each root gets at least 1 slot; distribute remaining slots evenly.
+        let per_root_cap = ((global_limit + num_roots - 1) / num_roots).max(1);
+
+        let mut per_root: std::collections::HashMap<SyncId, usize> =
+            std::collections::HashMap::new();
+        let mut batch_indices: Vec<usize> = Vec::with_capacity(global_limit);
+        for (i, op) in self.queued_operations.iter().enumerate() {
+            if batch_indices.len() >= global_limit {
+                break;
+            }
+            let count = per_root.entry(op.sync_id()).or_insert(0);
+            if *count < per_root_cap {
+                *count += 1;
+                batch_indices.push(i);
+            }
+        }
+        // Remove in reverse order to preserve index validity.
+        let mut batch: Vec<PlannedOperation> = Vec::with_capacity(batch_indices.len());
+        for &i in batch_indices.iter().rev() {
+            batch.push(self.queued_operations.remove(i));
+        }
+        batch.reverse();
+        batch
+    }
+
+    /// Drain and return the next batch without per-root fairness, removing
+    /// the dispatched items from the queue.
+    ///
+    /// This is the **unfair consuming** variant. It takes the first
+    /// `max_parallel_uploads + max_parallel_downloads` items in priority
+    /// order, which may all belong to a single [`SyncId`]. Prefer
+    /// [`Self::next_batch`] (which enforces per-root fairness) in
+    /// production code.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pcloud_engine::scheduler::Scheduler;
+    /// use pcloud_model::ids::SyncId;
+    /// use pcloud_model::sync::PlannedOperation;
+    ///
+    /// let mut s = Scheduler::default();
+    /// s.replace_queue(vec![PlannedOperation::DeleteLocal {
+    ///     sync_id: SyncId::new(1),
+    ///     path: "a.txt".into(),
+    /// }]);
+    /// let batch = s.drain_batch();
+    /// assert_eq!(batch.len(), 1);
+    /// assert_eq!(s.total_queued(), 0);
+    /// ```
+
+    /// Total number of operations currently in the queue (across all roots).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pcloud_engine::scheduler::Scheduler;
+    /// use pcloud_model::ids::SyncId;
+    /// use pcloud_model::sync::PlannedOperation;
+    ///
+    /// let mut s = Scheduler::default();
+    /// assert_eq!(s.total_queued(), 0);
+    /// s.replace_queue(vec![PlannedOperation::DeleteLocal {
+    ///     sync_id: SyncId::new(1),
+    ///     path: "x.txt".into(),
+    /// }]);
+    /// assert_eq!(s.total_queued(), 1);
     /// ```
     #[must_use]
-    pub fn next_batch(&self) -> &[PlannedOperation] {
+    pub fn total_queued(&self) -> usize {
+        self.queued_operations.len()
+    }
+
+    /// Drain and return the next batch, removing the dispatched items from
+    /// the queue.
+    ///
+    /// This is the **consuming** variant of [`next_batch`]. Call it when
+    /// the caller takes ownership of the dispatched operations (e.g.
+    /// feeding them directly to upload/download workers). Items removed
+    /// by `drain_batch` will not appear in subsequent calls.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pcloud_engine::scheduler::Scheduler;
+    /// use pcloud_model::ids::SyncId;
+    /// use pcloud_model::sync::PlannedOperation;
+    ///
+    /// let mut s = Scheduler::default();
+    /// s.replace_queue(vec![PlannedOperation::DeleteLocal {
+    ///     sync_id: SyncId::new(1),
+    ///     path: "a.txt".into(),
+    /// }]);
+    /// let batch = s.drain_batch();
+    /// assert_eq!(batch.len(), 1);
+    /// assert_eq!(s.total_queued(), 0);
+    /// ```
+    pub fn drain_batch(&mut self) -> Vec<PlannedOperation> {
         let limit = self.max_parallel_uploads + self.max_parallel_downloads;
         let limit = limit.max(1).min(self.queued_operations.len());
-        &self.queued_operations[..limit]
+        self.queued_operations.drain(..limit).collect()
+    }
+
+    /// Append a single operation to the end of the queue without replacing
+    /// existing entries. Useful in tests and for dead-letter replay where
+    /// individual items must be re-enqueued without clobbering other roots.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pcloud_engine::scheduler::Scheduler;
+    /// use pcloud_model::ids::SyncId;
+    /// use pcloud_model::sync::PlannedOperation;
+    ///
+    /// let mut s = Scheduler::default();
+    /// s.enqueue(PlannedOperation::DeleteLocal {
+    ///     sync_id: SyncId::new(1),
+    ///     path: "y.txt".into(),
+    /// });
+    /// assert_eq!(s.total_queued(), 1);
+    /// ```
+    pub fn enqueue(&mut self, operation: PlannedOperation) {
+        self.queued_operations.push(operation);
+    }
+
+    /// Peek at the next batch with a per-root operation cap applied.
+    ///
+    /// Works identically to [`Self::next_batch`] but enforces that at most
+    /// `max_per_root` operations from any single [`SyncId`] appear in the
+    /// returned slice. This prevents a high-throughput root from monopolising
+    /// the entire batch window.
+    ///
+    /// The overall batch width is still bounded by
+    /// `max_parallel_uploads + max_parallel_downloads`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pcloud_engine::scheduler::Scheduler;
+    /// use pcloud_model::ids::SyncId;
+    /// use pcloud_model::sync::PlannedOperation;
+    ///
+    /// let mut s = Scheduler { max_parallel_uploads: 4, max_parallel_downloads: 4, queued_operations: Vec::new() };
+    /// s.replace_queue(vec![
+    ///     PlannedOperation::DeleteLocal { sync_id: SyncId::new(1), path: "a".into() },
+    ///     PlannedOperation::DeleteLocal { sync_id: SyncId::new(1), path: "b".into() },
+    ///     PlannedOperation::DeleteLocal { sync_id: SyncId::new(1), path: "c".into() },
+    ///     PlannedOperation::DeleteLocal { sync_id: SyncId::new(2), path: "d".into() },
+    /// ]);
+    /// // With max_per_root=2, root 1 contributes at most 2 slots even though
+    /// // it has 3 queued items.
+    /// let batch = s.next_batch_fair(2);
+    /// let root1_count = batch.iter().filter(|op| op.sync_id() == SyncId::new(1)).count();
+    /// assert!(root1_count <= 2);
+    /// ```
+    #[must_use]
+    pub fn next_batch_fair(&self, max_per_root: usize) -> Vec<&PlannedOperation> {
+        let global_limit = (self.max_parallel_uploads + self.max_parallel_downloads).max(1);
+        let mut per_root: std::collections::HashMap<SyncId, usize> =
+            std::collections::HashMap::new();
+        let mut batch = Vec::with_capacity(global_limit);
+        for op in &self.queued_operations {
+            if batch.len() >= global_limit {
+                break;
+            }
+            let count = per_root.entry(op.sync_id()).or_insert(0);
+            if *count < max_per_root {
+                *count += 1;
+                batch.push(op);
+            }
+        }
+        batch
     }
 }
 

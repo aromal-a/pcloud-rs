@@ -7,6 +7,10 @@
 //! Thin front-end that parses subcommands, connects to the local daemon
 //! over IPC, and renders responses. All business logic lives in
 //! `pcloud-daemon` and the protocol/SDK crates.
+// dead_code: several private helpers are only reachable on unix (cfg-gated
+// by #[cfg(unix)] / #[cfg(not(unix))]) and some LoginOptions fields are used
+// only through cfg-gated paths. Suppressed at file level because cfg conditionals
+// make per-item annotation unwieldy in a binary crate.
 #![allow(dead_code)]
 #![deny(missing_docs)]
 
@@ -386,6 +390,9 @@ fn run(argv: &[String]) -> ExitCode {
             crate::commands::Command::BackupSnapshotPrune => {
                 ("backup snapshot-prune", "snapshot prune")
             }
+            // INVARIANT: the outer `matches!` guard above restricts the
+            // block to exactly the four BackupSnapshot* variants; no other
+            // Command variant can reach this arm.
             _ => unreachable!(),
         };
         eprintln!(

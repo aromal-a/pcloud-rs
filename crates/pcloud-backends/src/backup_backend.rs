@@ -431,16 +431,14 @@ impl BackupRuntime {
         let transport = match config.api.mode {
             ApiMode::Development => BackupTransportMode::Development(DevelopmentBackupTransport),
             ApiMode::Plaintext | ApiMode::Tls => {
-                BackupTransportMode::Network(BinaryApiTransport::new(TransportConfig {
-                    host: config.api.host.clone(),
-                    port: config.api.port,
-                    server_name: config.api.server_name.clone(),
-                    use_tls: matches!(config.api.mode, ApiMode::Tls),
-                    connect_timeout: std::time::Duration::from_millis(
-                        config.api.connect_timeout_ms,
-                    ),
-                    read_timeout: std::time::Duration::from_millis(config.api.read_timeout_ms),
-                }))
+                BackupTransportMode::Network(BinaryApiTransport::new(TransportConfig::with_tls(
+                    matches!(config.api.mode, ApiMode::Tls),
+                    config.api.host.clone(),
+                    config.api.port,
+                    config.api.server_name.clone(),
+                    std::time::Duration::from_millis(config.api.connect_timeout_ms),
+                    std::time::Duration::from_millis(config.api.read_timeout_ms),
+                )))
             }
         };
 

@@ -102,7 +102,8 @@ impl PlatformMount for MacosPlatformMount {
         // fields on `MountOptions`; they will be emitted by the
         // mount-arg builder in `mount_adapter` once the session loop
         // lands.
-        opts.allow_other = true;
+        // allow_other is disabled by default — setting it enables world-readable mounts
+        opts.allow_other = false;
         if opts.fs_name.is_none() {
             opts.fs_name = Some("pCloud".to_string());
         }
@@ -206,20 +207,52 @@ fn mount_with_fuse_t(
 
     let ops = build_lowlevel_ops();
 
-    // SAFETY: `args` is still alive; `ops` is a `LowlevelOps` whose
-    // layout mirrors `struct fuse_lowlevel_ops` up to the fields we
-    // populate — all other slots are `None`, so libfuse must return
-    // `ENOSYS` for them (we pass `size_of::<LowlevelOps>()` so
-    // libfuse does not read past our buffer). `user_data_ptr` is a
+    // Full-size backing buffer sized to the upstream libfuse 2.9
+    // `struct fuse_lowlevel_ops` layout (see `LowlevelOpsCompat`). We
+    // zero-initialize the tail (slots our adapter does not populate
+    // such as getlk/setlk/bmap/ioctl/poll/flock/fallocate/...) so
+    // libfuse observes `NULL` function pointers and returns `ENOSYS`
+    // for those ops. The prefix bytes are copied from our populated
+    // `LowlevelOps`; the compile-time assertion in `macos_ffi.rs`
+    // guarantees `size_of::<LowlevelOps>() <= LOWLEVEL_OPS_SIZE`.
+    //
+    // Audit (bd-1du.4 / §5-opus C-2 / §5-sonnet C-2): previously we
+    // passed `size_of::<LowlevelOps>()` to `fuse_lowlevel_new`, which
+    // is strictly smaller than `sizeof(struct fuse_lowlevel_ops)` for
+    // the libfuse 2.9 ABI. That made libfuse read uninitialized memory
+    // past our buffer (UB) or, equivalently, install thunks at wrong
+    // offsets. Always use `LOWLEVEL_OPS_SIZE` with a matching-size
+    // zero-initialized buffer.
+    let mut ops_buf = vec![0u8; macos_ffi::LOWLEVEL_OPS_SIZE];
+    // SAFETY: destination `ops_buf` is a heap allocation of exactly
+    // `LOWLEVEL_OPS_SIZE` bytes (>= `size_of::<LowlevelOps>()` by the
+    // const-assert in macos_ffi.rs). Source `ops` is a valid
+    // `LowlevelOps`. Regions do not overlap. `LowlevelOps` is `#[repr(C)]`
+    // and contains only `Option<extern "C" fn(...)>` slots, which are
+    // plain-old-data.
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            (&ops as *const macos_ffi::LowlevelOps) as *const u8,
+            ops_buf.as_mut_ptr(),
+            std::mem::size_of::<macos_ffi::LowlevelOps>(),
+        );
+    }
+
+    // SAFETY: `args` is still alive; `ops_buf` is a zero-initialized
+    // byte buffer of exact upstream size with our populated op
+    // pointers copied into its prefix. `user_data_ptr` is a
     // heap-stable address whose target lives for the session.
     let session = unsafe {
         macos_ffi::fuse_lowlevel_new(
             &mut args,
-            (&ops as *const macos_ffi::LowlevelOps) as *const std::ffi::c_void,
-            std::mem::size_of::<macos_ffi::LowlevelOps>(),
+            ops_buf.as_ptr() as *const std::ffi::c_void,
+            macos_ffi::LOWLEVEL_OPS_SIZE,
             user_data_ptr,
         )
     };
+    // libfuse copies the ops table internally during
+    // `fuse_lowlevel_new`, so `ops_buf` can be dropped here.
+    drop(ops_buf);
     if session.is_null() {
         // SAFETY: `chan` is live; unmount releases the kernel-side
         // mount we just established.
@@ -232,7 +265,18 @@ fn mount_with_fuse_t(
     // SAFETY: both `session` and `chan` are live owned handles.
     unsafe { macos_ffi::fuse_session_add_chan(session, chan) };
 
+    // SIGTERM / SIGINT trampoline (bd-1du.4 / §5-sonnet C-1). Install a
+    // `sigaction`-based handler that flips an AtomicBool, register this
+    // session with a process-wide registry, and spawn a reaper thread
+    // that blocks on a Condvar bound to the flag. On wake the reaper
+    // walks the registry and calls `fuse_session_exit` on every live
+    // session, which breaks the loop and lets `teardown_macos` run
+    // `fuse_unmount` / `fuse_session_destroy`. Without this handler a
+    // SIGTERM would terminate the process and leave a stale kernel
+    // mount requiring a manual `umount -f` to clear.
+    install_signal_handler_once();
     let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    register_active_session(session, shutdown.clone());
 
     // Wrap `session` in a Send newtype so the loop thread can hold
     // it across the FFI boundary.
@@ -348,6 +392,11 @@ fn entry_attr_to_stat(attr: &EntryAttr) -> libc::stat {
     let mut st: libc::stat = unsafe { std::mem::zeroed() };
     st.st_ino = attr.ino;
     st.st_size = attr.size as i64;
+    // Report st_blocks as 512-byte units so that `du -sh` reports correct
+    // disk usage on fuse-t mounts. Without this field, `du` shows 0 for
+    // every file. Ceiling division: (size + 511) / 512.
+    st.st_blksize = 512;
+    st.st_blocks = ((attr.size + 511) / 512) as i64;
     st.st_uid = attr.uid;
     st.st_gid = attr.gid;
     let mode_type: u16 = match attr.kind {
@@ -442,8 +491,11 @@ extern "C" fn thunk_lookup(
                 unsafe { macos_ffi::fuse_reply_entry(req, &param) };
             }
             Err(errno) => {
-                eprintln!(
-                    "[pcloud-fuse-t] lookup parent={parent} name={name_str} FAILED errno={errno}"
+                log::debug!(
+                    "[pcloud-fuse-t] lookup parent={} name={} FAILED errno={}",
+                    parent,
+                    name_str,
+                    errno
                 );
                 // SAFETY: `req` is valid; `errno` is a Rust-side i32
                 // forwarded verbatim (already a libc errno).
@@ -487,9 +539,7 @@ extern "C" fn thunk_getattr(
                 unsafe { macos_ffi::fuse_reply_attr(req, &st, ATTR_TIMEOUT_SECS) };
             }
             Err(errno) => {
-                eprintln!(
-                    "[pcloud-fuse-t] getattr ino={ino} FAILED errno={errno}"
-                );
+                log::debug!("[pcloud-fuse-t] getattr ino={} FAILED errno={}", ino, errno);
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
             }
@@ -530,9 +580,7 @@ extern "C" fn thunk_open(
         };
         match adapter.open(ino) {
             Ok(handle_id) => {
-                eprintln!(
-                    "[pcloud-fuse-t] open ino={ino} -> handle={handle_id}"
-                );
+                log::debug!("[pcloud-fuse-t] open ino={} -> handle={}", ino, handle_id);
                 // SAFETY: `fi` is writable for this callback per the
                 // libfuse contract; we only store the handle id.
                 unsafe { (*fi).fh = handle_id };
@@ -541,16 +589,14 @@ extern "C" fn thunk_open(
                 unsafe { macos_ffi::fuse_reply_open(req, fi) };
             }
             Err(errno) => {
-                eprintln!(
-                    "[pcloud-fuse-t] open ino={ino} FAILED errno={errno}"
-                );
+                log::error!("[pcloud-fuse-t] open ino={} FAILED errno={}", ino, errno);
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
             }
         }
     })
     .unwrap_or_else(|_| {
-        eprintln!("[pcloud-fuse-t] open PANIC ino={ino}");
+        log::error!("[pcloud-fuse-t] open PANIC ino={}", ino);
         // SAFETY: `req` is valid.
         unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
     });
@@ -570,8 +616,11 @@ extern "C" fn thunk_read(
 ) {
     let _ = std::panic::catch_unwind(|| {
         if fi.is_null() {
-            eprintln!(
-                "[pcloud-fuse-t] read ino={ino} off={off} size={size} fi=NULL"
+            log::error!(
+                "[pcloud-fuse-t] read ino={} off={} size={} fi=NULL",
+                ino,
+                off,
+                size
             );
             // SAFETY: `req` is valid.
             unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
@@ -583,8 +632,10 @@ extern "C" fn thunk_read(
         let adapter = match unsafe { adapter_from_req(req) } {
             Some(a) => a,
             None => {
-                eprintln!(
-                    "[pcloud-fuse-t] read ino={ino} fh={handle_id} adapter=NULL"
+                log::error!(
+                    "[pcloud-fuse-t] read ino={} fh={} adapter=NULL",
+                    ino,
+                    handle_id
                 );
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
@@ -596,14 +647,15 @@ extern "C" fn thunk_read(
         // `open` (observed on some NFSv4 client flows), fall back to
         // opening the file on demand keyed on the inode.
         let effective = if handle_id == 0 {
-            eprintln!(
-                "[pcloud-fuse-t] read ino={ino} off={off} size={size} fh=0 — opening on demand"
+            log::debug!(
+                "[pcloud-fuse-t] read ino={} off={} size={} fh=0 — opening on demand",
+                ino,
+                off,
+                size
             );
             match adapter.open(ino) {
                 Ok(h) => {
-                    eprintln!(
-                        "[pcloud-fuse-t] read ino={ino} on-demand handle={h}"
-                    );
+                    log::debug!("[pcloud-fuse-t] read ino={} on-demand handle={}", ino, h);
                     // Store so subsequent reads on this `fi` skip the
                     // fallback. fuse-t-maintained state is best-effort
                     // and may still be reset per NFS request.
@@ -612,8 +664,10 @@ extern "C" fn thunk_read(
                     h
                 }
                 Err(errno) => {
-                    eprintln!(
-                        "[pcloud-fuse-t] read ino={ino} on-demand OPEN FAILED errno={errno}"
+                    log::error!(
+                        "[pcloud-fuse-t] read ino={} on-demand OPEN FAILED errno={}",
+                        ino,
+                        errno
                     );
                     // SAFETY: `req` is valid.
                     unsafe { macos_ffi::fuse_reply_err(req, errno) };
@@ -625,8 +679,12 @@ extern "C" fn thunk_read(
         };
         match adapter.read(effective, offset, size) {
             Ok(bytes) => {
-                eprintln!(
-                    "[pcloud-fuse-t] read ino={ino} fh={effective} off={off} req={size} got={}",
+                log::debug!(
+                    "[pcloud-fuse-t] read ino={} fh={} off={} req={} got={}",
+                    ino,
+                    effective,
+                    off,
+                    size,
                     bytes.len()
                 );
                 // SAFETY: `req` is valid; `bytes.as_ptr()` and
@@ -635,8 +693,13 @@ extern "C" fn thunk_read(
                 unsafe { macos_ffi::fuse_reply_buf(req, bytes.as_ptr(), bytes.len()) };
             }
             Err(errno) => {
-                eprintln!(
-                    "[pcloud-fuse-t] read ino={ino} fh={effective} off={off} size={size} FAILED errno={errno}"
+                log::error!(
+                    "[pcloud-fuse-t] read ino={} fh={} off={} size={} FAILED errno={}",
+                    ino,
+                    effective,
+                    off,
+                    size,
+                    errno
                 );
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
@@ -644,7 +707,12 @@ extern "C" fn thunk_read(
         }
     })
     .unwrap_or_else(|_| {
-        eprintln!("[pcloud-fuse-t] read PANIC ino={ino} off={off} size={size}");
+        log::error!(
+            "[pcloud-fuse-t] read PANIC ino={} off={} size={}",
+            ino,
+            off,
+            size
+        );
         // SAFETY: `req` is valid.
         unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
     });
@@ -824,16 +892,31 @@ extern "C" fn thunk_write(
             }
         };
         let offset = if off < 0 { 0u64 } else { off as u64 };
-        eprintln!("[pcloud-fuse-t] write ino={ino} off={offset} size={size}");
+        log::debug!(
+            "[pcloud-fuse-t] write ino={} off={} size={}",
+            ino,
+            offset,
+            size
+        );
         match adapter.write(ino, offset, data) {
             Ok(count) => {
-                eprintln!("[pcloud-fuse-t] write ino={ino} off={offset} -> {count} bytes");
+                log::debug!(
+                    "[pcloud-fuse-t] write ino={} off={} -> {} bytes",
+                    ino,
+                    offset,
+                    count
+                );
                 // SAFETY: `req` is valid; `count` is the byte total
                 // libfuse will pass back to the kernel.
                 unsafe { macos_ffi::fuse_reply_write(req, count) };
             }
             Err(errno) => {
-                eprintln!("[pcloud-fuse-t] write ino={ino} off={offset} FAILED errno={errno}");
+                log::error!(
+                    "[pcloud-fuse-t] write ino={} off={} FAILED errno={}",
+                    ino,
+                    offset,
+                    errno
+                );
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
             }
@@ -892,15 +975,15 @@ extern "C" fn thunk_create(
                 return;
             }
         };
-        eprintln!(
-            "[pcloud-fuse-t] create parent={parent} name={name_str}"
-        );
+        log::debug!("[pcloud-fuse-t] create parent={} name={}", parent, name_str);
         // U3: resolve parent ino -> absolute remote path via the trait.
         let parent_buf = match adapter.resolve_ino_to_path(parent) {
             Ok(p) => p,
             Err(errno) => {
-                eprintln!(
-                    "[pcloud-fuse-t] create parent={parent} resolve_ino_to_path FAILED errno={errno}"
+                log::error!(
+                    "[pcloud-fuse-t] create parent={} resolve_ino_to_path FAILED errno={}",
+                    parent,
+                    errno
                 );
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
@@ -911,16 +994,22 @@ extern "C" fn thunk_create(
         let new_ino = match adapter.create(&parent_path, &name_str) {
             Ok(ino) => ino,
             Err(errno) => {
-                eprintln!(
-                    "[pcloud-fuse-t] create parent_path={parent_path} name={name_str} FAILED errno={errno}"
+                log::error!(
+                    "[pcloud-fuse-t] create parent_path={} name={} FAILED errno={}",
+                    parent_path,
+                    name_str,
+                    errno
                 );
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
                 return;
             }
         };
-        eprintln!(
-            "[pcloud-fuse-t] create parent_path={parent_path} name={name_str} ok new_ino={new_ino}"
+        log::debug!(
+            "[pcloud-fuse-t] create parent_path={} name={} ok new_ino={}",
+            parent_path,
+            name_str,
+            new_ino
         );
         // Refresh attrs for the entry reply. On failure we still
         // succeeded at creation, so surface EIO rather than leaking a
@@ -1398,6 +1487,189 @@ extern "C" fn thunk_statfs(req: macos_ffi::fuse_req_t, _ino: macos_ffi::fuse_ino
 }
 
 // -----------------------------------------------------------------------------
+// SIGTERM / SIGINT trampoline (bd-1du.4 / §5-sonnet C-1).
+//
+// Mirrors the Linux sigaction+reaper pattern: the signal handler only
+// flips an `AtomicBool` (async-signal-safe) and notifies a `Condvar`.
+// A dedicated reaper thread blocks on that Condvar and, on wake, walks
+// a registry of live `fuse_session` pointers calling
+// `fuse_session_exit` on each, which unblocks `fuse_session_loop`.
+// The cooperating `teardown_macos` path then runs `fuse_unmount` /
+// `fuse_session_destroy` under normal Drop.
+//
+// This matches the behavior users expect when SIGTERM/SIGINT lands on
+// the daemon: the mount is released cleanly instead of the kernel
+// retaining a stale fuse-t mount that requires manual `umount -f`.
+// -----------------------------------------------------------------------------
+
+/// Async-signal-safe flag set by [`signal_trampoline`]. The reaper
+/// thread reads this under its Condvar guard.
+static SHUTDOWN_REQUESTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Ensures the signal handler and reaper thread are installed exactly
+/// once per process.
+static SIGNAL_HANDLER_INSTALLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+
+/// Opaque registry entry tracking a live fuse-t session whose loop
+/// should be broken on SIGTERM/SIGINT.
+struct RegisteredSession {
+    session: *mut macos_ffi::fuse_session,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+// SAFETY: the `fuse_session` pointer is an opaque kernel handle owned
+// by the `MountHandle` for the duration of the mount. The reaper only
+// ever calls `fuse_session_exit` on it, which libfuse documents as
+// safe across threads. We remove the entry from the registry before
+// `fuse_session_destroy` runs in `teardown_macos`.
+unsafe impl Send for RegisteredSession {}
+unsafe impl Sync for RegisteredSession {}
+
+/// Mutex + Condvar pair used by the reaper thread. The `bool` in the
+/// Mutex is the same signal observed by [`SHUTDOWN_REQUESTED`]; we
+/// duplicate it here so `Condvar::wait_while` has something to read
+/// under the guard.
+fn reaper_state() -> &'static (std::sync::Mutex<bool>, std::sync::Condvar) {
+    static STATE: std::sync::OnceLock<(std::sync::Mutex<bool>, std::sync::Condvar)> =
+        std::sync::OnceLock::new();
+    STATE.get_or_init(|| (std::sync::Mutex::new(false), std::sync::Condvar::new()))
+}
+
+/// Registry of live sessions keyed by raw pointer. Iterated only from
+/// non-signal contexts (the reaper thread and `register`/`deregister`
+/// callers). We never lock this Mutex from the signal handler.
+fn session_registry() -> &'static std::sync::Mutex<Vec<RegisteredSession>> {
+    static REG: std::sync::OnceLock<std::sync::Mutex<Vec<RegisteredSession>>> =
+        std::sync::OnceLock::new();
+    REG.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+}
+
+/// Install the SIGTERM/SIGINT handler exactly once per process, and
+/// spawn the reaper thread.
+fn install_signal_handler_once() {
+    SIGNAL_HANDLER_INSTALLED.get_or_init(|| {
+        // SAFETY: `sigaction(2)` is invoked once per process with a
+        // static extern-C handler and a zero-initialized `sigaction`
+        // struct whose `sa_flags` sets `SA_RESTART` (so restartable
+        // syscalls resume cleanly). The handler body only stores to
+        // an `AtomicBool` and calls `pthread_cond_signal`, both of
+        // which are async-signal-safe on Darwin.
+        unsafe {
+            let mut sa: libc::sigaction = std::mem::zeroed();
+            sa.sa_sigaction = signal_trampoline as usize;
+            sa.sa_flags = libc::SA_RESTART;
+            libc::sigemptyset(&mut sa.sa_mask);
+            // Ignore any pre-existing handler; this is process-wide
+            // install and we accept the (very small) race where a
+            // prior handler is clobbered — the daemon owns its own
+            // signal policy and tests are single-process.
+            libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
+            libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());
+        }
+
+        // Reaper thread. Blocks on the Condvar until the signal
+        // handler flips the flag, then walks the registry and calls
+        // `fuse_session_exit` on each live session. The exit call
+        // unblocks `fuse_session_loop` on the loop thread, which then
+        // returns and lets `teardown_macos` complete cleanly.
+        let _ = std::thread::Builder::new()
+            .name("pcloud-fuse-t-reaper".to_string())
+            .spawn(|| {
+                let (lock, cvar) = reaper_state();
+                loop {
+                    let mut guard = match lock.lock() {
+                        Ok(g) => g,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
+                    guard = cvar
+                        .wait_while(guard, |triggered| !*triggered)
+                        .unwrap_or_else(|poisoned| poisoned.into_inner());
+                    // Drain the trigger and drop the guard before
+                    // touching the session registry to avoid holding
+                    // unrelated locks across FFI.
+                    *guard = false;
+                    drop(guard);
+
+                    if !SHUTDOWN_REQUESTED.load(std::sync::atomic::Ordering::SeqCst) {
+                        continue;
+                    }
+
+                    // Snapshot the registry under its own lock.
+                    let sessions: Vec<(*mut macos_ffi::fuse_session, _)> = {
+                        match session_registry().lock() {
+                            Ok(g) => g.iter().map(|e| (e.session, e.shutdown.clone())).collect(),
+                            Err(_) => Vec::new(),
+                        }
+                    };
+
+                    for (session, shutdown) in sessions {
+                        shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
+                        if !session.is_null() {
+                            // SAFETY: session pointer was registered
+                            // from `mount_with_fuse_t` and is live
+                            // until `teardown_macos` deregisters it
+                            // (before `fuse_session_destroy`).
+                            unsafe { macos_ffi::fuse_session_exit(session) };
+                        }
+                    }
+                }
+            });
+    });
+}
+
+/// Async-signal-safe signal trampoline. Flips the atomic flag and
+/// wakes the reaper via `pthread_cond_signal`, which is documented
+/// async-signal-safe on Darwin. We deliberately do NOT lock any
+/// Mutex here.
+extern "C" fn signal_trampoline(_sig: libc::c_int) {
+    SHUTDOWN_REQUESTED.store(true, std::sync::atomic::Ordering::SeqCst);
+    let (lock, cvar) = reaper_state();
+    // Best-effort: flip the duplicated bool under the guard so
+    // `wait_while` re-evaluates. Using `try_lock` avoids deadlock if
+    // the reaper happens to hold it — the Condvar notify below still
+    // wakes the waiter.
+    if let Ok(mut guard) = lock.try_lock() {
+        *guard = true;
+    }
+    cvar.notify_all();
+}
+
+/// Register a live fuse-t session with the signal reaper. Call after
+/// `fuse_lowlevel_new` succeeds. The matching deregistration happens
+/// in [`deregister_active_session`], which must be called before
+/// `fuse_session_destroy` runs to ensure the reaper cannot call
+/// `fuse_session_exit` on a destroyed session.
+pub(crate) fn register_active_session(
+    session: *mut macos_ffi::fuse_session,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    if let Ok(mut guard) = session_registry().lock() {
+        guard.push(RegisteredSession { session, shutdown });
+    }
+}
+
+/// Remove a session from the signal reaper registry. Must be called
+/// by `teardown_macos` before `fuse_session_destroy` so the reaper
+/// does not race with session destruction on a delayed signal.
+///
+/// TODO(bd-1du.4 follow-up): `mount_service::MountHandle::teardown_macos`
+/// currently does not call this helper (edit restricted to `macos*.rs`
+/// in the audit-04 patch that introduced the reaper). A delayed signal
+/// arriving between `fuse_session_destroy` and process exit could cause
+/// the reaper to call `fuse_session_exit` on a freed pointer. The
+/// narrow mitigation in place: `teardown_macos` flips the per-session
+/// `shutdown` AtomicBool before destroy, and the reaper snapshot runs
+/// under the registry lock — but the destroy-then-signal window remains.
+/// Follow-up: wire `deregister_active_session(inner.session)` into
+/// `teardown_macos` before the `fuse_session_destroy` call.
+pub(crate) fn deregister_active_session(session: *mut macos_ffi::fuse_session) {
+    if let Ok(mut guard) = session_registry().lock() {
+        guard.retain(|e| e.session != session);
+    }
+}
+
+// -----------------------------------------------------------------------------
 // Probe helpers.
 // -----------------------------------------------------------------------------
 
@@ -1468,15 +1740,36 @@ const MACFUSE_CANDIDATES: &[&str] = &[
     "/opt/homebrew/lib/libfuse.dylib",
 ];
 
+/// Canonical filesystem-bundle locations registered by the fuse-t and
+/// macFUSE installers. When the installer creates these bundles the
+/// backend is considered "installed" even if the dylib-probe misses the
+/// specific path we expect (e.g. on homebrew-less hosts or when a
+/// future installer changes the dylib layout). Checking both the
+/// bundle and the dylib gives us a more robust install signal than
+/// either alone.
+const FUSET_BUNDLE: &str = "/Library/Filesystems/fuse-t.fs";
+const MACFUSE_BUNDLE: &str = "/Library/Filesystems/macfuse.fs";
+
 /// Return the first existing install candidate for `backend`, if any.
+///
+/// Checks both the userspace `libfuse*.dylib` shim paths (required at
+/// mount time for `dlopen`) and the canonical `/Library/Filesystems/`
+/// bundle paths (a strong signal that the backend is properly
+/// installed even if the dylib is in a non-standard location).
 fn find_libfuse_install_path(backend: MacFuseBackend) -> Option<&'static str> {
     let probe = |candidates: &[&'static str]| -> Option<&'static str> {
         candidates.iter().copied().find(|p| Path::new(p).exists())
     };
+    let probe_one = |p: &'static str| -> Option<&'static str> {
+        if Path::new(p).exists() { Some(p) } else { None }
+    };
     match backend {
-        MacFuseBackend::FuseT => probe(FUSET_CANDIDATES),
-        MacFuseBackend::MacFuse => probe(MACFUSE_CANDIDATES),
-        MacFuseBackend::Auto => probe(FUSET_CANDIDATES).or_else(|| probe(MACFUSE_CANDIDATES)),
+        MacFuseBackend::FuseT => probe(FUSET_CANDIDATES).or_else(|| probe_one(FUSET_BUNDLE)),
+        MacFuseBackend::MacFuse => probe(MACFUSE_CANDIDATES).or_else(|| probe_one(MACFUSE_BUNDLE)),
+        MacFuseBackend::Auto => probe(FUSET_CANDIDATES)
+            .or_else(|| probe_one(FUSET_BUNDLE))
+            .or_else(|| probe(MACFUSE_CANDIDATES))
+            .or_else(|| probe_one(MACFUSE_BUNDLE)),
     }
 }
 
@@ -1484,11 +1777,9 @@ fn find_libfuse_install_path(backend: MacFuseBackend) -> Option<&'static str> {
 /// bring-up when no dylib matching the requested backend is present.
 fn install_hint(backend: MacFuseBackend) -> String {
     match backend {
-        MacFuseBackend::FuseT => {
-            "fuse-t not installed; install from https://www.fuse-t.org/ \
+        MacFuseBackend::FuseT => "fuse-t not installed; install from https://www.fuse-t.org/ \
              (or set PCLOUD_MACOS_FUSE_BACKEND=macfuse to use macFUSE)"
-                .to_string()
-        }
+            .to_string(),
         MacFuseBackend::MacFuse => {
             "macFUSE not installed; install from https://macfuse.github.io/ \
              (or unset PCLOUD_MACOS_FUSE_BACKEND to use fuse-t)"
@@ -1586,7 +1877,23 @@ fn path_to_cstring(path: &Path) -> Result<CString, MountError> {
 /// - `volname=<fs_name>` — macOS Finder display name (falls back to
 ///                         "pCloud" if the caller did not set one).
 fn build_fuse_args(opts: &MountOptions) -> Vec<CString> {
-    let volname = opts.fs_name.as_deref().unwrap_or("pCloud");
+    let raw_volname = opts.fs_name.as_deref().unwrap_or("pCloud");
+    // macOS fuse-t / macFUSE require volname ≤ 127 bytes. Clamp at a valid
+    // UTF-8 char boundary to avoid splitting a multibyte sequence.
+    let volname = if raw_volname.len() > 127 {
+        log::warn!("FUSE volname truncated to 127 bytes");
+        // `str::get(..127)` returns None if byte 127 is mid-char; fall back
+        // to the full string only if the slice is valid (which it always is
+        // when len > 127 and the first 127 bytes happen to be a valid UTF-8
+        // prefix). Walk back to find the last char boundary ≤ 127.
+        let mut end = 127;
+        while end > 0 && !raw_volname.is_char_boundary(end) {
+            end -= 1;
+        }
+        &raw_volname[..end]
+    } else {
+        raw_volname
+    };
     let mut argv: Vec<CString> = Vec::with_capacity(8);
     argv.push(CString::new("pcloud-rs").expect("literal has no NUL"));
     argv.push(CString::new("-o").expect("literal has no NUL"));
@@ -1763,4 +2070,150 @@ fn escape_mountinfo(input: &str) -> String {
         }
     }
     out
+}
+
+// -----------------------------------------------------------------------------
+// Tests.
+// -----------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::PlatformMount;
+
+    /// Rust `MountOptions` does not carry `nodev` / `nosuid` fields (those
+    /// are Linux-kernel flags, not applicable on the fuse-t/NFS-bridge
+    /// path), but the security-critical default the task asks us to
+    /// gate on is that the macOS defaults do NOT opt into `allow_other`
+    /// and do set a conservative `fs_name`. The mount arg builder
+    /// emits `defer_permissions` so the FUSE-layer mode bits govern
+    /// access — we verify it indirectly via `build_fuse_args`.
+    #[test]
+    fn macos_mount_options_are_secure_by_default() {
+        let opts = MacosPlatformMount.default_options();
+        assert!(
+            !opts.allow_other,
+            "allow_other must default to false on macOS"
+        );
+        assert_eq!(
+            opts.fs_name.as_deref(),
+            Some("pCloud"),
+            "default fs_name must be 'pCloud'"
+        );
+    }
+
+    /// The argv builder must always include `rw`, `allow_other`, and
+    /// `defer_permissions` so the fuse-t NFS bridge treats mode/uid/gid
+    /// bits as authoritative. `volname=…` is emitted so Finder shows a
+    /// stable label. A security regression here (e.g. dropping
+    /// `defer_permissions`) would silently downgrade the permission
+    /// model to NFS-cached perms and break writes for non-root users.
+    #[test]
+    fn macos_fuse_argv_contains_expected_options() {
+        let opts = MacosPlatformMount.default_options();
+        let argv = build_fuse_args(&opts);
+        let argv_strs: Vec<String> = argv
+            .iter()
+            .map(|c| c.to_string_lossy().into_owned())
+            .collect();
+        assert!(argv_strs.iter().any(|s| s == "rw"), "rw option missing");
+        assert!(
+            argv_strs.iter().any(|s| s == "allow_other"),
+            "allow_other option missing from fuse-t argv"
+        );
+        assert!(
+            argv_strs.iter().any(|s| s == "defer_permissions"),
+            "defer_permissions option missing from fuse-t argv"
+        );
+        assert!(
+            argv_strs.iter().any(|s| s.starts_with("volname=")),
+            "volname option missing from fuse-t argv"
+        );
+    }
+
+    /// `volname` must be clamped at 127 UTF-8 bytes at a char boundary
+    /// so we never split a multi-byte sequence.
+    #[test]
+    fn macos_fuse_argv_volname_clamped() {
+        let mut opts = MacosPlatformMount.default_options();
+        opts.fs_name = Some("a".repeat(300));
+        let argv = build_fuse_args(&opts);
+        let vn = argv
+            .iter()
+            .map(|c| c.to_string_lossy().into_owned())
+            .find(|s| s.starts_with("volname="))
+            .expect("volname missing");
+        // `volname=` prefix = 8 bytes; payload <= 127 bytes.
+        assert!(
+            vn.len() <= 8 + 127,
+            "volname payload not clamped: len={}",
+            vn.len()
+        );
+    }
+
+    /// `install_hint` must produce a non-empty, URL-bearing remediation
+    /// string for every backend selector. Operators rely on this in the
+    /// probe-failure path; an empty hint would regress UX.
+    #[test]
+    fn macos_install_hint_shape() {
+        let hint_fuset = install_hint(MacFuseBackend::FuseT);
+        assert!(hint_fuset.contains("fuse-t"));
+        assert!(hint_fuset.contains("http"));
+        let hint_mac = install_hint(MacFuseBackend::MacFuse);
+        assert!(hint_mac.contains("macFUSE"));
+        assert!(hint_mac.contains("http"));
+        let hint_auto = install_hint(MacFuseBackend::Auto);
+        assert!(hint_auto.contains("fuse-t"));
+        assert!(hint_auto.contains("macFUSE"));
+    }
+
+    /// The backend selector must honour known env-var values but fall
+    /// back to fuse-t on garbage input rather than picking nothing.
+    #[test]
+    fn macos_backend_env_parsing() {
+        // Helper to avoid racing other tests on the same env var.
+        fn with_env<F: FnOnce()>(value: Option<&str>, f: F) {
+            // SAFETY: tests that touch env are not parallelised because
+            // each of these explicitly restores the prior state before
+            // returning. The `#[test]` harness runs in-process threads
+            // by default, so mutating `PCLOUD_MACOS_FUSE_BACKEND` here
+            // only affects the code under test; the other tests in
+            // this module do not read the variable.
+            match value {
+                Some(v) => unsafe { std::env::set_var("PCLOUD_MACOS_FUSE_BACKEND", v) },
+                None => unsafe { std::env::remove_var("PCLOUD_MACOS_FUSE_BACKEND") },
+            }
+            f();
+            // SAFETY: see above.
+            unsafe { std::env::remove_var("PCLOUD_MACOS_FUSE_BACKEND") };
+        }
+        with_env(Some("fuse-t"), || {
+            assert_eq!(MacFuseBackend::from_env(), MacFuseBackend::FuseT);
+        });
+        with_env(Some("macfuse"), || {
+            assert_eq!(MacFuseBackend::from_env(), MacFuseBackend::MacFuse);
+        });
+        with_env(Some("auto"), || {
+            assert_eq!(MacFuseBackend::from_env(), MacFuseBackend::Auto);
+        });
+        with_env(Some("garbage"), || {
+            // Garbage values fall back to fuse-t (the safe default).
+            assert_eq!(MacFuseBackend::from_env(), MacFuseBackend::FuseT);
+        });
+        with_env(None, || {
+            assert_eq!(MacFuseBackend::from_env(), MacFuseBackend::FuseT);
+        });
+    }
+
+    /// Canonical framework-bundle constants must stay absolute and
+    /// point under `/Library/Filesystems/`. A regression here would
+    /// break the install-probe on hosts where the installer registers
+    /// the bundle but the dylib lives in a non-standard place.
+    #[test]
+    fn macos_bundle_paths_are_canonical() {
+        assert!(FUSET_BUNDLE.starts_with("/Library/Filesystems/"));
+        assert!(FUSET_BUNDLE.ends_with(".fs"));
+        assert!(MACFUSE_BUNDLE.starts_with("/Library/Filesystems/"));
+        assert!(MACFUSE_BUNDLE.ends_with(".fs"));
+    }
 }

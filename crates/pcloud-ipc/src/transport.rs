@@ -19,6 +19,10 @@ use std::{
     time::Duration,
 };
 
+use std::collections::HashMap;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+use std::sync::Mutex;
+
 use thiserror::Error;
 
 use crate::{
@@ -29,7 +33,121 @@ use crate::{
     server::{IpcError, MAX_REQUEST_BYTES},
 };
 
+/// Hard cap on the number of simultaneously active IPC connections
+/// across the entire process.
+///
+/// When the cap is reached, newly accepted connections are closed
+/// immediately (without reading or responding) so the server-side thread
+/// pool cannot be exhausted by a burst of idle or slow clients.
+/// 128 is well above typical real-world concurrency (one or two CLI
+/// callers at a time) while bounding worst-case thread/fd consumption.
+pub const MAX_IPC_CONNECTIONS: usize = 128;
+
+/// Per-peer (per-UID) cap on simultaneously active IPC connections.
+///
+/// Even when the process-global cap has not been reached, a single local
+/// user cannot hold more than this many concurrent connections. This
+/// prevents a malicious or buggy local user from monopolising the global
+/// slot pool before other users can connect.
+///
+/// Default: 32 (generous for legitimate use; tight enough to limit abuse).
+pub const MAX_IPC_CONNECTIONS_PER_PEER: usize = 32;
+
+/// Process-wide active connection counter. Incremented on accept,
+/// decremented when the connection handler returns (via RAII guard).
+static ACTIVE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
+
+/// Per-peer (per-UID) active connection counters.
+///
+/// Each entry is inserted on the first accepted connection from a uid
+/// and removed (entry deleted) when the count drops back to zero.
+/// The `Mutex` is only contended at accept/disconnect time — never
+/// during request processing — so lock duration is O(1).
+static PEER_CONNECTIONS: Mutex<Option<HashMap<u32, usize>>> = Mutex::new(None);
+
+/// RAII guard that decrements [`ACTIVE_CONNECTIONS`] and the per-peer
+/// counter for `peer_uid` on drop.
+struct ConnectionGuard {
+    peer_uid: u32,
+}
+
+impl ConnectionGuard {
+    /// Attempt to acquire a global + per-peer connection slot for `peer_uid`.
+    ///
+    /// Returns `None` when either:
+    /// * the process-global cap ([`MAX_IPC_CONNECTIONS`]) is reached, or
+    /// * the per-peer cap ([`MAX_IPC_CONNECTIONS_PER_PEER`]) for `peer_uid`
+    ///   is reached.
+    ///
+    /// Both caps are checked and incremented atomically under the
+    /// `PEER_CONNECTIONS` mutex to avoid TOCTOU races.
+    fn acquire(peer_uid: u32) -> Option<Self> {
+        // Lock the per-peer map first, then CAS the global counter.
+        // Holding the lock during the global CAS is intentional: it
+        // serialises the (check global, check peer, increment both)
+        // triple so no two threads can both succeed past either cap.
+        let mut map_guard = PEER_CONNECTIONS.lock().unwrap_or_else(|p| p.into_inner());
+        let map = map_guard.get_or_insert_with(HashMap::new);
+
+        // Check and reserve the per-peer slot first (cheaper check).
+        let peer_count = map.entry(peer_uid).or_insert(0);
+        if *peer_count >= MAX_IPC_CONNECTIONS_PER_PEER {
+            return None;
+        }
+
+        // Check and reserve the global slot.
+        // Use a CAS loop so we never overshoot even under concurrent pressure.
+        loop {
+            let global = ACTIVE_CONNECTIONS.load(AtomicOrdering::Relaxed);
+            if global >= MAX_IPC_CONNECTIONS {
+                // Clean up the tentative per-peer reservation.
+                if *peer_count == 0 {
+                    map.remove(&peer_uid);
+                }
+                return None;
+            }
+            if ACTIVE_CONNECTIONS
+                .compare_exchange(
+                    global,
+                    global + 1,
+                    AtomicOrdering::AcqRel,
+                    AtomicOrdering::Relaxed,
+                )
+                .is_ok()
+            {
+                break;
+            }
+        }
+
+        // Both slots secured — commit the per-peer increment.
+        *peer_count += 1;
+        Some(Self { peer_uid })
+    }
+}
+
+impl Drop for ConnectionGuard {
+    fn drop(&mut self) {
+        // Decrement global counter.
+        ACTIVE_CONNECTIONS.fetch_sub(1, AtomicOrdering::Release);
+
+        // Decrement per-peer counter and remove the entry when it hits zero.
+        let mut map_guard = PEER_CONNECTIONS.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(map) = map_guard.as_mut() {
+            if let Some(count) = map.get_mut(&self.peer_uid) {
+                *count -= 1;
+                if *count == 0 {
+                    map.remove(&self.peer_uid);
+                }
+            }
+        }
+    }
+}
+
 const IPC_REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5);
+/// Write timeout applied to the response write so a slow or stalled
+/// client cannot hold the server-side stream open indefinitely after the
+/// request has been dispatched.
+const IPC_RESPONSE_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Errors raised by the Unix-socket transport. All variants are safe to
 /// surface to the peer except when the framing is already broken
@@ -92,6 +210,20 @@ pub enum IpcTransportError {
 /// Concurrent accept from multiple threads is permitted, but the
 /// current helper surface is deliberately single-request per call
 /// (see [`Self::serve_once`]).
+///
+/// # Why `accept_and_spawn` is not used in production
+///
+/// [`Self::accept_and_spawn`] spawns a new OS thread per connection and
+/// requires the handler closure to be `Clone + Send + 'static`. The
+/// production daemon handler closes over a `&mut RuntimeShell`, and
+/// `RuntimeShell` is intentionally `!Send` (it holds raw pointers and
+/// non-`Send` SQLite connection state). Migrating dispatch to
+/// `accept_and_spawn` would therefore require either an `Arc<Mutex<RuntimeShell>>`
+/// wrapper (introducing lock contention on every IPC call) or a full
+/// refactor to a channel-based dispatch model. The current single-threaded
+/// [`Self::serve_once`] loop is the deliberate production path;
+/// `accept_and_spawn` is retained for embedders whose handler types are
+/// `Send`.
 #[derive(Debug)]
 pub struct BoundIpcServer {
     listener: UnixListener,
@@ -168,24 +300,15 @@ impl BoundIpcServer {
     where
         F: FnOnce(Request) -> Response,
     {
-        let (stream, _) = self.listener.accept()?;
-        self.serve_stream_once(stream, handler, IPC_REQUEST_READ_TIMEOUT)
-    }
+        let (mut stream, _) = self.listener.accept()?;
 
-    fn serve_stream_once<F>(
-        &self,
-        mut stream: UnixStream,
-        handler: F,
-        read_timeout: Duration,
-    ) -> Result<(), IpcTransportError>
-    where
-        F: FnOnce(Request) -> Response,
-    {
-        stream.set_read_timeout(Some(read_timeout))?;
-        let server = IpcServer::new(self.owner_uid);
+        // Recover peer identity before enforcing connection caps so the
+        // per-peer cap can be applied to the correct uid.  On failure we
+        // respond Unauthorized and return; no slot is consumed.
         let peer = match peer_identity(&stream) {
-            Ok(peer) => peer,
+            Ok(p) => p,
             Err(_) => {
+                let server = IpcServer::new(self.owner_uid);
                 let _ = read_framed_request(&mut stream);
                 let _ = write_response(
                     &mut stream,
@@ -196,6 +319,164 @@ impl BoundIpcServer {
                 return Ok(());
             }
         };
+
+        // Enforce the per-process AND per-peer connection caps.  When
+        // either cap is reached we close the incoming stream immediately
+        // and return success so the outer serve loop continues accepting
+        // new connections (and shedding excess ones) without propagating
+        // an error.  The client will see a connection reset.
+        let _guard = match ConnectionGuard::acquire(peer.uid) {
+            Some(g) => g,
+            None => {
+                eprintln!(
+                    "pcloud-ipc: connection cap reached (global={MAX_IPC_CONNECTIONS}, \
+                     per-peer={MAX_IPC_CONNECTIONS_PER_PEER}); \
+                     closing connection from uid={}", peer.uid
+                );
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+                return Ok(());
+            }
+        };
+        self.serve_stream_once_with_peer(stream, peer, handler, IPC_REQUEST_READ_TIMEOUT)
+    }
+
+    /// Accept a single connection and dispatch it on a **dedicated OS
+    /// thread**, returning immediately after the thread is spawned.
+    ///
+    /// This is the thread-per-connection entry point. It eliminates the
+    /// single-threaded bottleneck present in [`Self::serve_once`]: slow
+    /// backend calls (auth RTT, crypto unlock) no longer block subsequent
+    /// clients from being accepted and dispatched.
+    ///
+    /// The connection cap ([`MAX_IPC_CONNECTIONS`]) is still enforced:
+    /// when the cap is already reached, the incoming stream is closed
+    /// immediately and this method returns `Ok(())` without spawning.
+    ///
+    /// # Handler requirements
+    ///
+    /// `handler` must be `Clone + Send + 'static`. Typically this is
+    /// an `Arc`-wrapped dispatcher: `Arc<dyn Fn(Request) -> Response +
+    /// Send + Sync>`. The clone is taken once per accepted connection so
+    /// the thread owns its own handle.
+    ///
+    /// # Errors
+    ///
+    /// Only the `accept(2)` syscall itself can fail here; any error that
+    /// occurs inside the spawned thread is logged to stderr (pcloud-ipc
+    /// avoids a `log` dependency) and does not propagate back to the
+    /// caller.
+    pub fn accept_and_spawn<F>(&self, handler: F) -> Result<(), IpcTransportError>
+    where
+        F: Fn(Request) -> Response + Clone + Send + 'static,
+    {
+        let (mut stream, _addr) = self.listener.accept()?;
+
+        // Recover peer identity before enforcing connection caps so the
+        // per-peer cap can be applied to the correct uid.
+        let peer = match peer_identity(&stream) {
+            Ok(p) => p,
+            Err(_) => {
+                let server = IpcServer::new(self.owner_uid);
+                let _ = read_framed_request(&mut stream);
+                let _ = write_response(
+                    &mut stream,
+                    &server,
+                    crate::methods::ResponseStatus::Unauthorized,
+                    "peer credentials unavailable",
+                );
+                return Ok(());
+            }
+        };
+
+        // Enforce the per-process AND per-peer connection caps before
+        // spawning so we never launch more threads than either cap allows.
+        let guard = match ConnectionGuard::acquire(peer.uid) {
+            Some(g) => g,
+            None => {
+                eprintln!(
+                    "pcloud-ipc: connection cap reached (global={MAX_IPC_CONNECTIONS}, \
+                     per-peer={MAX_IPC_CONNECTIONS_PER_PEER}); \
+                     closing connection from uid={}", peer.uid
+                );
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+                return Ok(());
+            }
+        };
+
+        let owner_uid = self.owner_uid;
+        let handler = handler.clone();
+
+        std::thread::Builder::new()
+            .name("pcloud-ipc-conn".to_owned())
+            .spawn(move || {
+                // The guard is moved into the thread so ACTIVE_CONNECTIONS
+                // and the per-peer counter are decremented when this thread
+                // exits, regardless of whether the request succeeds or fails.
+                let _guard = guard;
+                let server_ctx = IpcServer::new(owner_uid);
+                let result = serve_stream_standalone_with_peer(
+                    stream,
+                    &server_ctx,
+                    peer,
+                    handler,
+                    IPC_REQUEST_READ_TIMEOUT,
+                );
+                if let Err(e) = result {
+                    eprintln!("pcloud-ipc: connection error: {e}");
+                }
+            })
+            .map_err(|e| IpcTransportError::Io(e))?;
+
+        Ok(())
+    }
+
+    /// Legacy entry-point used by tests that accept a stream directly
+    /// (e.g. `slow_client` test). Peer identity is re-resolved internally.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn serve_stream_once<F>(
+        &self,
+        stream: UnixStream,
+        handler: F,
+        read_timeout: Duration,
+    ) -> Result<(), IpcTransportError>
+    where
+        F: FnOnce(Request) -> Response,
+    {
+        let server = IpcServer::new(self.owner_uid);
+        // Resolve peer identity; on failure respond Unauthorized and return.
+        let peer = match peer_identity(&stream) {
+            Ok(p) => p,
+            Err(_) => {
+                let mut s = stream;
+                let _ = read_framed_request(&mut s);
+                let _ = write_response(
+                    &mut s,
+                    &server,
+                    crate::methods::ResponseStatus::Unauthorized,
+                    "peer credentials unavailable",
+                );
+                return Ok(());
+            }
+        };
+        self.serve_stream_once_with_peer(stream, peer, handler, read_timeout)
+    }
+
+    /// Core stream handler that receives a pre-resolved [`PeerIdentity`].
+    /// Called by both [`Self::serve_once`] (after cap enforcement) and the
+    /// legacy `serve_stream_once` shim used by tests.
+    fn serve_stream_once_with_peer<F>(
+        &self,
+        mut stream: UnixStream,
+        peer: PeerIdentity,
+        handler: F,
+        read_timeout: Duration,
+    ) -> Result<(), IpcTransportError>
+    where
+        F: FnOnce(Request) -> Response,
+    {
+        stream.set_read_timeout(Some(read_timeout))?;
+        let server = IpcServer::new(self.owner_uid);
+
         if !server.authorize_peer(&peer) {
             let _ = read_framed_request(&mut stream);
             let _ = write_response(
@@ -224,7 +505,17 @@ impl BoundIpcServer {
         // re-attaching it to spans. The handler API stays Request-only
         // to keep existing daemon dispatch sites untouched.
         let response = handler(envelope.request);
-        let _ = write_response(&mut stream, &server, response.status, response.message);
+        // Apply a write timeout before sending the response so a stalled
+        // or malicious client cannot block the serve thread indefinitely
+        // after the request has already been dispatched.
+        let _ = stream.set_write_timeout(Some(IPC_RESPONSE_WRITE_TIMEOUT));
+        if let Err(err) = write_response(&mut stream, &server, response.status, response.message) {
+            // BrokenPipe / ConnectionReset are expected when the client
+            // disconnects after sending the request but before reading
+            // the response (e.g. timeout on the client side). Log at
+            // trace level to avoid spamming operators in normal operation.
+            log::trace!("pcloud-ipc: write_response failed (client disconnected?): {err}");
+        }
         Ok(())
     }
 }
@@ -299,6 +590,51 @@ impl IpcClient {
         stream.read_to_end(&mut response_bytes)?;
         Ok(self.parse_response(&response_bytes)?)
     }
+}
+
+/// Module-level variant of `serve_stream_standalone` that receives a
+/// pre-resolved [`PeerIdentity`] (already recovered by `accept_and_spawn`
+/// before the connection slot was acquired).  Used by the thread closure
+/// spawned in [`BoundIpcServer::accept_and_spawn`].
+fn serve_stream_standalone_with_peer<F>(
+    mut stream: UnixStream,
+    server: &IpcServer,
+    peer: PeerIdentity,
+    handler: F,
+    read_timeout: Duration,
+) -> Result<(), IpcTransportError>
+where
+    F: FnOnce(Request) -> Response,
+{
+    stream.set_read_timeout(Some(read_timeout))?;
+
+    if !server.authorize_peer(&peer) {
+        let _ = read_framed_request(&mut stream);
+        let _ = write_response(
+            &mut stream,
+            server,
+            crate::methods::ResponseStatus::Unauthorized,
+            format!("unauthorized peer uid={}, pid={}", peer.uid, peer.pid),
+        );
+        return Ok(());
+    }
+
+    let request_bytes = match read_framed_request(&mut stream) {
+        Ok(bytes) => bytes,
+        Err(err) => {
+            return handle_client_error(&mut stream, server, err);
+        }
+    };
+    let envelope = match server.decode_envelope(&request_bytes) {
+        Ok(envelope) => envelope,
+        Err(err) => {
+            return handle_client_error(&mut stream, server, IpcTransportError::Protocol(err));
+        }
+    };
+    let response = handler(envelope.request);
+    let _ = stream.set_write_timeout(Some(IPC_RESPONSE_WRITE_TIMEOUT));
+    let _ = write_response(&mut stream, server, response.status, response.message);
+    Ok(())
 }
 
 fn read_framed_request(stream: &mut UnixStream) -> Result<Vec<u8>, IpcTransportError> {
@@ -663,5 +999,98 @@ mod tests {
         assert_eq!(followup.status, ResponseStatus::Ok);
         assert_eq!(followup.message, "healthy");
         handle.join().expect("server thread should exit");
+    }
+
+    /// Verify that the per-peer cap is enforced even when the global cap
+    /// has not been reached.  We set `MAX_IPC_CONNECTIONS_PER_PEER` = 32,
+    /// so a single uid exhausting 32 slots should be denied a 33rd while
+    /// total connections < 128.
+    ///
+    /// This test exercises [`ConnectionGuard::acquire`] directly to avoid
+    /// requiring real IPC round-trips for all 33 slots (which would be slow).
+    #[test]
+    fn per_peer_cap_enforced_even_when_global_cap_not_hit() {
+        use super::{ConnectionGuard, MAX_IPC_CONNECTIONS_PER_PEER, ACTIVE_CONNECTIONS, PEER_CONNECTIONS};
+        use std::sync::atomic::Ordering;
+
+        // Use a test-only uid unlikely to collide with other tests.
+        let test_uid: u32 = 0xBEEF_0001;
+
+        // Reset any leftover state from previous tests.
+        {
+            let mut map = PEER_CONNECTIONS.lock().unwrap();
+            if let Some(m) = map.as_mut() {
+                m.remove(&test_uid);
+            }
+        }
+
+        // Acquire MAX_IPC_CONNECTIONS_PER_PEER slots — all should succeed.
+        let mut guards: Vec<ConnectionGuard> = (0..MAX_IPC_CONNECTIONS_PER_PEER)
+            .map(|_| {
+                ConnectionGuard::acquire(test_uid)
+                    .expect("slot within per-peer cap should be available")
+            })
+            .collect();
+
+        // The next acquire must be denied (per-peer cap reached).
+        assert!(
+            ConnectionGuard::acquire(test_uid).is_none(),
+            "per-peer cap should deny the ({MAX_IPC_CONNECTIONS_PER_PEER}+1)th connection"
+        );
+
+        // Verify global counter matches how many we acquired.
+        assert_eq!(
+            ACTIVE_CONNECTIONS.load(Ordering::Relaxed),
+            MAX_IPC_CONNECTIONS_PER_PEER
+        );
+
+        // Release all guards; both counters should return to zero.
+        guards.clear();
+
+        assert_eq!(ACTIVE_CONNECTIONS.load(Ordering::Relaxed), 0);
+        {
+            let map = PEER_CONNECTIONS.lock().unwrap();
+            assert!(
+                map.as_ref().map_or(true, |m| !m.contains_key(&test_uid)),
+                "per-peer entry should be removed after all connections close"
+            );
+        }
+    }
+
+    /// Verify that the per-peer counter is correctly decremented (and the
+    /// map entry removed) when a connection closes, allowing subsequent
+    /// connections from the same peer.
+    #[test]
+    fn per_peer_cap_resets_on_disconnect() {
+        use super::{ConnectionGuard, ACTIVE_CONNECTIONS, PEER_CONNECTIONS};
+        use std::sync::atomic::Ordering;
+
+        let test_uid: u32 = 0xBEEF_0002;
+
+        // Reset any leftover state.
+        {
+            let mut map = PEER_CONNECTIONS.lock().unwrap();
+            if let Some(m) = map.as_mut() {
+                m.remove(&test_uid);
+            }
+        }
+
+        // Acquire and immediately release one slot, three times in a row.
+        for round in 0..3 {
+            let guard = ConnectionGuard::acquire(test_uid)
+                .unwrap_or_else(|| panic!("round {round}: slot should be available after disconnect"));
+            drop(guard);
+
+            assert_eq!(
+                ACTIVE_CONNECTIONS.load(Ordering::Relaxed),
+                0,
+                "round {round}: global counter should be zero after drop"
+            );
+            let map = PEER_CONNECTIONS.lock().unwrap();
+            assert!(
+                map.as_ref().map_or(true, |m| !m.contains_key(&test_uid)),
+                "round {round}: per-peer entry should be absent after drop"
+            );
+        }
     }
 }

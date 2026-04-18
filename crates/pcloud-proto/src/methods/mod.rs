@@ -161,29 +161,29 @@ mod tests {
     #[test]
     fn account_methods_build_expected_parameter_counts() {
         let promo = GetPromoRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             os_id: 3,
         };
         let set_language = SetLanguageRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             language: "en".to_owned(),
         };
         let locations = GetLocationApiRequest;
         let verify_email = VerifyEmailRequest {
-            auth_token: Some("token".to_owned()),
+            auth_token: Some("token".into()),
             verify_token: None,
         };
         let restricted_verify = VerifyEmailRequest {
             auth_token: None,
-            verify_token: Some("verify-token".to_owned()),
+            verify_token: Some("verify-token".into()),
         };
         let lost_password = LostPasswordRequest {
             email: "alice@example.com".to_owned(),
         };
         let change_password = ChangePasswordRequest {
-            auth_token: "token".to_owned(),
-            current_password: "old".to_owned(),
-            new_password: "new".to_owned(),
+            auth_token: "token".into(),
+            current_password: "old".into(),
+            new_password: "new".into(),
             device: "Desktop".to_owned(),
         };
 
@@ -246,7 +246,7 @@ mod tests {
 
         let register = RegisterRequest {
             email: "new@example.com".to_owned(),
-            password: "strong".to_owned(),
+            password: "strong".into(),
             terms_accepted: true,
             os_id: 3,
         };
@@ -259,8 +259,8 @@ mod tests {
     fn digest_auth_request_uses_login_command() {
         let request = LoginDigestRequest {
             username: "alice@example.com".to_owned(),
-            digest_token: "digest-token".to_owned(),
-            password_digest: "password-digest".to_owned(),
+            digest_token: "digest-token".into(),
+            password_digest: "password-digest".into(),
             code: None,
             context: AuthRequestContext::default(),
         };
@@ -274,7 +274,7 @@ mod tests {
         let request = DiffRequest {
             cursor: 42,
             limit: 256,
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
         };
         let encoded = request.encode().expect("diff request should encode");
         assert_eq!(encoded.frame.command, "diff");
@@ -284,7 +284,7 @@ mod tests {
     #[test]
     fn list_folder_request_encodes() {
         let request = ListFolderByPathRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             path: "/remote-sync".to_owned(),
         };
         let encoded = request.encode().expect("listfolder request should encode");
@@ -296,11 +296,11 @@ mod tests {
     fn download_and_upload_methods_build_expected_parameter_counts() {
         let download = GetFileLinkRequest {
             file_id: 7,
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             forced_host: Some("cdn.example".to_owned()),
         };
         let upload = UploadCreateRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             parent_folder_id: 9,
             file_name: "report.txt".to_owned(),
             file_size: 1024,
@@ -316,44 +316,44 @@ mod tests {
     #[test]
     fn public_link_methods_build_expected_parameter_counts() {
         let list = ListPublicLinksRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
         };
         let show = ShowPublicLinkRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             code: "abc123".to_owned(),
         };
         let delete = DeletePublicLinkRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             link_id: 7,
         };
         let create_file = CreateFilePublicLinkRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             path: "/Docs/report.txt".to_owned(),
         };
         let create_folder = CreateFolderPublicLinkRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             path: "/Docs".to_owned(),
         };
         let change_expire = ChangePublicLinkExpireRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             link_id: 7,
             expire: Some(123),
         };
         let change_password = ChangePublicLinkPasswordRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             link_id: 7,
-            password: Some("secret".to_owned()),
+            password: Some("secret".into()),
         };
         let change_upload = ChangePublicLinkUploadRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             link_id: 7,
             policy: PublicLinkUploadPolicy::Everyone,
         };
         let list_upload = ListUploadLinksRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
         };
         let create_upload = CreateUploadLinkRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             path: "/Docs".to_owned(),
             comment: "Upload here".to_owned(),
             expire: Some(123),
@@ -361,11 +361,11 @@ mod tests {
             maxfiles: Some(5),
         };
         let delete_upload = DeleteUploadLinkRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             upload_link_id: 17,
         };
         let create_tree = CreateTreePublicLinkRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             name: "Quarterly Docs".to_owned(),
             root_folder_id: Some(9),
             folder_ids_csv: Some("9,10".to_owned()),
@@ -375,29 +375,29 @@ mod tests {
             maxtraffic: Some(2048),
         };
         let list_access = ListPublicLinkAccessRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             link_id: 7,
         };
         let add_access = AddPublicLinkAccessRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             link_id: 7,
             email: "alice@example.com".to_owned(),
         };
         let remove_access = RemovePublicLinkAccessRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             link_id: 7,
             receiver_id: 33,
         };
         let list_bookmarks = ListBookmarksRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
         };
         let remove_bookmark = RemoveBookmarkRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             code: "alpha123".to_owned(),
             location_id: 8,
         };
         let change_bookmark = ChangeBookmarkRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             code: "alpha123".to_owned(),
             location_id: 8,
             name: "Pinned Link".to_owned(),

@@ -36,7 +36,8 @@ use std::time::Duration;
 use pcloud_config::resilience::ResiliencePolicy;
 use pcloud_resilience::{
     BackoffSchedule, BreakerState, CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError,
-    Clock, RateLimitError, RetryDecision, RetryPolicy, SystemClock, TokenBucket, TokenBucketConfig,
+    Clock, GlobalRetryBudget, RateLimitError, RetryDecision, RetryPolicy, SystemClock, TokenBucket,
+    TokenBucketConfig,
 };
 use thiserror::Error;
 
@@ -100,6 +101,9 @@ where
     /// The inner transport returned a permanent or exhausted-retry error.
     #[error("inner transport error: {0}")]
     Inner(#[source] E),
+    /// The shared global retry budget was exhausted — no further retries allowed.
+    #[error("global retry budget exhausted")]
+    BudgetExhausted,
 }
 
 /// Behaviour when the rate limiter has no tokens available.
@@ -130,6 +134,9 @@ where
     waiter: Arc<dyn Waiter>,
     classifier: Classifier<T::Error>,
     rate_mode: RateLimitMode,
+    /// Shared global retry budget — limits total retries across all concurrent
+    /// operations on this transport. `None` when no budget was configured.
+    budget: Option<Arc<GlobalRetryBudget>>,
 }
 
 impl<T> Clone for ResilientTransport<T>
@@ -145,6 +152,7 @@ where
             waiter: self.waiter.clone(),
             classifier: self.classifier.clone(),
             rate_mode: self.rate_mode,
+            budget: self.budget.clone(),
         }
     }
 }
@@ -178,6 +186,7 @@ where
             Arc::new(ThreadSleepWaiter),
             default_classifier::<T::Error>(),
             RateLimitMode::Wait,
+            None,
         )
     }
 
@@ -192,7 +201,33 @@ where
         classifier: Classifier<T::Error>,
         rate_mode: RateLimitMode,
     ) -> Result<Self, RateLimitError> {
-        Self::build(inner, policy, clock, waiter, classifier, rate_mode)
+        Self::build(inner, policy, clock, waiter, classifier, rate_mode, None)
+    }
+
+    /// Build a wrapper with a shared [`GlobalRetryBudget`].
+    ///
+    /// Use this variant in production to bound the total number of retry
+    /// attempts across all concurrent operations on the same client. When
+    /// the budget is exhausted, retries are refused immediately rather than
+    /// amplifying load on an already-struggling backend.
+    pub fn with_budget(
+        inner: T,
+        policy: &ResiliencePolicy,
+        clock: Arc<dyn Clock>,
+        waiter: Arc<dyn Waiter>,
+        classifier: Classifier<T::Error>,
+        rate_mode: RateLimitMode,
+        budget: Arc<GlobalRetryBudget>,
+    ) -> Result<Self, RateLimitError> {
+        Self::build(
+            inner,
+            policy,
+            clock,
+            waiter,
+            classifier,
+            rate_mode,
+            Some(budget),
+        )
     }
 
     fn build(
@@ -202,6 +237,7 @@ where
         waiter: Arc<dyn Waiter>,
         classifier: Classifier<T::Error>,
         rate_mode: RateLimitMode,
+        budget: Option<Arc<GlobalRetryBudget>>,
     ) -> Result<Self, RateLimitError> {
         let bucket_cfg =
             TokenBucketConfig::new(policy.rate_limit_capacity, policy.rate_limit_refill_per_sec)?;
@@ -229,6 +265,7 @@ where
             waiter,
             classifier,
             rate_mode,
+            budget,
         })
     }
 
@@ -240,10 +277,48 @@ where
     /// Execute a request with rate-limit, circuit-breaker, and retry logic
     /// applied. Auth tokens embedded in the request bytes are forwarded by
     /// reference — never cloned by this wrapper.
+    ///
+    /// ## Observability
+    ///
+    /// Per-attempt wall-clock duration is captured and the call site is
+    /// annotated for the future `pcloud-observability` wiring. When that
+    /// dependency is added, replace the `TODO(bd-1du)` blocks below with:
+    ///
+    /// ```ignore
+    /// use pcloud_observability::metrics::{register_histogram, DEFAULT_LATENCY_BUCKETS};
+    /// static TRANSPORT_LATENCY: OnceLock<HistogramHandle> = OnceLock::new();
+    /// let h = TRANSPORT_LATENCY.get_or_init(|| {
+    ///     register_histogram(
+    ///         "pcloud_transport_latency_seconds",
+    ///         DEFAULT_LATENCY_BUCKETS,
+    ///     )
+    /// });
+    /// h.observe(latency.as_secs_f64());
+    /// ```
+    ///
+    /// And use `MetricFamilies::observe_request(command, outcome, latency_s)`
+    /// for the error counter path.
+    ///
+    /// TODO(bd-1du): wire `pcloud_transport_latency_seconds` and
+    /// `pcloud_transport_errors_total` once `pcloud-observability` is added
+    /// as a dependency of `pcloud-proto` (requires workspace Cargo.toml
+    /// change reviewed separately from transport audit fixes).
+    ///
+    /// ## Upload mutation safety
+    ///
+    /// `upload_write` and `upload_save` are **not idempotent** at the
+    /// transport layer. The `UploadStateMachine` tracks the write offset and
+    /// retries with the correct offset after a failure. If the transport
+    /// layer were to retry these methods independently it could double-apply
+    /// bytes (the server may have committed the write before the client
+    /// received the error response). Those commands are therefore excluded
+    /// from transport-layer retries here.
     pub fn execute(&self, request: &EncodedRequest) -> Result<Value, ResilientError<T::Error>> {
+        let call_start = std::time::Instant::now();
         let mut attempt: u32 = 0;
         loop {
             attempt = attempt.saturating_add(1);
+            let attempt_start = std::time::Instant::now();
 
             // 1. Rate limit.
             match self.rate_mode {
@@ -273,16 +348,44 @@ where
             match self.inner.execute(request) {
                 Ok(v) => {
                     self.breaker.record_success();
+                    // Replenish one budget token on success so transient bursts
+                    // don't permanently deplete the shared pool.
+                    if let Some(ref budget) = self.budget {
+                        budget.replenish(1);
+                    }
+                    // TODO(bd-1du): emit pcloud_transport_latency_seconds{outcome="ok"}
+                    // via pcloud_observability::metrics::register_histogram (see doc above).
+                    let _latency = attempt_start.elapsed();
+                    let _total = call_start.elapsed();
                     return Ok(v);
                 }
                 Err(err) => {
+                    // TODO(bd-1du): emit pcloud_transport_latency_seconds{outcome="error"}
+                    // and pcloud_transport_errors_total{class=<classify>}
+                    // via pcloud_observability::metrics::MetricFamilies::observe_request.
+                    let _latency = attempt_start.elapsed();
                     self.breaker.record_failure();
                     let class = (self.classifier)(&err);
                     if class == ErrorClass::Permanent {
                         return Err(ResilientError::Inner(err));
                     }
+                    // SAFETY: upload_write and upload_save are NOT idempotent.
+                    // The UploadStateMachine owns offset-aware retry for these
+                    // commands. Retrying here could double-apply bytes if the
+                    // server committed the write before the client received the
+                    // error response. Return immediately so the state machine
+                    // can retry with the correct offset.
+                    if is_upload_mutation(request) {
+                        return Err(ResilientError::Inner(err));
+                    }
                     match self.retry.next(attempt) {
                         RetryDecision::Retry { wait } => {
+                            // Check global budget before consuming a retry slot.
+                            if let Some(ref budget) = self.budget {
+                                if !budget.try_consume() {
+                                    return Err(ResilientError::BudgetExhausted);
+                                }
+                            }
                             if !wait.is_zero() {
                                 self.waiter.wait(wait);
                             }
@@ -298,15 +401,92 @@ where
     }
 }
 
-/// Default classifier: every inner error is treated as transient (retryable
-/// until the retry budget is exhausted). Callers that need finer-grained
-/// classification (e.g. HTTP 4xx vs 5xx, or `TransportError::InvalidAddress`
-/// as permanent) should supply their own via [`ResilientTransport::new`].
+/// Returns `true` when the request command is an upload mutation that must
+/// **not** be retried at the transport layer.
+///
+/// `upload_write` and `upload_save` are non-idempotent: the server may have
+/// committed the write before the client received the error response. The
+/// `UploadStateMachine` is the authoritative retry owner for these methods;
+/// it tracks the write offset and retries with the correct position.
+///
+/// The check is a simple ASCII string comparison against the command name
+/// encoded in [`EncodedRequest::frame`].  Command names are short, static,
+/// lower-case ASCII tokens; no allocation or regex is needed.
+#[inline]
+fn is_upload_mutation(request: &EncodedRequest) -> bool {
+    matches!(
+        request.frame.command.as_str(),
+        "upload_write" | "upload_save"
+    )
+}
+
+/// Default classifier: every inner error is treated as **permanent** (not
+/// retried) unless a caller explicitly supplies a custom classifier.
+///
+/// The previous default treated every error as transient (retryable).
+/// That was over-broad: protocol-level errors such as `InvalidInput` (bad
+/// request parameters), `InvalidAddress` (bad hostname), and similar
+/// configuration-time mistakes will recur on every retry and only waste the
+/// global retry budget. Callers that know a specific error is transient
+/// (e.g. `TransportError::Io` for a connection reset) should supply a
+/// domain-aware classifier via [`ResilientTransport::new`].
+///
+/// For the binary transport specifically, use [`transport_error_classifier`]
+/// which promotes the handful of genuinely transient I/O variants while
+/// keeping all others permanent.
 pub fn default_classifier<E>() -> Classifier<E>
 where
     E: std::error::Error + Send + Sync + 'static,
 {
-    Arc::new(|_: &E| ErrorClass::Transient)
+    Arc::new(|_: &E| ErrorClass::Permanent)
+}
+
+/// A [`TransportError`]-specific error classifier.
+///
+/// Maps protocol-level permanent failures (bad address, invalid TLS name,
+/// TLS handshake errors) to [`ErrorClass::Permanent`] so the
+/// [`ResilientTransport`] does **not** waste retry budget on errors that
+/// are guaranteed to recur.
+///
+/// `TransportError::Io` is split by the underlying [`io::ErrorKind`]:
+/// - `TimedOut`, `ConnectionReset`, `BrokenPipe`, `ConnectionAborted`,
+///   `Interrupted`, and `WouldBlock` are **transient** — a fresh
+///   connection attempt may succeed.
+/// - All other `Io` kinds (e.g. `PermissionDenied`, `NotFound`,
+///   `AddrNotAvailable`) are **permanent** — retrying cannot help.
+///
+/// `Connect` (TCP handshake failure) and `ResponseTooLarge` are
+/// transient and permanent respectively: a connect failure may clear
+/// on the next attempt but an oversized frame is a protocol error that
+/// will recur.
+///
+/// Use this instead of [`default_classifier`] when wrapping a
+/// [`crate::transport::BinaryApiTransport`].
+pub fn transport_error_classifier() -> Classifier<crate::transport::TransportError> {
+    use crate::transport::TransportError;
+    use std::io::ErrorKind as K;
+    Arc::new(|err: &TransportError| match err {
+        // Permanent: these errors will not resolve on retry.
+        TransportError::InvalidAddress { .. } => ErrorClass::Permanent,
+        TransportError::InvalidServerName(_) => ErrorClass::Permanent,
+        TransportError::Tls(_) => ErrorClass::Permanent,
+        TransportError::SocketConfig(_) => ErrorClass::Permanent,
+        TransportError::ResponseTooLarge { .. } => ErrorClass::Permanent,
+        TransportError::ResponseHeader(_) => ErrorClass::Permanent,
+        TransportError::ResponseBody(_) => ErrorClass::Permanent,
+        // Io: classify by underlying kind — only a small set is genuinely transient.
+        TransportError::Io(io_err) => match io_err.kind() {
+            K::TimedOut
+            | K::ConnectionReset
+            | K::BrokenPipe
+            | K::ConnectionAborted
+            | K::Interrupted
+            | K::WouldBlock => ErrorClass::Transient,
+            _ => ErrorClass::Permanent,
+        },
+        // Connect: TCP handshake failure is transient (DNS flap, transient unreachable).
+        TransportError::Connect(_) => ErrorClass::Transient,
+    })
 }
 
 #[cfg(test)]
@@ -534,5 +714,40 @@ mod tests {
         assert!(matches!(err, ResilientError::Inner(FakeError::Perm)));
         // Only one underlying call — no retries on permanent failures.
         assert_eq!(fake.calls(), 1);
+    }
+
+    #[test]
+    fn budget_exhaustion_stops_retries() {
+        let clock = Arc::new(ManualClock::new());
+        let waiter = Arc::new(RecordingWaiter::new());
+        // 5 retry attempts allowed by policy, but budget only has 1 token.
+        let policy = test_policy(5, 100, 1000.0, 10);
+        // Script: all temp failures so retries would otherwise continue.
+        let fake = FakeTransport::new(vec![
+            Outcome::Temp,
+            Outcome::Temp,
+            Outcome::Temp,
+            Outcome::Temp,
+            Outcome::Ok,
+        ]);
+        let budget = Arc::new(GlobalRetryBudget::new(1));
+        let rt = ResilientTransport::with_budget(
+            fake,
+            &policy,
+            clock,
+            waiter,
+            classifier_temp_is_transient(),
+            RateLimitMode::Wait,
+            budget.clone(),
+        )
+        .unwrap();
+
+        // First call fails, retries once (consuming the 1 token), then budget
+        // is exhausted and the next retry attempt must be refused.
+        let err = rt.execute(&dummy_request()).unwrap_err();
+        assert!(
+            matches!(err, ResilientError::BudgetExhausted),
+            "expected BudgetExhausted, got {err:?}"
+        );
     }
 }

@@ -271,6 +271,262 @@ pub struct LowlevelOps {
 }
 
 // -----------------------------------------------------------------------------
+// Full-layout mirror of `struct fuse_lowlevel_ops` for the libfuse 2.9 ABI
+// (matches the declaration in fuse-t's bundled `fuse_lowlevel.h`, which is
+// ABI-compatible with upstream libfuse 2.9). This exists SOLELY so we can
+// hand `fuse_lowlevel_new` a size equal to the full upstream `sizeof(struct
+// fuse_lowlevel_ops)` regardless of how many trailing ops the adapter's
+// public [`LowlevelOps`] struct actually exposes.
+//
+// Audit (bd-1du.4 / §5-opus C-2 / §5-sonnet C-2): passing the Rust
+// `size_of::<LowlevelOps>()` to `fuse_lowlevel_new` when the struct stops
+// short of the upstream definition made libfuse read uninitialized memory
+// past our buffer (or equivalently, install thunks at the wrong offsets).
+// Always pass [`LOWLEVEL_OPS_SIZE`] instead — it is the full upstream size.
+//
+// When fuse-t upgrades to a new libfuse ABI, update this struct to mirror
+// the new layout *exactly* (same field order, same signatures). The
+// const-assertion below enforces that [`LowlevelOps`] remains no larger
+// than the full upstream layout, catching drift at compile time.
+//
+// Field order and signatures mirror `struct fuse_lowlevel_ops` from
+// `fuse_lowlevel.h` (libfuse 2.9 ABI). Every slot is `Option<extern "C"
+// fn(...)>` so the all-zero byte pattern used at the call site corresponds
+// to "None" for every op, which libfuse interprets as ENOSYS.
+// -----------------------------------------------------------------------------
+
+/// Full-layout mirror of `struct fuse_lowlevel_ops` (libfuse 2.9). Used
+/// only for [`LOWLEVEL_OPS_SIZE`]; never dereferenced at runtime.
+#[repr(C)]
+#[allow(dead_code)]
+pub struct LowlevelOpsCompat {
+    // Slots 0..=4 (lifecycle + name lookup + forget + attr).
+    init: Option<extern "C" fn(userdata: *mut c_void, conn: *mut c_void)>,
+    destroy: Option<extern "C" fn(userdata: *mut c_void)>,
+    lookup: Option<extern "C" fn(req: fuse_req_t, parent: fuse_ino_t, name: *const c_char)>,
+    forget: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, nlookup: u64)>,
+    getattr: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, fi: *mut fuse_file_info)>,
+
+    // setattr + readlink + namespace ops.
+    setattr: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            attr: *mut libc::stat,
+            to_set: c_int,
+            fi: *mut fuse_file_info,
+        ),
+    >,
+    readlink: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t)>,
+    mknod: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            parent: fuse_ino_t,
+            name: *const c_char,
+            mode: u32,
+            rdev: u32,
+        ),
+    >,
+    mkdir:
+        Option<extern "C" fn(req: fuse_req_t, parent: fuse_ino_t, name: *const c_char, mode: u32)>,
+    unlink: Option<extern "C" fn(req: fuse_req_t, parent: fuse_ino_t, name: *const c_char)>,
+    rmdir: Option<extern "C" fn(req: fuse_req_t, parent: fuse_ino_t, name: *const c_char)>,
+    symlink: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            link: *const c_char,
+            parent: fuse_ino_t,
+            name: *const c_char,
+        ),
+    >,
+    rename: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            parent: fuse_ino_t,
+            name: *const c_char,
+            newparent: fuse_ino_t,
+            newname: *const c_char,
+        ),
+    >,
+    link: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            newparent: fuse_ino_t,
+            newname: *const c_char,
+        ),
+    >,
+
+    // File I/O slots.
+    open: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, fi: *mut fuse_file_info)>,
+    read: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            size: usize,
+            off: i64,
+            fi: *mut fuse_file_info,
+        ),
+    >,
+    write: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            buf: *const c_char,
+            size: usize,
+            off: i64,
+            fi: *mut fuse_file_info,
+        ),
+    >,
+    flush: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, fi: *mut fuse_file_info)>,
+    release: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, fi: *mut fuse_file_info)>,
+    fsync: Option<
+        extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, datasync: c_int, fi: *mut fuse_file_info),
+    >,
+
+    // Directory slots.
+    opendir: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, fi: *mut fuse_file_info)>,
+    readdir: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            size: usize,
+            off: i64,
+            fi: *mut fuse_file_info,
+        ),
+    >,
+    releasedir: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, fi: *mut fuse_file_info)>,
+    fsyncdir: Option<
+        extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, datasync: c_int, fi: *mut fuse_file_info),
+    >,
+
+    // statfs + xattr family + access + create.
+    statfs: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t)>,
+    setxattr: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            name: *const c_char,
+            value: *const c_char,
+            size: usize,
+            flags: c_int,
+        ),
+    >,
+    getxattr:
+        Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, name: *const c_char, size: usize)>,
+    listxattr: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, size: usize)>,
+    removexattr: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, name: *const c_char)>,
+    access: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, mask: c_int)>,
+    create: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            parent: fuse_ino_t,
+            name: *const c_char,
+            mode: u32,
+            fi: *mut fuse_file_info,
+        ),
+    >,
+
+    // Trailing libfuse 2.9 ops our adapter does not wire. They remain
+    // in layout so the upstream size is correct.
+    getlk: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            fi: *mut fuse_file_info,
+            lock: *mut c_void, // struct flock*
+        ),
+    >,
+    setlk: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            fi: *mut fuse_file_info,
+            lock: *mut c_void, // struct flock*
+            sleep: c_int,
+        ),
+    >,
+    bmap: Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, blocksize: usize, idx: u64)>,
+    ioctl: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            cmd: c_int,
+            arg: *mut c_void,
+            fi: *mut fuse_file_info,
+            flags: c_uint,
+            in_buf: *const c_void,
+            in_bufsz: usize,
+            out_bufsz: usize,
+        ),
+    >,
+    poll: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            fi: *mut fuse_file_info,
+            ph: *mut c_void, // struct fuse_pollhandle*
+        ),
+    >,
+    write_buf: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            bufv: *mut c_void, // struct fuse_bufvec*
+            off: i64,
+            fi: *mut fuse_file_info,
+        ),
+    >,
+    retrieve_reply: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            cookie: *mut c_void,
+            ino: fuse_ino_t,
+            offset: i64,
+            bufv: *mut c_void, // struct fuse_bufvec*
+        ),
+    >,
+    forget_multi: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            count: usize,
+            forgets: *mut c_void, // struct fuse_forget_data*
+        ),
+    >,
+    flock:
+        Option<extern "C" fn(req: fuse_req_t, ino: fuse_ino_t, fi: *mut fuse_file_info, op: c_int)>,
+    fallocate: Option<
+        extern "C" fn(
+            req: fuse_req_t,
+            ino: fuse_ino_t,
+            mode: c_int,
+            offset: i64,
+            length: i64,
+            fi: *mut fuse_file_info,
+        ),
+    >,
+}
+
+/// Size in bytes of the full upstream `struct fuse_lowlevel_ops` (libfuse
+/// 2.9 ABI, as exposed by fuse-t). **Always** pass this value as the
+/// `op_size` argument to [`fuse_lowlevel_new`]; never
+/// `size_of::<LowlevelOps>()`, which is strictly smaller and would cause
+/// libfuse to skip fields or read past our buffer.
+pub const LOWLEVEL_OPS_SIZE: usize = std::mem::size_of::<LowlevelOpsCompat>();
+
+// Compile-time guard: the adapter's public [`LowlevelOps`] must never grow
+// larger than the full upstream layout. If it does, someone added an op
+// beyond the 2.9 ABI and either the mirror struct here or the adapter
+// struct is out of sync with fuse-t.
+const _: () = {
+    assert!(
+        std::mem::size_of::<LowlevelOps>() <= std::mem::size_of::<LowlevelOpsCompat>(),
+        "LowlevelOps exceeded the full libfuse 2.9 fuse_lowlevel_ops layout; \
+         update LowlevelOpsCompat in macos_ffi.rs to mirror the new upstream ABI"
+    );
+};
+
+// -----------------------------------------------------------------------------
 // Extern declarations. Symbols come from fuse-t's `libfuse.dylib`,
 // discovered via the dynamic linker at process start. Link-time
 // resolution will happen only on macOS builds; Linux workspaces do

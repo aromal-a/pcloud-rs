@@ -123,7 +123,7 @@ where
         thumb_size: Option<String>,
     ) -> Result<Vec<Notification>, NotificationsApiError<T::Error>> {
         let request = ListNotificationsRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             thumb_size,
         };
         let response = self
@@ -153,7 +153,7 @@ where
         upto_id: u64,
     ) -> Result<(), NotificationsApiError<T::Error>> {
         let request = MarkNotificationsReadRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             notification_id: upto_id,
         };
         let encoded = request.encode()?;

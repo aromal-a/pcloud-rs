@@ -3,6 +3,7 @@
 
 use crate::binary_api::{BinaryParam, BinaryParamValue};
 use crate::methods::ProtocolMethod;
+use crate::redacted::RedactedProtoString;
 
 /// `GetFileLinkRequest` — get file link request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -10,7 +11,7 @@ pub struct GetFileLinkRequest {
     /// The `file_id` field (file id).
     pub file_id: u64,
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `forced_host` field (forced host).
     pub forced_host: Option<String>,
 }
@@ -36,7 +37,7 @@ impl GetFileLinkRequest {
         let mut params = vec![
             BinaryParam {
                 name: "auth".to_owned(),
-                value: BinaryParamValue::String(self.auth_token.clone()),
+                value: BinaryParamValue::String(self.auth_token.expose_secret().to_owned()),
             },
             BinaryParam {
                 name: "fileid".to_owned(),

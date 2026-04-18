@@ -5,11 +5,12 @@
 use crate::binary_api::{BinaryParam, BinaryParamValue};
 
 use super::ProtocolMethod;
+use crate::redacted::RedactedProtoString;
 
-fn auth_param(token: &str) -> BinaryParam {
+fn auth_param(token: &RedactedProtoString) -> BinaryParam {
     BinaryParam {
         name: "auth".to_owned(),
-        value: BinaryParamValue::String(token.to_owned()),
+        value: BinaryParamValue::String(token.expose_secret().to_owned()),
     }
 }
 
@@ -31,7 +32,7 @@ fn string(name: &str, value: impl Into<String>) -> BinaryParam {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListShareRequestsRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `incoming` field (incoming).
     pub incoming: bool,
 }
@@ -53,7 +54,7 @@ impl ProtocolMethod for ListShareRequestsRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListSharesRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `incoming` field (incoming).
     pub incoming: bool,
 }
@@ -76,7 +77,7 @@ impl ProtocolMethod for ListSharesRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShareFolderRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `folder_id` field (folder id).
     pub folder_id: u64,
     /// The `name` field (name).
@@ -134,7 +135,7 @@ impl ProtocolMethod for ShareFolderRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CancelShareRequestRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `share_request_id` field (share request id).
     pub share_request_id: u64,
 }
@@ -155,7 +156,7 @@ impl ProtocolMethod for CancelShareRequestRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclineShareRequestRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `share_request_id` field (share request id).
     pub share_request_id: u64,
 }
@@ -176,7 +177,7 @@ impl ProtocolMethod for DeclineShareRequestRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AcceptShareRequestRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `share_request_id` field (share request id).
     pub share_request_id: u64,
     /// The `to_folder_id` field (to folder id).
@@ -206,7 +207,7 @@ impl ProtocolMethod for AcceptShareRequestRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoveShareRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `share_id` field (share id).
     pub share_id: u64,
 }
@@ -227,7 +228,7 @@ impl ProtocolMethod for RemoveShareRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModifyShareRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `share_id` field (share id).
     pub share_id: u64,
     /// The `permissions_bits` field (permissions bits).
@@ -251,7 +252,7 @@ impl ProtocolMethod for ModifyShareRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountStopShareRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `user_share_ids` field (user share ids).
     pub user_share_ids: Vec<u64>,
     /// The `team_share_ids` field (team share ids).
@@ -278,7 +279,7 @@ impl ProtocolMethod for AccountStopShareRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountModifyShareRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `user_shares` field (user shares).
     pub user_shares: Vec<(u64, u32)>,
     /// The `team_shares` field (team shares).
@@ -307,7 +308,7 @@ impl ProtocolMethod for AccountModifyShareRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccountTeamShareRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `folder_id` field (folder id).
     pub folder_id: u64,
     /// The `name` field (name).
@@ -358,7 +359,7 @@ impl ProtocolMethod for AccountTeamShareRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContactListRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
 }
 
 impl ProtocolMethod for ContactListRequest {

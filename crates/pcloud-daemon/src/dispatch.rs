@@ -202,9 +202,23 @@ pub fn backend_label(request: &Request) -> &'static str {
         | Request::AccountRegister { .. }
         | Request::SetApiServer { .. }
         | Request::SetLanguage { .. } => "account",
-        Request::GetFileLink { .. } | Request::DownloadFile { .. } => "transfer",
+        Request::GetFileLink { .. }
+        | Request::DownloadFile { .. }
+        | Request::UploadWriteFromFile { .. } => "transfer",
         Request::DeleteBackup { .. } => "backup",
-        _ => "other",
+        Request::CreateTreePublicLinkFromPaths { .. } => "public_link",
+        other => {
+            // A Request variant that is not yet listed in backend_label was
+            // added without a corresponding label. This is an observability
+            // gap — metrics and spans will bucket it as "other". Log once at
+            // warn level so operators and CI can detect drift.
+            log::warn!(
+                "pcloud-daemon: backend_label: unclassified request variant \
+                 (observability drift); add it to backend_label in dispatch.rs. \
+                 variant_debug={other:?}"
+            );
+            "other"
+        }
     }
 }
 

@@ -87,6 +87,7 @@
 //!     let config = WebConfig {
 //!         socket_path: PathBuf::from("/run/user/1000/pcloud-rs.sock"),
 //!         bind_addr: "127.0.0.1:17650".parse().unwrap(),
+//!         ..WebConfig::default()
 //!     };
 //!     serve(config).await
 //! }
@@ -98,7 +99,9 @@
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
+use pcloud_secret::secret_string::SecretString;
 use thiserror::Error;
 
 mod routes;
@@ -111,6 +114,36 @@ use routes::router;
 /// Intentionally loopback-only. See module docs for security rationale.
 pub const DEFAULT_BIND_ADDR: SocketAddr =
     SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 17650);
+
+/// Generate a cryptographically random 64-hex-char session token.
+///
+/// Returns an error string if the kernel CSPRNG is unavailable.
+/// Callers that cannot tolerate failure should use [`generate_web_token_or_panic`].
+///
+/// # Errors
+///
+/// Returns `Err` with a descriptive string if `getrandom` fails.
+pub fn generate_web_token() -> Result<String, String> {
+    let mut buf = [0u8; 32];
+    getrandom::getrandom(&mut buf)
+        .map_err(|e| format!("getrandom: kernel RNG unavailable: {e}"))?;
+    let mut s = String::with_capacity(64);
+    for b in buf {
+        use std::fmt::Write as _;
+        let _ = write!(&mut s, "{b:02x}");
+    }
+    Ok(s)
+}
+
+/// Generate a session token, panicking if the kernel RNG is unavailable.
+///
+/// This is a convenience wrapper around [`generate_web_token`] for call
+/// sites inside [`Default`] implementations where returning an error is
+/// not possible. If you can propagate errors, prefer [`generate_web_token`].
+#[must_use]
+pub fn generate_web_token_or_panic() -> String {
+    generate_web_token().expect("getrandom: kernel RNG unavailable — cannot start web UI")
+}
 
 /// Runtime configuration for [`serve`].
 ///
@@ -130,6 +163,15 @@ pub const DEFAULT_BIND_ADDR: SocketAddr =
 ///   `::1`); [`serve`] asserts this and panics with a descriptive
 ///   message otherwise. The default port is `17650`
 ///   ([`DEFAULT_BIND_ADDR`]).
+/// - [`WebConfig::web_token`] — session token required by mutating
+///   routes (`POST /sync`, `DELETE /sync/:id`, `POST /publinks`,
+///   `DELETE /publinks/:code`) via the `X-PCloud-Web-Token` header.
+///   Generate at daemon startup with [`generate_web_token`] and emit
+///   it to daemon logs so operators can authenticate calls.
+/// - [`WebConfig::ready`] — shared readiness flag. Set to `true` after
+///   daemon initialization completes. The `/readyz` route returns 503
+///   until this flag is set, enabling orchestrators to gate traffic
+///   on full daemon readiness rather than mere process liveness.
 #[derive(Debug, Clone)]
 pub struct WebConfig {
     /// Filesystem path to the daemon's UNIX IPC socket.
@@ -140,6 +182,19 @@ pub struct WebConfig {
     /// Address to bind the HTTP server to. Must be on the loopback
     /// interface; [`serve`] panics otherwise.
     pub bind_addr: SocketAddr,
+    /// Session token for mutating web management routes.
+    ///
+    /// Callers supply `X-PCloud-Web-Token: <token>` on every mutating
+    /// request. Read-only routes do not require it. Generate with
+    /// [`generate_web_token`].
+    pub web_token: String,
+    /// Readiness flag. `/readyz` returns 503 until this is `true`.
+    ///
+    /// Flip to `true` after daemon initialization completes so
+    /// orchestrators (k8s, systemd socket-activated unit checks, etc.)
+    /// can gate live traffic on full daemon readiness, not just process
+    /// liveness. Defaults to `false` (not ready) at construction.
+    pub ready: Arc<AtomicBool>,
 }
 
 impl Default for WebConfig {
@@ -147,6 +202,8 @@ impl Default for WebConfig {
         Self {
             socket_path: PathBuf::new(),
             bind_addr: DEFAULT_BIND_ADDR,
+            web_token: generate_web_token_or_panic(),
+            ready: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -198,6 +255,63 @@ pub(crate) struct AppState {
     /// cloning the state is cheap. An empty path is treated as "no
     /// daemon configured" by the request handlers.
     pub socket_path: Arc<PathBuf>,
+    /// Session token required by mutating routes. Stored in an [`Arc`]
+    /// around a [`SecretString`] so the token is zeroized when the last
+    /// [`AppState`] clone is dropped, and never appears in `Debug` output.
+    pub web_token: Arc<SecretString>,
+    /// Readiness flag shared with the daemon. `/readyz` returns 503
+    /// until this flips to `true`.
+    pub ready: Arc<AtomicBool>,
+}
+
+/// Write the web session token to `$XDG_RUNTIME_DIR/pcloud-daemon/web-token`
+/// with mode 0600.
+///
+/// Returns the path the token was written to on success, or an I/O error
+/// description on failure. The token value itself is never logged or returned
+/// in the error — callers must not include it in any log output.
+///
+/// Security rationale: stderr output (eprintln!) is captured verbatim by
+/// systemd-journal, Docker log drivers, and CI log collectors. Any process
+/// with journal-read privileges would see the token in cleartext. Writing to
+/// a 0600 file under the per-user runtime directory limits readability to the
+/// daemon owner and is consistent with the token-vault discipline used by the
+/// rest of the daemon (ADR 0005, ADR 0015).
+fn write_web_token_to_runtime_dir(token: &str) -> Result<PathBuf, std::io::Error> {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+
+    // Prefer XDG_RUNTIME_DIR (set by PAM/systemd for every login session).
+    // When absent, return an error so the caller can fall back gracefully;
+    // guessing the uid without unsafe code is not worth the complexity.
+    let runtime_dir = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(PathBuf::from)
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "XDG_RUNTIME_DIR is not set; cannot locate runtime directory for token file",
+            )
+        })?;
+
+    let token_dir = runtime_dir.join("pcloud-daemon");
+    std::fs::create_dir_all(&token_dir)?;
+
+    // Restrict the directory to the owner only if it was just created.
+    // We do this on a best-effort basis; failure is non-fatal.
+    let _ = std::fs::set_permissions(
+        &token_dir,
+        std::os::unix::fs::PermissionsExt::from_mode(0o700),
+    );
+
+    let token_path = token_dir.join("web-token");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&token_path)?;
+    file.write_all(token.as_bytes())?;
+    Ok(token_path)
 }
 
 /// Start the Web UI MVP on the configured bind address.
@@ -241,8 +355,36 @@ pub async fn serve(config: WebConfig) -> Result<(), WebError> {
         config.bind_addr,
     );
 
+    // Write the web session token to a mode-0600 file under the runtime
+    // directory rather than emitting it to stderr. stderr output is
+    // captured verbatim by systemd-journal and other logging pipelines,
+    // making it visible to any process that can read the journal — a wider
+    // audience than the token's intended consumers. Writing to a 0600 file
+    // restricts readability to the daemon owner, and `log::info!` directs
+    // operators to the file path without exposing the token value itself.
+    let token_written = write_web_token_to_runtime_dir(&config.web_token);
+    match token_written {
+        Ok(ref token_path) => {
+            log::info!(
+                "pcloud-web: session token written to {}",
+                token_path.display()
+            );
+        }
+        Err(ref e) => {
+            // Fall back to log::warn so operators know where to look;
+            // never emit the token value to stderr or to the log.
+            log::warn!(
+                "pcloud-web: could not write session token to runtime dir ({}); \
+                 retrieve it via `pcloudc web-token`",
+                e
+            );
+        }
+    }
+
     let state = AppState {
         socket_path: Arc::new(config.socket_path),
+        web_token: Arc::new(SecretString::new(config.web_token)),
+        ready: config.ready,
     };
     let app = router(state);
 
@@ -286,6 +428,8 @@ pub async fn bind_for_test(
     );
     let state = AppState {
         socket_path: Arc::new(config.socket_path),
+        web_token: Arc::new(SecretString::new(config.web_token)),
+        ready: config.ready,
     };
     let app = router(state);
     let listener = tokio::net::TcpListener::bind(config.bind_addr)
@@ -320,6 +464,7 @@ mod tests {
         let cfg = WebConfig {
             socket_path: PathBuf::from("/tmp/nonexistent.sock"),
             bind_addr: "0.0.0.0:0".parse().unwrap(),
+            ..WebConfig::default()
         };
         let _ = rt.block_on(serve(cfg));
     }

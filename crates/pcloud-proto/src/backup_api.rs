@@ -111,7 +111,7 @@ where
         parent_folder_name: Option<String>,
     ) -> Result<CreatedBackup, BackupApiError<T::Error>> {
         let request = CreateBackupRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             name: name.into(),
             backup_root_folder_id,
             parent_folder_name,
@@ -154,7 +154,7 @@ where
         folder_id: u64,
     ) -> Result<(), BackupApiError<T::Error>> {
         let request = StopBackupRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             folder_id,
         };
         execute_unit(
@@ -175,7 +175,7 @@ where
         device_folder_id: u64,
     ) -> Result<(), BackupApiError<T::Error>> {
         let request = StopDeviceRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             device_folder_id,
         };
         execute_unit(

@@ -138,7 +138,7 @@ where
         os_id: u64,
     ) -> Result<Option<PromoInfo>, AccountApiError<T::Error>> {
         let request = GetPromoRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             os_id,
         };
         let encoded = request.encode()?;
@@ -185,7 +185,7 @@ where
         language: impl Into<String>,
     ) -> Result<(), AccountApiError<T::Error>> {
         let request = SetLanguageRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             language: language.into(),
         };
         let encoded = request.encode()?;
@@ -263,7 +263,9 @@ where
         auth_token: impl Into<String>,
     ) -> Result<(), AccountApiError<T::Error>> {
         let request = VerifyEmailRequest {
-            auth_token: Some(auth_token.into()),
+            auth_token: Some(crate::redacted::RedactedProtoString::from(
+                auth_token.into(),
+            )),
             verify_token: None,
         };
         execute_unit(
@@ -284,7 +286,9 @@ where
     ) -> Result<(), AccountApiError<T::Error>> {
         let request = VerifyEmailRequest {
             auth_token: None,
-            verify_token: Some(verify_token.into()),
+            verify_token: Some(crate::redacted::RedactedProtoString::from(
+                verify_token.into(),
+            )),
         };
         execute_unit(
             &self.transport,
@@ -322,9 +326,9 @@ where
         device: impl Into<String>,
     ) -> Result<PasswordChangeResult, AccountApiError<T::Error>> {
         let request = ChangePasswordRequest {
-            auth_token: auth_token.into(),
-            current_password: current_password.into(),
-            new_password: new_password.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
+            current_password: crate::redacted::RedactedProtoString::from(current_password.into()),
+            new_password: crate::redacted::RedactedProtoString::from(new_password.into()),
             device: device.into(),
         };
         let encoded = request.encode()?;
@@ -363,7 +367,7 @@ where
     ) -> Result<(), AccountApiError<T::Error>> {
         let request = RegisterRequest {
             email: email.into(),
-            password: password.into(),
+            password: crate::redacted::RedactedProtoString::from(password.into()),
             terms_accepted,
             os_id,
         };

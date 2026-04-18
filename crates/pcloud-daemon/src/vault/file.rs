@@ -135,15 +135,31 @@ pub fn load_token(path: &Path) -> std::result::Result<Option<SecretString>, Auth
 /// Persist `token` to `path`, creating the parent directory at mode
 /// `0700` and writing the file atomically at mode `0600` on UNIX.
 /// Replaces any previous value.
+///
+/// # Windows
+///
+/// This function returns [`AuthVaultError::UnsupportedPlatform`] on
+/// Windows. The file-vault backend does not apply NTFS ACL restrictions,
+/// so the token file would be readable by any process running as the same
+/// user without any DACL gate. Use `DpapiVault` as the primary Windows
+/// backend; the file vault is intentionally restricted to UNIX hosts.
+/// Set `PCLOUD_VAULT=dpapi` or leave `PCLOUD_VAULT` unset on Windows.
 pub fn store_token(path: &Path, token: &SecretString) -> std::result::Result<(), AuthVaultError> {
+    // Audit-04 §2-opus L-3: refuse the file vault on Windows because we
+    // cannot apply owner-only NTFS ACLs portably. DPAPI is the correct
+    // backend on Windows.
+    #[cfg(windows)]
+    {
+        let _ = (path, token);
+        return Err(AuthVaultError::UnsupportedPlatform(
+            "file vault is not supported on Windows; use PCLOUD_VAULT=dpapi".to_owned(),
+        ));
+    }
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
         #[cfg(unix)]
         fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
-        // On Windows the permission model is NTFS ACLs, not octal POSIX
-        // bits; we intentionally do not attempt to translate 0o700 here.
-        // Use `DpapiVault` as the primary Windows backend and reserve the
-        // file vault for explicit `PCLOUD_VAULT=file` opt-in.
     }
 
     let tmp_path = path.with_extension("tmp");

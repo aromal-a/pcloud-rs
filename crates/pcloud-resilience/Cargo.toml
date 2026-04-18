@@ -11,11 +11,17 @@ default = []
 # Tokio-backed `Timeout` helper. Off by default so the core primitives stay
 # runtime-agnostic and this crate remains a pure utility library.
 tokio-timeout = ["dep:tokio"]
+# Wire transport metrics (latency histogram + error counter) to pcloud-observability.
+# Enables the `prometheus-exporter` feature of `pcloud-observability` so that
+# `register_histogram`, `HistogramHandle`, and `DEFAULT_LATENCY_BUCKETS` are
+# available on the module path used inside `transport.rs`.
+transport-metrics = ["dep:pcloud-observability", "pcloud-observability/prometheus-exporter"]
 
 [dependencies]
 thiserror.workspace = true
 parking_lot = "0.12"
 tokio = { version = "1", features = ["time", "macros", "rt"], optional = true }
+pcloud-observability = { workspace = true, optional = true }
 
 [dev-dependencies]
 proptest = "1"

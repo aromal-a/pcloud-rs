@@ -232,6 +232,7 @@ fn large_file_kernel_roundtrip_rename_unlink() {
             // Only flush on explicit fsync so the test controls when uploads happen.
             flush_threshold_bytes: u64::MAX,
             flush_interval: Duration::from_secs(3600),
+            ..WritePathOptions::default()
         },
     ));
 

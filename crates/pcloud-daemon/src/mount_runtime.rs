@@ -8,22 +8,36 @@
 //!   and hands it to `pcloud_fs::mount::MountService::mount`.
 //! * `unmount_filesystem` calls the drain hook and tears the session down.
 //!
-//! ## Scope honesty
+//! ## Current wiring
 //!
-//! Sub-task 1 of bd-1du.4.e (`PcloudFsShim` + `fuser_shim.rs` composition
-//! of `FuseAdapter` + `WritePathService` + a `ProtoFolderBackend` /
-//! `ProtoFileBackend` / upload-backend stub) has **not** landed at the
-//! time this module was written. Rather than speculatively mount a real
-//! `ProtoFuseAdapter` against placeholder transport plumbing, this module
-//! currently mounts `pcloud_fs::fuse_adapter::NullFuseAdapter`.
-//! That gives us:
+//! The authenticated mount path installs a **fully composed
+//! `ProtoFuseAdapter`** via [`pcloud_shim_adapter_factory`] — this is done
+//! in [`crate::runtime::Runtime::try_install_pcloud_shim_factory`] which
+//! runs before every `mount_filesystem()` call. The composed adapter
+//! carries:
 //!
-//! * an honest end-to-end mount lifecycle (validate → mount → drain →
-//!   unmount),
-//! * a real `MountHandle` stored on the runtime and destroyed on drop,
-//! * real IPC/CLI round-trips,
-//! * a clean seam (`adapter_factory`) that sub-task 1 can swap for the
-//!   composed `PcloudFsShim` without touching this file's public surface.
+//! * a [`ProtoFolderBackend`] wired to a live [`BinaryApiTransport`] and a
+//!   zeroising [`SecretString`] auth token (listfolder / stat),
+//! * a [`ProtoFileBackend`] for content reads (`getfilelink` + HTTP GET),
+//! * a [`ProtoUploadBackend`] for the write path (`upload_create` /
+//!   `upload_write` / `upload_save`),
+//! * a [`PageCache`][pcloud_fs::page_cache::PageCache] sized from
+//!   `[mount].cache_size_mb` and/or `PCLOUD_CACHE_SIZE_GB`,
+//! * a [`WriteJournal`] + [`WritePathService`] rooted under
+//!   `<cache_dir>/fuse-staging`.
+//!
+//! On Linux the adapter is wrapped in a [`PcloudFsShim`] and dispatched via
+//! [`MountService::mount_fuser`]; on macOS the bare adapter is handed to
+//! [`MountService::mount`] which routes through the fuse-t FFI. All FUSE
+//! operations (lookup, readdir, read, write, flush, fsync, create, unlink,
+//! rename, mkdir, rmdir) are forwarded through the adapter to the pCloud
+//! API.
+//!
+//! The [`default_adapter_factory`] still returns a [`NullFuseAdapter`] as
+//! the pre-auth fallback: if the daemon is asked to mount before a token
+//! is available the mount succeeds with `ENOSYS` on every op so the
+//! lifecycle itself (validate → mount → drain → unmount) is still
+//! exercisable and the shutdown invariants hold.
 //!
 //! Do **not** claim mounted-drive parity on the back of this module
 //! alone — the bd-1du.4 tracker and `C_FEATURE_PARITY_MATRIX.csv` remain
@@ -724,6 +738,8 @@ fn mount_error_to_response(err: MountError) -> Response {
         | MountError::MountpointNotEmpty(_)
         | MountError::MountpointNotOwned { .. }
         | MountError::MountpointWorldWritable { .. }
+        | MountError::MountpointSymlink(_)
+        | MountError::OptionOutOfRange { .. }
         | MountError::AllowOtherRejected => ResponseStatus::InvalidRequest,
         MountError::UnsupportedPlatform => ResponseStatus::Unavailable,
         MountError::Unsupported(_) => ResponseStatus::Unavailable,
@@ -795,6 +811,9 @@ impl DynFuseAdapter for PcloudShimAdapter {
         mountpoint: &Path,
         options: MountOptions,
     ) -> Result<MountHandle, MountError> {
+        // INVARIANT: `mount_with` is called exactly once per adapter instance
+        // (enforced by `Box<Self>` ownership); the shim Option is Some until
+        // this take() fires. A second call cannot occur.
         let shim = self
             .shim
             .take()
@@ -832,6 +851,9 @@ impl DynFuseAdapter for PcloudProtoAdapter {
         mountpoint: &Path,
         options: MountOptions,
     ) -> Result<MountHandle, MountError> {
+        // INVARIANT: `mount_with` is called exactly once per adapter instance
+        // (enforced by `Box<Self>` ownership); the adapter Option is Some until
+        // this take() fires. A second call cannot occur.
         let adapter = self
             .adapter
             .take()
@@ -920,6 +942,10 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
         }
         let writer = Arc::new(WritePathService::new(stage, journal, upload, write_options));
         // Publish the writer for the drain hook.
+        // INVARIANT: `writer_slot_for_factory` is an internal Mutex that is
+        // never poisoned by a panic inside this function (no panics between
+        // Mutex::new and this lock call). Poison here would indicate a bug
+        // elsewhere in daemon startup and is not recoverable.
         *writer_slot_for_factory.lock().expect("writer slot") = Some(Arc::clone(&writer));
 
         // Wire the write-path into the adapter too so adapter-level FUSE
@@ -964,6 +990,9 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
         // so data acknowledged to the kernel but not yet uploaded is
         // pushed to the backend (or surfaces a per-inode error the
         // caller can log).
+        // INVARIANT: `writer_slot` is only ever locked from this closure
+        // (single drain hook) and from the factory above; neither path
+        // panics while holding the lock, so it cannot be poisoned.
         let w = writer_slot.lock().expect("writer slot");
         let Some(writer) = w.as_ref() else {
             return "writer drain: no active writer".to_owned();
@@ -1086,13 +1115,12 @@ mod tests {
         use pcloud_proto::{BinaryApiTransport, TransportConfig};
         use pcloud_secret::secret_string::SecretString;
         let tmp = tempdir().unwrap();
-        let transport = BinaryApiTransport::new(TransportConfig {
-            host: "127.0.0.1".to_owned(),
-            port: 1,
-            server_name: "localhost".to_owned(),
-            use_tls: false,
-            connect_timeout: std::time::Duration::from_millis(10),
-            read_timeout: std::time::Duration::from_millis(10),
+        let transport = BinaryApiTransport::new({
+            let mut cfg = TransportConfig::dev_plaintext("127.0.0.1", 1u16, "localhost");
+            cfg.connect_timeout = std::time::Duration::from_millis(10);
+            cfg.read_timeout = std::time::Duration::from_millis(10);
+            cfg.total_request_timeout = std::time::Duration::from_secs(30);
+            cfg
         });
         let params = ShimFactoryParams {
             transport,

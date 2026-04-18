@@ -276,6 +276,8 @@ impl SessionRegistry {
             }],
         };
         self.by_id.insert(id, session);
+        // INVARIANT: the session was inserted on the preceding line;
+        // the key is guaranteed to be present in the same-thread call.
         self.by_id.get(&id).expect("just inserted")
     }
 

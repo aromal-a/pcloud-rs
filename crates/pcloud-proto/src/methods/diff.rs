@@ -4,6 +4,7 @@
 
 use crate::binary_api::{BinaryParam, BinaryParamValue};
 use crate::methods::ProtocolMethod;
+use crate::redacted::RedactedProtoString;
 
 /// `DiffRequest` — diff request.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,7 +14,7 @@ pub struct DiffRequest {
     /// The `limit` field (limit).
     pub limit: u64,
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
 }
 
 impl DiffRequest {
@@ -37,7 +38,7 @@ impl DiffRequest {
         vec![
             BinaryParam {
                 name: "auth".to_owned(),
-                value: BinaryParamValue::String(self.auth_token.clone()),
+                value: BinaryParamValue::String(self.auth_token.expose_secret().to_owned()),
             },
             BinaryParam {
                 name: "timeformat".to_owned(),

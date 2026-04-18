@@ -210,6 +210,34 @@ where
     F: FileBackend,
     U: FileUploadBackend,
 {
+    /// Called by fuser once the FUSE session is established, before any kernel
+    /// requests are dispatched. We replay the on-disk write journal here so
+    /// that any writes acknowledged before a crash are recovered before new
+    /// kernel ops arrive. A failed replay is logged but does not abort the
+    /// mount — the operator can recover by inspecting the staging directory.
+    fn init(
+        &mut self,
+        _req: &Request<'_>,
+        _config: &mut fuser::KernelConfig,
+    ) -> std::result::Result<(), libc::c_int> {
+        match self.writer.replay_journal() {
+            Ok(records) if !records.is_empty() => {
+                log::info!(
+                    "pcloud-fs: journal replay recovered {} record(s) on mount",
+                    records.len()
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                log::error!(
+                    "pcloud-fs: journal replay failed on startup: {e} — data may be inconsistent"
+                );
+                // Do not abort mount; log and continue so the user can recover.
+            }
+        }
+        Ok(())
+    }
+
     fn lookup(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let Some(name_str) = name.to_str() else {
             reply.error(EINVAL);
@@ -424,9 +452,16 @@ where
         };
         // Allocate an inode for the new file deterministically via the
         // shared inode table.
-        let (ino, _gen) = self
+        let (ino, _gen) = match self
             .inodes
-            .insert_or_get(&full_path, FsEntryKind::RegularFile);
+            .insert_or_get(&full_path, FsEntryKind::RegularFile)
+        {
+            Ok(pair) => pair,
+            Err(e) => {
+                reply.error(e.to_errno());
+                return;
+            }
+        };
         let name_str = name.to_str().unwrap_or("");
         if let Err(e) = self.writer.create(ino, &parent_path, name_str) {
             reply.error(e.to_errno());
@@ -759,6 +794,7 @@ mod tests {
             WritePathOptions {
                 flush_threshold_bytes: 1024 * 1024,
                 flush_interval: StdDuration::from_secs(3600),
+                ..WritePathOptions::default()
             },
         ));
 

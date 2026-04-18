@@ -16,6 +16,7 @@ async fn health_endpoint_returns_200_ok() {
     let cfg = WebConfig {
         socket_path: PathBuf::new(),
         bind_addr: "127.0.0.1:0".parse().unwrap(),
+        ..WebConfig::default()
     };
     let (listener, addr, app) = bind_for_test(cfg).await.expect("bind");
 
@@ -49,6 +50,7 @@ async fn index_sends_csp_and_reports_offline_without_socket() {
     let cfg = WebConfig {
         socket_path: PathBuf::new(),
         bind_addr: "127.0.0.1:0".parse().unwrap(),
+        ..WebConfig::default()
     };
     let (listener, addr, app) = bind_for_test(cfg).await.expect("bind");
     let server = tokio::spawn(async move {

@@ -1001,6 +1001,32 @@ pub enum Request {
         /// Remote folder id of the backup to delete.
         backup_id: u64,
     },
+    /// Create a new backup for a local folder at a remote root. Mirrors C
+    /// `psync_create_backup`. Requires an authenticated session. Calls
+    /// `backup/createbackup` and registers the local folder as an
+    /// upload-only sync root via the SyncRootCascade adapter.
+    CreateBackup {
+        /// Display name for the backup.
+        name: String,
+        /// Remote root folder id under which the backup will be created.
+        root_folder_id: u64,
+        /// Absolute local path to register as an upload-only sync root.
+        local_path: String,
+        /// Optional parent folder display name.
+        parent_folder_name: Option<String>,
+    },
+    /// Stop a device backup by its device folder id. Mirrors C
+    /// `psync_stop_device`. Requires an authenticated session. Calls
+    /// `backup/stopdevice` and removes the matching local sync root.
+    StopDevice {
+        /// Remote device folder id to stop.
+        device_folder_id: u64,
+    },
+    /// Delete the local backup-device registration. Mirrors C
+    /// `psync_delete_backup_device`. Local-only: clears the persisted
+    /// device backup-root folder id so the next `CreateBackup` allocates
+    /// a fresh device. Does not talk to the backend.
+    DeleteBackupDevice,
     /// Pin the daemon to a specific API server region. Mirrors C
     /// `psync_set_api_server`. Persists to the store and updates all
     /// live protocol transports. Requires no auth but is silently
@@ -1017,6 +1043,42 @@ pub enum Request {
     SetLanguage {
         /// IETF language tag (e.g. `"en"`, `"de"`, `"fr"`).
         language: String,
+    },
+    /// Upload a local file by path into an existing upload session.
+    /// Mirrors C `upload_writefromfile` (the local-file convenience
+    /// form: read local bytes, call `upload_write`, then `upload_save`).
+    /// Distinct from the server-side-copy wire command of the same name;
+    /// this variant reads `local_path` on the daemon host and streams
+    /// the bytes via the standard `upload_write` + `upload_save` proto
+    /// path. Requires an authenticated session and an active upload
+    /// session previously created by [`Request::UploadCreate`].
+    /// Tracker: bd-1du row 93.
+    UploadWriteFromFile {
+        /// Upload session id returned by a prior [`Request::UploadCreate`].
+        upload_session_id: u64,
+        /// Absolute local path of the source file to read and upload.
+        local_path: String,
+        /// Byte offset into the upload session at which writing begins.
+        /// `0` for the start of a fresh session.
+        offset: u64,
+    },
+    /// Create a tree public link by resolving a list of absolute
+    /// pCloud-drive paths to their remote folder ids on the daemon side.
+    /// Mirrors the C `ptree_public_link` path-based variant: the daemon
+    /// walks each path via `listfolder` under the authenticated session,
+    /// collects the resulting folder ids, and then calls the existing
+    /// `create_tree_public_link` proto path.
+    ///
+    /// Distinct from [`Request::CreateTreePublicLink`] which requires
+    /// callers to supply pre-resolved numeric ids. Tracker: bd-1du row 149.
+    CreateTreePublicLinkFromPaths {
+        /// Display name of the generated tree link.
+        name: String,
+        /// Absolute pCloud-drive paths whose folder ids will be resolved
+        /// and included in the tree link.
+        paths: Vec<String>,
+        /// Optional UNIX-seconds expiry.
+        expires: Option<u64>,
     },
 }
 

@@ -149,10 +149,43 @@ impl RetryPolicy {
     /// }
     /// ```
     pub fn next(&self, attempt: u32) -> RetryDecision {
+        self.next_wait(attempt, None)
+    }
+
+    /// Same as [`Self::next`] but accepts an optional explicit wait
+    /// override that takes precedence over the computed backoff.
+    ///
+    /// Use this to honour a server-supplied `Retry-After` hint: when
+    /// the caller parses a 429/503 response it passes the duration
+    /// here, and the policy returns `RetryDecision::Retry { wait =
+    /// override_wait }` (unless the attempt budget is already
+    /// exhausted, in which case [`RetryDecision::GiveUp`] still wins).
+    ///
+    /// The override is respected as-is — callers are responsible for
+    /// any upper-bound capping (the HTTP helpers cap at 300 s, see
+    /// `http_download::parse_retry_after`).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use pcloud_resilience::{BackoffSchedule, RetryDecision, RetryPolicy};
+    ///
+    /// let p = RetryPolicy::new(
+    ///     3,
+    ///     BackoffSchedule::Fixed { delay: Duration::from_millis(10) },
+    /// );
+    /// // Server asked us to wait 5 seconds; policy-computed 10 ms is ignored.
+    /// assert_eq!(
+    ///     p.next_wait(1, Some(Duration::from_secs(5))),
+    ///     RetryDecision::Retry { wait: Duration::from_secs(5) },
+    /// );
+    /// ```
+    pub fn next_wait(&self, attempt: u32, override_wait: Option<Duration>) -> RetryDecision {
         if attempt >= self.max_attempts {
             return RetryDecision::GiveUp;
         }
-        let wait = self.compute_wait(attempt);
+        let wait = override_wait.unwrap_or_else(|| self.compute_wait(attempt));
         RetryDecision::Retry { wait }
     }
 
@@ -303,6 +336,21 @@ impl MethodRetryPolicy {
     /// [`RetryPolicy`] for the wait-duration computation.
     #[must_use]
     pub fn next(&self, class: RetryClass, attempt: u32) -> RetryDecision {
+        self.next_wait(class, attempt, None)
+    }
+
+    /// Same as [`Self::next`] but accepts an optional explicit wait
+    /// override. Used to honour a server-supplied `Retry-After` hint
+    /// (audit-04 H-4): the transport layer passes the parsed duration
+    /// here and the policy returns it unchanged on `Retry`, so there
+    /// is a single source of truth for "how long to wait".
+    #[must_use]
+    pub fn next_wait(
+        &self,
+        class: RetryClass,
+        attempt: u32,
+        override_wait: Option<Duration>,
+    ) -> RetryDecision {
         let allowed = match class {
             RetryClass::Idempotent => self.retry_idempotent,
             RetryClass::Mutation => self.retry_mutations,
@@ -311,7 +359,7 @@ impl MethodRetryPolicy {
         if !allowed {
             return RetryDecision::GiveUp;
         }
-        self.inner.next(attempt)
+        self.inner.next_wait(attempt, override_wait)
     }
 }
 

@@ -17,6 +17,7 @@ use pcloud_secret::secret_bytes::SecretBytes;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 use thiserror::Error;
+use unicode_normalization::UnicodeNormalization;
 
 /// Runtime configuration for deterministic encrypted-filename handling.
 ///
@@ -51,6 +52,13 @@ pub enum MetadataCryptoError {
 }
 
 const FILENAME_LABEL: &[u8] = b"pcloud-crypto/filename/v1";
+
+/// Maximum byte length of an encrypted filename as stored on the server.
+///
+/// The encrypted form is always a fixed-length lowercase hex string: HMAC-SHA256
+/// produces 32 bytes, hex-encoded to 64 ASCII characters. This constant is the
+/// authoritative upper bound for any wire-layer or server-side length checks.
+pub const MAX_ENCRYPTED_FILENAME_BYTES: usize = 64;
 
 /// Encode a plaintext filename to its deterministic encrypted form.
 ///
@@ -94,10 +102,19 @@ pub fn encrypt_filename(
     if plaintext.is_empty() || plaintext.contains('/') {
         return Err(MetadataCryptoError::InvalidName);
     }
+    // Normalize to Unicode NFC before hashing (H-4 in the crypto audit
+    // plan). Without this, the same visual filename typed on macOS (NFD)
+    // vs Linux/Windows (NFC) would hash to different HMAC tags and the
+    // server-side lookup would silently miss. `.nfc()` is a no-op on
+    // already-NFC input so ASCII names keep their prior tag.
+    let normalized: String = plaintext.nfc().collect();
+    // INVARIANT: HMAC-SHA256 accepts keys of any non-zero length per RFC 2104;
+    // `new_from_slice` only fails for a zero-length key, which `SecretBytes`
+    // never produces (callers always derive from a 32-byte master key).
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(master.expose_secret())
         .expect("HMAC-SHA256 accepts any key length");
     mac.update(FILENAME_LABEL);
-    mac.update(plaintext.as_bytes());
+    mac.update(normalized.as_bytes());
     let tag = mac.finalize().into_bytes();
     let mut out = String::with_capacity(tag.len() * 2);
     for byte in tag.iter() {

@@ -127,9 +127,16 @@ impl PlatformMount for BsdPlatformMount {
         }
 
         // Unreachable under the module cfg-gate, but kept so the
-        // function remains total if the gate ever widens.
+        // function remains total if the gate ever widens. Surface the
+        // concrete remediation hint so operators do not see an opaque
+        // "UnsupportedPlatform" with no guidance.
         #[allow(unreachable_code)]
-        Err(MountError::UnsupportedPlatform)
+        Err(MountError::Unsupported(
+            "BSD FUSE support requires fusefs-libs (pkg install fusefs-libs), \
+             the 'fuse' kernel module loaded (kldload fuse), and \
+             sysctl vfs.usermount=1 for non-root mounts"
+                .to_string(),
+        ))
     }
 
     /// Conservative defaults for BSD: no cross-user access, a stable
@@ -140,6 +147,9 @@ impl PlatformMount for BsdPlatformMount {
             read_only: false,
             fs_name: Some("pcloud".to_string()),
             allow_other: false,
+            attr_timeout_secs: 1.0,
+            entry_timeout_secs: 1.0,
+            max_readahead: 128 * 1024,
         }
     }
 }

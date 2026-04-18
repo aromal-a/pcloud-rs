@@ -36,6 +36,19 @@
 
 use std::io::{self, Write};
 
+/// Read a plain (visible-echo) line from stdin. Use this for non-secret
+/// interactive prompts such as paths, IDs, names, URLs, and email addresses.
+/// Reserve [`SecretPrompt::read_secret`] / [`SecretPrompt::read_masked`] for
+/// passwords, tokens, and passphrase inputs.
+///
+/// # Errors
+///
+/// - [`PromptError::Io`] on any stdin / stdout IO failure.
+/// - [`PromptError::Eof`] when stdin closes before any byte is typed.
+pub fn prompt_line(label: &str) -> Result<String, PromptError> {
+    SecretPrompt::new(label).read_line()
+}
+
 /// Errors produced by [`SecretPrompt`] reads.
 #[derive(Debug, thiserror::Error)]
 pub enum PromptError {

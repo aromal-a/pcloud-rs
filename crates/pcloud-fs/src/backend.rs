@@ -248,9 +248,7 @@ where
         {
             Ok(l) => l,
             Err(e) => {
-                eprintln!(
-                    "[pcloud-backend] getfilelink file_id={file_id} FAILED: {e:?}"
-                );
+                eprintln!("[pcloud-backend] getfilelink file_id={file_id} FAILED: {e:?}");
                 return Err(transfer_error_to_fs(e));
             }
         };
@@ -267,6 +265,14 @@ where
             .ok_or_else(|| FsError::transport("getfilelink returned no hosts"))?;
         // `getfilelink` does not include file size; defer to a per-range
         // response on first read (the HTTP layer reports Content-Length).
+        // TODO(bd-fuse): populate size from remote getattr; currently 0 causes
+        // incorrect statfs responses. getfilelink does not return file size;
+        // a follow-up call to getfileinfo is needed to populate this field so
+        // getattr and statfs report correct sizes to the kernel.
+        log::warn!(
+            "FileHandle for file_id={} opened with size=0; getattr/statfs responses will be incorrect until size is populated from remote metadata",
+            file_id
+        );
         Ok(FileHandle {
             file_id,
             size: 0,
@@ -415,12 +421,28 @@ where
             .list_folder_by_path(self.auth_token.expose_secret(), parent_path)
             .map_err(|e| WritePathError::Upload(format!("resolve parent: {e}")))?;
 
+        // Guard against OOM on large files: refuse to slurp more than 512 MiB
+        // into a single Vec. Callers that need to upload larger files must use
+        // the chunked upload_create + upload_write + upload_save path instead.
+        const MAX_WHOLE_FILE_BYTES: u64 = 512 * 1024 * 1024;
+        let file_meta = std::fs::metadata(staging_file)
+            .map_err(|e| WritePathError::Upload(format!("staging stat: {e}")))?;
+        if file_meta.len() > MAX_WHOLE_FILE_BYTES {
+            return Err(WritePathError::Upload(format!(
+                "staging file too large for whole-file upload ({} bytes > {} byte limit); \
+                 use chunked upload_create/upload_write/upload_save path",
+                file_meta.len(),
+                MAX_WHOLE_FILE_BYTES,
+            )));
+        }
         let bytes = std::fs::read(staging_file)
             .map_err(|e| WritePathError::Upload(format!("staging read: {e}")))?;
 
         // upload_create
         let create = pcloud_proto::methods::upload::UploadCreateRequest {
-            auth_token: self.auth_token.expose_secret().to_owned(),
+            auth_token: pcloud_proto::redacted::RedactedProtoString::from(
+                self.auth_token.expose_secret().to_owned(),
+            ),
             parent_folder_id: parent.folder_id,
             file_name: name.to_owned(),
             file_size: bytes.len() as u64,
@@ -439,7 +461,9 @@ where
 
         // upload_write (streams body)
         let write_req = UploadWriteRequest {
-            auth_token: self.auth_token.expose_secret().to_owned(),
+            auth_token: pcloud_proto::redacted::RedactedProtoString::from(
+                self.auth_token.expose_secret().to_owned(),
+            ),
             upload_id,
             upload_offset: 0,
             chunk_id: 0,
@@ -462,7 +486,9 @@ where
 
         // upload_save
         let save = UploadSaveRequest {
-            auth_token: self.auth_token.expose_secret().to_owned(),
+            auth_token: pcloud_proto::redacted::RedactedProtoString::from(
+                self.auth_token.expose_secret().to_owned(),
+            ),
             parent_folder_id: parent.folder_id,
             file_name: name.to_owned(),
             upload_id,

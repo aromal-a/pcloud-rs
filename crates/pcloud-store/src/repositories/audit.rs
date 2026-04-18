@@ -427,9 +427,9 @@ pub(crate) fn compute_entry_hash(
 }
 
 pub(crate) fn compute_hmac(key: &[u8], entry_hash: &[u8]) -> [u8; AUDIT_HASH_LEN] {
-    // Hmac<Sha256>::new_from_slice only fails on zero-length keys for
-    // some backends; we accept any non-zero input and fall back to
-    // length-prefixing for zero-length to avoid a panic in tests.
+    // INVARIANT: HMAC-SHA256 accepts keys of any non-zero length per RFC 2104.
+    // The `if key.is_empty()` guard substitutes a one-byte sentinel so the
+    // call can never fail with a zero-length key, even in zero-key test fixtures.
     let mut mac = <HmacSha256 as Mac>::new_from_slice(if key.is_empty() { &[0u8] } else { key })
         .expect("HMAC-SHA256 accepts any key length");
     mac.update(entry_hash);

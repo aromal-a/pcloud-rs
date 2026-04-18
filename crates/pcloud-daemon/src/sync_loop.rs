@@ -31,6 +31,7 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use pcloud_config::sync_loop::SyncLoopConfig;
+use pcloud_model::ids::SyncId;
 use pcloud_model::sync::SyncType;
 use pcloud_secret::secret_string::SecretString;
 use pcloud_store::repositories::sync_graph::SyncRootRecord;
@@ -201,6 +202,13 @@ pub struct CycleResult {
     pub total_errors: usize,
     /// Duration of the cycle.
     pub duration: Duration,
+    /// If the tamper-evident audit chain write at the end of the cycle
+    /// failed, the error message surfaces here. Previously these errors
+    /// were only logged and swallowed, which silently broke audit
+    /// continuity. Audit-04 P2-6 (bd-pcloud-rs-s1p.50) requires the
+    /// caller to observe and react to the failure (e.g. counting it as
+    /// a cycle error).
+    pub audit_persist_error: Option<String>,
 }
 
 /// Trait abstracting the sync runtime dependencies so the loop can be
@@ -246,8 +254,22 @@ pub trait SyncLoopRuntime: Send + 'static {
     /// Get pending download count.
     fn pending_download_count(&self) -> usize;
 
+    /// Evict all in-memory state for a sync root that has been removed.
+    /// Implementations must drop the corresponding `FsWatcher` (if any) and
+    /// clear the root from the scheduler, upload coordinator, and download
+    /// coordinator. Called by the sync loop when a root disappears from the
+    /// persisted list between two consecutive `list_sync_roots` calls.
+    fn evict_removed_root(&mut self, sync_id: SyncId);
+
     /// Emit an audit event for a completed cycle.
-    fn emit_cycle_audit(&mut self, root_id: u64, result: &CycleResult);
+    ///
+    /// Returns an `Err` when the underlying tamper-evident chain write
+    /// failed; the cycle caller surfaces the error via
+    /// [`CycleResult::audit_persist_error`] and counts it as a cycle
+    /// error so callers can observe the audit-chain breakage rather
+    /// than silently swallowing it. Audit-04 P2-6
+    /// (bd-pcloud-rs-s1p.50).
+    fn emit_cycle_audit(&mut self, root_id: u64, result: &CycleResult) -> Result<(), String>;
 }
 
 /// Run one sync cycle for a single root, respecting its `SyncType`.
@@ -332,8 +354,14 @@ pub fn run_cycle(runtime: &mut dyn SyncLoopRuntime, config: &SyncLoopConfig) -> 
 
     cycle.duration = started.elapsed();
 
-    // Emit audit event for the full cycle
-    runtime.emit_cycle_audit(0, &cycle);
+    // Emit audit event for the full cycle. If the chain write fails,
+    // surface the message on `audit_persist_error` and bump
+    // `total_errors` so the failure is not silently swallowed. See
+    // audit-04 P2-6 (bd-pcloud-rs-s1p.50).
+    if let Err(err) = runtime.emit_cycle_audit(0, &cycle) {
+        cycle.total_errors = cycle.total_errors.saturating_add(1);
+        cycle.audit_persist_error = Some(err);
+    }
 
     cycle
 }
@@ -368,6 +396,15 @@ pub fn sync_loop_main(
 ) {
     let poll_interval = Duration::from_secs(config.poll_interval_secs);
 
+    // Track the set of sync root ids that were active at the end of the
+    // previous cycle. When a root disappears from this set we call
+    // `evict_removed_root` to drop its FsWatcher and clear engine state.
+    let mut prev_root_ids: std::collections::HashSet<SyncId> = runtime
+        .list_sync_roots()
+        .iter()
+        .map(|r| r.sync_id)
+        .collect();
+
     loop {
         // Check shutdown
         if shared.shutdown.load(Ordering::Acquire) {
@@ -391,6 +428,21 @@ pub fn sync_loop_main(
         if let Ok(mut status) = shared.status.lock() {
             status.state = SyncLoopState::Running;
         }
+
+        // Evict any roots that disappeared since the last cycle.
+        // This ensures FsWatcher handles are dropped promptly rather than
+        // leaking until the next full restart of the daemon.
+        let current_roots = runtime.list_sync_roots();
+        let current_root_ids: std::collections::HashSet<SyncId> =
+            current_roots.iter().map(|r| r.sync_id).collect();
+        for removed_id in prev_root_ids.difference(&current_root_ids) {
+            log::debug!(
+                "sync_loop: evicting removed root sync_id={}",
+                removed_id.get()
+            );
+            runtime.evict_removed_root(*removed_id);
+        }
+        prev_root_ids = current_root_ids;
 
         // Run one full cycle
         let cycle = run_cycle(runtime, &config);
@@ -497,6 +549,13 @@ pub fn spawn_sync_loop<R: SyncLoopRuntime>(
         .spawn(move || {
             sync_loop_main(&mut runtime, config, shared_clone);
         })
+        // INVARIANT: thread spawn failure is an OS-level resource exhaustion
+        // (EAGAIN / thread-limit) that is unrecoverable for daemon startup.
+        // Propagating through Result here would require callers to handle a
+        // failure mode they cannot meaningfully recover from; a panic with a
+        // clear message is the intended behaviour.
+        // TODO(bd-follow-up): consider surfacing as a daemon startup Err
+        // so callers can log and report a structured error code.
         .expect("failed to spawn sync loop thread");
 
     SyncLoopHandle {
@@ -596,8 +655,13 @@ mod tests {
             0
         }
 
-        fn emit_cycle_audit(&mut self, _root_id: u64, _result: &CycleResult) {
+        fn evict_removed_root(&mut self, _sync_id: SyncId) {
+            // No-op in mock: the mock has no FsWatchers to drop.
+        }
+
+        fn emit_cycle_audit(&mut self, _root_id: u64, _result: &CycleResult) -> Result<(), String> {
             self.audit_count.fetch_add(1, Ordering::Relaxed);
+            Ok(())
         }
     }
 

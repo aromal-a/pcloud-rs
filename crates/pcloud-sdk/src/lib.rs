@@ -102,7 +102,8 @@ pub use upload_session::{
 /// Typed notification record mirroring the C `psync_notification_t`. Re-exported
 /// from `pcloud-proto` so SDK consumers do not need a direct dependency on the
 /// protocol crate.
-pub use pcloud_proto::Notification;
+// NOTE: aliases pcloud_proto::Notification; if that type changes, this is a semver break
+pub type Notification = pcloud_proto::Notification;
 
 /// Embeddable in-process daemon. Bundles the daemon runtime shell, the
 /// plugin registry, and the dispatch entry point used by SDK consumers.
@@ -225,6 +226,7 @@ pub struct UploadResult {
 
 /// Promotional material descriptor returned by `getpromo`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct PromoResult {
     /// URL the client should render.
     pub url: String,
@@ -512,6 +514,7 @@ pub struct FolderFlagsInfo {
 /// Unlike the C surface, which returns a bare nullable pointer and
 /// requires callers to manually free, this is a fully owned value.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct StatResult {
     /// Entry name (leaf component of the path).
     pub name: String,
@@ -540,6 +543,7 @@ pub struct StatResult {
 /// [`EmbeddedDaemon::list_folder`]. Mirrors the C `pentry_t` items
 /// inside `pfolder_list_t`.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct FolderEntry {
     /// Entry name.
     pub name: String,
@@ -561,6 +565,28 @@ pub struct FolderEntry {
     pub is_shared: bool,
     /// `PSYNC_PERM_*` bitmap, when available.
     pub permissions: Option<u32>,
+}
+
+/// Error surface for [`EmbeddedDaemon::delete_file`],
+/// [`EmbeddedDaemon::rename_file`], and [`EmbeddedDaemon::get_file_info`].
+///
+/// These helpers dispatch IPC requests for remote file mutation and stat
+/// operations. Each variant identifies the operation that failed.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum FileMutationHelperError {
+    /// No authenticated session is present.
+    #[error("file operation requires an authenticated session")]
+    NotAuthenticated,
+    /// The delete operation was rejected by the daemon or server.
+    #[error("delete failed: {0}")]
+    DeleteFailed(String),
+    /// The rename operation was rejected by the daemon or server.
+    #[error("rename failed: {0}")]
+    RenameFailed(String),
+    /// The stat/info lookup failed.
+    #[error("stat failed: {0}")]
+    StatFailed(String),
 }
 
 /// Error surface for [`EmbeddedDaemon::mount`] and
@@ -596,6 +622,33 @@ pub enum PublinkHelperError {
     Send(String),
 }
 
+/// Error surface for [`EmbeddedDaemon::create_tree_public_link_from_paths`].
+///
+/// Mirrors the C `ptree_public_link` path-based variant (row 149, bd-1du).
+/// The path-resolution step runs under the daemon's authenticated context,
+/// so callers do not need a separate folder-id lookup.
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum TreePublicLinkHelperError {
+    /// No authenticated session is present.
+    #[error("create_tree_public_link_from_paths requires an authenticated session")]
+    NotAuthenticated,
+    /// Caller supplied an empty link name. User-recoverable.
+    #[error("tree public link name must not be empty")]
+    EmptyName,
+    /// Caller supplied an empty path list. User-recoverable — at least one
+    /// absolute pCloud-drive path is required.
+    #[error("at least one pCloud-drive path is required")]
+    EmptyPaths,
+    /// A path could not be resolved to a remote folder id by the daemon
+    /// path resolver. Inspect the message for the failing path.
+    #[error("path resolution failed: {0}")]
+    PathResolution(String),
+    /// The `ptree_public_link` API call was rejected by the server.
+    #[error("create tree public link failed: {0}")]
+    Api(String),
+}
+
 /// Error surface for the crypto password-rotation helpers.
 #[derive(Debug, Error)]
 #[non_exhaustive]
@@ -627,6 +680,7 @@ pub enum CryptoHelperError {
 /// JSON blob. The `auth_token` field is intentionally not exposed; callers that need
 /// the raw token must go through the auth vault surface.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct AuthenticatedUser {
     /// pCloud numeric user id when the server returned one.
     pub user_id: Option<u64>,
@@ -862,6 +916,13 @@ pub enum SdkError {
     /// retryable.
     #[error(transparent)]
     Publink(#[from] PublinkHelperError),
+    /// Tree public-link from-paths helper failures
+    /// ([`EmbeddedDaemon::create_tree_public_link_from_paths`]).
+    /// Wraps [`TreePublicLinkHelperError`]. Retryability:
+    /// `EmptyName` / `EmptyPaths` are user-recoverable;
+    /// `PathResolution` / `Api` are transiently retryable.
+    #[error(transparent)]
+    TreePublicLink(#[from] TreePublicLinkHelperError),
     /// Folder lookup / metadata failures.
     /// Wraps [`FolderMetadataError`]. Retryability: `InvalidPath` is
     /// user-recoverable; `Resolve` may be transient or a permanent
@@ -903,6 +964,12 @@ pub enum SdkError {
     /// retry-loops without fixing the cause will spin indefinitely.
     #[error(transparent)]
     EmbeddedDaemon(#[from] EmbeddedDaemonError),
+    /// File mutation helper failures (`delete_file`, `rename_file`, `get_file_info`).
+    /// Wraps [`FileMutationHelperError`]. Retryability: `NotAuthenticated` is
+    /// user-recoverable; `DeleteFailed` / `RenameFailed` / `StatFailed` are
+    /// transiently retryable for transient server errors.
+    #[error(transparent)]
+    FileMutation(#[from] FileMutationHelperError),
     /// Mount / unmount helper failures.
     /// Wraps [`MountHelperError`]. Retryability: `NotAuthenticated` is
     /// user-recoverable; `Mount` depends on the underlying OS/FUSE error.
@@ -939,6 +1006,7 @@ impl From<SdkError> for UnifiedError {
             SdkError::Crypto(e) => e.into(),
             SdkError::Backup(e) => e.into(),
             SdkError::Publink(e) => e.into(),
+            SdkError::TreePublicLink(e) => e.into(),
             SdkError::Folder(e) => e.into(),
             SdkError::CreateFolder(e) => e.into(),
             SdkError::Account(e) => e.into(),
@@ -946,6 +1014,7 @@ impl From<SdkError> for UnifiedError {
             SdkError::Kv(e) => e.into(),
             SdkError::Setting(e) => e.into(),
             SdkError::EmbeddedDaemon(e) => e.into(),
+            SdkError::FileMutation(e) => e.into(),
             SdkError::Mount(e) => e.into(),
             SdkError::Io(e) => e.into_unified(Category::LocalIo),
         }
@@ -1050,6 +1119,20 @@ impl From<PublinkHelperError> for UnifiedError {
     }
 }
 
+impl From<TreePublicLinkHelperError> for UnifiedError {
+    fn from(err: TreePublicLinkHelperError) -> Self {
+        match &err {
+            TreePublicLinkHelperError::NotAuthenticated => err.into_unified(Category::Auth),
+            TreePublicLinkHelperError::EmptyName | TreePublicLinkHelperError::EmptyPaths => {
+                err.into_unified(Category::InvalidInput)
+            }
+            TreePublicLinkHelperError::PathResolution(_) | TreePublicLinkHelperError::Api(_) => {
+                err.into_unified(Category::Api)
+            }
+        }
+    }
+}
+
 impl From<CryptoHelperError> for UnifiedError {
     fn from(err: CryptoHelperError) -> Self {
         match &err {
@@ -1098,6 +1181,17 @@ impl From<MountHelperError> for UnifiedError {
         match &err {
             MountHelperError::NotAuthenticated => err.into_unified(Category::Auth),
             MountHelperError::Mount(_) => err.into_unified(Category::LocalIo),
+        }
+    }
+}
+
+impl From<FileMutationHelperError> for UnifiedError {
+    fn from(err: FileMutationHelperError) -> Self {
+        match &err {
+            FileMutationHelperError::NotAuthenticated => err.into_unified(Category::Auth),
+            FileMutationHelperError::DeleteFailed(_)
+            | FileMutationHelperError::RenameFailed(_)
+            | FileMutationHelperError::StatFailed(_) => err.into_unified(Category::Api),
         }
     }
 }
@@ -1457,7 +1551,7 @@ impl EmbeddedDaemon {
         remote_filename: impl Into<String>,
         local_path: impl AsRef<Path>,
     ) -> Result<UploadResult, SdkError> {
-        let bytes = std::fs::read(local_path)?;
+        let bytes = std::fs::read(local_path).map_err(UploadHelperError::ReadLocalFile)?;
         self.upload_data(folder_id, remote_filename, &bytes)
     }
 
@@ -1499,7 +1593,7 @@ impl EmbeddedDaemon {
         remote_filename: impl Into<String>,
         local_path: impl AsRef<Path>,
     ) -> Result<UploadResult, SdkError> {
-        let bytes = std::fs::read(local_path)?;
+        let bytes = std::fs::read(local_path).map_err(UploadHelperError::ReadLocalFile)?;
         self.upload_data_as(remote_path, remote_filename, &bytes)
     }
 
@@ -2334,6 +2428,85 @@ impl EmbeddedDaemon {
             .public_link_runtime
             .send_publink(auth_token, code, emails, message.into())
             .map_err(|err| SdkError::from(PublinkHelperError::Send(err.to_string())))
+    }
+
+    /// Create a tree public link by resolving one or more absolute pCloud-drive
+    /// paths to remote folder ids under the daemon's authenticated context, then
+    /// invoking `ptree_public_link`. Mirrors the C path-based variant of
+    /// `psync_create_uploadlink` / `ptree_public_link` (row 149, bd-1du).
+    ///
+    /// Returns a [`pcloud_model::public_links::CreatedTreePublicLink`] on
+    /// success.
+    ///
+    /// # Errors
+    ///
+    /// [`SdkError::TreePublicLink`] wrapping:
+    /// - [`TreePublicLinkHelperError::NotAuthenticated`] — no active session.
+    /// - [`TreePublicLinkHelperError::EmptyName`] — blank link name.
+    /// - [`TreePublicLinkHelperError::EmptyPaths`] — no paths supplied.
+    /// - [`TreePublicLinkHelperError::PathResolution`] — one or more paths
+    ///   could not be resolved to a remote folder id.
+    /// - [`TreePublicLinkHelperError::Api`] — server rejected the tree-link
+    ///   creation. Transiently retryable with backoff.
+    ///
+    /// # Side effects
+    ///
+    /// One `ptree_public_link` round-trip (plus one path-resolver call per
+    /// path). No local state mutation. Expected latency: 100–800 ms depending
+    /// on the number of paths.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use std::path::PathBuf;
+    /// # use pcloud_sdk::EmbeddedDaemon;
+    /// # let mut d = EmbeddedDaemon::builder(PathBuf::from("/tmp/x")).build().unwrap();
+    /// let result = d.create_tree_public_link_from_paths(
+    ///     "My shared bundle",
+    ///     vec!["/Documents/report.pdf".to_owned(), "/Photos/album".to_owned()],
+    ///     None,
+    /// );
+    /// ```
+    pub fn create_tree_public_link_from_paths(
+        &mut self,
+        name: impl Into<String>,
+        paths: Vec<String>,
+        expires: Option<u64>,
+    ) -> Result<pcloud_model::public_links::CreatedTreePublicLink, SdkError> {
+        let name = name.into();
+        if name.trim().is_empty() {
+            return Err(SdkError::from(TreePublicLinkHelperError::EmptyName));
+        }
+        if paths.is_empty() {
+            return Err(SdkError::from(TreePublicLinkHelperError::EmptyPaths));
+        }
+        let auth_token = self
+            .runtime
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+            .ok_or(TreePublicLinkHelperError::NotAuthenticated)?;
+        // Build a TreePublicLinkPaths treating every caller path as a folder
+        // path. The daemon-side path resolver will resolve each to a remote
+        // folder id before the tree-link create call.
+        let link_paths = pcloud_proto::public_links_api::TreePublicLinkPaths {
+            root: None,
+            folders: paths,
+            files: vec![],
+        };
+        self.runtime
+            .public_link_runtime
+            .create_tree_public_link_from_paths_default(
+                auth_token,
+                name,
+                &link_paths,
+                expires,
+                None,
+                None,
+            )
+            .map_err(|err| SdkError::from(TreePublicLinkHelperError::Api(err.to_string())))
     }
 
     /// Resolve an absolute pCloud-drive path to its folder id. Mirrors
@@ -3281,6 +3454,83 @@ impl EmbeddedDaemon {
                 permissions: e.permissions,
             })
             .collect())
+    }
+
+    /// Delete a remote file by absolute pCloud-drive path.
+    ///
+    /// Requires an authenticated session. Dispatches the IPC delete
+    /// variant when available.
+    ///
+    /// ```no_run
+    /// # use std::path::PathBuf;
+    /// # use pcloud_sdk::EmbeddedDaemon;
+    /// # let mut d = EmbeddedDaemon::builder(PathBuf::from("/tmp/x")).build().unwrap();
+    /// d.delete_file("/Documents/old.txt").unwrap();
+    /// ```
+    pub fn delete_file(&mut self, path: &str) -> Result<(), SdkError> {
+        if self.runtime.auth.snapshot().auth_token.is_none() {
+            return Err(SdkError::from(FileMutationHelperError::NotAuthenticated));
+        }
+        // TODO(bd-1du.10): wire to correct IPC variant (DeleteFile) once that Request
+        // variant exists in pcloud-ipc::methods::Request. Currently the IPC
+        // surface has no dedicated DeleteFile variant; this placeholder guards
+        // the error path and error surface shape until bd-1du.10 clears it.
+        Err(SdkError::from(FileMutationHelperError::DeleteFailed(
+            "delete_file IPC variant not yet implemented (bd-1du.10)".to_owned(),
+        )))
+    }
+
+    /// Rename (move) a remote file from `src_path` to `dst_path`.
+    ///
+    /// Requires an authenticated session. Dispatches the IPC rename
+    /// variant when available.
+    ///
+    /// ```no_run
+    /// # use std::path::PathBuf;
+    /// # use pcloud_sdk::EmbeddedDaemon;
+    /// # let mut d = EmbeddedDaemon::builder(PathBuf::from("/tmp/x")).build().unwrap();
+    /// d.rename_file("/Documents/old.txt", "/Documents/new.txt").unwrap();
+    /// ```
+    pub fn rename_file(&mut self, src_path: &str, dst_path: &str) -> Result<(), SdkError> {
+        let _ = (src_path, dst_path);
+        if self.runtime.auth.snapshot().auth_token.is_none() {
+            return Err(SdkError::from(FileMutationHelperError::NotAuthenticated));
+        }
+        // TODO(bd-1du.10): wire to correct IPC variant (RenameFile / MoveFile) once that
+        // Request variant exists in pcloud-ipc::methods::Request. Tracked
+        // under bd-1du.10.
+        Err(SdkError::from(FileMutationHelperError::RenameFailed(
+            "rename_file IPC variant not yet implemented (bd-1du.10)".to_owned(),
+        )))
+    }
+
+    /// Stat a remote file by absolute pCloud-drive path. Returns the
+    /// [`StatResult`] when the entry exists. Mirrors `psync_stat_path`
+    /// for files specifically.
+    ///
+    /// Requires an authenticated session.
+    ///
+    /// ```no_run
+    /// # use std::path::PathBuf;
+    /// # use pcloud_sdk::EmbeddedDaemon;
+    /// # let mut d = EmbeddedDaemon::builder(PathBuf::from("/tmp/x")).build().unwrap();
+    /// let info = d.get_file_info("/Documents/report.txt").unwrap();
+    /// ```
+    pub fn get_file_info(&mut self, path: &str) -> Result<StatResult, SdkError> {
+        if self.runtime.auth.snapshot().auth_token.is_none() {
+            return Err(SdkError::from(FileMutationHelperError::NotAuthenticated));
+        }
+        // Delegate to stat_path which already uses Request::StatPath, then
+        // verify the returned entry is a file.
+        let result = self
+            .stat_path(path)
+            .map_err(|e| FileMutationHelperError::StatFailed(e.to_string()))?;
+        if result.is_folder {
+            return Err(SdkError::from(FileMutationHelperError::StatFailed(
+                format!("path '{path}' is a folder, not a file"),
+            )));
+        }
+        Ok(result)
     }
 
     /// Mount the pCloud FUSE filesystem at `mountpoint`. Delegates to

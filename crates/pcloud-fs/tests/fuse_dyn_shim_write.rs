@@ -115,6 +115,7 @@ fn dyn_shim_write_file_and_readback_via_kernel_vfs() {
         WritePathOptions {
             flush_threshold_bytes: 64 * 1024 * 1024,
             flush_interval: Duration::from_secs(3600),
+            ..WritePathOptions::default()
         },
     ));
 

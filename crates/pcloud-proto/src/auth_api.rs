@@ -289,7 +289,9 @@ where
         context.get_auth = true;
 
         let request = UserInfoRequest {
-            auth_token: current.expose_secret().to_owned(),
+            auth_token: crate::redacted::RedactedProtoString::from(
+                current.expose_secret().to_owned(),
+            ),
             context,
         };
         let encoded = request.encode().map_err(AuthApiError::Encode)?;
@@ -352,13 +354,14 @@ where
         let challenge = self.get_digest()?;
         let request = LoginDigestRequest {
             username: username.clone(),
-            digest_token: challenge.digest.clone(),
-            password_digest: compute_password_digest(
+            digest_token: crate::redacted::RedactedProtoString::from(challenge.digest.clone()),
+            password_digest: crate::redacted::RedactedProtoString::from(compute_password_digest(
                 &username,
                 password.as_ref(),
                 &challenge.digest,
-            ),
-            code: code.map(|code| code.as_ref().to_owned()),
+            )),
+            code: code
+                .map(|code| crate::redacted::RedactedProtoString::from(code.as_ref().to_owned())),
             context: self.context.clone(),
         };
         let encoded = request.encode()?;
@@ -412,8 +415,8 @@ where
         recovery_code: bool,
     ) -> Result<PasswordLoginOutcome, AuthApiError<T::Error>> {
         let request = TwoFactorLoginRequest {
-            token: token.into(),
-            code: code.as_ref().to_owned(),
+            token: crate::redacted::RedactedProtoString::from(token.into()),
+            code: crate::redacted::RedactedProtoString::from(code.as_ref().to_owned()),
             trust_device,
             recovery_code,
             context: self.context.clone(),
@@ -438,7 +441,7 @@ where
         auth_token: impl AsRef<str>,
     ) -> Result<UserInfo, AuthApiError<T::Error>> {
         let request = UserInfoRequest {
-            auth_token: auth_token.as_ref().to_owned(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.as_ref().to_owned()),
             context: self.context.clone(),
         };
         let encoded = request.encode()?;
@@ -476,7 +479,7 @@ where
         token: impl Into<String>,
     ) -> Result<TwoFactorSmsDelivery, AuthApiError<T::Error>> {
         let request = TwoFactorSendSmsRequest {
-            token: token.into(),
+            token: crate::redacted::RedactedProtoString::from(token.into()),
         };
         let encoded = request.encode()?;
         let response = self
@@ -496,7 +499,7 @@ where
         token: impl Into<String>,
     ) -> Result<TwoFactorNotificationDelivery, AuthApiError<T::Error>> {
         let request = TwoFactorSendNotificationRequest {
-            token: token.into(),
+            token: crate::redacted::RedactedProtoString::from(token.into()),
         };
         let encoded = request.encode()?;
         let response = self

@@ -28,7 +28,7 @@
 // **GATING:** none (portable).
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -40,6 +40,7 @@ use pcloud_config::sync_loop::SyncLoopConfig;
 use pcloud_engine::EngineShell;
 use pcloud_engine::local_scan::{IncrementalScanTracker, LocalScanEntry, ScanDecision};
 use pcloud_engine::planner::DeletePolicy;
+use pcloud_engine::stall_detector::StallDetector;
 use pcloud_fs::FilesystemShell;
 use pcloud_fs::fs_watcher::{FsWatcher, WatcherConfig, fs_events_to_local_scan_entries};
 use pcloud_model::ids::SyncId;
@@ -47,8 +48,9 @@ use pcloud_model::sync::EntryKind;
 use pcloud_secret::secret_string::SecretString;
 use pcloud_store::DiffStateRepository;
 use pcloud_store::repositories::audit::AuditRepository;
-use pcloud_store::repositories::file_metadata::{FileMetadataRecord, FileMetadataRepository};
+use pcloud_store::repositories::file_metadata::FileMetadataRepository;
 use pcloud_store::repositories::sync_graph::{SyncGraphRepository, SyncRootRecord};
+use pcloud_store::repositories::values::ValuesRepository;
 use rusqlite::Connection;
 
 use crate::sync_loop::{
@@ -112,7 +114,35 @@ pub struct RealSyncLoopRuntime {
     /// the same WAL database so cycle audit events feed the tamper-
     /// evident chain rather than being lost to stderr.
     audit: AuditRepository,
+    /// Stall detector: marks progress on successful transfer dispatch
+    /// and emits a `warn!` once the cycle has not advanced for
+    /// `stall_timeout`. Audit-04 P2-6 (bd-pcloud-rs-s1p.48).
+    stall_detector: StallDetector,
+    /// On-disk staging directory for streamed downloads (audit-04 L-3,
+    /// bd-pcloud-rs-s1p.87). `execute_downloads` writes through to files
+    /// under this directory via [`TransferRuntime::download_to_path`]
+    /// rather than buffering whole bodies in memory.
+    download_staging_dir: PathBuf,
 }
+
+/// Files strictly below this threshold are mirrored into the in-memory
+/// caches (page cache + staging cache + FUSE staging) after a streamed
+/// download. Files at or above this threshold stay on disk only —
+/// seeding a multi-MiB page into an LRU that would immediately evict
+/// them is pure waste, and keeping them out bounds sync-loop peak RAM
+/// regardless of individual file size (bd-pcloud-rs-s1p.87).
+const DOWNLOAD_INMEM_MIRROR_THRESHOLD: u64 = 4 * 1024 * 1024;
+
+/// `value_kv` key under which the planner's dead-letter buffer is
+/// persisted between cycles. Value is a JSON-encoded `Vec<SyncCandidate>`.
+/// Audit-04 P2-6 (bd-pcloud-rs-s1p.44).
+const DEAD_LETTER_KEY: &str = "sync.planner.overflow";
+
+/// `value_kv` key under which the scheduler's queued operations are
+/// persisted between cycles. Value is a JSON-encoded
+/// `Vec<PlannedOperation>` sorted by `(sync_id, priority, path)` so the
+/// on-disk form is deterministic. pcloud-rs-774.
+const SCHEDULER_QUEUE_KEY: &str = "sync.scheduler.queue";
 
 impl std::fmt::Debug for RealSyncLoopRuntime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -150,11 +180,96 @@ impl RealSyncLoopRuntime {
 
         let audit = AuditRepository::load(&conn).unwrap_or_default();
 
+        let mut engine = EngineShell::new();
+
+        // Audit-04 P2-6 (bd-pcloud-rs-s1p.47): restore the persisted
+        // per-root pause state so roots that were paused via IPC before
+        // the last daemon restart stay paused after reboot rather than
+        // silently resuming.
+        if let Ok(repo) = SyncGraphRepository::load(&conn) {
+            for root in &repo.tracked_sync_roots {
+                if root.paused {
+                    engine.pause_sync_root(root.sync_id);
+                }
+            }
+        }
+
+        // Audit-04 P2-6 (bd-pcloud-rs-s1p.44): restore the dead-letter
+        // overflow buffer so candidates skipped at the per-tick cap
+        // before the last restart are replayed on the first cycle.
+        if let Ok(Some(raw)) = ValuesRepository::get_string(&conn, DEAD_LETTER_KEY) {
+            match serde_json::from_str::<Vec<pcloud_model::sync::SyncCandidate>>(&raw) {
+                Ok(overflow) if !overflow.is_empty() => {
+                    log::info!(
+                        "sync loop: restored {} deferred planner candidates from dead-letter store",
+                        overflow.len()
+                    );
+                    engine.restore_planner_overflow(overflow);
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    log::warn!("sync loop: dead-letter overflow buffer corrupt, discarding: {err}");
+                    let _ = ValuesRepository::delete(&conn, DEAD_LETTER_KEY);
+                }
+            }
+        }
+
+        // pcloud-rs-774: restore the persisted scheduler queue so
+        // planned operations that were scheduled but not yet dispatched
+        // before the last restart survive the reboot instead of silently
+        // vanishing.
+        if let Ok(Some(raw)) = ValuesRepository::get_string(&conn, SCHEDULER_QUEUE_KEY) {
+            match serde_json::from_str::<Vec<pcloud_model::sync::PlannedOperation>>(&raw) {
+                Ok(queue) if !queue.is_empty() => {
+                    log::info!(
+                        "sync loop: restored {} queued scheduler operations from persisted queue",
+                        queue.len()
+                    );
+                    engine.restore_scheduler_queue(queue);
+                }
+                Ok(_) => {}
+                Err(err) => {
+                    log::warn!(
+                        "sync loop: persisted scheduler queue is corrupt, discarding: {err}"
+                    );
+                    let _ = ValuesRepository::delete(&conn, SCHEDULER_QUEUE_KEY);
+                }
+            }
+        }
+
+        // Audit-04 P2-6 (bd-pcloud-rs-s1p.48): wire a real stall detector
+        // so no-progress cycles are logged. Timeout is conservative but
+        // shorter than the 5-minute default so a stuck run_cycle is
+        // visible quickly.
+        let stall_detector = StallDetector::new(Duration::from_secs(120));
+
+        // bd-pcloud-rs-s1p.87: per-daemon on-disk staging dir for streamed
+        // downloads. `execute_downloads` writes through to files under this
+        // directory via [`TransferRuntime::download_to_path`], so peak
+        // transport memory is bounded by the HTTP read buffer (64 KiB)
+        // plus the BufWriter buffer (64 KiB), independent of body size.
+        let download_staging_dir = config.paths.cache_dir.join("download-staging");
+        if let Err(err) = std::fs::create_dir_all(&download_staging_dir) {
+            log::warn!(
+                "sync loop: failed to pre-create download staging dir {download_staging_dir:?}: {err}; \
+                 downloads will attempt to create it on-demand"
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            if let Ok(meta) = std::fs::metadata(&download_staging_dir) {
+                let mut perm = meta.permissions();
+                perm.set_mode(0o700);
+                let _ = std::fs::set_permissions(&download_staging_dir, perm);
+            }
+        }
+
         Ok(Self {
             auth_token,
             sync_runtime: SyncRuntime::from_config(config),
             transfer_runtime: TransferRuntime::from_config(config),
-            engine: EngineShell::new(),
+            engine,
             cache: CacheShell::default(),
             filesystem: FilesystemShell::default(),
             store_conn: conn,
@@ -163,7 +278,84 @@ impl RealSyncLoopRuntime {
             watcher_config: WatcherConfig::default(),
             sync_loop_config: config.sync_loop.clone(),
             audit,
+            stall_detector,
+            download_staging_dir,
         })
+    }
+
+    /// Persist the current planner dead-letter overflow buffer into the
+    /// store. Called after each ingest so a crash between ticks does not
+    /// silently drop deferred work. Audit-04 P2-6 (bd-pcloud-rs-s1p.44).
+    fn persist_planner_overflow(&self) {
+        let overflow = &self.engine.planner_overflow;
+        if overflow.is_empty() {
+            let _ = ValuesRepository::delete(&self.store_conn, DEAD_LETTER_KEY);
+            return;
+        }
+        match serde_json::to_string(overflow) {
+            Ok(serialized) => {
+                if let Err(err) =
+                    ValuesRepository::set_string(&self.store_conn, DEAD_LETTER_KEY, &serialized)
+                {
+                    log::warn!(
+                        "sync loop: failed to persist {} deferred candidates: {err}",
+                        overflow.len()
+                    );
+                }
+            }
+            Err(err) => {
+                log::warn!("sync loop: failed to serialize dead-letter overflow: {err}");
+            }
+        }
+    }
+
+    /// Persist the current scheduler queued operations so they survive a
+    /// daemon restart. Called from the same ingest hot path as
+    /// [`Self::persist_planner_overflow`]. pcloud-rs-774.
+    fn persist_scheduler_queue(&self) {
+        let snapshot = self.engine.snapshot_scheduler_queue();
+        if snapshot.is_empty() {
+            let _ = ValuesRepository::delete(&self.store_conn, SCHEDULER_QUEUE_KEY);
+            return;
+        }
+        match serde_json::to_string(&snapshot) {
+            Ok(serialized) => {
+                if let Err(err) = ValuesRepository::set_string(
+                    &self.store_conn,
+                    SCHEDULER_QUEUE_KEY,
+                    &serialized,
+                ) {
+                    log::warn!(
+                        "sync loop: failed to persist {} scheduler ops: {err}",
+                        snapshot.len()
+                    );
+                }
+            }
+            Err(err) => {
+                log::warn!("sync loop: failed to serialize scheduler queue: {err}");
+            }
+        }
+    }
+
+    /// Drain the engine's pending-watcher-eviction notifications and
+    /// drop the associated [`FsWatcher`] handles. Called from
+    /// [`Self::evict_removed_root`] and by the sync loop between cycles
+    /// so any `EngineShell::evict_sync_root` call (including IPC-driven
+    /// ones that don't go through `evict_removed_root`) eventually tears
+    /// down the corresponding inotify/FSEvents subscription.
+    ///
+    /// pcloud-rs-774.
+    pub fn drain_engine_watcher_evictions(&mut self) {
+        let pending = self.engine.drain_watcher_evictions();
+        for sync_id in pending {
+            if self.watchers.contains_key(&sync_id) {
+                log::debug!(
+                    "sync loop: draining engine-signaled watcher eviction for sync_id={}",
+                    sync_id.get()
+                );
+                self.remove_watcher(sync_id);
+            }
+        }
     }
 
     /// Ensure a filesystem watcher is running for `root`. If the watcher
@@ -246,68 +438,34 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
             .diff(auth_token.clone_secret(), cursor, batch_limit)
             .map_err(|e| e.to_string())?;
 
-        // Persist the new cursor if it advanced.
-        if batch.cursor > cursor {
-            let now_unix = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0);
-            DiffStateRepository::save(&self.store_conn, root.sync_id, batch.cursor, now_unix)
-                .map_err(|e| e.to_string())?;
-        }
-
-        // Persist file/folder metadata from the diff batch into the local
-        // cache. This populates the `file_metadata` table so that
-        // `stat_path` can resolve paths locally without hitting the API.
-        for entry in &batch.entries {
-            let is_folder = entry.entry_kind == EntryKind::Folder;
-            let file_id = if is_folder {
-                entry.remote_folder_id.map(|id| id.get())
-            } else {
-                entry.remote_file_id.map(|id| id.get())
-            };
-            if let Some(file_id) = file_id {
-                if entry.change_kind == pcloud_model::sync::ChangeKind::Delete {
-                    let _ = FileMetadataRepository::delete(&self.store_conn, file_id);
-                } else {
-                    // Extract leaf name from the sync-root-relative path.
-                    let name = entry
-                        .path
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(&entry.path)
-                        .to_owned();
-                    // Parent folder id: for files use the folder id if
-                    // present, otherwise default to 0 (root).
-                    let parent_folder_id = if is_folder {
-                        // For folders, we don't know the parent from the
-                        // diff entry alone; default to 0.
-                        0
-                    } else {
-                        entry.remote_folder_id.map(|id| id.get()).unwrap_or(0)
-                    };
-                    let record = FileMetadataRecord {
-                        file_id,
-                        parent_folder_id,
-                        name,
-                        size: 0,
-                        hash: String::new(),
-                        modified: 0,
-                        created: 0,
-                        is_folder,
-                    };
-                    let _ = FileMetadataRepository::upsert(&self.store_conn, &record);
-                }
-            }
-        }
-
+        // Audit 04 C3: the diff cursor MUST NOT advance before the batch
+        // has been successfully ingested. Previously the cursor was
+        // persisted immediately after fetch, so a crash between fetch
+        // and engine ingestion silently dropped a batch on restart.
+        //
+        // We now run the ingestion *first*, and only if it returns `Ok`
+        // do we commit cursor advance + metadata deletions together in a
+        // single SQLite transaction. If the engine rejects the batch or
+        // the transaction fails, the cursor stays put and the same batch
+        // is refetched on the next cycle — at-least-once semantics.
         let delete_policy =
             DeletePolicy::for_sync_type(root.sync_type, self.sync_loop_config.propagate_deletes);
         let operations = self
             .engine
             .ingest_remote_diff_filtered(&batch, &delete_policy)
             .map_err(|e| format!("{e:?}"))?;
-        Ok(operations.len())
+        let op_count = operations.len();
+
+        // Audit-04 P2-6 (bd-pcloud-rs-s1p.44): persist any candidates
+        // that were deferred at the per-tick cap so a crash here does
+        // not drop them silently.
+        self.persist_planner_overflow();
+
+        // Commit cursor advance + metadata-cache deletes atomically.
+        commit_diff_batch(&self.store_conn, root.sync_id, cursor, &batch)
+            .map_err(|e| e.to_string())?;
+
+        Ok(op_count)
     }
 
     fn run_local_scan(&mut self, root: &SyncRootRecord) -> Result<usize, String> {
@@ -325,7 +483,7 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
 
         let entries = match decision {
             ScanDecision::FullScan => {
-                let entries = walk_local_tree(root)?;
+                let entries = walk_local_tree(root, &self.store_conn)?;
                 self.scan_tracker.record_full_scan(root.sync_id);
                 entries
             }
@@ -343,12 +501,36 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
             .engine
             .ingest_local_scan_with_delete_policy(&entries, &delete_policy)
             .map_err(|e| format!("{e:?}"))?;
-        Ok(operations.len())
+        let op_count = operations.len();
+        self.persist_planner_overflow();
+        // pcloud-rs-774: persist the updated scheduler queue so newly
+        // planned operations survive a crash between ticks.
+        self.persist_scheduler_queue();
+        Ok(op_count)
     }
 
     fn advance_transfers(&mut self) -> usize {
         let batch = self.engine.advance_transfer_cycle();
-        batch.len()
+        let dispatched = batch.len();
+        // pcloud-rs-774: dispatch shrinks the queue; reflect that in the
+        // persisted copy so a restart doesn't re-enqueue already-dispatched
+        // work.
+        if dispatched > 0 {
+            self.persist_scheduler_queue();
+        }
+        // Audit-04 P2-6 (bd-pcloud-rs-s1p.48): any forward movement in
+        // the scheduler queue counts as progress for the stall
+        // detector. If dispatched==0 but we have unresolved conflicts or
+        // in-flight transfers, the absence of progress is real and the
+        // next check_stall() call will surface it.
+        if dispatched > 0 {
+            self.stall_detector.mark_progress();
+        } else if self.stall_detector.check_stall() {
+            log::warn!(
+                "sync loop: stall detected; no scheduler dispatch progress within stall window"
+            );
+        }
+        dispatched
     }
 
     fn execute_downloads(&mut self, auth_token: &SecretString) -> Result<usize, String> {
@@ -367,29 +549,63 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                     file_id.get(),
                     None,
                 ) {
-                    Ok(link) => match self.transfer_runtime.download_bytes(&link) {
-                        Ok((_signed, bytes)) => {
-                            let cache_key = format!("download:{path}");
-                            self.cache.cache_page(cache_key, bytes.clone());
-                            self.cache.stage_file(path.clone(), bytes.clone());
-                            self.filesystem.seed_staged_file(path.clone(), bytes);
-                            if self.engine.mark_transfer_completed(path) {
-                                completed += 1;
+                    Ok(link) => {
+                        // bd-pcloud-rs-s1p.87: stream download to a per-file
+                        // on-disk staging path rather than buffering the
+                        // full body in memory. The peak memory held by the
+                        // transport is bounded by the HTTP read buffer
+                        // (64 KiB) plus the BufWriter buffer (64 KiB),
+                        // independent of body size.
+                        let staged_path =
+                            staged_download_path(&self.download_staging_dir, file_id.get(), path);
+                        match self.transfer_runtime.download_to_path(&link, &staged_path) {
+                            Ok((_signed, written)) => {
+                                // Mirror into in-memory caches only for
+                                // small payloads. Larger files stay on
+                                // disk; downstream consumers (FUSE, writeback)
+                                // can read from the staged path on demand.
+                                if written < DOWNLOAD_INMEM_MIRROR_THRESHOLD {
+                                    match std::fs::read(&staged_path) {
+                                        Ok(bytes) => {
+                                            let cache_key = format!("download:{path}");
+                                            self.cache.cache_page(cache_key, bytes.clone());
+                                            self.cache.stage_file(path.clone(), bytes.clone());
+                                            self.filesystem
+                                                .seed_staged_file(path.clone(), bytes);
+                                        }
+                                        Err(err) => {
+                                            log::warn!(
+                                                "sync loop: staged download at {staged_path:?} readable failed: {err}; skipping in-memory mirror"
+                                            );
+                                        }
+                                    }
+                                } else {
+                                    log::debug!(
+                                        "sync loop: staged {written}-byte download at {staged_path:?} kept on-disk (above {}B in-memory mirror threshold)",
+                                        DOWNLOAD_INMEM_MIRROR_THRESHOLD
+                                    );
+                                }
+                                if self.engine.mark_transfer_completed(path) {
+                                    completed += 1;
+                                }
                             }
-                        }
-                        Err(err) => {
-                            let decision = self.engine.classify_failure(
-                                &task.operation,
-                                pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
-                            );
-                            let message = format!("{err}; recovery={:?}", decision.disposition);
-                            if !self.engine.mark_transfer_failed(path, message) {
-                                log::warn!(
-                                    "audit: mark_transfer_failed dropped for untracked transfer path={path:?}"
+                            Err(err) => {
+                                // Best-effort cleanup of any partial file.
+                                let _ = std::fs::remove_file(&staged_path);
+                                let decision = self.engine.classify_failure(
+                                    &task.operation,
+                                    pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
                                 );
+                                let message =
+                                    format!("{err}; recovery={:?}", decision.disposition);
+                                if !self.engine.mark_transfer_failed(path, message) {
+                                    log::warn!(
+                                        "audit: mark_transfer_failed dropped for untracked transfer path={path:?}"
+                                    );
+                                }
                             }
                         }
-                    },
+                    }
                     Err(err) => {
                         let decision = self.engine.classify_failure(
                             &task.operation,
@@ -439,11 +655,31 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                     }
                 };
 
-                // Read payload from filesystem shell or cache.
-                let payload = match read_upload_payload(&mut self.filesystem, &self.cache, path) {
-                    Ok(bytes) => bytes,
-                    Err(failure) => {
-                        let decision = self.engine.classify_failure(&task.operation, failure);
+                // Resolve the upload payload source (filesystem staging
+                // preferred, cache staging fallback). Both accessors
+                // return a borrowed `&[u8]` directly — no `Vec` clones.
+                //
+                // Bead pcloud-rs-s1p.88: we intentionally avoid the
+                // previous `read_staged_path(0, usize::MAX)` call, which
+                // copied the entire staged file into a fresh `Vec` via
+                // `ReadResult.bytes`, and the subsequent `.to_vec()` in
+                // the cache fallback. For large uploads (GiBs) this
+                // was a peak-RSS hazard. The current wire layer
+                // (`upload_bytes`) still requires a single `&[u8]`
+                // slice, so we borrow directly from staging instead of
+                // cloning; follow-up work to pipeline chunked
+                // `upload_write` calls is tracked separately.
+                let payload_len = match resolve_upload_payload_len(
+                    &self.filesystem,
+                    &self.cache,
+                    path,
+                ) {
+                    Some(len) => len,
+                    None => {
+                        let decision = self.engine.classify_failure(
+                            &task.operation,
+                            pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+                        );
                         let message = format!(
                             "missing staged upload payload; recovery={:?}",
                             decision.disposition
@@ -461,14 +697,45 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                     auth_token.clone_secret(),
                     parent_folder_id,
                     remote_name.clone(),
-                    payload.len() as u64,
+                    payload_len as u64,
                 ) {
                     Ok(session) => {
-                        match self.transfer_runtime.upload_bytes(
-                            auth_token.clone_secret(),
-                            &session,
-                            &payload,
+                        // Re-borrow the staged bytes for the single
+                        // `upload_bytes` call. We deliberately do not
+                        // hold a borrow across the `upload_create`
+                        // boundary so that the `&mut self` receiver
+                        // remains available.
+                        let upload_result = match borrow_upload_payload(
+                            &self.filesystem,
+                            &self.cache,
+                            path,
                         ) {
+                            Some(bytes) => self.transfer_runtime.upload_bytes(
+                                auth_token.clone_secret(),
+                                &session,
+                                bytes,
+                            ),
+                            None => {
+                                // Race: payload evicted between the
+                                // length probe and the write. Treat
+                                // as a transient failure.
+                                let decision = self.engine.classify_failure(
+                                    &task.operation,
+                                    pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+                                );
+                                let message = format!(
+                                    "staged upload payload evicted mid-upload; recovery={:?}",
+                                    decision.disposition
+                                );
+                                if !self.engine.mark_transfer_failed(path, message) {
+                                    log::warn!(
+                                        "audit: mark_transfer_failed dropped for untracked transfer path={path:?}"
+                                    );
+                                }
+                                continue;
+                            }
+                        };
+                        match upload_result {
                             Ok(_frame) => {
                                 if self.engine.mark_transfer_completed(path) {
                                     completed += 1;
@@ -519,30 +786,56 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
         self.engine.downloads.active_count()
     }
 
-    fn emit_cycle_audit(&mut self, _root_id: u64, result: &CycleResult) {
-        // Persist a structured audit event into the tamper-evident audit
-        // chain instead of losing it to stderr. Cycle audits are only
-        // emitted when at least one non-trivial event occurred.
-        if result.total_errors > 0 || result.total_uploads > 0 || result.total_downloads > 0 {
-            let details = format!(
-                "roots={}, uploads={}, downloads={}, conflicts={}, errors={}, duration_ms={}",
-                result.roots_processed,
-                result.total_uploads,
-                result.total_downloads,
-                result.total_conflicts,
-                result.total_errors,
-                result.duration.as_millis()
-            );
-            if let Err(err) =
-                self.audit
-                    .append_event(&self.store_conn, "sync.loop.cycle", Some(&details))
-            {
-                // Audit persistence failure must not be silently swallowed
-                // (project rule: never silently ignore audit failures on
-                // active control paths). Surface on stderr as a fallback.
-                log::error!("audit: sync-loop-cycle persistence failed: {err}; details={details}");
-            }
+    fn evict_removed_root(&mut self, sync_id: SyncId) {
+        // Drop the FsWatcher handle (closes the watcher thread's channel
+        // sender and unregisters inotify/FSEvents watches) and remove the
+        // root from the incremental scan tracker.
+        self.remove_watcher(sync_id);
+        // Also evict engine-side state (scheduler queue, in-flight
+        // transfers, paused-root set).
+        self.engine.evict_sync_root(sync_id);
+        // pcloud-rs-774: evict_sync_root pushed the id into the engine's
+        // pending-watcher-eviction queue. The watcher for *this* id has
+        // already been removed above, but draining here keeps the engine
+        // notification queue coherent and also reaps any prior IPC-driven
+        // evictions that bypassed evict_removed_root.
+        self.drain_engine_watcher_evictions();
+        // Persist the shrunken scheduler queue so removed-root ops don't
+        // come back on restart.
+        self.persist_scheduler_queue();
+    }
+
+    fn emit_cycle_audit(&mut self, _root_id: u64, result: &CycleResult) -> Result<(), String> {
+        // Only emit an audit event when something non-trivial happened
+        // in the cycle. A purely idle tick does not deserve a chain
+        // entry — but note that audit_persist_error is surfaced by the
+        // caller regardless.
+        if result.total_errors == 0 && result.total_uploads == 0 && result.total_downloads == 0 {
+            return Ok(());
         }
+        let details = format!(
+            "roots={}, uploads={}, downloads={}, conflicts={}, errors={}, duration_ms={}",
+            result.roots_processed,
+            result.total_uploads,
+            result.total_downloads,
+            result.total_conflicts,
+            result.total_errors,
+            result.duration.as_millis()
+        );
+        if let Err(err) =
+            self.audit
+                .append_event(&self.store_conn, "sync.loop.cycle", Some(&details))
+        {
+            // Audit-04 P2-6 (bd-pcloud-rs-s1p.50): audit persistence
+            // failures must not be silently swallowed. Return the error
+            // so `run_cycle` can bump `total_errors` and attach the
+            // message to `audit_persist_error` on `CycleResult`.
+            log::error!("audit: sync-loop-cycle persistence failed: {err}; details={details}");
+            return Err(format!(
+                "audit-chain write failed: {err}; details={details}"
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -563,7 +856,7 @@ pub fn spawn_daemon_sync_loop(
     config: &ConfigProfile,
     auth: &pcloud_auth::SessionManager,
     db_path: std::path::PathBuf,
-) -> (SyncLoopHandle, SharedAuthToken) {
+) -> Result<(SyncLoopHandle, SharedAuthToken), rusqlite::Error> {
     let token = shared_auth_token();
 
     // Seed the shared auth token with any existing auth state.
@@ -573,13 +866,15 @@ pub fn spawn_daemon_sync_loop(
         *guard = Some(existing.clone_secret());
     }
 
-    let runtime = RealSyncLoopRuntime::new(Arc::clone(&token), config, &db_path)
-        .expect("failed to open sync loop store connection");
+    let runtime = RealSyncLoopRuntime::new(Arc::clone(&token), config, &db_path).map_err(|e| {
+        log::error!("sync loop: failed to open store connection: {e}");
+        e
+    })?;
 
     let shared = Arc::new(SyncLoopShared::new(SyncLoopState::Idle));
     let handle = crate::sync_loop::spawn_sync_loop(runtime, config.sync_loop.clone(), shared);
 
-    (handle, token)
+    Ok((handle, token))
 }
 
 // ---------------------------------------------------------------------------
@@ -588,7 +883,20 @@ pub fn spawn_daemon_sync_loop(
 
 /// Walk a sync root's local directory tree and produce
 /// [`LocalScanEntry`] items.
-fn walk_local_tree(root: &SyncRootRecord) -> Result<Vec<LocalScanEntry>, String> {
+///
+/// Audit 04 C2: each emitted entry's `remote_parent_folder_id` is
+/// populated from the local metadata cache so that
+/// `resolve_upload_parent` can route nested files to the correct remote
+/// folder. The root's remote folder id is resolved from
+/// `SyncRootRecord::remote_path` via
+/// [`FileMetadataRepository::resolve_path`]; children inherit their
+/// parent's id by `(parent_id, leaf_name)` lookup. When the cache is
+/// cold we fall back to `None`, which is still correct upstream
+/// (the planner will requeue the file until the cache warms up).
+fn walk_local_tree(
+    root: &SyncRootRecord,
+    conn: &Connection,
+) -> Result<Vec<LocalScanEntry>, String> {
     let base = std::path::Path::new(&root.local_path);
     if !base.is_dir() {
         return Err(format!(
@@ -596,16 +904,57 @@ fn walk_local_tree(root: &SyncRootRecord) -> Result<Vec<LocalScanEntry>, String>
             root.local_path
         ));
     }
+    // Resolve the remote folder id of the sync root itself. Root folder
+    // (remote path "/" or empty) has id 0. If the cache does not yet
+    // know about `remote_path`, we propagate `None` so nested uploads
+    // defer until the next scan cycle instead of racing with a stale
+    // placeholder.
+    let root_remote_folder_id =
+        resolve_sync_root_remote_folder_id(conn, &root.remote_path).map_err(|e| e.to_string())?;
     let mut entries = Vec::new();
-    walk_recursive(base, base, root.sync_id, &mut entries)?;
+    // Track visited directory inodes to detect and break hard-link cycles
+    // before recursing into them (see walk_recursive for details).
+    let mut visited_inodes = std::collections::HashSet::new();
+    walk_recursive(
+        base,
+        base,
+        root.sync_id,
+        root_remote_folder_id,
+        conn,
+        &mut entries,
+        &mut visited_inodes,
+    )?;
     Ok(entries)
+}
+
+/// Resolve the remote folder id for a sync root's `remote_path` via the
+/// local metadata cache. Returns `Some(0)` for the root folder (path
+/// `"/"` or empty), `Some(id)` for a resolved subfolder, or `None` if
+/// the cache does not yet contain the path.
+fn resolve_sync_root_remote_folder_id(
+    conn: &Connection,
+    remote_path: &str,
+) -> Result<Option<pcloud_model::ids::RemoteFolderId>, rusqlite::Error> {
+    let trimmed = remote_path.trim();
+    if trimmed.is_empty() || trimmed == "/" {
+        return Ok(Some(pcloud_model::ids::RemoteFolderId::new(0)));
+    }
+    match FileMetadataRepository::resolve_path(conn, trimmed)? {
+        Some(record) if record.is_folder => {
+            Ok(Some(pcloud_model::ids::RemoteFolderId::new(record.file_id)))
+        }
+        _ => Ok(None),
+    }
 }
 
 fn walk_recursive(
     base: &std::path::Path,
     current: &std::path::Path,
     sync_id: SyncId,
+    parent_remote_folder_id: Option<pcloud_model::ids::RemoteFolderId>,
+    conn: &Connection,
     entries: &mut Vec<LocalScanEntry>,
+    visited_inodes: &mut std::collections::HashSet<u64>,
 ) -> Result<(), String> {
     let dir_entries = std::fs::read_dir(current)
         .map_err(|e| format!("failed to read {}: {e}", current.display()))?;
@@ -620,26 +969,153 @@ fn walk_recursive(
         if relative.is_empty() {
             continue;
         }
-        let file_type = entry
-            .file_type()
-            .map_err(|e| format!("file_type error: {e}"))?;
-        let entry_kind = if file_type.is_dir() {
+
+        // Use symlink_metadata so that we inspect the symlink node itself,
+        // not its target. This prevents both (a) following symlinks into
+        // directories outside the sync root and (b) participating in
+        // directory cycles via hard-linked dirs or circular symlinks.
+        let symlink_meta = std::fs::symlink_metadata(&path)
+            .map_err(|e| format!("symlink_metadata error for {}: {e}", path.display()))?;
+
+        if symlink_meta.is_symlink() {
+            // Skip symlinks. Following them can create cycles and expose
+            // paths outside the sync root. Matches C client behaviour.
+            log::debug!("walk_local_tree: skipping symlink {}", path.display());
+            continue;
+        }
+
+        let entry_kind = if symlink_meta.is_dir() {
             EntryKind::Folder
         } else {
             EntryKind::File
         };
+
+        let leaf_name = entry.file_name().to_string_lossy().into_owned();
+
         entries.push(LocalScanEntry {
             sync_id,
             path: relative,
             entry_kind,
             deleted: false,
-            remote_parent_folder_id: None,
+            remote_parent_folder_id: parent_remote_folder_id,
         });
-        if file_type.is_dir() {
-            walk_recursive(base, &path, sync_id, entries)?;
+
+        if symlink_meta.is_dir() {
+            // Guard against hard-linked directory cycles (unusual but valid
+            // on some Linux filesystems). Track visited inodes and skip any
+            // directory we have already entered.
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                let inode = symlink_meta.ino();
+                if !visited_inodes.insert(inode) {
+                    log::warn!(
+                        "walk_local_tree: inode cycle detected at {} (inode {}); skipping",
+                        path.display(),
+                        inode
+                    );
+                    continue;
+                }
+            }
+
+            // Resolve this directory's own remote folder id from the
+            // cache so its children can point at the correct parent.
+            // A cache miss leaves children with `None` — same
+            // best-effort contract as the sync root resolution above.
+            let child_parent = match parent_remote_folder_id {
+                Some(parent_id) => {
+                    match FileMetadataRepository::get_by_parent_and_name(
+                        conn,
+                        parent_id.get(),
+                        &leaf_name,
+                    )
+                    .map_err(|e| e.to_string())?
+                    {
+                        Some(record) if record.is_folder => {
+                            Some(pcloud_model::ids::RemoteFolderId::new(record.file_id))
+                        }
+                        _ => None,
+                    }
+                }
+                None => None,
+            };
+            walk_recursive(
+                base,
+                &path,
+                sync_id,
+                child_parent,
+                conn,
+                entries,
+                visited_inodes,
+            )?;
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Helper: commit a diff batch atomically (Audit 04 C1 + C3)
+// ---------------------------------------------------------------------------
+
+/// Commit the effects of a successfully-ingested diff batch into the
+/// store as a single SQLite transaction.
+///
+/// This function MUST be called **only after**
+/// [`pcloud_engine::EngineShell::ingest_remote_diff_filtered`] returns
+/// `Ok`. That ordering is the core of Audit 04 C3's at-least-once
+/// guarantee: if the engine rejects the batch (or if this transaction
+/// fails for any reason), the persisted cursor stays at `previous_cursor`
+/// and the same batch is refetched on the next cycle.
+///
+/// Audit 04 C1: we intentionally do **not** upsert `file_metadata` rows
+/// from diff entries because `RemoteDiffEntry` lacks `size`, `hash`,
+/// `modified`, `created`, and `parent_folder_id`. The old code fabricated
+/// zeros for all of these, which poisoned
+/// [`FileMetadataRepository::resolve_path`] / stat-cache callers with
+/// plausibly-typed but semantically-wrong metadata. Metadata upserts
+/// must originate from call sites that have a full stat payload (e.g.
+/// `listfolder` responses), not from the diff loop.
+fn commit_diff_batch(
+    conn: &Connection,
+    sync_id: SyncId,
+    previous_cursor: u64,
+    batch: &pcloud_engine::diff_poller::RemoteDiffBatch,
+) -> Result<(), rusqlite::Error> {
+    // Use FULL synchronous mode for cursor writes. The connection-level
+    // default is NORMAL (good for read-heavy workloads), but the diff
+    // cursor is the at-least-once bookmark: losing it after an OS crash
+    // forces a full re-sync. FULL flushes to the OS page cache before
+    // returning, providing the same durability guarantees as `fsync`.
+    // The per-transaction scope means only cursor writes pay the extra
+    // latency; all other reads in the same connection stay at NORMAL.
+    conn.pragma_update(None, "synchronous", "FULL")?;
+    let tx = conn.unchecked_transaction()?;
+    for entry in &batch.entries {
+        if entry.change_kind != pcloud_model::sync::ChangeKind::Delete {
+            continue;
+        }
+        let is_folder = entry.entry_kind == EntryKind::Folder;
+        let file_id = if is_folder {
+            entry.remote_folder_id.map(|id| id.get())
+        } else {
+            entry.remote_file_id.map(|id| id.get())
+        };
+        if let Some(file_id) = file_id {
+            FileMetadataRepository::delete(&tx, file_id)?;
+        }
+    }
+    if batch.cursor > previous_cursor {
+        let now_unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0);
+        DiffStateRepository::save(&tx, sync_id, batch.cursor, now_unix)?;
+    }
+    let result = tx.commit();
+    // Restore NORMAL synchronous mode for subsequent reads so we don't
+    // impose FULL-sync cost on all future operations in this connection.
+    let _ = conn.pragma_update(None, "synchronous", "NORMAL");
+    result
 }
 
 // ---------------------------------------------------------------------------
@@ -663,21 +1139,99 @@ fn resolve_upload_parent(
 }
 
 // ---------------------------------------------------------------------------
-// Helper: read upload payload from filesystem or cache
+// Helper: derive an on-disk staging path for a streamed download
+// (bd-pcloud-rs-s1p.87).
 // ---------------------------------------------------------------------------
 
-fn read_upload_payload(
-    filesystem: &mut FilesystemShell,
+/// Build a safe, collision-resistant on-disk path inside `staging_dir`
+/// for the streamed download of `file_id` at logical `path`. The
+/// filename is derived from `file_id` and a SHA-256 digest of `path`
+/// so two different logical paths sharing the same basename cannot
+/// collide and path separators / suspicious components never leak into
+/// the filesystem.
+fn staged_download_path(staging_dir: &Path, file_id: u64, path: &str) -> PathBuf {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(path.as_bytes());
+    let digest = hasher.finalize();
+    // 16 hex chars is ample for a collision-resistant tag here.
+    let mut tag = String::with_capacity(32);
+    for byte in &digest[..8] {
+        use std::fmt::Write as _;
+        let _ = write!(&mut tag, "{byte:02x}");
+    }
+    staging_dir.join(format!("f{file_id}-{tag}.part"))
+}
+
+// ---------------------------------------------------------------------------
+// Helpers: resolve upload payload from filesystem or cache
+// ---------------------------------------------------------------------------
+
+/// Resolve the length of the staged upload payload for `path`, trying
+/// the filesystem shell's staging area first and falling back to the
+/// cache's staging buffer. Returns `None` when neither source carries
+/// a buffer for `path`.
+///
+/// Bead `pcloud-rs-s1p.88`: this replaces the previous
+/// `read_upload_payload` helper, which called
+/// `read_staged_path(0, usize::MAX)` and cloned the entire payload
+/// into a new `Vec` (and, on the cache fallback, cloned it a second
+/// time via `.to_vec()`). For large files this peaked at roughly
+/// 3× the file size in heap usage. The new API is zero-copy: both
+/// the length probe and the subsequent borrow of the payload bytes
+/// reuse the existing staging buffer in place.
+fn resolve_upload_payload_len(
+    filesystem: &FilesystemShell,
     cache: &CacheShell,
     path: &str,
-) -> Result<Vec<u8>, pcloud_engine::recovery::RecoveryFailure> {
-    if let Ok(result) = filesystem.read_staged_path(path, 0, usize::MAX) {
-        return Ok(result.bytes);
+) -> Option<usize> {
+    if let Some(len) = filesystem.staged_len(path) {
+        return Some(len);
     }
-    if let Some(bytes) = cache.staging.get(path) {
-        return Ok(bytes.to_vec());
+    cache.staging.get(path).map(<[u8]>::len)
+}
+
+/// Zero-copy borrow of the staged upload payload for `path`, trying
+/// the filesystem shell's staging area first and falling back to the
+/// cache's staging buffer. Returns `None` if the buffer was evicted
+/// between the length probe and the borrow.
+fn borrow_upload_payload<'a>(
+    filesystem: &'a FilesystemShell,
+    cache: &'a CacheShell,
+    path: &str,
+) -> Option<&'a [u8]> {
+    if let Some(bytes) = filesystem.staged_bytes(path) {
+        return Some(bytes);
     }
-    Err(pcloud_engine::recovery::RecoveryFailure::InvalidPath)
+    cache.staging.get(path)
+}
+
+/// Iterate the staged upload payload for `path` in fixed-size chunks
+/// without allocating. Each yielded slice borrows directly from the
+/// staging buffer. `chunk_size == 0` yields a single whole-buffer
+/// chunk.
+///
+/// Bead `pcloud-rs-s1p.88`: used by the zero-copy upload-payload
+/// regression test (`read_upload_payload_zero_copy_for_large_files`)
+/// to prove that the sync loop can stream a 50 MiB staged file in
+/// 4 MiB chunks without allocating the file again on the heap.
+#[cfg_attr(not(test), allow(dead_code))]
+fn read_upload_payload_chunks<'a>(
+    filesystem: &'a FilesystemShell,
+    cache: &'a CacheShell,
+    path: &str,
+    chunk_size: usize,
+) -> Option<std::slice::Chunks<'a, u8>> {
+    if let Some(chunks) = filesystem.staged_chunks(path, chunk_size) {
+        return Some(chunks);
+    }
+    let bytes = cache.staging.get(path)?;
+    let cs = if chunk_size == 0 {
+        bytes.len().max(1)
+    } else {
+        chunk_size
+    };
+    Some(bytes.chunks(cs))
 }
 
 // ---------------------------------------------------------------------------
@@ -691,6 +1245,117 @@ mod tests {
     use pcloud_store::bootstrap_profile;
     use std::sync::Arc;
     use tempfile::TempDir;
+
+    /// Bead pcloud-rs-s1p.88: verify that the sync-loop upload-payload
+    /// helpers do not allocate a whole-file `Vec` for large staged
+    /// buffers, and that the chunk iterator yields borrowed slices
+    /// bounded by the requested chunk size.
+    ///
+    /// The previous `read_upload_payload` implementation called
+    /// `read_staged_path(0, usize::MAX)` which produced a fresh
+    /// `ReadResult.bytes` `Vec` the size of the whole file, plus a
+    /// second `to_vec()` clone on the cache fallback. For a 50 MiB
+    /// file that was ~100 MiB of transient heap use per upload — the
+    /// exact blow-up called out in audit-04 §4-opus L-4. The new
+    /// helpers return a borrowed `&[u8]` (no allocation) and a 4 MiB
+    /// chunk iterator over the same buffer (no per-chunk allocation).
+    #[test]
+    fn read_upload_payload_zero_copy_for_large_files() {
+        const FIFTY_MIB: usize = 50 * 1024 * 1024;
+        const CHUNK: usize = 4 * 1024 * 1024;
+
+        let mut fs = FilesystemShell::default();
+        let cache = CacheShell::default();
+        fs.seed_staged_file("big.bin", vec![0xABu8; FIFTY_MIB]);
+
+        // Length probe is zero-copy.
+        let len = resolve_upload_payload_len(&fs, &cache, "big.bin")
+            .expect("staged payload should be visible");
+        assert_eq!(len, FIFTY_MIB);
+
+        // Borrow returns a zero-copy reference to the exact staging
+        // buffer — proven by pointer identity. A `Vec` clone would
+        // have a different backing address.
+        let borrowed = borrow_upload_payload(&fs, &cache, "big.bin")
+            .expect("staged payload should borrow");
+        assert_eq!(borrowed.len(), FIFTY_MIB);
+        let staging_ptr = fs.staged_bytes("big.bin").unwrap().as_ptr();
+        assert!(
+            std::ptr::eq(borrowed.as_ptr(), staging_ptr),
+            "borrow_upload_payload must return a zero-copy reference to the staging buffer"
+        );
+
+        // Chunk iterator yields 4 MiB slices that alias the staging
+        // buffer — no per-chunk allocation, and the largest slice
+        // length is exactly CHUNK (the pCloud upload_write
+        // granularity).
+        let chunks = read_upload_payload_chunks(&fs, &cache, "big.bin", CHUNK)
+            .expect("chunk iterator should be present");
+        let chunks: Vec<&[u8]> = chunks.collect();
+        // 50 MiB / 4 MiB = 12 full chunks + 1 remainder of 2 MiB.
+        assert_eq!(chunks.len(), 13);
+        for chunk in &chunks[..12] {
+            assert_eq!(chunk.len(), CHUNK);
+        }
+        assert_eq!(chunks[12].len(), 2 * 1024 * 1024);
+
+        // All chunks lie inside the original staging buffer — proves
+        // the iterator is a view, not a copy.
+        let base = staging_ptr as usize;
+        let end = base + FIFTY_MIB;
+        for chunk in &chunks {
+            let cp = chunk.as_ptr() as usize;
+            assert!(
+                cp >= base && cp + chunk.len() <= end,
+                "chunk at {cp:#x} len={} escaped staging buffer [{base:#x}, {end:#x})",
+                chunk.len()
+            );
+        }
+
+        // No chunk ever exceeds the requested chunk size.
+        assert!(chunks.iter().all(|c| c.len() <= CHUNK));
+    }
+
+    /// Sanity: the cache-fallback path is also zero-copy.
+    #[test]
+    fn read_upload_payload_cache_fallback_is_zero_copy() {
+        const SIZE: usize = 10 * 1024 * 1024;
+        const CHUNK: usize = 4 * 1024 * 1024;
+
+        let fs = FilesystemShell::default();
+        let mut cache = CacheShell::default();
+        cache.staging.stage("cache-only.bin", vec![0x11u8; SIZE]);
+
+        assert_eq!(
+            resolve_upload_payload_len(&fs, &cache, "cache-only.bin"),
+            Some(SIZE)
+        );
+        let borrowed =
+            borrow_upload_payload(&fs, &cache, "cache-only.bin").expect("cache borrow");
+        assert_eq!(borrowed.len(), SIZE);
+
+        let cache_ptr = cache.staging.get("cache-only.bin").unwrap().as_ptr();
+        assert!(std::ptr::eq(borrowed.as_ptr(), cache_ptr));
+
+        let chunks: Vec<&[u8]> =
+            read_upload_payload_chunks(&fs, &cache, "cache-only.bin", CHUNK)
+                .unwrap()
+                .collect();
+        // 10 MiB / 4 MiB = 2 full + 1 remainder of 2 MiB.
+        assert_eq!(chunks.len(), 3);
+        assert!(chunks.iter().all(|c| c.len() <= CHUNK));
+    }
+
+    /// Sanity: missing payload produces `None` (mapped by the caller
+    /// to `RecoveryFailure::InvalidPath`).
+    #[test]
+    fn read_upload_payload_returns_none_when_absent() {
+        let fs = FilesystemShell::default();
+        let cache = CacheShell::default();
+        assert!(resolve_upload_payload_len(&fs, &cache, "missing.bin").is_none());
+        assert!(borrow_upload_payload(&fs, &cache, "missing.bin").is_none());
+        assert!(read_upload_payload_chunks(&fs, &cache, "missing.bin", 4 * 1024 * 1024).is_none());
+    }
 
     /// Verify that `RealSyncLoopRuntime` implements `SyncLoopRuntime`
     /// and can be constructed with dev-mode backends.
@@ -742,7 +1407,11 @@ mod tests {
             sync_type: SyncType::Full,
         };
 
-        let entries = walk_local_tree(&root).unwrap();
+        let db_path = tmp.path().join("walk.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let conn = Connection::open(&db_path).unwrap();
+
+        let entries = walk_local_tree(&root, &conn).unwrap();
 
         // Should find: file1.txt, subdir, subdir/file2.txt
         assert_eq!(entries.len(), 3);
@@ -761,6 +1430,11 @@ mod tests {
     /// Verify walk_local_tree returns an error for a non-existent path.
     #[test]
     fn walk_local_tree_returns_error_for_missing_path() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("missing.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let conn = Connection::open(&db_path).unwrap();
+
         let root = SyncRootRecord {
             sync_id: SyncId::new(1),
             local_path: "/nonexistent/path/that/should/not/exist".to_owned(),
@@ -768,7 +1442,86 @@ mod tests {
             paused: false,
             sync_type: SyncType::Full,
         };
-        assert!(walk_local_tree(&root).is_err());
+        assert!(walk_local_tree(&root, &conn).is_err());
+    }
+
+    /// Audit 04 C2 regression: nested files under a sync root that
+    /// resolves in the local metadata cache MUST carry the parent's
+    /// `remote_parent_folder_id` so `resolve_upload_parent` succeeds.
+    #[test]
+    fn walk_local_tree_threads_remote_parent_folder_id() {
+        use pcloud_store::repositories::file_metadata::FileMetadataRecord;
+
+        let tmp = TempDir::new().unwrap();
+        let root_path = tmp.path().join("sync-root");
+        std::fs::create_dir_all(root_path.join("nested")).unwrap();
+        std::fs::write(root_path.join("top.txt"), b"top").unwrap();
+        std::fs::write(root_path.join("nested/inner.txt"), b"inner").unwrap();
+
+        let db_path = tmp.path().join("thread.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let conn = Connection::open(&db_path).unwrap();
+
+        // Seed cache: /Remote/42 (folder id 1000) contains folder
+        // "nested" (folder id 2000).
+        FileMetadataRepository::upsert(
+            &conn,
+            &FileMetadataRecord {
+                file_id: 1000,
+                parent_folder_id: 0,
+                name: "Remote".to_owned(),
+                size: 0,
+                hash: String::new(),
+                modified: 0,
+                created: 0,
+                is_folder: true,
+            },
+        )
+        .unwrap();
+        // Note: resolve_path splits on '/', so we also need
+        // /Remote/42 to resolve — but for this test we use a single-
+        // level remote_path.
+        let root = SyncRootRecord {
+            sync_id: SyncId::new(42),
+            local_path: root_path.to_string_lossy().to_string(),
+            remote_path: "/Remote".to_owned(),
+            paused: false,
+            sync_type: SyncType::Full,
+        };
+        FileMetadataRepository::upsert(
+            &conn,
+            &FileMetadataRecord {
+                file_id: 2000,
+                parent_folder_id: 1000,
+                name: "nested".to_owned(),
+                size: 0,
+                hash: String::new(),
+                modified: 0,
+                created: 0,
+                is_folder: true,
+            },
+        )
+        .unwrap();
+
+        let entries = walk_local_tree(&root, &conn).unwrap();
+        // top-level file should carry parent id 1000
+        let top = entries.iter().find(|e| e.path == "top.txt").unwrap();
+        assert_eq!(
+            top.remote_parent_folder_id
+                .map(pcloud_model::ids::RemoteFolderId::get),
+            Some(1000)
+        );
+        // nested file should carry parent id 2000 (the "nested" folder)
+        let inner = entries
+            .iter()
+            .find(|e| e.path == "nested/inner.txt")
+            .unwrap();
+        assert_eq!(
+            inner
+                .remote_parent_folder_id
+                .map(pcloud_model::ids::RemoteFolderId::get),
+            Some(2000)
+        );
     }
 
     /// Verify that `resolve_upload_parent` returns 0 for root-level files
@@ -784,6 +1537,162 @@ mod tests {
             )
             .unwrap(),
             17
+        );
+    }
+
+    /// Audit 04 C3 regression: the diff cursor MUST NOT advance if the
+    /// engine ingestion step is skipped (simulating a crash between
+    /// fetch and commit). Calling only `commit_diff_batch` on a batch
+    /// with `cursor > previous_cursor` is legitimate, but if the caller
+    /// never reaches that point (crash), the cursor stays at
+    /// `previous_cursor` on restart and the batch is refetched.
+    #[test]
+    fn sync_loop_crash_does_not_advance_cursor() {
+        use pcloud_engine::diff_poller::{RemoteDiffBatch, RemoteDiffEntry};
+        use pcloud_model::ids::{RemoteFileId, SyncId};
+
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("cursor.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let conn = Connection::open(&db_path).unwrap();
+
+        let sync_id = SyncId::new(7);
+        // Seed cursor at 100.
+        DiffStateRepository::save(&conn, sync_id, 100, 1_700_000_000).unwrap();
+
+        // Construct a batch that would advance the cursor to 200.
+        let batch = RemoteDiffBatch {
+            sync_id,
+            cursor: 200,
+            has_more: false,
+            entries: vec![RemoteDiffEntry {
+                path: "victim.txt".to_owned(),
+                entry_kind: EntryKind::File,
+                change_kind: pcloud_model::sync::ChangeKind::Delete,
+                remote_file_id: Some(RemoteFileId::new(42)),
+                remote_folder_id: None,
+                event: None,
+            }],
+        };
+
+        // "Crash" between fetch and commit: never call commit_diff_batch.
+        // Cursor must remain at 100.
+        let cursor_after_crash = DiffStateRepository::load(&conn, sync_id)
+            .unwrap()
+            .map(|r| r.diffid)
+            .unwrap();
+        assert_eq!(
+            cursor_after_crash, 100,
+            "cursor MUST NOT advance before ingest + commit succeed"
+        );
+
+        // Now actually commit. Cursor advances; delete is applied.
+        commit_diff_batch(&conn, sync_id, 100, &batch).unwrap();
+        let cursor_after_commit = DiffStateRepository::load(&conn, sync_id)
+            .unwrap()
+            .map(|r| r.diffid)
+            .unwrap();
+        assert_eq!(cursor_after_commit, 200);
+    }
+
+    /// Audit 04 C1 regression: a diff batch containing only `Upsert`
+    /// entries (no stat payload) MUST NOT write any rows into
+    /// `file_metadata`. Previously the diff loop fabricated
+    /// size/hash/modified/created=0 and poisoned the stat cache.
+    #[test]
+    fn commit_diff_batch_does_not_fabricate_upsert_metadata() {
+        use pcloud_engine::diff_poller::{RemoteDiffBatch, RemoteDiffEntry};
+        use pcloud_model::ids::{RemoteFileId, SyncId};
+        use pcloud_store::repositories::file_metadata::FileMetadataRepository;
+
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("no_fabricate.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let conn = Connection::open(&db_path).unwrap();
+
+        let sync_id = SyncId::new(3);
+        let batch = RemoteDiffBatch {
+            sync_id,
+            cursor: 5,
+            has_more: false,
+            entries: vec![RemoteDiffEntry {
+                path: "stat-less.txt".to_owned(),
+                entry_kind: EntryKind::File,
+                change_kind: pcloud_model::sync::ChangeKind::Upsert,
+                remote_file_id: Some(RemoteFileId::new(777)),
+                remote_folder_id: None,
+                event: None,
+            }],
+        };
+
+        assert_eq!(FileMetadataRepository::count(&conn).unwrap(), 0);
+        commit_diff_batch(&conn, sync_id, 0, &batch).unwrap();
+        // Cursor must have advanced...
+        assert_eq!(
+            DiffStateRepository::load(&conn, sync_id)
+                .unwrap()
+                .unwrap()
+                .diffid,
+            5
+        );
+        // ...but NO file_metadata row was written.
+        assert_eq!(FileMetadataRepository::count(&conn).unwrap(), 0);
+        assert!(
+            FileMetadataRepository::get_by_id(&conn, 777)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    /// `commit_diff_batch` applies delete entries to the metadata cache.
+    #[test]
+    fn commit_diff_batch_applies_deletes() {
+        use pcloud_engine::diff_poller::{RemoteDiffBatch, RemoteDiffEntry};
+        use pcloud_model::ids::{RemoteFileId, SyncId};
+        use pcloud_store::repositories::file_metadata::{
+            FileMetadataRecord, FileMetadataRepository,
+        };
+
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("deletes.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let conn = Connection::open(&db_path).unwrap();
+
+        // Seed a real metadata row (from some prior listfolder).
+        FileMetadataRepository::upsert(
+            &conn,
+            &FileMetadataRecord {
+                file_id: 111,
+                parent_folder_id: 0,
+                name: "doomed.txt".to_owned(),
+                size: 42,
+                hash: "deadbeef".to_owned(),
+                modified: 1,
+                created: 1,
+                is_folder: false,
+            },
+        )
+        .unwrap();
+
+        let batch = RemoteDiffBatch {
+            sync_id: SyncId::new(1),
+            cursor: 9,
+            has_more: false,
+            entries: vec![RemoteDiffEntry {
+                path: "doomed.txt".to_owned(),
+                entry_kind: EntryKind::File,
+                change_kind: pcloud_model::sync::ChangeKind::Delete,
+                remote_file_id: Some(RemoteFileId::new(111)),
+                remote_folder_id: None,
+                event: None,
+            }],
+        };
+
+        commit_diff_batch(&conn, SyncId::new(1), 0, &batch).unwrap();
+        assert!(
+            FileMetadataRepository::get_by_id(&conn, 111)
+                .unwrap()
+                .is_none()
         );
     }
 

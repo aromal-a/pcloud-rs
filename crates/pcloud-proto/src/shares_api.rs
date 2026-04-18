@@ -104,7 +104,7 @@ where
         incoming: bool,
     ) -> Result<Vec<ShareRequestEntry>, SharesApiError<T::Error>> {
         let req = ListShareRequestsRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             incoming,
         };
         let response = self
@@ -141,7 +141,7 @@ where
         incoming: bool,
     ) -> Result<Vec<ShareEntry>, SharesApiError<T::Error>> {
         let req = ListSharesRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             incoming,
         };
         let response = self
@@ -183,7 +183,7 @@ where
         hint: Option<String>,
     ) -> Result<ShareMutationResult, SharesApiError<T::Error>> {
         let req = ShareFolderRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             folder_id,
             name: name.into(),
             mail: mail.into(),
@@ -218,7 +218,7 @@ where
         share_request_id: u64,
     ) -> Result<(), SharesApiError<T::Error>> {
         let req = CancelShareRequestRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             share_request_id,
         };
         self.execute_unit(&req, "cancelsharerequest")
@@ -235,7 +235,7 @@ where
         share_request_id: u64,
     ) -> Result<(), SharesApiError<T::Error>> {
         let req = DeclineShareRequestRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             share_request_id,
         };
         self.execute_unit(&req, "declineshare")
@@ -254,7 +254,7 @@ where
         name: Option<String>,
     ) -> Result<(), SharesApiError<T::Error>> {
         let req = AcceptShareRequestRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             share_request_id,
             to_folder_id,
             name,
@@ -273,7 +273,7 @@ where
         share_id: u64,
     ) -> Result<(), SharesApiError<T::Error>> {
         let req = RemoveShareRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             share_id,
         };
         self.execute_unit(&req, "removeshare")
@@ -291,7 +291,7 @@ where
         permissions: SharePermissions,
     ) -> Result<(), SharesApiError<T::Error>> {
         let req = ModifyShareRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             share_id,
             permissions_bits: permissions.to_bits(),
         };
@@ -310,7 +310,7 @@ where
         team_share_ids: Vec<u64>,
     ) -> Result<(), SharesApiError<T::Error>> {
         let req = AccountStopShareRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             user_share_ids,
             team_share_ids,
         };
@@ -329,7 +329,7 @@ where
         team_shares: Vec<(u64, SharePermissions)>,
     ) -> Result<(), SharesApiError<T::Error>> {
         let req = AccountModifyShareRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             user_shares: user_shares
                 .into_iter()
                 .map(|(id, p)| (id, p.to_bits()))
@@ -358,7 +358,7 @@ where
         hint: Option<String>,
     ) -> Result<ShareMutationResult, SharesApiError<T::Error>> {
         let req = AccountTeamShareRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             folder_id,
             name: name.into(),
             team_id,
@@ -402,7 +402,7 @@ where
         signature_b64: String,
     ) -> Result<ShareMutationResult, SharesApiError<T::Error>> {
         let req = ShareFolderRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             folder_id,
             name: name.into(),
             mail: mail.into(),
@@ -442,7 +442,7 @@ where
         signature_b64: String,
     ) -> Result<ShareMutationResult, SharesApiError<T::Error>> {
         let req = AccountTeamShareRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             folder_id,
             name: name.into(),
             team_id,
@@ -475,7 +475,7 @@ where
         auth_token: impl Into<String>,
     ) -> Result<Vec<ContactEntry>, SharesApiError<T::Error>> {
         let req = ContactListRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
         };
         let response = self
             .transport

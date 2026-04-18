@@ -55,6 +55,15 @@ pub struct SetupFingerprint(pub [u8; FINGERPRINT_LEN]);
 pub struct KeyManager {
     /// Time-to-live (seconds) for the in-memory key cache after the last
     /// successful authenticated operation. Non-secret.
+    ///
+    /// **Current status: dead policy state (audit-04 LOW §3-opus L-2).**
+    /// The field is serialised for forward-compatibility (operators may set it
+    /// in a profile) but the daemon does not yet start an auto-stop timer keyed
+    /// on this value. To wire it: on a successful `start()` the daemon should
+    /// spawn a `tokio::time::sleep(Duration::from_secs(cache_ttl_secs))`
+    /// task that calls `CryptoShell::stop()` on wake. Until that lands, the
+    /// only way to evict the in-memory key is an explicit `stop()` or
+    /// daemon shutdown.
     pub cache_ttl_secs: u64,
     /// Per-profile Argon2id salt (16 bytes, OS-random). Non-secret, but must
     /// remain stable once `setup()` has recorded a fingerprint or the fingerprint
@@ -86,6 +95,9 @@ pub const PRIV_KEY_FLAG_TEMP_PASS: u64 = 1;
 impl Default for KeyManager {
     fn default() -> Self {
         let mut derivation_salt = vec![0u8; DERIVATION_SALT_LEN];
+        // INVARIANT: getrandom is only expected to fail on platforms without
+        // an OS RNG (e.g. embedded bare-metal). On all supported Linux/macOS/
+        // Windows targets the kernel RNG is always available at process start.
         getrandom(&mut derivation_salt)
             .expect("OS randomness should be available for crypto salt generation");
 
@@ -177,6 +189,9 @@ impl KeyManager {
     #[must_use]
     pub fn fingerprint_for(key: &SecretBytes) -> SetupFingerprint {
         const LABEL: &[u8] = b"pcloud-crypto/fingerprint/v1";
+        // INVARIANT: HMAC-SHA256 accepts keys of any non-zero length per RFC 2104;
+        // `new_from_slice` only fails for a zero-length key, which `SecretBytes`
+        // never produces (callers always derive from a 32-byte master key).
         let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(key.expose_secret())
             .expect("HMAC-SHA256 accepts any key length");
         mac.update(LABEL);

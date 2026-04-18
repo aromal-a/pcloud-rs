@@ -37,10 +37,19 @@ use std::sync::Arc;
 
 use pcloud_config::{Environment, resilience::ResiliencePolicy};
 use pcloud_proto::resilient_transport::{
-    RateLimitMode, ResilientError, ResilientTransport, ThreadSleepWaiter, default_classifier,
+    RateLimitMode, ResilientError, ResilientTransport, ThreadSleepWaiter,
+    transport_error_classifier,
 };
 use pcloud_proto::transport::{BinaryApiTransport, TransportError};
-use pcloud_resilience::{RateLimitError, SystemClock};
+use pcloud_resilience::{GlobalRetryBudget, RateLimitError, SystemClock};
+
+/// Default capacity for the shared [`GlobalRetryBudget`] in production.
+///
+/// 100 tokens means at most 100 in-flight retry attempts across all
+/// concurrent operations before the budget is exhausted. The budget
+/// replenishes one token per successful call, so it tracks an "excess
+/// retry" count rather than a hard ceiling on total retries.
+const DEFAULT_RETRY_BUDGET_CAPACITY: u32 = 100;
 
 /// Decision produced by the factory, inspectable by tests.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,20 +74,53 @@ impl WrapDecision {
 /// The factory is cheaply cloneable and `Send + Sync`: it carries a copy
 /// of the [`ResiliencePolicy`] and the target [`Environment`]. Actual
 /// wrapping happens lazily when a backend hands a transport in.
+///
+/// ## Shared retry budget
+///
+/// A single [`GlobalRetryBudget`] is shared across **all** transports
+/// created by this factory. Cloning the factory clones the `Arc`, not
+/// the budget, so the token pool is truly shared. This prevents retry
+/// storms: when many requests fail simultaneously their combined retries
+/// cannot exceed the configured capacity regardless of how many
+/// concurrent backends are retrying.
 #[derive(Debug, Clone)]
 pub struct TransportFactory {
     environment: Environment,
     policy: ResiliencePolicy,
+    /// Shared global retry budget.  `None` in dev/test environments
+    /// where the bare (unwrapped) transport path is used.
+    budget: Option<Arc<GlobalRetryBudget>>,
 }
 
 impl TransportFactory {
     /// Build a factory for the given environment and resilience policy.
+    ///
+    /// In production a [`GlobalRetryBudget`] with
+    /// [`DEFAULT_RETRY_BUDGET_CAPACITY`] tokens is created and shared
+    /// across all transports produced by this factory. In dev/test the
+    /// budget is `None` because no `ResilientTransport` wrapper is created.
     #[must_use]
     pub fn new(environment: Environment, policy: ResiliencePolicy) -> Self {
+        let budget = match environment {
+            Environment::Production => Some(Arc::new(GlobalRetryBudget::new(
+                DEFAULT_RETRY_BUDGET_CAPACITY,
+            ))),
+            Environment::Development | Environment::Test => None,
+        };
         Self {
             environment,
             policy,
+            budget,
         }
+    }
+
+    /// Returns the shared [`GlobalRetryBudget`] for this factory, if any.
+    ///
+    /// Production factories always have a budget; dev/test factories
+    /// return `None`.
+    #[must_use]
+    pub fn budget(&self) -> Option<Arc<GlobalRetryBudget>> {
+        self.budget.clone()
     }
 
     /// The active wrap decision for this factory.
@@ -103,6 +145,9 @@ impl TransportFactory {
     /// as required for enterprise-grade operation. Tests that need
     /// deterministic timing should construct a `ResilientTransport`
     /// directly with a `ManualClock`.
+    ///
+    /// The same [`GlobalRetryBudget`] `Arc` is passed to every transport
+    /// produced by this factory — the token pool is shared, not per-transport.
     pub fn wrap_binary(
         &self,
         inner: BinaryApiTransport,
@@ -110,13 +155,19 @@ impl TransportFactory {
         match self.decision() {
             WrapDecision::Bare => Ok(None),
             WrapDecision::Wrap => {
-                let wrapped = ResilientTransport::new(
+                // SAFETY: production path always has a budget (see `new`).
+                let budget = self
+                    .budget
+                    .clone()
+                    .expect("production TransportFactory must have a GlobalRetryBudget");
+                let wrapped = ResilientTransport::with_budget(
                     inner,
                     &self.policy,
                     Arc::new(SystemClock),
                     Arc::new(ThreadSleepWaiter),
-                    default_classifier::<TransportError>(),
+                    transport_error_classifier(),
                     RateLimitMode::Wait,
+                    budget,
                 )?;
                 Ok(Some(wrapped))
             }
@@ -135,13 +186,12 @@ mod tests {
     use std::time::Duration;
 
     fn dummy_transport() -> BinaryApiTransport {
-        BinaryApiTransport::new(TransportConfig {
-            host: "127.0.0.1".to_string(),
-            port: 65535,
-            server_name: "localhost".to_string(),
-            use_tls: false,
-            connect_timeout: Duration::from_millis(10),
-            read_timeout: Duration::from_millis(10),
+        BinaryApiTransport::new({
+            let mut cfg = TransportConfig::dev_plaintext("127.0.0.1", 65535, "localhost");
+            cfg.connect_timeout = Duration::from_millis(10);
+            cfg.read_timeout = Duration::from_millis(10);
+            cfg.total_request_timeout = Duration::from_secs(30);
+            cfg
         })
     }
 
@@ -183,5 +233,33 @@ mod tests {
         let f = TransportFactory::new(Environment::Test, ResiliencePolicy::secure_defaults());
         let wrapped = f.wrap_binary(dummy_transport()).expect("policy is valid");
         assert!(wrapped.is_none());
+    }
+
+    #[test]
+    fn production_factory_has_shared_budget() {
+        let f = TransportFactory::new(Environment::Production, ResiliencePolicy::secure_defaults());
+        // Production factory must expose a budget.
+        let b = f
+            .budget()
+            .expect("production factory must have a GlobalRetryBudget");
+        assert_eq!(b.capacity(), DEFAULT_RETRY_BUDGET_CAPACITY);
+        // Cloning the factory shares the same Arc — pointer equality.
+        let f2 = f.clone();
+        let b2 = f2.budget().unwrap();
+        assert!(
+            Arc::ptr_eq(&b, &b2),
+            "cloned factory must share the same budget Arc"
+        );
+    }
+
+    #[test]
+    fn dev_and_test_factories_have_no_budget() {
+        for env in [Environment::Development, Environment::Test] {
+            let f = TransportFactory::new(env, ResiliencePolicy::secure_defaults());
+            assert!(
+                f.budget().is_none(),
+                "non-production factory must not create a GlobalRetryBudget"
+            );
+        }
     }
 }

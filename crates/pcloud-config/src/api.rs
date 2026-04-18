@@ -175,18 +175,38 @@ impl ApiEndpoint {
     /// Empty/whitespace-only strings are ignored. A port suffix is
     /// accepted only when it parses as `u16`; otherwise the port is
     /// preserved and only the host/SNI fields are updated.
-    pub fn apply_api_server_hint(&mut self, api_server: &str) {
+    ///
+    /// **Security:** unknown hosts (not ending in `.pcloud.com` or
+    /// `.pcloud.link`) are rejected to prevent a compromised preferences
+    /// store from redirecting traffic to an attacker-controlled server.
+    /// Returns `Err` when the host fails the allowlist check.
+    pub fn apply_api_server_hint(&mut self, api_server: &str) -> Result<(), &'static str> {
         if api_server.trim().is_empty() {
-            return;
+            return Ok(());
         }
 
         let (host, port) = parse_api_server_hint(api_server);
+        if !is_known_safe_host(&host) {
+            return Err("api server hint rejected: host is not a known pCloud domain");
+        }
         self.host = host.clone();
         self.server_name = host;
         if let Some(port) = port {
             self.port = port;
         }
+        Ok(())
     }
+}
+
+/// Returns `true` when `host` is within a known-safe pCloud domain.
+///
+/// Only `.pcloud.com` and `.pcloud.link` subdomains are trusted as API
+/// server endpoints. This is deliberately restrictive — operators that
+/// need a custom endpoint must use the explicit config override path, not
+/// the persisted preferences hint.
+#[must_use]
+pub fn is_known_safe_host(host: &str) -> bool {
+    host.ends_with(".pcloud.com") || host.ends_with(".pcloud.link")
 }
 
 impl ApiMode {
@@ -221,11 +241,34 @@ mod tests {
     #[test]
     fn apply_api_server_hint_updates_endpoint() {
         let mut endpoint = ApiEndpoint::secure_defaults(Environment::Production);
-        endpoint.apply_api_server_hint("bineapi-eu.pcloud.com:8443");
+        endpoint
+            .apply_api_server_hint("bineapi-eu.pcloud.com:8443")
+            .expect("known pCloud host should be accepted");
 
         assert_eq!(endpoint.host, "bineapi-eu.pcloud.com");
         assert_eq!(endpoint.server_name, "bineapi-eu.pcloud.com");
         assert_eq!(endpoint.port, 8443);
+    }
+
+    #[test]
+    fn apply_api_server_hint_rejects_unknown_host() {
+        let mut endpoint = ApiEndpoint::secure_defaults(Environment::Production);
+        let result = endpoint.apply_api_server_hint("evil.example.com:443");
+        assert!(
+            result.is_err(),
+            "unknown host must be rejected to prevent SSRF/redirect"
+        );
+        // Endpoint must be unchanged after rejection.
+        assert_eq!(endpoint.host, "bineapi.pcloud.com");
+    }
+
+    #[test]
+    fn apply_api_server_hint_accepts_pcloud_link() {
+        let mut endpoint = ApiEndpoint::secure_defaults(Environment::Production);
+        endpoint
+            .apply_api_server_hint("cdn.pcloud.link")
+            .expect("pcloud.link domain should be accepted");
+        assert_eq!(endpoint.host, "cdn.pcloud.link");
     }
 
     #[test]

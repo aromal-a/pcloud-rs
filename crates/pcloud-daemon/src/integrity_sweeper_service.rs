@@ -757,7 +757,10 @@ impl IntegritySweeperShell {
     /// Snapshot the cumulative progress counters.
     #[must_use]
     pub fn progress_snapshot(&self) -> SweepProgress {
-        *self.shared.progress.lock().expect("progress poisoned")
+        *self.shared.progress.lock().unwrap_or_else(|poisoned| {
+            log::error!("integrity sweeper mutex poisoned — recovering");
+            poisoned.into_inner()
+        })
     }
 
     /// Number of audit-persistence failures observed by the worker.
@@ -798,6 +801,9 @@ impl IntegritySweeperShell {
             .spawn(move || {
                 worker_loop(rx, &shared, &stop_flag, &audit_drops, &mut audit_sink);
             })
+            // INVARIANT: thread spawn failure is an OS-level resource exhaustion
+            // that is unrecoverable at daemon startup; panic with a clear message
+            // is the intended behaviour. TODO(bd-follow-up): surface as Err.
             .expect("spawn integrity sweeper thread");
         self.worker = Some(handle);
     }
@@ -805,13 +811,19 @@ impl IntegritySweeperShell {
     /// Replace the sweep roots the walker visits on each `run_once`
     /// invocation. Called by the runtime after sync-root add/remove.
     pub fn set_sweep_roots(&self, roots: Vec<SweepRoot>) {
-        *self.sweep_roots.lock().expect("sweep_roots poisoned") = roots;
+        *self.sweep_roots.lock().unwrap_or_else(|poisoned| {
+            log::error!("integrity sweeper mutex poisoned — recovering");
+            poisoned.into_inner()
+        }) = roots;
     }
 
     /// Replace the remote checksum fetcher. Called by the runtime once
     /// an authenticated session is available.
     pub fn set_checksum_fetcher(&self, fetcher: Arc<dyn DaemonChecksumFetcher>) {
-        *self.checksum_fetcher.lock().expect("fetcher poisoned") = fetcher;
+        *self.checksum_fetcher.lock().unwrap_or_else(|poisoned| {
+            log::error!("integrity sweeper mutex poisoned — recovering");
+            poisoned.into_inner()
+        }) = fetcher;
     }
 
     /// Synchronously trigger one sweep cycle and update the progress
@@ -917,7 +929,10 @@ impl IntegritySweeperShell {
             return Ok(());
         };
         let parsed = pcloud_config::integrity_sweeper::load_skip_list(skip_path)?;
-        let mut g = self.skip_globs.lock().expect("skip globs poisoned");
+        let mut g = self.skip_globs.lock().unwrap_or_else(|poisoned| {
+            log::error!("integrity sweeper mutex poisoned — recovering");
+            poisoned.into_inner()
+        });
         *g = parsed;
         Ok(())
     }
@@ -926,7 +941,13 @@ impl IntegritySweeperShell {
     /// PR4 unit suite to confirm reloads applied.
     #[must_use]
     pub fn skip_glob_count(&self) -> usize {
-        self.skip_globs.lock().expect("skip globs poisoned").len()
+        self.skip_globs
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                log::error!("integrity sweeper mutex poisoned — recovering");
+                poisoned.into_inner()
+            })
+            .len()
     }
 
     /// Test-only event-injection seam used by the PR4 unit suite to
@@ -952,7 +973,10 @@ impl IntegritySweeperShell {
                 .scheduler_wake
                 .stopped
                 .lock()
-                .expect("scheduler wake poisoned");
+                .unwrap_or_else(|poisoned| {
+                    log::error!("integrity sweeper mutex poisoned — recovering");
+                    poisoned.into_inner()
+                });
             *stopped = true;
             self.scheduler_wake.cv.notify_all();
         }
@@ -1012,7 +1036,13 @@ impl IntegritySweeperShell {
         let sweep_roots = Arc::clone(&self.sweep_roots);
         let checksum_fetcher = Arc::clone(&self.checksum_fetcher);
         let skip_globs_arc = Arc::new(Mutex::new(
-            self.skip_globs.lock().expect("skip_globs poisoned").clone(),
+            self.skip_globs
+                .lock()
+                .unwrap_or_else(|poisoned| {
+                    log::error!("integrity sweeper mutex poisoned — recovering");
+                    poisoned.into_inner()
+                })
+                .clone(),
         ));
         let tick_notify = Arc::clone(&self.tick_notify);
 
@@ -1036,6 +1066,9 @@ impl IntegritySweeperShell {
                     &tick_notify,
                 );
             })
+            // INVARIANT: thread spawn failure is an OS-level resource exhaustion
+            // that is unrecoverable at daemon startup; panic with a clear message
+            // is the intended behaviour. TODO(bd-follow-up): surface as Err.
             .expect("spawn integrity sweeper scheduler thread");
         self.scheduler_handle = Some(handle);
         Ok(())
@@ -1064,7 +1097,10 @@ impl IntegritySweeperShell {
     #[doc(hidden)]
     pub fn subscribe_tick_notify(&self) -> mpsc::Receiver<()> {
         let (tx, rx) = mpsc::channel();
-        *self.tick_notify.lock().expect("tick_notify poisoned") = Some(tx);
+        *self.tick_notify.lock().unwrap_or_else(|poisoned| {
+            log::error!("integrity sweeper mutex poisoned — recovering");
+            poisoned.into_inner()
+        }) = Some(tx);
         rx
     }
 }
@@ -1160,7 +1196,14 @@ fn scheduler_loop(
 /// Errors (disconnected receiver) are silently ignored -- the notifier is
 /// best-effort for test coordination.
 fn notify_tick(tick_notify: &Mutex<Option<mpsc::Sender<()>>>) {
-    if let Some(tx) = tick_notify.lock().expect("tick_notify poisoned").as_ref() {
+    if let Some(tx) = tick_notify
+        .lock()
+        .unwrap_or_else(|poisoned| {
+            log::error!("integrity sweeper mutex poisoned — recovering");
+            poisoned.into_inner()
+        })
+        .as_ref()
+    {
         let _ = tx.send(());
     }
 }
@@ -1199,11 +1242,26 @@ fn run_sweep_cycle_with_ndjson(
     skip_globs: &Mutex<Vec<glob::Pattern>>,
     mut ndjson_sink: Option<&mut dyn Write>,
 ) {
-    let roots = sweep_roots.lock().expect("sweep_roots poisoned").clone();
-    let fetcher = checksum_fetcher.lock().expect("fetcher poisoned").clone();
+    let roots = sweep_roots
+        .lock()
+        .unwrap_or_else(|poisoned| {
+            log::error!("integrity sweeper mutex poisoned — recovering");
+            poisoned.into_inner()
+        })
+        .clone();
+    let fetcher = checksum_fetcher
+        .lock()
+        .unwrap_or_else(|poisoned| {
+            log::error!("integrity sweeper mutex poisoned — recovering");
+            poisoned.into_inner()
+        })
+        .clone();
     let skip_patterns: Vec<String> = skip_globs
         .lock()
-        .expect("skip_globs poisoned")
+        .unwrap_or_else(|poisoned| {
+            log::error!("integrity sweeper mutex poisoned — recovering");
+            poisoned.into_inner()
+        })
         .iter()
         .map(|p| p.as_str().to_owned())
         .collect();
@@ -1285,14 +1343,20 @@ fn run_sweep_cycle_with_ndjson(
 /// immediate wake channel so joining the scheduler thread does not have
 /// to wait up to one cron period.
 fn wait_until(wake: &Arc<SchedulerWake>, wait: Duration) -> bool {
-    let stopped = wake.stopped.lock().expect("scheduler wake poisoned");
+    let stopped = wake.stopped.lock().unwrap_or_else(|poisoned| {
+        log::error!("integrity sweeper mutex poisoned — recovering");
+        poisoned.into_inner()
+    });
     if *stopped {
         return true;
     }
     let (guard, _timeout) = wake
         .cv
         .wait_timeout(stopped, wait)
-        .expect("scheduler wake poisoned");
+        .unwrap_or_else(|poisoned| {
+            log::error!("integrity sweeper mutex poisoned — recovering");
+            poisoned.into_inner()
+        });
     *guard
 }
 
@@ -1341,7 +1405,10 @@ fn handle_event<F>(
 ) where
     F: FnMut(&IntegrityEvent) -> Result<(), String>,
 {
-    let mut progress = shared.progress.lock().expect("progress poisoned");
+    let mut progress = shared.progress.lock().unwrap_or_else(|poisoned| {
+        log::error!("integrity sweeper mutex poisoned — recovering");
+        poisoned.into_inner()
+    });
     match event {
         IntegrityEvent::Ok { .. } => {
             progress.files_hashed = progress.files_hashed.saturating_add(1);

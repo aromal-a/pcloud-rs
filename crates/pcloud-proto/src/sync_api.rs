@@ -160,7 +160,7 @@ where
         let request = DiffRequest {
             cursor,
             limit,
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
         };
         let encoded = request.encode()?;
         let response = self

@@ -27,6 +27,7 @@ use std::fmt;
 use std::ops::Deref;
 
 use serde::{Deserialize, Serialize};
+use zeroize::Zeroize as _;
 
 /// A `String` that round-trips identically on the IPC wire but whose
 /// `Debug` representation is redacted. See the module-level docs.
@@ -47,9 +48,12 @@ impl RedactedString {
 
     /// Unwrap to the inner `String`. Use on the daemon side when
     /// handing off to `SecretString::from(...)`.
+    ///
+    /// Takes the inner buffer without zeroizing it, transferring ownership
+    /// to the caller (who is responsible for wrapping it in `SecretString`).
     #[must_use]
-    pub fn into_string(self) -> String {
-        self.0
+    pub fn into_string(mut self) -> String {
+        std::mem::take(&mut self.0)
     }
 
     /// Borrow the inner secret as `&str`.
@@ -91,8 +95,8 @@ impl From<&str> for RedactedString {
 }
 
 impl From<RedactedString> for String {
-    fn from(value: RedactedString) -> String {
-        value.0
+    fn from(mut value: RedactedString) -> String {
+        std::mem::take(&mut value.0)
     }
 }
 
@@ -107,6 +111,17 @@ impl Deref for RedactedString {
 
     fn deref(&self) -> &str {
         &self.0
+    }
+}
+
+impl Drop for RedactedString {
+    /// Zeroize the secret backing buffer before releasing the allocation.
+    ///
+    /// This prevents the plaintext from lingering in freed heap memory
+    /// between the IPC parse boundary and the daemon-side `SecretString`
+    /// hand-off.
+    fn drop(&mut self) {
+        self.0.zeroize();
     }
 }
 

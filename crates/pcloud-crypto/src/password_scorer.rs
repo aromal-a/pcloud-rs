@@ -533,7 +533,16 @@ pub fn psync_password_quality10000(password: &str) -> u32 {
 
 // === Passphrase derivation =================================================
 
-const PBKDF2_ITERS: u32 = 5000;
+/// Legacy PBKDF2 iteration count used by the C client (`psymkey_derive` in
+/// `pclsync/pssl.c:693`). Retained ONLY for byte-compatibility with the
+/// legacy C auth path and is gated behind the `legacy-c-compat` Cargo
+/// feature; not used for crypto-folder key derivation.
+pub const PBKDF2_ITERS_LEGACY: u32 = 5000;
+
+/// OWASP 2023 recommended PBKDF2-HMAC-SHA-512 iteration count. Used by
+/// default by [`psync_derive_password_from_passphrase`] when the
+/// `legacy-c-compat` feature is off (H-3 in the crypto audit plan).
+pub const PBKDF2_ITERS_OWASP: u32 = 210_000;
 const DERIVED_LEN: usize = 32;
 const SHA512_LEN: usize = 64;
 
@@ -547,6 +556,9 @@ fn pbkdf2_hmac_sha512(password: &[u8], salt: &[u8], iters: u32, out: &mut [u8]) 
     while written < out.len() {
         let mut u = [0u8; SHA512_LEN];
         // U_1 = PRF(password, salt || INT(block_index))
+        // INVARIANT: HMAC-SHA512 accepts keys of any non-zero length per RFC 2104;
+        // the `password` slice here is always the raw password bytes from the
+        // caller, which are guaranteed non-empty by upstream validation.
         let mut mac = <HmacSha512 as Mac>::new_from_slice(password)
             .expect("HMAC-SHA512 accepts any key length");
         mac.update(salt);
@@ -556,6 +568,7 @@ fn pbkdf2_hmac_sha512(password: &[u8], salt: &[u8], iters: u32, out: &mut [u8]) 
         let mut t = u;
         // U_2..U_c
         for _ in 1..iters {
+            // INVARIANT: same as above — password is always non-empty.
             let mut mac = <HmacSha512 as Mac>::new_from_slice(password)
                 .expect("HMAC-SHA512 accepts any key length");
             mac.update(&u);
@@ -574,36 +587,16 @@ fn pbkdf2_hmac_sha512(password: &[u8], salt: &[u8], iters: u32, out: &mut [u8]) 
 
 /// Standard base64 (RFC 4648, `+` / `/`, `=` padding) — matches the C
 /// `putil_base64_encode` output character set used by `psymkey_derive`.
+///
+/// Delegates to the `base64` crate's `STANDARD` engine so we do not
+/// maintain an audited hand-rolled implementation (audit-04 §3-opus M-5
+/// / FIX-PLAN P3). Bit-identical to the previous hand-rolled routine —
+/// see `base64_round_trip_known_vectors` test below.
 fn base64_encode(input: &[u8]) -> Vec<u8> {
-    const ALPHA: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = Vec::with_capacity(input.len().div_ceil(3) * 4);
-    let mut i = 0;
-    while i + 3 <= input.len() {
-        let b0 = input[i];
-        let b1 = input[i + 1];
-        let b2 = input[i + 2];
-        out.push(ALPHA[(b0 >> 2) as usize]);
-        out.push(ALPHA[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize]);
-        out.push(ALPHA[(((b1 & 0x0F) << 2) | (b2 >> 6)) as usize]);
-        out.push(ALPHA[(b2 & 0x3F) as usize]);
-        i += 3;
-    }
-    let rem = input.len() - i;
-    if rem == 1 {
-        let b0 = input[i];
-        out.push(ALPHA[(b0 >> 2) as usize]);
-        out.push(ALPHA[((b0 & 0x03) << 4) as usize]);
-        out.push(b'=');
-        out.push(b'=');
-    } else if rem == 2 {
-        let b0 = input[i];
-        let b1 = input[i + 1];
-        out.push(ALPHA[(b0 >> 2) as usize]);
-        out.push(ALPHA[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize]);
-        out.push(ALPHA[((b1 & 0x0F) << 2) as usize]);
-        out.push(b'=');
-    }
-    out
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .encode(input)
+        .into_bytes()
 }
 
 /// Faithful port of `psync_derive_password_from_passphrase`
@@ -669,13 +662,23 @@ pub fn psync_derive_password_from_passphrase(
     salt.copy_from_slice(&digest);
     usercopy.zeroize();
 
+    // NFC-normalize the passphrase so the same visual passphrase typed on
+    // macOS (NFD) vs Linux/Windows (NFC) derives to the same API password
+    // (H-4 in the crypto audit plan).
+    let normalized_pp: String = {
+        use unicode_normalization::UnicodeNormalization;
+        passphrase.expose_secret().nfc().collect()
+    };
+
     let mut derived = [0u8; DERIVED_LEN];
-    pbkdf2_hmac_sha512(
-        passphrase.expose_secret().as_bytes(),
-        &salt,
-        PBKDF2_ITERS,
-        &mut derived,
-    );
+    // Default to OWASP 2023 iteration count (H-3). Keep the legacy 5000-iter
+    // C-compat path available under the `legacy-c-compat` Cargo feature for
+    // byte-equivalent interop with the C auth server contract.
+    #[cfg(feature = "legacy-c-compat")]
+    let iters = PBKDF2_ITERS_LEGACY;
+    #[cfg(not(feature = "legacy-c-compat"))]
+    let iters = PBKDF2_ITERS_OWASP;
+    pbkdf2_hmac_sha512(normalized_pp.as_bytes(), &salt, iters, &mut derived);
     salt.zeroize();
 
     let encoded = base64_encode(&derived);

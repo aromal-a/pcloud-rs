@@ -451,6 +451,9 @@ impl AuditVerifierShell {
                     slo.as_ref(),
                 );
             })
+            // INVARIANT: thread spawn failure is an OS-level resource exhaustion
+            // that is unrecoverable at daemon startup; panic with a clear message
+            // is the intended behaviour. TODO(bd-follow-up): surface as Err.
             .expect("spawn audit verifier scheduler thread");
         self.scheduler_handle = Some(handle);
         Ok(())

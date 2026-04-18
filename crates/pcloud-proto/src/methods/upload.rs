@@ -17,6 +17,7 @@ use sha1::{Digest, Sha1};
 
 use crate::binary_api::{BinaryParam, EncodedRequest, FrameParseError, encode_request};
 use crate::methods::ProtocolMethod;
+use crate::redacted::RedactedProtoString;
 
 /// 256 KiB socket write chunk (`psettings.h:90`).
 pub const PSYNC_COPY_BUFFER_SIZE: usize = 256 * 1024;
@@ -65,7 +66,7 @@ pub enum ConflictParam {
     /// `ifhash = "new"` as PARAM_STR. Create-if-absent; server renames
     /// silently on collision (`pupload.c:1500-1501`).
     New,
-    // TODO(spec §9.3, `pupload.c:1495-1509`): C always emits `ifhash`. A true
+    // TODO(bd-1du, spec §9.3, `pupload.c:1495-1509`): C always emits `ifhash`. A true
     // unconditional overwrite is not expressible at wire level and must be
     // verified on the live API before a variant is added.
 }
@@ -88,7 +89,7 @@ impl ConflictParam {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadFileRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `parent_folder_id` field (parent folder id).
     pub parent_folder_id: u64,
     /// The `filename` field (filename).
@@ -128,7 +129,7 @@ impl UploadFileRequest {
         // auth, folderid, filename, nopartial, timeformat, [ctime], mtime, ifhash
         let cap = 7 + usize::from(self.ctime.is_some());
         let mut out = Vec::with_capacity(cap);
-        out.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        out.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         out.push(BinaryParam::number("folderid", self.parent_folder_id));
         out.push(BinaryParam::string("filename", self.filename.as_str()));
         out.push(BinaryParam::bool("nopartial", self.nopartial));
@@ -156,7 +157,7 @@ impl UploadFileRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadCreateRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `parent_folder_id` field (parent folder id).
     pub parent_folder_id: u64,
     /// The `file_name` field (file name).
@@ -184,7 +185,7 @@ impl UploadCreateRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(4);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("folderid", self.parent_folder_id));
         params.push(BinaryParam::string("name", self.file_name.as_str()));
         params.push(BinaryParam::number("filesize", self.file_size));
@@ -210,7 +211,7 @@ impl ProtocolMethod for UploadCreateRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadWriteRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `upload_id` field (upload id).
     pub upload_id: u64,
     /// The `upload_offset` field (upload offset).
@@ -238,7 +239,7 @@ impl UploadWriteRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(4);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("uploadoffset", self.upload_offset));
         params.push(BinaryParam::number("id", self.chunk_id));
         params.push(BinaryParam::number("uploadid", self.upload_id));
@@ -264,7 +265,7 @@ impl UploadWriteRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadWriteFromFileRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `upload_id` field (upload id).
     pub upload_id: u64,
     /// The `upload_offset` field (upload offset).
@@ -301,7 +302,7 @@ impl UploadWriteFromFileRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(8);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("uploadoffset", self.upload_offset));
         params.push(BinaryParam::number("id", self.chunk_id));
         params.push(BinaryParam::number("uploadid", self.upload_id));
@@ -331,7 +332,7 @@ impl ProtocolMethod for UploadWriteFromFileRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadInfoRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `upload_id` field (upload id).
     pub upload_id: u64,
     /// Client-assigned correlation id (`pupload.c:884`).
@@ -357,7 +358,7 @@ impl UploadInfoRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(3);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("uploadid", self.upload_id));
         params.push(BinaryParam::number("id", self.chunk_id));
         params
@@ -382,7 +383,7 @@ impl ProtocolMethod for UploadInfoRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadSaveRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `parent_folder_id` field (parent folder id).
     pub parent_folder_id: u64,
     /// The `file_name` field (file name).
@@ -418,7 +419,7 @@ impl UploadSaveRequest {
         // auth, folderid, name, uploadid, timeformat, [ctime], mtime, [ifhash]
         let cap = 6 + usize::from(self.ctime.is_some()) + usize::from(self.conflict.is_some());
         let mut out = Vec::with_capacity(cap);
-        out.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        out.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         out.push(BinaryParam::number("folderid", self.parent_folder_id));
         out.push(BinaryParam::string("name", self.file_name.as_str()));
         out.push(BinaryParam::number("uploadid", self.upload_id));
@@ -451,7 +452,7 @@ impl ProtocolMethod for UploadSaveRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadDeleteRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `upload_id` field (upload id).
     pub upload_id: u64,
 }
@@ -475,7 +476,7 @@ impl UploadDeleteRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(2);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("uploadid", self.upload_id));
         params
     }
@@ -500,7 +501,7 @@ impl ProtocolMethod for UploadDeleteRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UploadBlockChecksumsRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `upload_id` field (upload id).
     pub upload_id: u64,
 }
@@ -524,7 +525,7 @@ impl UploadBlockChecksumsRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(2);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("uploadid", self.upload_id));
         params
     }
@@ -548,7 +549,7 @@ impl ProtocolMethod for UploadBlockChecksumsRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetChecksumLinkRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `file_id` field (file id).
     pub file_id: u64,
     /// The `hash` field (hash).
@@ -574,7 +575,7 @@ impl GetChecksumLinkRequest {
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(3);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("fileid", self.file_id));
         params.push(BinaryParam::number("hash", self.hash));
         params
@@ -598,7 +599,7 @@ impl ProtocolMethod for GetChecksumLinkRequest {
 /// `psync_block_checksum_header`: 24 bytes, host byte order. The C client
 /// assumes little-endian (`pnetlibs.c:100-104`).
 ///
-/// TODO(spec §9.2): live-API verification required before trusting this
+/// TODO(bd-1du, spec §9.2): live-API verification required before trusting this
 /// layout on big-endian targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockChecksumHeader {
@@ -772,7 +773,7 @@ mod tests {
     #[test]
     fn uploadfile_request_encodes_with_body_and_conflict_new() {
         let req = UploadFileRequest {
-            auth_token: "t".to_owned(),
+            auth_token: "t".into(),
             parent_folder_id: 7,
             filename: "a.bin".to_owned(),
             nopartial: true,
@@ -790,7 +791,7 @@ mod tests {
     #[test]
     fn uploadfile_request_with_ctime_and_ifhash_counts_eight_params() {
         let req = UploadFileRequest {
-            auth_token: "t".to_owned(),
+            auth_token: "t".into(),
             parent_folder_id: 7,
             filename: "a.bin".to_owned(),
             nopartial: true,

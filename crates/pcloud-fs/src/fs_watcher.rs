@@ -108,7 +108,10 @@ impl FsWatcher {
         sync_id: SyncId,
         config: &WatcherConfig,
     ) -> Result<(Self, mpsc::Receiver<FsEvent>), WatchError> {
-        let (tx, rx) = mpsc::channel();
+        // Bounded channel: prevents unbounded memory growth under load.
+        // 1024 slots cover normal burst traffic; overflow is surfaced via
+        // the inotify-overflow log below rather than silently dropped.
+        let (tx, rx) = mpsc::sync_channel(1024);
         let root = root_path
             .canonicalize()
             .unwrap_or_else(|_| root_path.to_path_buf());
@@ -116,12 +119,25 @@ impl FsWatcher {
         let debounce = config.debounce_duration;
 
         // Use a dedicated thread for debounce coalescing.
-        let (notify_tx, notify_rx) = mpsc::channel::<Event>();
+        // Bounded channel: keeps memory usage finite under inotify storms.
+        let (notify_tx, notify_rx) = mpsc::sync_channel::<Event>(1024);
 
         let mut watcher = RecommendedWatcher::new(
             move |result: Result<Event, notify::Error>| {
-                if let Ok(event) = result {
-                    let _ = notify_tx.send(event);
+                match result {
+                    Ok(event) => {
+                        // Discard if the debounce thread is full; this is
+                        // preferable to an unbounded queue growing under load.
+                        let _ = notify_tx.try_send(event);
+                    }
+                    Err(err) => {
+                        // Surface inotify overflow and similar kernel errors
+                        // so operators know local changes may be missed.
+                        log::warn!(
+                            "fs watcher event overflow: {err}; \
+                             some local changes may be missed until next full scan"
+                        );
+                    }
                 }
             },
             Config::default(),
@@ -151,7 +167,7 @@ impl FsWatcher {
 /// by path within `debounce` windows, and emits [`FsEvent`]s.
 fn debounce_loop(
     notify_rx: mpsc::Receiver<Event>,
-    output_tx: mpsc::Sender<FsEvent>,
+    output_tx: mpsc::SyncSender<FsEvent>,
     root: &Path,
     sync_id: SyncId,
     debounce: Duration,
@@ -200,7 +216,7 @@ fn debounce_loop(
 /// Flush pending events whose debounce window has elapsed.
 fn flush_pending(
     pending: &mut HashMap<String, (FsEventKind, EntryKind, Instant)>,
-    tx: &mpsc::Sender<FsEvent>,
+    tx: &mpsc::SyncSender<FsEvent>,
     sync_id: SyncId,
     debounce: Duration,
 ) {

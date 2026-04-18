@@ -20,12 +20,13 @@
 
 use crate::binary_api::{BinaryParam, BinaryParamValue};
 use crate::methods::ProtocolMethod;
+use crate::redacted::RedactedProtoString;
 
 /// Parameters for the `backup/createbackup` method.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateBackupRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// Leaf folder name. The C client parses the local path and uses the
     /// final segment as this value.
     pub name: String,
@@ -57,7 +58,7 @@ impl CreateBackupRequest {
         let mut params = vec![
             BinaryParam {
                 name: "auth".to_owned(),
-                value: BinaryParamValue::String(self.auth_token.clone()),
+                value: BinaryParamValue::String(self.auth_token.expose_secret().to_owned()),
             },
             BinaryParam {
                 name: "name".to_owned(),
@@ -96,7 +97,7 @@ impl ProtocolMethod for CreateBackupRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StopBackupRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `folder_id` field (folder id).
     pub folder_id: u64,
 }
@@ -122,7 +123,7 @@ impl StopBackupRequest {
         vec![
             BinaryParam {
                 name: "auth".to_owned(),
-                value: BinaryParamValue::String(self.auth_token.clone()),
+                value: BinaryParamValue::String(self.auth_token.expose_secret().to_owned()),
             },
             BinaryParam {
                 name: "folderid".to_owned(),
@@ -146,7 +147,7 @@ impl ProtocolMethod for StopBackupRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StopDeviceRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// Device (root backup) folder id. In the C implementation this is
     /// resolved from the `BackupRootFoId` setting when the caller passes 0.
     pub device_folder_id: u64,
@@ -173,7 +174,7 @@ impl StopDeviceRequest {
         vec![
             BinaryParam {
                 name: "auth".to_owned(),
-                value: BinaryParamValue::String(self.auth_token.clone()),
+                value: BinaryParamValue::String(self.auth_token.expose_secret().to_owned()),
             },
             BinaryParam {
                 name: "folderid".to_owned(),
@@ -200,7 +201,7 @@ mod tests {
     #[test]
     fn create_backup_emits_required_parameters() {
         let request = CreateBackupRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             name: "Documents".to_owned(),
             backup_root_folder_id: 11,
             parent_folder_name: Some("Work".to_owned()),
@@ -213,7 +214,7 @@ mod tests {
     #[test]
     fn create_backup_without_parent_skips_parameter() {
         let request = CreateBackupRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             name: "Documents".to_owned(),
             backup_root_folder_id: 11,
             parent_folder_name: None,
@@ -225,11 +226,11 @@ mod tests {
     #[test]
     fn stop_backup_and_stop_device_share_shape() {
         let stop_backup = StopBackupRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             folder_id: 42,
         };
         let stop_device = StopDeviceRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             device_folder_id: 42,
         };
         let encoded_backup = stop_backup.encode().expect("stop backup should encode");

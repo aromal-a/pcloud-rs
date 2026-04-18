@@ -181,7 +181,7 @@ pub fn serve_with_metrics(
 }
 
 // Upload retry/started counters are exposed through [`MetricsBridge::slo`].
-// TODO(P0.3 follow-up): wire `slo.incr_upload_started()` and
+// TODO(bd-1du): wire `slo.incr_upload_started()` and
 // `slo.incr_upload_retry()` into `crates/pcloud-daemon/src/transfer_backend.rs`
 // at the points where an upload session is created and where a chunk is
 // retried. Exact integration must land alongside P0.3 so retry classification

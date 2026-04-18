@@ -24,6 +24,7 @@
 
 use crate::binary_api::{BinaryParam, BinaryParamValue};
 use crate::methods::ProtocolMethod;
+use crate::redacted::RedactedProtoString;
 
 /// `crypto_changeuserprivate` — upload a private key that has been
 /// re-encoded with a new passphrase. The server replaces the currently
@@ -31,7 +32,7 @@ use crate::methods::ProtocolMethod;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeUserPrivateRequest {
     /// Authenticated session token.
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// Re-encoded private key (ciphertext blob, hex / pcloud-custom
     /// serialization — opaque at this layer).
     pub private_key: String,
@@ -64,7 +65,7 @@ impl ChangeUserPrivateRequest {
         vec![
             BinaryParam {
                 name: "auth".to_owned(),
-                value: BinaryParamValue::String(self.auth_token.clone()),
+                value: BinaryParamValue::String(self.auth_token.expose_secret().to_owned()),
             },
             BinaryParam {
                 name: "privatekey".to_owned(),
@@ -102,7 +103,7 @@ impl ProtocolMethod for ChangeUserPrivateRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendChangeUserPrivateRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
 }
 
 impl SendChangeUserPrivateRequest {
@@ -125,7 +126,7 @@ impl SendChangeUserPrivateRequest {
     pub fn params(&self) -> Vec<BinaryParam> {
         vec![BinaryParam {
             name: "auth".to_owned(),
-            value: BinaryParamValue::String(self.auth_token.clone()),
+            value: BinaryParamValue::String(self.auth_token.expose_secret().to_owned()),
         }]
     }
 }
@@ -148,7 +149,7 @@ mod tests {
     #[test]
     fn change_user_private_encodes_with_five_params() {
         let req = ChangeUserPrivateRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
             private_key: "ZW5jcnlwdGVkX3ByaXZhdGVfa2V5".to_owned(),
             signature: "c2lnbmF0dXJl".to_owned(),
             hint: "memory of first pet".to_owned(),
@@ -170,7 +171,7 @@ mod tests {
     #[test]
     fn send_change_user_private_encodes_with_one_param() {
         let req = SendChangeUserPrivateRequest {
-            auth_token: "token".to_owned(),
+            auth_token: "token".into(),
         };
         let encoded = req.encode().expect("encode");
         assert_eq!(encoded.frame.command, "crypto_sendchangeuserprivate");

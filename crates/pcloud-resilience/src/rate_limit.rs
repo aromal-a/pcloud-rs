@@ -226,6 +226,36 @@ impl TokenBucket {
         self.refill_locked(&mut state);
         state.tokens.max(0.0)
     }
+
+    /// Returns the duration the caller would have to wait before `n` tokens
+    /// are available, **without** deducting any tokens. Intended for
+    /// "Retry-After" style advisories where the caller has already been
+    /// rejected and must not burn a further reservation.
+    ///
+    /// Returns `Duration::ZERO` if `n` tokens are available immediately.
+    /// Returns `RateLimitError::RequestExceedsCapacity` if `n` exceeds
+    /// bucket capacity.
+    pub fn peek_wait_for(&self, n: u32) -> Result<Duration, RateLimitError> {
+        if n == 0 {
+            return Ok(Duration::ZERO);
+        }
+        if n > self.cfg.capacity {
+            return Err(RateLimitError::RequestExceedsCapacity {
+                requested: n,
+                capacity: self.cfg.capacity,
+            });
+        }
+        let mut state = self.state.lock().expect("token-bucket mutex poisoned");
+        self.refill_locked(&mut state);
+        let need = f64::from(n);
+        if state.tokens >= need {
+            Ok(Duration::ZERO)
+        } else {
+            let deficit = need - state.tokens;
+            let seconds = deficit / self.cfg.refill_rate_per_sec;
+            Ok(Duration::from_secs_f64(seconds))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -286,6 +316,29 @@ mod tests {
         let b = bucket(3, 1.0, Arc::new(ManualClock::new()));
         let err = b.try_acquire(4).unwrap_err();
         assert!(matches!(err, RateLimitError::RequestExceedsCapacity { .. }));
+    }
+
+    #[test]
+    fn peek_wait_for_does_not_consume_tokens() {
+        let clock = Arc::new(ManualClock::new());
+        let b = bucket(2, 2.0, clock);
+        // Drain the bucket.
+        assert!(b.try_acquire(2).unwrap());
+        // Peek reports a non-zero wait without burning a token.
+        let peek = b.peek_wait_for(1).unwrap();
+        assert!(peek > Duration::ZERO);
+        // A second peek is unchanged because no token was consumed.
+        let peek2 = b.peek_wait_for(1).unwrap();
+        assert_eq!(peek, peek2);
+    }
+
+    #[test]
+    fn peek_wait_for_zero_when_available() {
+        let b = bucket(3, 1.0, Arc::new(ManualClock::new()));
+        assert_eq!(b.peek_wait_for(1).unwrap(), Duration::ZERO);
+        assert_eq!(b.peek_wait_for(3).unwrap(), Duration::ZERO);
+        // Still full.
+        assert!((b.available_tokens() - 3.0).abs() < 1e-9);
     }
 
     #[test]

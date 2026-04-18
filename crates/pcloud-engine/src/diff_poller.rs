@@ -98,19 +98,14 @@ fn normalize_entry(
     })
 }
 
+/// Thin wrapper over [`crate::is_valid_relative_path`] that maps the
+/// shared boolean predicate to the local typed error.
 fn validate_relative_path(path: &str) -> Result<(), DiffNormalizationError> {
-    let trimmed = path.trim();
-    if trimmed.is_empty()
-        || trimmed.starts_with('/')
-        || trimmed.starts_with("./")
-        || trimmed.contains('\\')
-        || trimmed
-            .split('/')
-            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
-    {
-        return Err(DiffNormalizationError::InvalidPath(path.to_owned()));
+    if crate::is_valid_relative_path(path) {
+        Ok(())
+    } else {
+        Err(DiffNormalizationError::InvalidPath(path.to_owned()))
     }
-    Ok(())
 }
 
 #[cfg(test)]

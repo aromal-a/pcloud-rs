@@ -85,11 +85,13 @@ pub mod http_download;
 pub mod methods;
 pub mod notifications_api;
 pub mod public_links_api;
+pub mod redacted;
 pub mod resilient_transport;
 pub mod response;
 pub mod revision_provider;
 pub mod shares_api;
 pub mod sync_api;
+pub mod tls;
 pub mod transfer_api;
 pub mod transport;
 
@@ -163,6 +165,7 @@ pub use http_download::{
 pub use methods::ProtocolMethod;
 pub use notifications_api::{Notification, NotificationsApi, NotificationsApiError};
 pub use public_links_api::{PublicLinksApi, PublicLinksApiError};
+pub use redacted::RedactedProtoString;
 pub use resilient_transport::{
     Classifier, ErrorClass, RateLimitMode, ResilientError, ResilientTransport, ThreadSleepWaiter,
     Waiter, default_classifier,

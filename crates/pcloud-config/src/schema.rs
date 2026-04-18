@@ -243,6 +243,15 @@ pub const CONFIG_SCHEMA_JSON: &str = r#"{
                 "capacity":       { "type": "integer", "minimum": 0 },
                 "refill_per_sec": { "type": "number" }
               }
+            },
+            "auth_attempt": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["capacity","refill_per_sec"],
+              "properties": {
+                "capacity":       { "type": "integer", "minimum": 0 },
+                "refill_per_sec": { "type": "number" }
+              }
             }
           }
         },
@@ -706,6 +715,7 @@ static RATE_LIMIT_NODE: Node = Node::Object {
         ("cheap", &RATE_BUCKET_NODE),
         ("medium", &RATE_BUCKET_NODE),
         ("expensive", &RATE_BUCKET_NODE),
+        ("auth_attempt", &RATE_BUCKET_NODE),
     ],
 };
 

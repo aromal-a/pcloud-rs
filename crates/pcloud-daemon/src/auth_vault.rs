@@ -31,6 +31,15 @@ pub enum AuthVaultError {
     /// non-UTF8 contents).
     #[error("vault file metadata was insecure: {0}")]
     InsecureMetadata(&'static str),
+    /// The file vault backend is not supported on this platform.
+    ///
+    /// On Windows, NTFS ACLs cannot be applied portably without calling
+    /// into the Win32 security API. Use the DPAPI backend instead
+    /// (`PCLOUD_VAULT=dpapi`). This error is returned at runtime by
+    /// `store_token` on Windows so callers get a clear diagnostic rather
+    /// than silently writing a world-accessible file.
+    #[error("file vault not supported on this platform: {0}")]
+    UnsupportedPlatform(String),
 }
 
 // Re-export the real file-vault free functions under their historical

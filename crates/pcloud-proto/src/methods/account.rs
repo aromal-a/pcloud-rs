@@ -4,12 +4,13 @@
 
 use crate::binary_api::{BinaryParam, BinaryParamValue};
 use crate::methods::ProtocolMethod;
+use crate::redacted::RedactedProtoString;
 
 /// `GetPromoRequest` — get promo request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GetPromoRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `os_id` field (os id).
     pub os_id: u64,
 }
@@ -35,7 +36,7 @@ impl GetPromoRequest {
         vec![
             BinaryParam {
                 name: "auth".to_owned(),
-                value: BinaryParamValue::String(self.auth_token.clone()),
+                value: BinaryParamValue::String(self.auth_token.expose_secret().to_owned()),
             },
             BinaryParam {
                 name: "os".to_owned(),
@@ -59,7 +60,7 @@ impl ProtocolMethod for GetPromoRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SetLanguageRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `language` field (language).
     pub language: String,
 }
@@ -85,7 +86,7 @@ impl SetLanguageRequest {
         vec![
             BinaryParam {
                 name: "auth".to_owned(),
-                value: BinaryParamValue::String(self.auth_token.clone()),
+                value: BinaryParamValue::String(self.auth_token.expose_secret().to_owned()),
             },
             BinaryParam {
                 name: "language".to_owned(),
@@ -148,9 +149,9 @@ impl ProtocolMethod for GetLocationApiRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerifyEmailRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: Option<String>,
+    pub auth_token: Option<RedactedProtoString>,
     /// The `verify_token` field (verify token).
-    pub verify_token: Option<String>,
+    pub verify_token: Option<RedactedProtoString>,
 }
 
 impl VerifyEmailRequest {
@@ -175,13 +176,13 @@ impl VerifyEmailRequest {
         if let Some(auth_token) = &self.auth_token {
             params.push(BinaryParam {
                 name: "auth".to_owned(),
-                value: BinaryParamValue::String(auth_token.clone()),
+                value: BinaryParamValue::String(auth_token.expose_secret().to_owned()),
             });
         }
         if let Some(verify_token) = &self.verify_token {
             params.push(BinaryParam {
                 name: "verifytoken".to_owned(),
-                value: BinaryParamValue::String(verify_token.clone()),
+                value: BinaryParamValue::String(verify_token.expose_secret().to_owned()),
             });
         }
         params
@@ -240,23 +241,16 @@ impl ProtocolMethod for LostPasswordRequest {
     }
 }
 
-/// NOTE (audit H1): `auth_token`, `current_password`, and `new_password`
-/// are stored as plain `String` because this DTO is a send-and-forget
-/// request builder: it is constructed by `account_api.rs`, immediately
-/// serialized via `params()` into a `BinaryParam` vector for the wire,
-/// and dropped in the same function scope. The secrets never outlive a
-/// single HTTPS transaction and are never persisted, logged, or surfaced
-/// via `Debug` on a long-lived struct. If this struct ever starts being
-/// stored on runtime state, these fields must be converted to
-/// `SecretString` and `params()` updated to call `.expose_secret()`.
+/// Wire DTO for the `changepassword` endpoint (audit H1 fixed). All secret
+/// fields use `RedactedProtoString` so `Debug` output never leaks credentials.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangePasswordRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `current_password` field (current password).
-    pub current_password: String,
+    pub current_password: RedactedProtoString,
     /// The `new_password` field (new password).
-    pub new_password: String,
+    pub new_password: RedactedProtoString,
     /// The `device` field (device).
     pub device: String,
 }
@@ -282,15 +276,15 @@ impl ChangePasswordRequest {
         vec![
             BinaryParam {
                 name: "auth".to_owned(),
-                value: BinaryParamValue::String(self.auth_token.clone()),
+                value: BinaryParamValue::String(self.auth_token.expose_secret().to_owned()),
             },
             BinaryParam {
                 name: "oldpassword".to_owned(),
-                value: BinaryParamValue::String(self.current_password.clone()),
+                value: BinaryParamValue::String(self.current_password.expose_secret().to_owned()),
             },
             BinaryParam {
                 name: "newpassword".to_owned(),
-                value: BinaryParamValue::String(self.new_password.clone()),
+                value: BinaryParamValue::String(self.new_password.expose_secret().to_owned()),
             },
             BinaryParam {
                 name: "device".to_owned(),
@@ -320,7 +314,7 @@ pub struct RegisterRequest {
     /// The `email` field (email).
     pub email: String,
     /// The `password` field (password).
-    pub password: String,
+    pub password: RedactedProtoString,
     /// The `terms_accepted` field (terms accepted).
     pub terms_accepted: bool,
     /// The `os_id` field (os id).
@@ -352,7 +346,7 @@ impl RegisterRequest {
             },
             BinaryParam {
                 name: "password".to_owned(),
-                value: BinaryParamValue::String(self.password.clone()),
+                value: BinaryParamValue::String(self.password.expose_secret().to_owned()),
             },
             BinaryParam {
                 name: "termsaccepted".to_owned(),

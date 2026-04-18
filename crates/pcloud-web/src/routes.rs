@@ -30,6 +30,7 @@
 // **GATING:** none (portable).
 
 use std::path::Path;
+use std::sync::atomic::Ordering;
 
 use axum::{
     Form, Router,
@@ -41,8 +42,10 @@ use axum::{
 use pcloud_ipc::{IpcClient, Method, Request, Response as IpcResponse, ResponseStatus};
 use pcloud_model::public_links::PublicLinkUploadPolicy;
 use pcloud_model::sync::SyncType;
+use pcloud_secret::ExposeSecret;
 use serde::Deserialize;
 use serde_json::json;
+use subtle::ConstantTimeEq;
 
 use crate::{AppState, templates};
 
@@ -61,6 +64,9 @@ const CSP: &str = "default-src 'self'; script-src 'none'; style-src 'self' 'unsa
 const CSRF_COOKIE: &str = "pcw_csrf";
 /// Request header the caller must echo the cookie value into.
 const CSRF_HEADER: &str = "x-csrf-token";
+/// Request header that mutating routes require for session authentication.
+/// The value must match the token logged at daemon startup.
+const WEB_TOKEN_HEADER: &str = "x-pcloud-web-token";
 
 /// Build the Axum router with the provided shared [`AppState`].
 pub(crate) fn router(state: AppState) -> Router {
@@ -68,6 +74,8 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/", get(index))
         .route("/api/status", get(api_status))
         .route("/health", get(health))
+        .route("/livez", get(livez))
+        .route("/readyz", get(readyz))
         .route("/sync", get(sync_list).post(sync_add))
         .route("/sync/:id", delete(sync_remove))
         .route("/publinks", get(publinks_list).post(publinks_create))
@@ -85,6 +93,31 @@ pub(crate) fn router(state: AppState) -> Router {
 /// `GET /health` — liveness probe. Never touches the daemon.
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
+}
+
+/// `GET /livez` — Kubernetes-style liveness probe.
+///
+/// Returns 200 `"ok"` unconditionally: if the process is running and
+/// the HTTP server is accepting requests, the process is alive.
+/// Orchestrators that use `/livez` for liveness should only restart the
+/// container when this returns non-200 (i.e. the web server itself is
+/// wedged), not when the daemon is temporarily unreachable.
+async fn livez() -> impl IntoResponse {
+    (StatusCode::OK, "ok")
+}
+
+/// `GET /readyz` — Kubernetes-style readiness probe.
+///
+/// Returns 200 `"ok"` when the daemon has completed initialization and
+/// set the shared `ready` flag to `true`, or 503 `"not ready"` while
+/// initialization is still in progress. Orchestrators should not route
+/// traffic to this instance until this endpoint returns 200.
+async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
+    if state.ready.load(Ordering::Acquire) {
+        (StatusCode::OK, "ok")
+    } else {
+        (StatusCode::SERVICE_UNAVAILABLE, "not ready")
+    }
 }
 
 /// `GET /` — HTML landing page + CSRF cookie issuance.
@@ -147,12 +180,15 @@ struct SyncAddForm {
     sync_type: String,
 }
 
-/// `POST /sync` — add a sync root. CSRF required.
+/// `POST /sync` — add a sync root. Session token and CSRF required.
 async fn sync_add(
     State(state): State<AppState>,
     headers: HeaderMap,
     Form(form): Form<SyncAddForm>,
 ) -> Response {
+    if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
+        return resp;
+    }
     if let Err(resp) = require_csrf(&headers) {
         return resp;
     }
@@ -176,12 +212,15 @@ async fn sync_add(
     ipc_redirect_response(ipc, "/sync")
 }
 
-/// `DELETE /sync/{id}` — remove a sync root. CSRF required.
+/// `DELETE /sync/{id}` — remove a sync root. Session token and CSRF required.
 async fn sync_remove(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(id): AxumPath<u64>,
 ) -> Response {
+    if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
+        return resp;
+    }
     if let Err(resp) = require_csrf(&headers) {
         return resp;
     }
@@ -216,16 +255,29 @@ struct PublinkCreateForm {
     #[serde(default)]
     expiry: String,
     /// Optional link password. Empty means none.
+    ///
+    /// Zeroized on `Drop` so the cleartext password does not linger in
+    /// heap memory after the request handler completes.
     #[serde(default)]
     password: String,
 }
 
-/// `POST /publinks` — create a public link. CSRF required.
+impl Drop for PublinkCreateForm {
+    fn drop(&mut self) {
+        use zeroize::Zeroize as _;
+        self.password.zeroize();
+    }
+}
+
+/// `POST /publinks` — create a public link. Session token and CSRF required.
 async fn publinks_create(
     State(state): State<AppState>,
     headers: HeaderMap,
     Form(form): Form<PublinkCreateForm>,
 ) -> Response {
+    if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
+        return resp;
+    }
     if let Err(resp) = require_csrf(&headers) {
         return resp;
     }
@@ -280,12 +332,15 @@ async fn publinks_create(
     ipc_redirect_response(ipc, "/publinks")
 }
 
-/// `DELETE /publinks/{code}` — revoke a public link. CSRF required.
+/// `DELETE /publinks/{code}` — revoke a public link. Session token and CSRF required.
 async fn publinks_revoke(
     State(state): State<AppState>,
     headers: HeaderMap,
     AxumPath(code): AxumPath<String>,
 ) -> Response {
+    if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
+        return resp;
+    }
     if let Err(resp) = require_csrf(&headers) {
         return resp;
     }
@@ -633,6 +688,37 @@ fn csrf_reject(msg: &'static str) -> Response {
         .into_response()
 }
 
+/// Session-token gate for mutating routes.
+///
+/// Compares the `X-PCloud-Web-Token` header value against the daemon's
+/// startup token using a constant-time byte comparison to prevent
+/// timing side-channels. Returns `Err(401 Unauthorized)` when the header
+/// is absent, malformed, or does not match. Read-only routes (`GET /`,
+/// `GET /health`, etc.) do not call this.
+#[allow(clippy::result_large_err)]
+fn require_web_token(headers: &HeaderMap, expected: &str) -> Result<(), Response> {
+    let provided = headers
+        .get(WEB_TOKEN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    // Constant-time compare via `subtle::ConstantTimeEq` to prevent
+    // timing side-channels on web-token validation.
+    let matches: bool = provided.as_bytes().ct_eq(expected.as_bytes()).into();
+    if !matches {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            [(
+                header::CONTENT_TYPE,
+                HeaderValue::from_static("text/plain; charset=utf-8"),
+            )],
+            "missing or invalid X-PCloud-Web-Token",
+        )
+            .into_response());
+    }
+    Ok(())
+}
+
 // -------------------------------------------------------------------
 // Response builders
 // -------------------------------------------------------------------
@@ -828,5 +914,26 @@ mod tests {
         assert_eq!(get("password"), "<redacted>");
         assert_eq!(get("crypto_passphrase"), "<redacted>");
         assert_eq!(get("socket_path"), "/tmp/x.sock");
+    }
+
+    #[test]
+    fn web_token_gate_rejects_missing_token() {
+        let headers = HeaderMap::new();
+        assert!(require_web_token(&headers, "deadbeef").is_err());
+    }
+
+    #[test]
+    fn web_token_gate_rejects_wrong_token() {
+        let mut headers = HeaderMap::new();
+        headers.insert(WEB_TOKEN_HEADER, HeaderValue::from_static("wrongtoken"));
+        assert!(require_web_token(&headers, "deadbeef").is_err());
+    }
+
+    #[test]
+    fn web_token_gate_admits_correct_token() {
+        let token = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
+        let mut headers = HeaderMap::new();
+        headers.insert(WEB_TOKEN_HEADER, HeaderValue::from_str(token).unwrap());
+        assert!(require_web_token(&headers, token).is_ok());
     }
 }

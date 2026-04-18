@@ -10,9 +10,17 @@
 //! here. The cross-platform seam is [`crate::platform::PlatformMount`] /
 //! [`crate::platform::MountinfoReader`].
 
+use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Condvar, Mutex, OnceLock};
+
+// ENOTSUP / EOPNOTSUPP: "operation not supported". Used instead of ENOSYS
+// ("no such syscall") for operations that are understood but inapplicable to
+// this filesystem (e.g. access(2) and chmod/chown have no meaning on pCloud,
+// which has no per-file Unix permission bits).
+const ENOTSUP: i32 = libc::EOPNOTSUPP;
 
 use crate::fuse_adapter::FuseAdapter;
 use crate::mount_orphan::MountinfoReader;
@@ -147,6 +155,50 @@ fn adapter_attr_to_fuser(a: &crate::fuse_adapter::EntryAttr) -> fuser::FileAttr 
 }
 
 impl fuser::Filesystem for BoxedFuserShim {
+    /// Return filesystem statistics so that `df(1)` and `stat -f` report
+    /// meaningful values instead of ENOSYS. We first attempt a real
+    /// `statvfs(2)` on the mount point path; if that fails we fall back to
+    /// conservative defaults that claim 1 TiB total with ~500 GiB free.
+    fn statfs(&mut self, _req: &fuser::Request<'_>, _ino: u64, reply: fuser::ReplyStatfs) {
+        const DEFAULT_BSIZE: u32 = 4096;
+        const TIB_BLOCKS: u64 = (1u64 << 40) / DEFAULT_BSIZE as u64;
+        const FREE_BLOCKS: u64 = TIB_BLOCKS / 2;
+
+        let stat_result = self.path_for(1).and_then(|p| {
+            #[allow(unsafe_code)]
+            {
+                let path_cstr = std::ffi::CString::new(p.to_string_lossy().as_bytes()).ok()?;
+                let mut sv: libc::statvfs64 = unsafe { std::mem::zeroed() };
+                let rc = unsafe { libc::statvfs64(path_cstr.as_ptr(), &mut sv) };
+                if rc == 0 { Some(sv) } else { None }
+            }
+        });
+
+        let (blocks, bfree, bavail, files, ffree, bsize, namelen, frsize) = match stat_result {
+            Some(sv) => (
+                sv.f_blocks,
+                sv.f_bfree,
+                sv.f_bavail,
+                sv.f_files,
+                sv.f_ffree,
+                sv.f_bsize as u32,
+                sv.f_namemax as u32,
+                sv.f_frsize as u32,
+            ),
+            None => (
+                TIB_BLOCKS,
+                FREE_BLOCKS,
+                FREE_BLOCKS,
+                1_000_000u64,
+                999_000u64,
+                DEFAULT_BSIZE,
+                255u32,
+                DEFAULT_BSIZE,
+            ),
+        };
+        reply.statfs(blocks, bfree, bavail, files, ffree, bsize, namelen, frsize);
+    }
+
     fn lookup(
         &mut self,
         _req: &fuser::Request<'_>,
@@ -358,13 +410,20 @@ impl fuser::Filesystem for BoxedFuserShim {
         }
     }
 
+    /// setattr: chmod/chown return ENOTSUP (pCloud has no Unix permission
+    /// bits). utimens is accepted as a no-op to satisfy editors that update
+    /// mtime. Size changes are forwarded to the adapter's truncate method.
+    ///
+    /// pCloud does not support Unix permission bits. chmod/chown return
+    /// ENOTSUP; utimens is accepted as a no-op to satisfy editors that
+    /// update mtime.
     fn setattr(
         &mut self,
         _req: &fuser::Request<'_>,
         ino: u64,
-        _mode: Option<u32>,
-        _uid: Option<u32>,
-        _gid: Option<u32>,
+        mode: Option<u32>,
+        uid: Option<u32>,
+        gid: Option<u32>,
         size: Option<u64>,
         _atime: Option<fuser::TimeOrNow>,
         _mtime: Option<fuser::TimeOrNow>,
@@ -376,6 +435,13 @@ impl fuser::Filesystem for BoxedFuserShim {
         _flags: Option<u32>,
         reply: fuser::ReplyAttr,
     ) {
+        // pCloud does not support Unix permission bits. chmod/chown return
+        // ENOTSUP; utimens is accepted as a no-op to satisfy editors that
+        // update mtime.
+        if mode.is_some() || uid.is_some() || gid.is_some() {
+            reply.error(ENOTSUP);
+            return;
+        }
         if let Some(new_size) = size {
             if let Err(errno) = self.adapter.truncate(ino, new_size) {
                 reply.error(errno);
@@ -391,6 +457,29 @@ impl fuser::Filesystem for BoxedFuserShim {
             }
             Err(errno) => reply.error(errno),
         }
+    }
+
+    /// access(2) is not meaningful on pCloud because there are no per-file
+    /// Unix permission bits. Return ENOTSUP so callers fall back to
+    /// getattr UID/GID checks.
+    fn access(
+        &mut self,
+        _req: &fuser::Request<'_>,
+        _ino: u64,
+        _mask: i32,
+        reply: fuser::ReplyEmpty,
+    ) {
+        // pCloud has no per-file Unix permission bits; access(2) is not meaningful.
+        // Return ENOTSUP so callers fall back to getattr UID/GID checks.
+        reply.error(ENOTSUP);
+    }
+
+    /// forget: called by the kernel when it releases a reference to an inode
+    /// lookup. Decrements the adapter's lookup reference count and evicts the
+    /// inode map entry when it reaches zero.
+    fn forget(&mut self, _req: &fuser::Request<'_>, ino: u64, nlookup: u64) {
+        self.adapter.forget_ino(ino, nlookup);
+        log::trace!("forget ino={} nlookup={}", ino, nlookup);
     }
 
     fn unlink(
@@ -509,42 +598,156 @@ impl fuser::Filesystem for BoxedFuserShim {
 // Signal handling + active-mount registry (process-wide).
 // -----------------------------------------------------------------------------
 
-static ACTIVE_MOUNTS: OnceLock<Mutex<Vec<PathBuf>>> = OnceLock::new();
-static SIGNAL_HANDLER_INSTALLED: OnceLock<()> = OnceLock::new();
+// AtomicBool set by the signal handler; the reaper thread observes this
+// flag via a `Condvar` wake-up and initiates graceful unmount on all
+// registered active mounts. Using an atomic avoids Mutex inside the
+// signal handler, which is not async-signal-safe.
+static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-fn registry() -> &'static Mutex<Vec<PathBuf>> {
-    ACTIVE_MOUNTS.get_or_init(|| Mutex::new(Vec::new()))
+/// Condvar the reaper thread blocks on. The signal handler notifies via
+/// `libc::pthread_cond_broadcast` indirectly: the handler body only
+/// writes to `SHUTDOWN_REQUESTED`, and the reaper polls on a timed wait
+/// so it wakes within ~100ms of a signal even without explicit notify
+/// (notify_all from a signal handler is not async-signal-safe).
+static SHUTDOWN_CV: OnceLock<(Mutex<bool>, Condvar)> = OnceLock::new();
+
+fn shutdown_cv() -> &'static (Mutex<bool>, Condvar) {
+    SHUTDOWN_CV.get_or_init(|| (Mutex::new(false), Condvar::new()))
+}
+
+// Registry of active mount paths. Canonical-path `BTreeSet` with
+// debug assertions that register/unregister calls balance. Updated only
+// from non-signal contexts; the reaper thread drains it on shutdown.
+static ACTIVE_MOUNTS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
+
+fn registry() -> &'static Mutex<BTreeSet<PathBuf>> {
+    ACTIVE_MOUNTS.get_or_init(|| Mutex::new(BTreeSet::new()))
+}
+
+/// Register `path` in the active-mount set. Canonicalises when possible
+/// so the unregister-at-Drop path matches exactly what was registered.
+/// Debug-asserts that the insertion was novel (no double-register).
+fn register_mount(path: &Path) {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if let Ok(mut guard) = registry().lock() {
+        let inserted = guard.insert(canonical);
+        debug_assert!(inserted, "ACTIVE_MOUNTS double-register: {path:?}");
+    }
+}
+
+/// Remove `path` from the active-mount set. Debug-asserts the entry was
+/// present so unbalanced drops surface in tests rather than silently
+/// leaking.
+fn unregister_mount(path: &Path) {
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if let Ok(mut guard) = registry().lock() {
+        let removed = guard.remove(&canonical) || guard.remove(path);
+        debug_assert!(removed, "ACTIVE_MOUNTS unregister miss: {path:?}");
+    }
+}
+
+static SIGNAL_HANDLER_INSTALLED: OnceLock<()> = OnceLock::new();
+static REAPER_INSTALLED: OnceLock<()> = OnceLock::new();
+
+/// Return whether a shutdown has been requested via SIGTERM/SIGINT.
+/// Poll this from the main event loop to trigger unmount cleanup.
+#[allow(dead_code)]
+pub fn shutdown_requested() -> bool {
+    SHUTDOWN_REQUESTED.load(Ordering::Relaxed)
 }
 
 fn install_signal_handler_once() {
     SIGNAL_HANDLER_INSTALLED.get_or_init(|| {
-        // SAFETY: signal(2) is called once during process lifetime with a
-        // static handler.
-        let handler = signal_trampoline as *const () as libc::sighandler_t;
+        // SAFETY: `sigaction(2)` is called exactly once per signal during
+        // process lifetime with a static handler. The handler body only
+        // stores to an `AtomicBool`, which is async-signal-safe. We use
+        // `SA_RESTART` so long-running syscalls resume transparently
+        // across the signal delivery instead of returning `EINTR` to
+        // callers that are not prepared for it.
         unsafe {
-            libc::signal(libc::SIGTERM, handler);
-            libc::signal(libc::SIGINT, handler);
+            let mut sa: libc::sigaction = std::mem::zeroed();
+            sa.sa_sigaction = signal_trampoline as usize;
+            sa.sa_flags = libc::SA_RESTART;
+            libc::sigemptyset(&mut sa.sa_mask);
+            let _ = libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
+            let _ = libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());
         }
+    });
+    // Install the reaper thread after the signal handler is in place so
+    // there is no window where a signal can flip the flag without
+    // anyone listening.
+    install_reaper_once();
+}
+
+extern "C" fn signal_trampoline(_sig: libc::c_int) {
+    // SAFETY: AtomicBool::store is async-signal-safe. We do NOT lock any
+    // Mutex here — Mutex::lock is not async-signal-safe and can deadlock
+    // if the signal fires while another thread holds the lock. The
+    // reaper thread wakes up from its timed Condvar wait within ~100ms.
+    SHUTDOWN_REQUESTED.store(true, Ordering::Relaxed);
+}
+
+fn install_reaper_once() {
+    REAPER_INSTALLED.get_or_init(|| {
+        std::thread::Builder::new()
+            .name("pcloudfs-reaper".to_string())
+            .spawn(|| reaper_main())
+            .ok();
     });
 }
 
-extern "C" fn signal_trampoline(sig: libc::c_int) {
-    if let Some(mtx) = ACTIVE_MOUNTS.get()
-        && let Ok(guard) = mtx.lock()
-    {
-        for path in guard.iter() {
-            if let Ok(c) = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) {
-                // SAFETY: umount2 is async-signal-safe.
-                unsafe {
-                    libc::umount2(c.as_ptr(), libc::MNT_DETACH);
-                }
+/// Reaper thread entry: block on a `Condvar` with a 100ms timed wait and
+/// check `SHUTDOWN_REQUESTED` on every wake. When set, drain the active
+/// mount registry and issue a lazy `umount2(MNT_DETACH)` on every
+/// remaining path so the kernel releases FUSE resources even if the
+/// owning `MountHandle` drops never run (e.g. process abort).
+fn reaper_main() {
+    let (lock, cv) = shutdown_cv();
+    loop {
+        if SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
+            reap_all_mounts();
+            return;
+        }
+        let guard = match lock.lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        // Timed wait bounds the latency between signal delivery and
+        // unmount — the signal handler cannot safely call notify_all(),
+        // so we poll the atomic on every timeout.
+        let (_guard, _) = cv
+            .wait_timeout(guard, std::time::Duration::from_millis(100))
+            .unwrap_or_else(|p| p.into_inner());
+    }
+}
+
+fn reap_all_mounts() {
+    let paths: Vec<PathBuf> = registry()
+        .lock()
+        .map(|g| g.iter().cloned().collect())
+        .unwrap_or_default();
+    for path in paths {
+        log::warn!(
+            "pcloud-fs reaper: signal received, detaching mount at {}",
+            path.display()
+        );
+        if let Ok(c) = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) {
+            // SAFETY: `umount2` is a direct syscall; `c` owns the
+            // NUL-terminated path bytes for the duration of the call.
+            // MNT_DETACH never blocks waiting on in-flight I/O.
+            let rc = unsafe { libc::umount2(c.as_ptr(), libc::MNT_DETACH) };
+            if rc != 0 {
+                let e = std::io::Error::last_os_error();
+                log::warn!(
+                    "pcloud-fs reaper: umount2({}) failed: {}",
+                    path.display(),
+                    e
+                );
             }
         }
-    }
-    // Restore default and re-raise so the process terminates normally.
-    unsafe {
-        libc::signal(sig, libc::SIG_DFL);
-        libc::raise(sig);
+        if let Ok(mut guard) = registry().lock() {
+            guard.remove(&path);
+        }
     }
 }
 
@@ -581,7 +784,34 @@ impl LinuxMountHandle {
     /// whether the kernel-side unmount succeeded, so the SIGTERM
     /// trampoline does not attempt to unmount the same path again.
     pub fn unmount(mut self) -> Result<(), MountError> {
-        drop(self.session.take());
+        // Drop the fuser BackgroundSession on a helper thread with a bounded
+        // 5-second join so a wedged FUSE loop cannot block Drop forever.
+        // We use an `mpsc::sync_channel(1)` doorbell + `recv_timeout` rather
+        // than `JoinHandle::join()` because `join()` has no timeout and
+        // would block the caller indefinitely on a wedged FUSE loop. If the
+        // timeout elapses we deliberately leak the thread (logging an
+        // error) — the kernel lazy-unmount below is the authoritative
+        // recovery, and the thread will exit once libfuse unwedges.
+        let session = self.session.take();
+        let (tx, rx) = std::sync::mpsc::sync_channel::<()>(1);
+        let _joiner = std::thread::Builder::new()
+            .name("pcloudfs-session-drop".to_string())
+            .spawn(move || {
+                drop(session);
+                let _ = tx.send(());
+            });
+        match rx.recv_timeout(std::time::Duration::from_secs(5)) {
+            Ok(()) => {}
+            Err(_) => {
+                log::error!(
+                    "FUSE session drop exceeded 5s timeout on {}; leaking \
+                     helper thread and escalating to umount2(MNT_DETACH)",
+                    self.mountpoint.display()
+                );
+                // Deliberately do not join `_joiner`; the lazy umount
+                // below will unwedge libfuse.
+            }
+        }
 
         // Settle window: poll `/proc/self/mountinfo` for the path. Most
         // unmounts complete within a few milliseconds; we exit early
@@ -638,9 +868,7 @@ impl LinuxMountHandle {
             }
         }
 
-        if let Ok(mut guard) = registry().lock() {
-            guard.retain(|p| p != &self.mountpoint);
-        }
+        unregister_mount(&self.mountpoint);
         match fallback_err {
             Some(e) => Err(e),
             None => Ok(()),
@@ -666,6 +894,49 @@ struct FuserShim<A: FuseAdapter> {
 }
 
 impl<A: FuseAdapter> fuser::Filesystem for FuserShim<A> {
+    /// Return filesystem statistics so that `df(1)` and `stat -f` report
+    /// meaningful values instead of ENOSYS. Mirrors the implementation on
+    /// [`BoxedFuserShim`].
+    fn statfs(&mut self, _req: &fuser::Request<'_>, _ino: u64, reply: fuser::ReplyStatfs) {
+        const DEFAULT_BSIZE: u32 = 4096;
+        const TIB_BLOCKS: u64 = (1u64 << 40) / DEFAULT_BSIZE as u64;
+        const FREE_BLOCKS: u64 = TIB_BLOCKS / 2;
+
+        let stat_result = self.adapter.resolve_ino_to_path(1).ok().and_then(|p| {
+            #[allow(unsafe_code)]
+            {
+                let path_cstr = std::ffi::CString::new(p.to_string_lossy().as_bytes()).ok()?;
+                let mut sv: libc::statvfs64 = unsafe { std::mem::zeroed() };
+                let rc = unsafe { libc::statvfs64(path_cstr.as_ptr(), &mut sv) };
+                if rc == 0 { Some(sv) } else { None }
+            }
+        });
+
+        let (blocks, bfree, bavail, files, ffree, bsize, namelen, frsize) = match stat_result {
+            Some(sv) => (
+                sv.f_blocks,
+                sv.f_bfree,
+                sv.f_bavail,
+                sv.f_files,
+                sv.f_ffree,
+                sv.f_bsize as u32,
+                sv.f_namemax as u32,
+                sv.f_frsize as u32,
+            ),
+            None => (
+                TIB_BLOCKS,
+                FREE_BLOCKS,
+                FREE_BLOCKS,
+                1_000_000u64,
+                999_000u64,
+                DEFAULT_BSIZE,
+                255u32,
+                DEFAULT_BSIZE,
+            ),
+        };
+        reply.statfs(blocks, bfree, bavail, files, ffree, bsize, namelen, frsize);
+    }
+
     fn lookup(
         &mut self,
         _req: &fuser::Request<'_>,
@@ -876,13 +1147,20 @@ impl<A: FuseAdapter> fuser::Filesystem for FuserShim<A> {
         }
     }
 
+    /// setattr: chmod/chown return ENOTSUP (pCloud has no Unix permission
+    /// bits). utimens is accepted as a no-op to satisfy editors that update
+    /// mtime. Size changes are forwarded to the adapter's truncate method.
+    ///
+    /// pCloud does not support Unix permission bits. chmod/chown return
+    /// ENOTSUP; utimens is accepted as a no-op to satisfy editors that
+    /// update mtime.
     fn setattr(
         &mut self,
         _req: &fuser::Request<'_>,
         ino: u64,
-        _mode: Option<u32>,
-        _uid: Option<u32>,
-        _gid: Option<u32>,
+        mode: Option<u32>,
+        uid: Option<u32>,
+        gid: Option<u32>,
         size: Option<u64>,
         _atime: Option<fuser::TimeOrNow>,
         _mtime: Option<fuser::TimeOrNow>,
@@ -894,6 +1172,13 @@ impl<A: FuseAdapter> fuser::Filesystem for FuserShim<A> {
         _flags: Option<u32>,
         reply: fuser::ReplyAttr,
     ) {
+        // pCloud does not support Unix permission bits. chmod/chown return
+        // ENOTSUP; utimens is accepted as a no-op to satisfy editors that
+        // update mtime.
+        if mode.is_some() || uid.is_some() || gid.is_some() {
+            reply.error(ENOTSUP);
+            return;
+        }
         if let Some(new_size) = size {
             if let Err(errno) = self.adapter.truncate(ino, new_size) {
                 reply.error(errno);
@@ -909,6 +1194,29 @@ impl<A: FuseAdapter> fuser::Filesystem for FuserShim<A> {
             }
             Err(errno) => reply.error(errno),
         }
+    }
+
+    /// access(2) is not meaningful on pCloud because there are no per-file
+    /// Unix permission bits. Return ENOTSUP so callers fall back to
+    /// getattr UID/GID checks.
+    fn access(
+        &mut self,
+        _req: &fuser::Request<'_>,
+        _ino: u64,
+        _mask: i32,
+        reply: fuser::ReplyEmpty,
+    ) {
+        // pCloud has no per-file Unix permission bits; access(2) is not meaningful.
+        // Return ENOTSUP so callers fall back to getattr UID/GID checks.
+        reply.error(ENOTSUP);
+    }
+
+    /// forget: called by the kernel when it releases a reference to an inode
+    /// lookup. Decrements the adapter's lookup reference count and evicts the
+    /// inode map entry when it reaches zero.
+    fn forget(&mut self, _req: &fuser::Request<'_>, ino: u64, nlookup: u64) {
+        self.adapter.forget_ino(ino, nlookup);
+        log::trace!("forget ino={} nlookup={}", ino, nlookup);
     }
 
     fn unlink(
@@ -1079,9 +1387,7 @@ pub fn mount_with_fuser<A: FuseAdapter>(
     let session = fuser::spawn_mount2(shim, mountpoint, &fuse_opts)
         .map_err(|e| MountError::Fuser(e.to_string()))?;
 
-    if let Ok(mut guard) = registry().lock() {
-        guard.push(mountpoint.to_path_buf());
-    }
+    register_mount(mountpoint);
 
     Ok(MountHandle::from_linux(LinuxMountHandle {
         mountpoint: mountpoint.to_path_buf(),
@@ -1105,9 +1411,7 @@ where
     let session = fuser::spawn_mount2(filesystem, mountpoint, &fuse_opts)
         .map_err(|e| MountError::Fuser(e.to_string()))?;
 
-    if let Ok(mut guard) = registry().lock() {
-        guard.push(mountpoint.to_path_buf());
-    }
+    register_mount(mountpoint);
 
     Ok(MountHandle::from_linux(LinuxMountHandle {
         mountpoint: mountpoint.to_path_buf(),

@@ -39,6 +39,17 @@ pub enum StagingError {
         /// The mode bits observed on the staging dir, masked to `0o777`.
         mode: u32,
     },
+    /// The staging dir is owned by a uid other than the current
+    /// effective uid. Using it would let another local user plant
+    /// attacker-controlled content inside the staging area that this
+    /// process then consumes as its own.
+    #[error("staging dir is not owned by current uid ({current}); actual owner uid={owner}")]
+    InsecureOwnership {
+        /// Uid observed on the staging directory.
+        owner: u32,
+        /// Effective uid of the current process.
+        current: u32,
+    },
     /// The caller-supplied blob name was rejected for containing a path
     /// separator, a traversal component, or a NUL byte.
     #[error("staging blob name rejected: {0}")]
@@ -245,11 +256,26 @@ fn create_secure_dir(path: &Path) -> Result<(), StagingError> {
 
 #[cfg(unix)]
 fn verify_secure_dir(path: &Path) -> Result<(), StagingError> {
-    use std::os::unix::fs::PermissionsExt;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let meta = fs::metadata(path)?;
     let mode = meta.permissions().mode() & 0o777;
     if mode & 0o077 != 0 {
         return Err(StagingError::InsecurePermissions { mode });
+    }
+    // Ownership check (audit-04 P2-4b): a staging dir owned by another
+    // local user could be pre-populated with attacker-controlled blobs
+    // that this process later consumes as if it had produced them. Even
+    // 0700 permissions do not help if the OWNER is hostile, because the
+    // permission bits apply to the *owner*.
+    //
+    // SAFETY: `geteuid` is a pure syscall with no preconditions.
+    let current_uid = unsafe { libc::geteuid() };
+    let owner = meta.uid();
+    if owner != current_uid {
+        return Err(StagingError::InsecureOwnership {
+            owner,
+            current: current_uid,
+        });
     }
     Ok(())
 }

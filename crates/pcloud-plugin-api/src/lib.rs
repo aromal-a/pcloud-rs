@@ -866,6 +866,8 @@ impl PluginRegistry {
             signed,
             trusted_key_fingerprint,
         });
+        // INVARIANT: the element was just pushed to `self.loaded` on the
+        // preceding statements; `last()` on a non-empty Vec is always Some.
         Ok(self.loaded.last().expect("just pushed"))
     }
 
@@ -967,6 +969,9 @@ impl PluginRegistry {
         let op_label = operation_label(operation);
         let mut handler_opt = Some(handler);
         let result = catch_unwind(AssertUnwindSafe(|| {
+            // INVARIANT: `handler_opt` is Some on entry; the closure runs
+            // exactly once inside `catch_unwind`, so `take()` always yields
+            // the handler. A second call cannot occur.
             let h = handler_opt.take().expect("handler consumed exactly once");
             h(operation)
         }));

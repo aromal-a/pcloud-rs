@@ -61,6 +61,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "allocator-api2"
+version = "0.2.21"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1831,6 +1837,8 @@ version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
+ "allocator-api2",
+ "equivalent",
  "foldhash",
 ]
 
@@ -2482,6 +2490,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
+name = "lru"
+version = "0.12.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "234cf4f4a04dc1f57e24b96cc0cd600cf2af460d4161ac5ecdd0af8e1f3b2a38"
+dependencies = [
+ "hashbrown 0.15.5",
+]
+
+[[package]]
 name = "lru-slab"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3090,9 +3107,11 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "argon2",
+ "base64 0.22.1",
  "criterion",
  "getrandom 0.2.17",
  "hmac",
+ "log",
  "pcloud-kms",
  "pcloud-secret",
  "proptest",
@@ -3101,6 +3120,7 @@ dependencies = [
  "sha2",
  "subtle",
  "thiserror 2.0.18",
+ "unicode-normalization",
  "zeroize",
 ]
 
@@ -3164,6 +3184,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "globset",
+ "log",
  "pcloud-model",
  "pcloud-resilience",
  "serde",
@@ -3209,8 +3230,10 @@ dependencies = [
  "criterion",
  "fuser",
  "glob",
+ "indexmap",
  "libc",
  "log",
+ "lru",
  "notify",
  "pcloud-cache",
  "pcloud-engine",
@@ -3249,6 +3272,7 @@ version = "0.1.0"
 dependencies = [
  "criterion",
  "libc",
+ "log",
  "pcloud-model",
  "pcloud-secret",
  "proptest",
@@ -3427,6 +3451,7 @@ dependencies = [
  "sha2",
  "thiserror 2.0.18",
  "webpki-roots",
+ "zeroize",
 ]
 
 [[package]]
@@ -3434,6 +3459,7 @@ name = "pcloud-resilience"
 version = "0.1.0"
 dependencies = [
  "parking_lot",
+ "pcloud-observability",
  "proptest",
  "thiserror 2.0.18",
  "tokio",
@@ -3504,13 +3530,17 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
+ "log",
  "pcloud-ipc",
  "pcloud-model",
+ "pcloud-secret",
  "serde",
  "serde_json",
+ "subtle",
  "thiserror 2.0.18",
  "tokio",
  "tower",
+ "zeroize",
 ]
 
 [[package]]
@@ -5144,6 +5174,15 @@ name = "unicode-ident"
 version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
+
+[[package]]
+name = "unicode-normalization"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5fd4f6878c9cb28d874b009da9e8d183b5abc80117c40bbd187a1fde336be6e8"
+dependencies = [
+ "tinyvec",
+]
 
 [[package]]
 name = "unicode-xid"

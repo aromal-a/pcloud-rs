@@ -9,15 +9,25 @@ description = "Client-side crypto folder primitives (AES-256-GCM, Argon2, zeroiz
 [dependencies]
 aes-gcm.workspace = true
 argon2.workspace = true
+base64 = "0.22"
 getrandom.workspace = true
 hmac.workspace = true
+log.workspace = true
 pcloud-kms = { path = "../pcloud-kms" }
 pcloud-secret = { path = "../pcloud-secret" }
 serde.workspace = true
 sha2.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
+unicode-normalization = "0.1"
 zeroize.workspace = true
+
+[features]
+# OFF by default — enables legacy C-compat PBKDF2-HMAC-SHA-512 5000-iter
+# password derivation for byte-equivalent interop with the legacy C client
+# auth path. When disabled (the secure default) the OWASP 2023 iteration
+# count is used instead (see password_scorer::PBKDF2_ITERS_OWASP).
+legacy-c-compat = []
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }

@@ -46,6 +46,7 @@ pub use pcloud_backends::auth_backend;
 pub mod audit_verifier_service;
 pub mod auth_vault;
 pub mod ha_lease;
+pub mod health_server;
 pub mod vault;
 pub use pcloud_backends::backup_backend;
 pub mod bootstrap;

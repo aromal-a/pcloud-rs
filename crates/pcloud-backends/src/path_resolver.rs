@@ -551,6 +551,9 @@ fn normalize_path(path: &str) -> Result<String, PathResolveError> {
 }
 
 fn split_parent(path: &str) -> (String, String) {
+    // INVARIANT: all paths entering this function have been normalised by
+    // `normalise_path`; the normaliser guarantees a leading '/' so rfind
+    // can never return None.
     let idx = path
         .rfind('/')
         .expect("normalised path always contains '/'");

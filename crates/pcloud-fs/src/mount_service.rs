@@ -23,7 +23,7 @@ use thiserror::Error;
 use crate::fuse_adapter::FuseAdapter;
 
 /// Options accepted by [`MountService::mount`].
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MountOptions {
     /// Mount read-only. Defaults to `true` for the 4.a scaffold.
     pub read_only: bool,
@@ -32,6 +32,24 @@ pub struct MountOptions {
     /// When `true`, the mount would allow other users on the host to access
     /// it. This crate always rejects that configuration.
     pub allow_other: bool,
+    /// Attribute cache TTL in seconds. Default: 1.
+    ///
+    /// Controls how long the kernel caches `getattr` replies before
+    /// re-validating. Higher values reduce round-trips for stat-heavy
+    /// workloads; lower values ensure freshness for frequently-changing files.
+    pub attr_timeout_secs: f64,
+    /// Directory entry cache TTL in seconds. Default: 1.
+    ///
+    /// Controls how long the kernel caches positive and negative dentry
+    /// lookups. Tune downward if concurrent writers can create or delete
+    /// files that other processes need to see quickly.
+    pub entry_timeout_secs: f64,
+    /// Max readahead in bytes. Default: 128 KiB.
+    ///
+    /// Hint to the kernel about how many bytes to read ahead on sequential
+    /// access patterns. Larger values can improve throughput on high-latency
+    /// network backends at the cost of extra memory usage.
+    pub max_readahead: u32,
 }
 
 impl Default for MountOptions {
@@ -40,6 +58,9 @@ impl Default for MountOptions {
             read_only: true,
             fs_name: None,
             allow_other: false,
+            attr_timeout_secs: 1.0,
+            entry_timeout_secs: 1.0,
+            max_readahead: 128 * 1024,
         }
     }
 }
@@ -76,8 +97,38 @@ pub enum MountError {
     },
     /// The caller requested `allow_other`, which this service rejects by
     /// policy (non-opt-in broad access to other users).
+    ///
+    /// # Single authoritative gate
+    ///
+    /// `allow_other` acceptability is decided only here and in
+    /// [`crate::mount::MountService::validate`]. Both layers are
+    /// consistent: the declarative validator forbids `allow_other &&
+    /// !read_only` and pre-checks `/etc/fuse.conf` for
+    /// `user_allow_other`; the runtime mount service below applies the
+    /// additional cross-platform rule that **any** `allow_other=true`
+    /// is rejected regardless of platform or read-only state. No
+    /// downstream backend (Linux, macOS, Windows, BSD) is allowed to
+    /// second-guess this gate.
     #[error("allow_other is rejected by the Rust mount service")]
     AllowOtherRejected,
+    /// The mountpoint is a symbolic link. Refusing to mount onto a
+    /// symlink target closes the TOCTOU window between validation and
+    /// `fuser::Session::mount`: an attacker able to flip the link
+    /// between those two calls could redirect the mount onto an
+    /// unexpected directory.
+    #[error("mountpoint is a symbolic link (refusing to mount to avoid TOCTOU): {0}")]
+    MountpointSymlink(PathBuf),
+    /// A cache-TTL mount option is non-finite or outside the accepted
+    /// `[0.0, 3600.0]` clamp range. The value is passed verbatim to
+    /// the kernel and a NaN/infinite value would be undefined-
+    /// behaviour on the FUSE side.
+    #[error("mount option out of range: {field} = {value} (expected finite 0.0..=3600.0)")]
+    OptionOutOfRange {
+        /// Offending field name (e.g. `"attr_timeout_secs"`).
+        field: &'static str,
+        /// Offending value.
+        value: f64,
+    },
     /// The current platform has no FUSE implementation linked in.
     #[error("mount is only supported on Linux")]
     UnsupportedPlatform,
@@ -110,16 +161,43 @@ impl MountService {
 
     /// Validate that `mountpoint` is safe to use.
     ///
-    /// Checks, in order: path exists, is a directory, is empty, is owned by
-    /// current uid (Linux), and is not world-writable (Linux).
+    /// Checks, in order: path is not a symlink (avoid TOCTOU), exists,
+    /// is a directory, is empty, is owned by current uid (Linux), and
+    /// is not world-writable (Linux).
+    ///
+    /// # TOCTOU-narrowing single-stat strategy
+    ///
+    /// We call [`std::fs::symlink_metadata`] (which does **not** follow
+    /// the final component) once and derive every subsequent decision
+    /// — symlink?, dir?, owner, mode — from that single snapshot. The
+    /// directory-is-empty check then performs exactly one additional
+    /// `opendir` which can only succeed if the path still points at
+    /// the same inode the kernel just resolved; this collapses the
+    /// classic "stat-then-open" race window into a single kernel trip
+    /// that any attacker would have to race with tiny precision.
+    ///
+    /// For the next hardening pass on Linux we can migrate this to
+    /// `openat2(RESOLVE_NO_SYMLINKS)` + `fstat` on the returned fd and
+    /// thread the fd all the way into `fuser::Session::mount` once
+    /// `fuser` grows an fd-based entry point. Until then, refusing to
+    /// mount onto *any* symlink is the strictest guarantee we can give
+    /// without the kernel ABI: the only inode visible to the mount
+    /// call is the one we just stat'd.
     pub fn validate_mountpoint(mountpoint: &Path) -> Result<(), MountError> {
-        let meta = match std::fs::metadata(mountpoint) {
+        // `symlink_metadata` does not traverse the final component. If
+        // the last segment is a symlink we reject outright; resolving it
+        // here would reopen the TOCTOU window we are trying to close.
+        let meta = match std::fs::symlink_metadata(mountpoint) {
             Ok(m) => m,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Err(MountError::MountpointMissing(mountpoint.to_path_buf()));
             }
             Err(e) => return Err(MountError::Io(e)),
         };
+
+        if meta.file_type().is_symlink() {
+            return Err(MountError::MountpointSymlink(mountpoint.to_path_buf()));
+        }
 
         if !meta.is_dir() {
             return Err(MountError::MountpointNotDirectory(mountpoint.to_path_buf()));
@@ -155,16 +233,39 @@ impl MountService {
         Ok(())
     }
 
+    /// Clamp and validate cache-TTL option values.
+    ///
+    /// `attr_timeout_secs` and `entry_timeout_secs` flow straight into
+    /// the kernel via FUSE; a NaN / infinite / negative value would be
+    /// undefined. We clamp to `[0.0, 3600.0]` — one hour is already
+    /// well past the point where staleness becomes operationally
+    /// unacceptable — and reject anything non-finite.
+    fn validate_options(options: &mut MountOptions) -> Result<(), MountError> {
+        const LO: f64 = 0.0;
+        const HI: f64 = 3600.0;
+        fn check(field: &'static str, v: &mut f64) -> Result<(), MountError> {
+            if !v.is_finite() {
+                return Err(MountError::OptionOutOfRange { field, value: *v });
+            }
+            *v = v.clamp(LO, HI);
+            Ok(())
+        }
+        check("attr_timeout_secs", &mut options.attr_timeout_secs)?;
+        check("entry_timeout_secs", &mut options.entry_timeout_secs)?;
+        Ok(())
+    }
+
     /// Mount `adapter` at `mountpoint` with `options`.
     pub fn mount<A: FuseAdapter>(
         &self,
         mountpoint: &Path,
         adapter: A,
-        options: MountOptions,
+        mut options: MountOptions,
     ) -> Result<MountHandle, MountError> {
         if options.allow_other {
             return Err(MountError::AllowOtherRejected);
         }
+        Self::validate_options(&mut options)?;
 
         Self::validate_mountpoint(mountpoint)?;
 
@@ -201,7 +302,7 @@ impl MountService {
         &self,
         mountpoint: &Path,
         filesystem: F,
-        options: MountOptions,
+        mut options: MountOptions,
     ) -> Result<MountHandle, MountError>
     where
         F: fuser::Filesystem + Send + 'static,
@@ -209,6 +310,7 @@ impl MountService {
         if options.allow_other {
             return Err(MountError::AllowOtherRejected);
         }
+        Self::validate_options(&mut options)?;
         Self::validate_mountpoint(mountpoint)?;
         crate::platform::linux::mount_fuser_filesystem(mountpoint, filesystem, options)
     }
@@ -504,7 +606,17 @@ impl Drop for MountHandle {
         #[cfg(target_os = "linux")]
         {
             if let Some(inner) = self.inner.take() {
-                let _ = inner.unmount();
+                if let Err(err) = inner.unmount() {
+                    // `Drop` must stay infallible, but silently
+                    // swallowing unmount errors leaves the kernel mount
+                    // behind with no operator-observable signal.
+                    // Record the error via `log::error!` and stash its
+                    // message in the process-global
+                    // `last_drop_error()` slot so monitoring can pick
+                    // it up.
+                    log::error!("MountHandle::drop: unmount failed: {err}");
+                    set_last_drop_error(err.to_string());
+                }
             }
         }
         #[cfg(target_os = "windows")]
@@ -520,6 +632,39 @@ impl Drop for MountHandle {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// last_drop_error: global operator-observable sink for swallowed Drop errors
+// ---------------------------------------------------------------------------
+
+/// Process-global slot holding the most recent error message produced
+/// by `MountHandle::Drop`. Writes are best-effort; reads are cheap.
+///
+/// `Drop` implementations must not panic, so returning `Result` from
+/// `drop` is not an option. This slot gives operators a deterministic
+/// way to observe unmount failures that would otherwise be silently
+/// logged and lost (e.g. a `log::error!` consumed by a filtered
+/// logger). Call [`take_last_drop_error`] from a test or a health
+/// endpoint to drain and inspect it.
+static LAST_DROP_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn set_last_drop_error(msg: String) {
+    if let Ok(mut slot) = LAST_DROP_ERROR.lock() {
+        *slot = Some(msg);
+    }
+}
+
+/// Consume and return the most recent `MountHandle::Drop` error message,
+/// if any. Returns `None` when no drop error has been recorded since
+/// the last call to this function (or since process start).
+///
+/// Provided specifically so that tests and operator health endpoints
+/// have a deterministic way to observe the errors that `Drop` is
+/// forced to swallow (panicking during unwind is unsafe).
+#[must_use]
+pub fn take_last_drop_error() -> Option<String> {
+    LAST_DROP_ERROR.lock().ok().and_then(|mut g| g.take())
 }
 
 impl std::fmt::Debug for MountHandle {
@@ -611,12 +756,18 @@ mod linux_integration {
     use crate::fuse_adapter::NullFuseAdapter;
     use tempfile::tempdir;
 
+    /// Test gate harmonised with `CLAUDE.md`: either
+    /// `PCLOUD_FUSE_TEST=1` or `PCLOUD_LIVE_E2E=1` enables FUSE-backed
+    /// integration tests, matching the documented live-test convention
+    /// used by the rest of the workspace.
     fn fuse_gate_enabled() -> bool {
-        std::env::var("PCLOUD_FUSE_TEST").ok().as_deref() == Some("1")
+        let fuse = std::env::var("PCLOUD_FUSE_TEST").ok().as_deref() == Some("1");
+        let live = std::env::var("PCLOUD_LIVE_E2E").ok().as_deref() == Some("1");
+        fuse || live
     }
 
     #[test]
-    #[ignore = "requires PCLOUD_FUSE_TEST=1 and a working libfuse kernel module"]
+    #[ignore = "requires PCLOUD_FUSE_TEST=1 or PCLOUD_LIVE_E2E=1 and a working libfuse kernel module"]
     fn mount_and_immediate_unmount_cleanly() {
         if !fuse_gate_enabled() {
             return;

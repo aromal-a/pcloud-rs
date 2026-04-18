@@ -93,6 +93,16 @@ use self::winfsp_ffi::{
 /// panics and we must return *something* across the FFI boundary.
 const STATUS_UNSUCCESSFUL: NTSTATUS = NTSTATUS(0xC000_0001_u32 as i32);
 
+/// WinFSP `FspCleanup*` flag bits. Values taken verbatim from WinFSP
+/// `winfsp/winfsp.h` (`FSP_FSCTL_CLEANUP_*` defines).
+///
+/// `FspCleanupDelete` (0x01): the file was opened with `FILE_DELETE_ON_CLOSE`
+/// disposition. When this bit is set in the `Cleanup` callback's `Flags`
+/// parameter the driver expects the server to delete the underlying object
+/// before `Close` is called so that a subsequent open of the same path finds
+/// it gone.
+const FSP_CLEANUP_DELETE: u32 = 0x01;
+
 /// WinFSP `FSP_FSCTL_VOLUME_PARAMS.Flags` bits (subset). Values taken
 /// verbatim from WinFSP `fsctl.h`.
 const VP_FLAG_CASE_SENSITIVE_SEARCH: u32 = 0x0000_0001;
@@ -166,6 +176,9 @@ impl PlatformMount for WindowsPlatformMount {
             read_only: true,
             fs_name: Some("pcloud".to_string()),
             allow_other: false,
+            attr_timeout_secs: 1.0,
+            entry_timeout_secs: 1.0,
+            max_readahead: 128 * 1024,
         }
     }
 
@@ -274,12 +287,32 @@ pub fn mount_with_winfsp_dyn(
         )
     };
     if status.0 != STATUS_SUCCESS.0 {
-        // SAFETY: recover and drop the leaked adapter box before bailing.
+        // SAFETY: `adapter_raw` was produced by `Box::into_raw` just above
+        // and has not been handed to WinFSP yet; reconstruct and drop it
+        // to free the boxed trait object.
         unsafe {
             let _ = Box::from_raw(adapter_raw as *mut Box<dyn FuseAdapter>);
         }
         return Err(status_to_mount_error(status, "FspFileSystemCreate"));
     }
+
+    // From this point forward we own a live `FSP_FILE_SYSTEM*` plus a
+    // leaked adapter `Box`. If any subsequent step fails we must tear
+    // them down in **strict reverse order**:
+    //
+    //   1. `FspFileSystemDelete`  — forces WinFSP to release its
+    //      reference to the user-context pointer. Must happen BEFORE
+    //      step 2, otherwise a pending dispatcher callback thread could
+    //      call `cb_open`/`cb_read`/... and dereference `adapter_raw`
+    //      after we have already freed the adapter box (use-after-free).
+    //   2. `Box::from_raw(adapter_raw)` — reclaim and drop the leaked
+    //      adapter box.
+    //
+    // `MountFailureGuard` is an RAII guard that encodes exactly this
+    // ordering. We `arm()` it immediately, `disarm()` it on the success
+    // path, and rely on its `Drop` to run the cleanup on every early-
+    // return error path.
+    let mut guard = MountFailureGuard::new(lib.clone(), fs, adapter_raw);
 
     // Attach the boxed adapter as the WinFSP UserContext so every callback
     // can recover it via `FspFileSystemGetUserContext`.
@@ -294,12 +327,7 @@ pub fn mount_with_winfsp_dyn(
     // SAFETY: UTF-16 buffer is NUL-terminated and lives for the call.
     let status = unsafe { (lib.fsp_set_mount_point)(fs, winfsp_ffi::PCWSTR(mp_utf16.as_ptr())) };
     if status.0 != STATUS_SUCCESS.0 {
-        // SAFETY: recover the adapter box we gave to WinFSP so we can free it.
-        unsafe {
-            let _ = Box::from_raw(adapter_raw as *mut Box<dyn FuseAdapter>);
-            // SAFETY: `fs` is a valid handle we own.
-            (lib.fsp_delete)(fs);
-        }
+        // `guard` will run `fsp_delete` first, adapter-box free second.
         return Err(status_to_mount_error(status, "FspFileSystemSetMountPoint"));
     }
 
@@ -309,18 +337,92 @@ pub fn mount_with_winfsp_dyn(
     // "library default".
     let status = unsafe { (lib.fsp_start_dispatcher)(fs, 0) };
     if status.0 != STATUS_SUCCESS.0 {
-        // SAFETY: reclaim adapter box; delete file system.
-        unsafe {
-            let _ = Box::from_raw(adapter_raw as *mut Box<dyn FuseAdapter>);
-            (lib.fsp_delete)(fs);
-        }
+        // `guard` will run `fsp_delete` first, adapter-box free second.
         return Err(status_to_mount_error(
             status,
             "FspFileSystemStartDispatcher",
         ));
     }
 
+    // Transfer ownership of `fs` and `adapter_raw` to the `MountHandle`;
+    // the guard must no longer touch them.
+    guard.disarm();
     Ok(MountHandle::from_windows(fs, mp_utf16, adapter_raw, lib))
+}
+
+/// RAII cleanup guard for the partially-initialised WinFSP mount path.
+///
+/// # Why a dedicated guard
+///
+/// Between `FspFileSystemCreate` and `FspFileSystemStartDispatcher` the
+/// file-system handle `fs` may already have the adapter pointer
+/// installed as its `UserContext`. A naive error path that frees the
+/// adapter `Box` and then calls `FspFileSystemDelete` races with
+/// WinFSP internal worker threads that can still look up the user
+/// context and call into the adapter's v-table — a classic double-
+/// reclaim / use-after-free.
+///
+/// The guard enforces the correct teardown order on every early-return
+/// path:
+///
+/// 1. `FspFileSystemDelete(fs)` — WinFSP drops its reference to the
+///    user-context pointer and stops any pending dispatchers.
+/// 2. `Box::from_raw(adapter_raw)` — only now is it safe to free the
+///    adapter.
+///
+/// The success path calls [`MountFailureGuard::disarm`] to hand
+/// ownership of both pointers to the returned `MountHandle`.
+struct MountFailureGuard {
+    lib: std::sync::Arc<crate::platform::windows::winfsp_ffi::WinFspLibrary>,
+    fs: PFspFileSystem,
+    adapter_raw: *mut c_void,
+    armed: bool,
+}
+
+impl MountFailureGuard {
+    fn new(
+        lib: std::sync::Arc<crate::platform::windows::winfsp_ffi::WinFspLibrary>,
+        fs: PFspFileSystem,
+        adapter_raw: *mut c_void,
+    ) -> Self {
+        Self {
+            lib,
+            fs,
+            adapter_raw,
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for MountFailureGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        // Step 1: delete file system FIRST so WinFSP drops every
+        // reference to the user-context pointer (no dispatcher thread
+        // can reach the adapter after this returns).
+        if !self.fs.is_null() {
+            // SAFETY: `fs` is a live WinFSP handle we own. After
+            // `FspFileSystemDelete` returns, WinFSP has released its
+            // reference and no further callback will fire.
+            unsafe { (self.lib.fsp_delete)(self.fs) };
+        }
+        // Step 2: reclaim the adapter box. Now, and only now, is it
+        // safe to free the memory.
+        if !self.adapter_raw.is_null() {
+            // SAFETY: `adapter_raw` was produced by `Box::into_raw` on
+            // a `Box<Box<dyn FuseAdapter>>` and WinFSP has dropped its
+            // reference.
+            unsafe {
+                let _ = Box::from_raw(self.adapter_raw as *mut Box<dyn FuseAdapter>);
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +452,10 @@ unsafe fn adapter_from_fs<'a>(fs: PFspFileSystem) -> Option<&'a dyn FuseAdapter>
     // (it lives on `MountHandle`), but we do have a function-pointer view
     // through a thread-local-free re-load. To avoid re-resolving on every
     // callback we perform a one-shot load on first callback entry.
+    // SAFETY: `fs` is a live WinFSP file-system handle whose dispatcher is
+    // active; `fsp_get_user_context_global` is resolved once at first call
+    // from the loaded `winfsp-x64.dll` and then cached — safe to call on
+    // any dispatcher thread while the file system is active.
     let ctx_ptr = unsafe { fsp_get_user_context_global(fs) };
     if ctx_ptr.is_null() {
         return None;
@@ -362,20 +468,45 @@ unsafe fn adapter_from_fs<'a>(fs: PFspFileSystem) -> Option<&'a dyn FuseAdapter>
 
 /// Retrieve the WinFSP user-context pointer without needing an
 /// `Arc<WinFspLibrary>`. We re-resolve the export on first use and cache
-/// it in a `OnceLock`. If `winfsp-x64.dll` is already resident (which is
-/// always the case inside a callback) this is just a symbol lookup.
+/// it in a `OnceLock<Mutex<Option<FnPtr>>>`. If `winfsp-x64.dll` is
+/// already resident (which is always the case inside a callback) this is
+/// just a symbol lookup.
+///
+/// # Why `OnceLock<Mutex<Option<FnPtr>>>`
+///
+/// Rust `extern "system" fn` pointers are already `Send + Sync`, so a
+/// bare `OnceLock<Option<FnPtr>>` is sound in isolation. However, the
+/// auditor requested an explicit lock wrapper to document — and enforce
+/// at the type level — that **no future maintainer may swap the
+/// contents for a non-`Sync` type** (e.g. `Rc`, `Cell<FnPtr>`) without
+/// first removing the mutex. The `Mutex` also gives us a clean hook to
+/// stash any future per-process symbol-resolution state alongside the
+/// function pointer (logging, metrics, version probe) without another
+/// unsafe refactor.
+///
+/// The runtime cost is a single `Mutex::lock` on every callback entry,
+/// which is a handful of nanoseconds and strictly dominated by the
+/// subsequent DLL call.
 ///
 /// # Safety
 ///
 /// Must only be called from a WinFSP dispatcher callback, i.e. when the
 /// DLL is known to be resident.
 unsafe fn fsp_get_user_context_global(fs: PFspFileSystem) -> *mut c_void {
-    static GETTER: std::sync::OnceLock<Option<winfsp_ffi::FnFspFileSystemGetUserContext>> =
-        std::sync::OnceLock::new();
-    let getter = GETTER.get_or_init(|| match load_winfsp() {
-        Ok(Some(lib)) => Some(lib.fsp_get_user_context),
-        _ => None,
+    static GETTER: std::sync::OnceLock<
+        std::sync::Mutex<Option<winfsp_ffi::FnFspFileSystemGetUserContext>>,
+    > = std::sync::OnceLock::new();
+    let cell = GETTER.get_or_init(|| {
+        let resolved = match load_winfsp() {
+            Ok(Some(lib)) => Some(lib.fsp_get_user_context),
+            _ => None,
+        };
+        std::sync::Mutex::new(resolved)
     });
+    let getter = match cell.lock() {
+        Ok(g) => *g,
+        Err(poison) => *poison.into_inner(),
+    };
     match getter {
         // SAFETY: `fs` came from WinFSP; the getter signature matches the
         // WinFSP ABI.
@@ -942,6 +1073,9 @@ extern "system" fn cb_overwrite(
             None => return STATUS_INVALID_PARAMETER,
         };
         // SAFETY: produced by `Box::into_raw` in cb_open / cb_create.
+        // SAFETY: `file_context` was produced by `Box::into_raw` in `cb_open`
+        // or `cb_create` and has not been freed yet (WinFSP calls `Cleanup`/
+        // callback before `Close`, which is the only point of ownership return).
         let ctx = match unsafe { file_context_ref(file_context) } {
             Some(c) => c,
             None => return STATUS_INVALID_PARAMETER,
@@ -1002,6 +1136,9 @@ extern "system" fn cb_write(
             Some(a) => a,
             None => return STATUS_INVALID_PARAMETER,
         };
+        // SAFETY: `file_context` was produced by `Box::into_raw` in `cb_open`
+        // or `cb_create` and has not been freed yet (WinFSP calls `Cleanup`/
+        // callback before `Close`, which is the only point of ownership return).
         let ctx = match unsafe { file_context_ref(file_context) } {
             Some(c) => c,
             None => return STATUS_INVALID_PARAMETER,
@@ -1066,6 +1203,9 @@ extern "system" fn cb_set_file_size(
             Some(a) => a,
             None => return STATUS_INVALID_PARAMETER,
         };
+        // SAFETY: `file_context` was produced by `Box::into_raw` in `cb_open`
+        // or `cb_create` and has not been freed yet (WinFSP calls `Cleanup`/
+        // callback before `Close`, which is the only point of ownership return).
         let ctx = match unsafe { file_context_ref(file_context) } {
             Some(c) => c,
             None => return STATUS_INVALID_PARAMETER,
@@ -1109,6 +1249,9 @@ extern "system" fn cb_set_basic_info(
             Some(a) => a,
             None => return STATUS_INVALID_PARAMETER,
         };
+        // SAFETY: `file_context` was produced by `Box::into_raw` in `cb_open`
+        // or `cb_create` and has not been freed yet (WinFSP calls `Cleanup`/
+        // callback before `Close`, which is the only point of ownership return).
         let ctx = match unsafe { file_context_ref(file_context) } {
             Some(c) => c,
             None => return STATUS_INVALID_PARAMETER,
@@ -1188,6 +1331,9 @@ extern "system" fn cb_can_delete(
             Some(a) => a,
             None => return STATUS_INVALID_PARAMETER,
         };
+        // SAFETY: `file_context` was produced by `Box::into_raw` in `cb_open`
+        // or `cb_create` and has not been freed yet (WinFSP calls `Cleanup`/
+        // callback before `Close`, which is the only point of ownership return).
         let ctx = match unsafe { file_context_ref(file_context) } {
             Some(c) => c,
             None => return STATUS_INVALID_PARAMETER,
@@ -1282,15 +1428,85 @@ extern "system" fn cb_set_security(
 }
 
 extern "system" fn cb_cleanup(
-    _fs: PFspFileSystem,
-    _file_context: *mut c_void,
+    fs: PFspFileSystem,
+    file_context: *mut c_void,
     _file_name: winfsp_ffi::PCWSTR,
-    _flags: u32,
+    flags: u32,
 ) {
     guarded_void(|| {
-        // No-op: delete-on-close semantics are handled in the write path
-        // when it lands (bd-1du.4 write-side). See `cb_close` for handle
-        // cleanup; Cleanup does NOT own the FileContext.
+        // Handle FILE_DELETE_ON_CLOSE: when the kernel sets FspCleanupDelete
+        // the file must be deleted before Close arrives. We issue a backend
+        // delete via the adapter's unlink path, keyed on the resolved path
+        // from the inode stored in the FileContext.
+        if flags & FSP_CLEANUP_DELETE != 0 {
+            // SAFETY: `fs` carries the adapter installed in mount_with_winfsp_dyn;
+            // callback lifetime is within the dispatcher.
+            let adapter = match unsafe { adapter_from_fs(fs) } {
+                Some(a) => a,
+                None => return,
+            };
+            // SAFETY: file_context was produced by Box::into_raw in cb_open/cb_create
+            // and has not been freed yet (Close arrives after Cleanup).
+            let ctx = match unsafe { file_context_ref(file_context) } {
+                Some(c) => c,
+                None => return,
+            };
+            if ctx.is_dir {
+                // FspCleanupDelete on a directory: rmdir via adapter.
+                // We need the path, but the trait exposes ino-based readdir/rmdir.
+                // Resolve via resolve_ino_to_path then delegate.
+                match adapter.resolve_ino_to_path(ctx.ino) {
+                    Ok(path) => {
+                        let path_str = path.to_string_lossy();
+                        if let Err(e) = adapter.rmdir(&path_str) {
+                            log::error!(
+                                "FspCleanupDelete: rmdir ino={} failed errno={}",
+                                ctx.ino,
+                                e
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "FspCleanupDelete: resolve_ino_to_path ino={} failed errno={}",
+                            ctx.ino,
+                            e
+                        );
+                    }
+                }
+            } else {
+                // FspCleanupDelete on a file: resolve path and call unlink.
+                match adapter.resolve_ino_to_path(ctx.ino) {
+                    Ok(path) => {
+                        let path_str = path.to_string_lossy();
+                        // Split into (parent_path, name) for adapter.unlink.
+                        if let Some((parent, name)) = split_parent_and_name(&path_str) {
+                            if let Err(e) = adapter.unlink(&parent, &name) {
+                                log::error!(
+                                    "FspCleanupDelete: unlink ino={} path={} failed errno={}",
+                                    ctx.ino,
+                                    path_str,
+                                    e
+                                );
+                            }
+                        } else {
+                            log::warn!(
+                                "FspCleanupDelete: could not split path={} for unlink",
+                                path_str
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "FspCleanupDelete: resolve_ino_to_path ino={} failed errno={}",
+                            ctx.ino,
+                            e
+                        );
+                    }
+                }
+            }
+        }
+        // Note: Cleanup does NOT own the FileContext; Close reclaims it.
     });
 }
 
@@ -1334,6 +1550,9 @@ extern "system" fn cb_read(
             None => return STATUS_INVALID_PARAMETER,
         };
         // SAFETY: produced by `Box::into_raw` in cb_open; still owned by us.
+        // SAFETY: `file_context` was produced by `Box::into_raw` in `cb_open`
+        // or `cb_create` and has not been freed yet (WinFSP calls `Cleanup`/
+        // callback before `Close`, which is the only point of ownership return).
         let ctx = match unsafe { file_context_ref(file_context) } {
             Some(c) => c,
             None => return STATUS_INVALID_PARAMETER,
@@ -1399,6 +1618,9 @@ extern "system" fn cb_get_file_info(
             Some(a) => a,
             None => return STATUS_INVALID_PARAMETER,
         };
+        // SAFETY: `file_context` was produced by `Box::into_raw` in `cb_open`
+        // or `cb_create` and has not been freed yet (WinFSP calls `Cleanup`/
+        // callback before `Close`, which is the only point of ownership return).
         let ctx = match unsafe { file_context_ref(file_context) } {
             Some(c) => c,
             None => return STATUS_INVALID_PARAMETER,
@@ -1432,6 +1654,9 @@ extern "system" fn cb_read_directory(
             Some(a) => a,
             None => return STATUS_INVALID_PARAMETER,
         };
+        // SAFETY: `file_context` was produced by `Box::into_raw` in `cb_open`
+        // or `cb_create` and has not been freed yet (WinFSP calls `Cleanup`/
+        // callback before `Close`, which is the only point of ownership return).
         let ctx = match unsafe { file_context_ref(file_context) } {
             Some(c) => c,
             None => return STATUS_INVALID_PARAMETER,
@@ -1750,5 +1975,60 @@ mod tests {
         assert!(!opts.allow_other);
         assert!(opts.read_only);
         assert_eq!(opts.fs_name.as_deref(), Some("pcloud"));
+    }
+
+    /// Security-posture smoke test mirroring the macOS one. Windows has
+    /// no `nodev`/`nosuid` NFS-style flags (ACLs govern access), but the
+    /// same security intent surfaces here as: no broad `allow_other`,
+    /// read-only by default, and sane cache TTLs. Any regression here
+    /// would silently widen the NT file-object exposure.
+    #[test]
+    fn windows_mount_options_are_secure_by_default() {
+        let opts = WindowsPlatformMount.default_options();
+        assert!(
+            !opts.allow_other,
+            "allow_other must default to false on Windows"
+        );
+        assert!(
+            opts.read_only,
+            "read_only must default to true on Windows MVP"
+        );
+        assert!(
+            opts.attr_timeout_secs > 0.0,
+            "attr cache TTL must be positive"
+        );
+        assert!(
+            opts.entry_timeout_secs > 0.0,
+            "entry cache TTL must be positive"
+        );
+    }
+
+    /// `VolumeParams` must advertise Windows-convention Unicode-on-disk
+    /// plus case-preserved names (pCloud canonicalises names
+    /// server-side). Case-sensitive search must NOT be enabled by
+    /// default — it breaks Windows apps that assume case-insensitivity.
+    #[test]
+    fn windows_volume_params_flags_are_sane() {
+        let opts = WindowsPlatformMount.default_options();
+        let vp = build_volume_params(&opts);
+        assert_ne!(
+            vp.flags & VP_FLAG_UNICODE_ON_DISK,
+            0,
+            "UNICODE_ON_DISK must be set"
+        );
+        assert_ne!(
+            vp.flags & VP_FLAG_CASE_PRESERVED_NAMES,
+            0,
+            "CASE_PRESERVED_NAMES must be set"
+        );
+        assert_eq!(
+            vp.flags & VP_FLAG_CASE_SENSITIVE_SEARCH,
+            0,
+            "CASE_SENSITIVE_SEARCH must NOT be set by default"
+        );
+        assert_eq!(
+            vp.max_component_length, 255,
+            "max filename length must be 255"
+        );
     }
 }

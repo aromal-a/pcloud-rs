@@ -61,7 +61,8 @@ fn live_sync_loop_processes_authenticated_root() {
         return;
     }
 
-    let (handle, _token) = spawn_daemon_sync_loop(&runtime.config, &runtime.auth, store_path);
+    let (handle, _token) = spawn_daemon_sync_loop(&runtime.config, &runtime.auth, store_path)
+        .expect("failed to open sync loop store connection");
 
     assert!(handle.is_alive(), "sync loop should be running");
 

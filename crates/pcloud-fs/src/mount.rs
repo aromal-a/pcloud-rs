@@ -15,6 +15,18 @@ pub enum MountPolicyError {
     /// `read_only=true`. Allowing arbitrary local users to write through
     /// a pCloud mount is considered unsafe and is rejected here.
     AllowOtherRequiresReadOnly,
+    /// `allow_other=true` requires `user_allow_other` in `/etc/fuse.conf`
+    /// (Linux/BSD). The config file either did not exist, was
+    /// unreadable, or did not contain an uncommented `user_allow_other`
+    /// line. `fusermount3` would have rejected the mount with an
+    /// opaque "option allow_other only allowed if ..." error; surface
+    /// the remediation hint here instead.
+    AllowOtherRequiresFuseConf {
+        /// Path inspected (typically `/etc/fuse.conf`).
+        path: String,
+        /// Short remediation hint.
+        hint: String,
+    },
 }
 
 /// Declarative mount policy for the FUSE adapter. This type is a pure
@@ -36,11 +48,20 @@ impl MountService {
     ///
     /// - `allow_other && !read_only` is rejected with
     ///   [`MountPolicyError::AllowOtherRequiresReadOnly`].
+    /// - `allow_other=true` additionally requires an uncommented
+    ///   `user_allow_other` line in `/etc/fuse.conf` on Linux/BSD;
+    ///   otherwise `fusermount3` would reject the mount with an opaque
+    ///   error. Pre-checked here and surfaced as
+    ///   [`MountPolicyError::AllowOtherRequiresFuseConf`]. On non-Unix
+    ///   targets the check is skipped.
     ///
     /// Every other combination is accepted.
     pub fn validate(&self) -> Result<(), MountPolicyError> {
         if self.allow_other && !self.read_only {
             return Err(MountPolicyError::AllowOtherRequiresReadOnly);
+        }
+        if self.allow_other {
+            check_user_allow_other()?;
         }
         Ok(())
     }
@@ -55,6 +76,43 @@ impl MountService {
             "read-write"
         }
     }
+}
+
+/// Pre-check `/etc/fuse.conf` for an uncommented `user_allow_other`
+/// line. On platforms where the file cannot exist (Windows, macOS) the
+/// check is a no-op.
+#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
+fn check_user_allow_other() -> Result<(), MountPolicyError> {
+    const PATH: &str = "/etc/fuse.conf";
+    let contents = match std::fs::read_to_string(PATH) {
+        Ok(s) => s,
+        Err(_) => {
+            return Err(MountPolicyError::AllowOtherRequiresFuseConf {
+                path: PATH.to_string(),
+                hint: "/etc/fuse.conf missing; create it and add \
+                       'user_allow_other' (requires root)"
+                    .to_string(),
+            });
+        }
+    };
+    let has_flag = contents.lines().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.starts_with('#') && trimmed == "user_allow_other"
+    });
+    if !has_flag {
+        return Err(MountPolicyError::AllowOtherRequiresFuseConf {
+            path: PATH.to_string(),
+            hint: "add an uncommented 'user_allow_other' line to \
+                   /etc/fuse.conf (requires root)"
+                .to_string(),
+        });
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd")))]
+fn check_user_allow_other() -> Result<(), MountPolicyError> {
+    Ok(())
 }
 
 #[cfg(test)]

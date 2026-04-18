@@ -3,6 +3,7 @@
 //! `public_links_api`.
 
 use crate::binary_api::{BinaryParam, BinaryParamValue};
+use crate::redacted::RedactedProtoString;
 use pcloud_model::public_links::PublicLinkUploadPolicy;
 
 use super::ProtocolMethod;
@@ -11,7 +12,7 @@ use super::ProtocolMethod;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListPublicLinksRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
 }
 
 impl ProtocolMethod for ListPublicLinksRequest {
@@ -22,7 +23,7 @@ impl ProtocolMethod for ListPublicLinksRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(3);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("timeformat", "timestamp"));
         params.push(BinaryParam::string("iconformat", "id"));
         params
@@ -33,7 +34,7 @@ impl ProtocolMethod for ListPublicLinksRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShowPublicLinkRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `code` field (code).
     pub code: String,
 }
@@ -42,7 +43,7 @@ pub struct ShowPublicLinkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeletePublicLinkRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `link_id` field (link id).
     pub link_id: u64,
 }
@@ -55,7 +56,7 @@ impl ProtocolMethod for DeletePublicLinkRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(2);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("linkid", self.link_id));
         params
     }
@@ -69,7 +70,7 @@ impl ProtocolMethod for ShowPublicLinkRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(4);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("timeformat", "timestamp"));
         params.push(BinaryParam::string("iconformat", "id"));
         params.push(BinaryParam::string("code", self.code.as_str()));
@@ -81,7 +82,7 @@ impl ProtocolMethod for ShowPublicLinkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateFilePublicLinkRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `path` field (path).
     pub path: String,
 }
@@ -94,7 +95,7 @@ impl ProtocolMethod for CreateFilePublicLinkRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(2);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("path", self.path.as_str()));
         params
     }
@@ -104,7 +105,7 @@ impl ProtocolMethod for CreateFilePublicLinkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateFolderPublicLinkRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `path` field (path).
     pub path: String,
 }
@@ -117,7 +118,7 @@ impl ProtocolMethod for CreateFolderPublicLinkRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(2);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("path", self.path.as_str()));
         params
     }
@@ -127,7 +128,7 @@ impl ProtocolMethod for CreateFolderPublicLinkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangePublicLinkExpireRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `link_id` field (link id).
     pub link_id: u64,
     /// The `expire` field (expire).
@@ -142,7 +143,7 @@ impl ProtocolMethod for ChangePublicLinkExpireRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(3);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("linkid", self.link_id));
         match self.expire {
             Some(expire) => params.push(BinaryParam::number("expire", expire)),
@@ -156,11 +157,11 @@ impl ProtocolMethod for ChangePublicLinkExpireRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangePublicLinkPasswordRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `link_id` field (link id).
     pub link_id: u64,
     /// The `password` field (password).
-    pub password: Option<String>,
+    pub password: Option<RedactedProtoString>,
 }
 
 impl ProtocolMethod for ChangePublicLinkPasswordRequest {
@@ -171,9 +172,9 @@ impl ProtocolMethod for ChangePublicLinkPasswordRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(3);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("linkid", self.link_id));
-        match self.password.as_deref() {
+        match self.password.as_ref().map(|p| p.expose_secret()) {
             Some(password) => params.push(BinaryParam::string("linkpassword", password)),
             None => params.push(BinaryParam::number("deletepassword", 1)),
         }
@@ -185,7 +186,7 @@ impl ProtocolMethod for ChangePublicLinkPasswordRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangePublicLinkUploadRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `link_id` field (link id).
     pub link_id: u64,
     /// The `policy` field (policy).
@@ -204,7 +205,7 @@ impl ProtocolMethod for ChangePublicLinkUploadRequest {
             _ => 4,
         };
         let mut params = Vec::with_capacity(cap);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("linkid", self.link_id));
         match self.policy {
             PublicLinkUploadPolicy::Everyone => {
@@ -227,7 +228,7 @@ impl ProtocolMethod for ChangePublicLinkUploadRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListUploadLinksRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
 }
 
 impl ProtocolMethod for ListUploadLinksRequest {
@@ -238,7 +239,7 @@ impl ProtocolMethod for ListUploadLinksRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(3);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("timeformat", "timestamp"));
         params.push(BinaryParam::string("iconformat", "id"));
         params
@@ -249,7 +250,7 @@ impl ProtocolMethod for ListUploadLinksRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateUploadLinkRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `path` field (path).
     pub path: String,
     /// The `comment` field (comment).
@@ -274,7 +275,7 @@ impl ProtocolMethod for CreateUploadLinkRequest {
             + usize::from(self.maxspace.is_some())
             + usize::from(self.maxfiles.is_some());
         let mut params = Vec::with_capacity(cap);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("path", self.path.as_str()));
         params.push(BinaryParam::string("comment", self.comment.as_str()));
         if let Some(expire) = self.expire {
@@ -294,7 +295,7 @@ impl ProtocolMethod for CreateUploadLinkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeleteUploadLinkRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `upload_link_id` field (upload link id).
     pub upload_link_id: u64,
 }
@@ -307,7 +308,7 @@ impl ProtocolMethod for DeleteUploadLinkRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(2);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("uploadlinkid", self.upload_link_id));
         params
     }
@@ -317,7 +318,7 @@ impl ProtocolMethod for DeleteUploadLinkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateTreePublicLinkRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `name` field (name).
     pub name: String,
     /// The `root_folder_id` field (root folder id).
@@ -349,7 +350,7 @@ impl ProtocolMethod for CreateTreePublicLinkRequest {
             + usize::from(self.maxdownloads.is_some())
             + usize::from(self.maxtraffic.is_some());
         let mut params = Vec::with_capacity(cap);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("name", self.name.as_str()));
         if let Some(root_folder_id) = self.root_folder_id {
             // Preserve original wire shape: the `folderid` field was historically
@@ -382,7 +383,7 @@ impl ProtocolMethod for CreateTreePublicLinkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListPublicLinkAccessRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `link_id` field (link id).
     pub link_id: u64,
 }
@@ -395,7 +396,7 @@ impl ProtocolMethod for ListPublicLinkAccessRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(2);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("linkid", self.link_id));
         params
     }
@@ -405,7 +406,7 @@ impl ProtocolMethod for ListPublicLinkAccessRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AddPublicLinkAccessRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `link_id` field (link id).
     pub link_id: u64,
     /// The `email` field (email).
@@ -420,7 +421,7 @@ impl ProtocolMethod for AddPublicLinkAccessRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(3);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("linkid", self.link_id));
         params.push(BinaryParam::string("mail", self.email.as_str()));
         params
@@ -431,7 +432,7 @@ impl ProtocolMethod for AddPublicLinkAccessRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemovePublicLinkAccessRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `link_id` field (link id).
     pub link_id: u64,
     /// The `receiver_id` field (receiver id).
@@ -446,7 +447,7 @@ impl ProtocolMethod for RemovePublicLinkAccessRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(3);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("linkid", self.link_id));
         params.push(BinaryParam::number("receiverid", self.receiver_id));
         params
@@ -457,7 +458,7 @@ impl ProtocolMethod for RemovePublicLinkAccessRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListBookmarksRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
 }
 
 impl ProtocolMethod for ListBookmarksRequest {
@@ -468,7 +469,7 @@ impl ProtocolMethod for ListBookmarksRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(2);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("timeformat", "timestamp"));
         params
     }
@@ -478,7 +479,7 @@ impl ProtocolMethod for ListBookmarksRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemoveBookmarkRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `code` field (code).
     pub code: String,
     /// The `location_id` field (location id).
@@ -493,7 +494,7 @@ impl ProtocolMethod for RemoveBookmarkRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(3);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("locationid", self.location_id));
         params.push(BinaryParam::string("code", self.code.as_str()));
         params
@@ -508,7 +509,7 @@ impl ProtocolMethod for RemoveBookmarkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateFilePublicLinkOptionsRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `path` field (path).
     pub path: String,
     /// The `expire` field (expire).
@@ -531,7 +532,7 @@ impl ProtocolMethod for CreateFilePublicLinkOptionsRequest {
             + usize::from(self.maxdownloads.is_some())
             + usize::from(self.maxtraffic.is_some());
         let mut params = Vec::with_capacity(cap);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("path", self.path.as_str()));
         if let Some(expire) = self.expire {
             params.push(BinaryParam::number("expire", expire));
@@ -551,7 +552,7 @@ impl ProtocolMethod for CreateFilePublicLinkOptionsRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateFolderPublicLinkOptionsRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `path` field (path).
     pub path: String,
     /// The `expire` field (expire).
@@ -561,7 +562,7 @@ pub struct CreateFolderPublicLinkOptionsRequest {
     /// The `maxtraffic` field (maxtraffic).
     pub maxtraffic: Option<u64>,
     /// The `password` field (password).
-    pub password: Option<String>,
+    pub password: Option<RedactedProtoString>,
 }
 
 impl ProtocolMethod for CreateFolderPublicLinkOptionsRequest {
@@ -577,9 +578,9 @@ impl ProtocolMethod for CreateFolderPublicLinkOptionsRequest {
             + usize::from(self.maxdownloads.is_some())
             + usize::from(self.maxtraffic.is_some());
         let mut params = Vec::with_capacity(cap);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("path", self.path.as_str()));
-        if let Some(password) = self.password.as_deref() {
+        if let Some(password) = self.password.as_ref().map(|p| p.expose_secret()) {
             params.push(BinaryParam::string("linkpassword", password));
         }
         if let Some(expire) = self.expire {
@@ -601,7 +602,7 @@ impl ProtocolMethod for CreateFolderPublicLinkOptionsRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CreateFolderUpDownLinkRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `folder_id` field (folder id).
     pub folder_id: u64,
     /// The `mail` field (mail).
@@ -618,7 +619,7 @@ impl ProtocolMethod for CreateFolderUpDownLinkRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(4);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("folderid", self.folder_id));
         params.push(BinaryParam::string("mail", self.mail.as_str()));
         params.push(BinaryParam::number("canupload", u64::from(self.can_upload)));
@@ -633,7 +634,7 @@ impl ProtocolMethod for CreateFolderUpDownLinkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SendPublinkRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `code` field (code).
     pub code: String,
     /// The `mails` field (mails).
@@ -650,7 +651,7 @@ impl ProtocolMethod for SendPublinkRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(5);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("code", self.code.as_str()));
         params.push(BinaryParam::string("mails", self.mails.as_str()));
         params.push(BinaryParam::string("message", self.message.as_str()));
@@ -663,7 +664,7 @@ impl ProtocolMethod for SendPublinkRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeBookmarkRequest {
     /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    pub auth_token: RedactedProtoString,
     /// The `code` field (code).
     pub code: String,
     /// The `location_id` field (location id).
@@ -682,7 +683,7 @@ impl ProtocolMethod for ChangeBookmarkRequest {
 
     fn params(&self) -> Vec<BinaryParam> {
         let mut params = Vec::with_capacity(5);
-        params.push(BinaryParam::string("auth", self.auth_token.as_str()));
+        params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::string("code", self.code.as_str()));
         params.push(BinaryParam::number("locationid", self.location_id));
         params.push(BinaryParam::string("name", self.name.as_str()));

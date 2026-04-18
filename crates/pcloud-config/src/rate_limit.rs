@@ -30,10 +30,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Burst capacity for the [`RateCategory::AuthAttempt`] bucket.
+///
+/// 10 attempts before the bucket is exhausted; replenishes at
+/// [`AUTH_ATTEMPT_REFILL_PER_SEC`] tokens/second.
+pub const AUTH_ATTEMPT_CAPACITY: u32 = 10;
+
+/// Refill rate for the [`RateCategory::AuthAttempt`] bucket: 5 tokens
+/// per minute, expressed as tokens/second.
+pub const AUTH_ATTEMPT_REFILL_PER_SEC: f64 = 5.0 / 60.0;
+
 /// Coarse category used to assign a request to a rate-limit bucket.
 ///
 /// The daemon dispatcher classifies every decoded `Request` into one of
-/// these three buckets before calling the backend; the classifier is
+/// these four buckets before calling the backend; the classifier is
 /// deliberately conservative — anything it does not recognize falls into
 /// [`RateCategory::Medium`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -49,6 +59,10 @@ pub enum RateCategory {
     /// intensive operations: snapshot create, integrity run-once, bulk
     /// public-link operations, tree-link create, crypto password change.
     Expensive,
+    /// Auth-specific burst (default: 10 attempts, refill 5/min). Applied
+    /// to credential submission, TFA, crypto unlock, and account password
+    /// change operations to limit brute-force exposure through the IPC.
+    AuthAttempt,
 }
 
 /// Per-category bucket parameters. Capacity is the burst size; refill is
@@ -111,6 +125,11 @@ pub struct RateLimitPolicy {
     /// Bucket for the [`RateCategory::Expensive`] category. Default: 6/min.
     #[serde(default = "default_expensive")]
     pub expensive: RateBucket,
+
+    /// Bucket for the [`RateCategory::AuthAttempt`] category.
+    /// Default: 10 attempts, refill 5/min.
+    #[serde(default = "default_auth_attempt")]
+    pub auth_attempt: RateBucket,
 }
 
 fn default_enabled() -> bool {
@@ -123,6 +142,13 @@ fn default_medium() -> RateBucket {
 
 fn default_expensive() -> RateBucket {
     RateBucket::per_minute(6)
+}
+
+fn default_auth_attempt() -> RateBucket {
+    RateBucket {
+        capacity: AUTH_ATTEMPT_CAPACITY,
+        refill_per_sec: AUTH_ATTEMPT_REFILL_PER_SEC,
+    }
 }
 
 impl Default for RateLimitPolicy {
@@ -140,6 +166,7 @@ impl RateLimitPolicy {
             cheap: RateBucket::disabled(),
             medium: default_medium(),
             expensive: default_expensive(),
+            auth_attempt: default_auth_attempt(),
         }
     }
 
@@ -150,6 +177,7 @@ impl RateLimitPolicy {
             RateCategory::Cheap => self.cheap,
             RateCategory::Medium => self.medium,
             RateCategory::Expensive => self.expensive,
+            RateCategory::AuthAttempt => self.auth_attempt,
         }
     }
 }

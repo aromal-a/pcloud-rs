@@ -80,6 +80,10 @@ use serde_json::{Value, json};
 /// **not** a secret — it is a hard-coded public test constant used only by
 /// the mock and by tests that talk to it.
 ///
+/// **TEST-ONLY.** Never use this value outside of test code or the mock
+/// server. Secret-scanning rules must be configured to ignore this
+/// constant (it is a known-fake value, not a live credential).
+///
 /// Scenario: any test that needs an authenticated endpoint uses this token.
 pub const TEST_TOKEN: &str = "MOCK-TEST-TOKEN-0000000000000000";
 

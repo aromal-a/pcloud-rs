@@ -50,10 +50,13 @@ pub mod backend;
 pub mod errors;
 pub mod fs_watcher;
 pub mod fuse_adapter;
-// `fuser_shim` is internally gated with `#![cfg(target_os = "linux")]`;
-// on non-Linux targets the module body compiles empty, so we do not need
-// an outer gate. Keeping `pub mod` unconditional lets the crate's
-// top-level public API type-check on all targets (bd-xplat-$OS, Phase 0).
+// `fuser_shim` uses `fuser` (Linux/FreeBSD only) and `libc::statvfs64`
+// (Linux-only). Gate the module so cross-compilation targets (macOS,
+// Windows, bare-metal) do not attempt to compile it. The `fuser` dep is
+// already gated to `cfg(target_os = "linux")` in Cargo.toml; the module
+// gate must match so the compiler does not try to resolve the import on
+// unsupported platforms (bd-xplat-$OS, Phase 0).
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub mod fuser_shim;
 pub mod inode;
 pub mod integrity_sweeper;
@@ -143,6 +146,51 @@ impl FilesystemShell {
     ) -> Result<ReadResult, ReadPathError> {
         self.reads
             .read(&self.writeback.staging, path, offset, requested_bytes)
+    }
+
+    /// Zero-copy reference to the staged buffer for `path`.
+    ///
+    /// Unlike [`Self::read_staged_path`], this does not populate or
+    /// consult the page cache and does not allocate a new `Vec`. Returns
+    /// `None` if no buffer is currently staged for `path`.
+    ///
+    /// Bead `pcloud-rs-s1p.88`: used by the sync loop's upload path to
+    /// stream the payload in 4 MiB chunks without buffering the whole
+    /// file.
+    #[must_use]
+    pub fn staged_bytes(&self, path: &str) -> Option<&[u8]> {
+        self.writeback.staging.get(path)
+    }
+
+    /// Byte length of the staged buffer for `path`, or `None` if absent.
+    #[must_use]
+    pub fn staged_len(&self, path: &str) -> Option<usize> {
+        self.writeback.staging.get(path).map(<[u8]>::len)
+    }
+
+    /// Return an iterator over fixed-size chunks of the staged buffer
+    /// for `path`. Each yielded slice borrows from the staging area —
+    /// no per-chunk heap allocation occurs.
+    ///
+    /// `chunk_size` must be non-zero; callers that pass `0` get a
+    /// single chunk covering the whole buffer (behaviour inherited
+    /// from the underlying `slice::chunks` when guarded below).
+    ///
+    /// Bead `pcloud-rs-s1p.88`: pairs with [`Self::staged_bytes`] to
+    /// bound sync-loop upload memory to a single chunk at a time.
+    #[must_use]
+    pub fn staged_chunks<'a>(
+        &'a self,
+        path: &str,
+        chunk_size: usize,
+    ) -> Option<std::slice::Chunks<'a, u8>> {
+        let bytes = self.writeback.staging.get(path)?;
+        let cs = if chunk_size == 0 {
+            bytes.len().max(1)
+        } else {
+            chunk_size
+        };
+        Some(bytes.chunks(cs))
     }
 
     /// Flush up to `max_entries` pending writes from the journal, returning

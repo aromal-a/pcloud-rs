@@ -37,6 +37,8 @@ pub mod scheduler;
 pub mod selective;
 /// Session manager actor that tracks per-sync-root engine state.
 pub mod session_manager;
+/// Stall detection for the sync engine loop.
+pub mod stall_detector;
 /// Upload/download coordinators and transfer-cycle bookkeeping.
 pub mod transfers;
 
@@ -56,13 +58,152 @@ use pcloud_model::{conflict::ConflictResolution, transfer::RecoveryDecision};
 /// ```
 pub const CRATE_NAME: &str = "pcloud-engine";
 
+/// Shared path-validity predicate used by `diff_poller`, `fs_events`, and
+/// `local_scan` to reject unsafe relative paths before they reach the planner.
+///
+/// Returns `true` when `path` is safe: non-empty, not absolute, not starting
+/// with `./`, no backslashes, and every segment is a non-empty name that is
+/// neither `.` nor `..`.
+///
+/// Each caller maps a `false` return to its own typed error variant so the
+/// public error enums stay distinct.
+///
+/// # Example
+///
+/// ```
+/// assert!(pcloud_engine::is_valid_relative_path("docs/report.txt"));
+/// assert!(!pcloud_engine::is_valid_relative_path("../escape"));
+/// assert!(!pcloud_engine::is_valid_relative_path("/etc/passwd"));
+/// assert!(!pcloud_engine::is_valid_relative_path(""));
+/// ```
+#[must_use]
+pub fn is_valid_relative_path(path: &str) -> bool {
+    let trimmed = path.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('/')
+        || trimmed.starts_with("./")
+        || trimmed.contains('\\')
+    {
+        return false;
+    }
+    !trimmed
+        .split('/')
+        .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+}
+
+/// Probe whether the filesystem at `path` is case-insensitive.
+///
+/// Writes a temporary file with a mixed-case name, then checks if the
+/// all-lowercase version of the name resolves to the same inode. If it does,
+/// the filesystem is case-insensitive and sync with a case-sensitive remote
+/// (pCloud) may produce unexpected results.
+///
+/// Returns `Ok(true)` when the filesystem is detected as case-insensitive,
+/// `Ok(false)` when it is case-sensitive, and `Err` if the probe could not
+/// complete (e.g. the directory does not exist or writes are not permitted).
+///
+/// # Caller responsibility
+///
+/// This probe creates and immediately removes a temporary file. The probe is
+/// best-effort: a `false` return does not guarantee the filesystem is
+/// case-sensitive in all edge cases (e.g. case-folding per-volume on macOS
+/// APFS with mixed volume settings).
+///
+/// # Example
+///
+/// ```no_run
+/// use pcloud_engine::probe_case_insensitive_fs;
+/// let result = probe_case_insensitive_fs(std::path::Path::new("/tmp"));
+/// // The probe may succeed or fail depending on the test environment;
+/// // verify it does not panic.
+/// let _ = result;
+/// ```
+pub fn probe_case_insensitive_fs(dir: &std::path::Path) -> std::io::Result<bool> {
+    use std::fs;
+
+    // Mixed-case sentinel name unlikely to clash with real content.
+    let probe_name = ".PcLouDcAsEpRoBe_tmp";
+    let lower_name = probe_name.to_ascii_lowercase();
+
+    let probe_path = dir.join(probe_name);
+    let lower_path = dir.join(&lower_name);
+
+    // Create the probe file, check for case-fold, then clean up.
+    fs::write(&probe_path, b"")?;
+    let case_insensitive = lower_path.exists();
+    let _ = fs::remove_file(&probe_path);
+
+    Ok(case_insensitive)
+}
+
+/// Check whether a sync root's local path sits on a case-insensitive
+/// filesystem and emit a [`log::warn`] if so.
+///
+/// This helper should be called when a new sync root is added so that the
+/// operator is informed before sync begins. The warning is advisory only —
+/// sync is not blocked.
+///
+/// // TODO(bd-1du): case-insensitive filesystem sync semantics are not yet
+/// // implemented; case-conflicting remote files may produce unexpected
+/// // behavior.
+pub fn warn_if_case_insensitive(path: &std::path::Path) {
+    match probe_case_insensitive_fs(path) {
+        Ok(true) => {
+            log::warn!(
+                "sync root {} appears to be on a case-insensitive filesystem; \
+                 filename case conflicts may cause sync issues on case-sensitive remotes",
+                path.display()
+            );
+        }
+        Ok(false) => {
+            // Case-sensitive; no action required.
+        }
+        Err(err) => {
+            log::debug!(
+                "case-sensitivity probe for sync root {} failed ({}); \
+                 assuming case-sensitive",
+                path.display(),
+                err
+            );
+        }
+    }
+}
+
+/// Return `Some(sync_id)` if every candidate in `candidates` belongs to
+/// the same sync root. Returns `None` if the slice is empty or spans
+/// multiple sync ids (in which case scoped replacement is not valid and
+/// callers must fall back to a whole-queue replacement).
+fn single_sync_id(candidates: &[SyncCandidate]) -> Option<SyncId> {
+    let first = candidates.first()?.sync_id;
+    if candidates.iter().all(|c| c.sync_id == first) {
+        Some(first)
+    } else {
+        None
+    }
+}
+
 /// Top-level engine aggregate that wires the diff poller, local scanner,
 /// filesystem event ingestor, planner, scheduler, recovery manager,
 /// conflict resolver, and transfer coordinators into a single shell.
 ///
 /// Owned by `pcloud-daemon` per runtime and mutated on the main engine
 /// loop. Intentionally in-memory only; durable state lives in the store.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// # Equality
+///
+/// [`PartialEq`] / [`Eq`] compare **all** coordinator fields. This is
+/// semantically correct but expensive for large in-flight worksets.
+/// Callers that need a "has anything changed" check should compare
+/// individual sub-fields rather than the whole shell. The auto-derive was
+/// removed in audit-04 and replaced with an explicit impl so that this
+/// cost is visible in code-review diffs.
+///
+/// # Clone
+///
+/// `Clone` produces a point-in-time snapshot. Any in-flight coordinator
+/// state in the clone is immediately stale; only use clones in tests or
+/// for diagnostic snapshots, not as a live copy.
+#[derive(Debug, Clone)]
 pub struct EngineShell {
     /// Per-sync-root session state actor.
     pub session_manager: session_manager::SessionManagerActor,
@@ -100,6 +241,32 @@ pub struct EngineShell {
     /// (bd-1du.3); the counter exists so callers and tests can confirm
     /// the wake signal is observed by the engine.
     pub localscan_wakes: u64,
+    /// Dead-letter buffer of [`SyncCandidate`]s the planner could not
+    /// schedule within a single tick because `max_operations_per_tick`
+    /// was exceeded. The sync loop's transport adapter persists this
+    /// list to the `value_kv` store between cycles and prepends it to
+    /// the next ingestion so over-cap work is never silently dropped.
+    /// Audit-04 P2-6 (bd-pcloud-rs-s1p.44).
+    pub planner_overflow: Vec<SyncCandidate>,
+    /// Notification queue of [`SyncId`]s whose filesystem watchers must be
+    /// torn down by the embedding runtime. Populated by
+    /// [`Self::evict_sync_root`] and drained by the sync loop runtime
+    /// after each cycle via [`Self::drain_watcher_evictions`].
+    ///
+    /// The engine itself does not own [`pcloud_fs::fs_watcher::FsWatcher`]
+    /// handles — those live on the sync loop runtime — but the engine is
+    /// the single place where a sync root is semantically evicted. This
+    /// queue closes the gap where a code path that goes through
+    /// `EngineShell::evict_sync_root` (e.g. IPC remove-sync-root) would
+    /// otherwise leave the runtime's watcher for that root alive until
+    /// the next cycle's root-diff detection fires.
+    ///
+    /// pcloud-rs-774: durable plan queue + FsWatcher lifecycle cleanup.
+    pending_watcher_evictions: Vec<SyncId>,
+    /// Cache of the last batch dispatched by [`Self::advance_transfer_cycle`].
+    /// Stored on the struct so we can return a `&[PlannedOperation]` without
+    /// a lifetime issue.
+    last_dispatched_batch: Vec<PlannedOperation>,
 }
 
 impl Default for EngineShell {
@@ -107,6 +274,34 @@ impl Default for EngineShell {
         Self::new()
     }
 }
+
+/// Explicit field-by-field equality for [`EngineShell`].
+///
+/// The auto-derive was removed so that any future field addition that
+/// introduces a non-`PartialEq` type is caught at compile time rather
+/// than silently omitted from comparisons.
+impl PartialEq for EngineShell {
+    fn eq(&self, other: &Self) -> bool {
+        self.session_manager == other.session_manager
+            && self.diff_poller == other.diff_poller
+            && self.local_scanner == other.local_scanner
+            && self.event_ingestor == other.event_ingestor
+            && self.planner == other.planner
+            && self.scheduler == other.scheduler
+            && self.recovery == other.recovery
+            && self.conflict_resolver == other.conflict_resolver
+            && self.downloads == other.downloads
+            && self.uploads == other.uploads
+            && self.auth_state == other.auth_state
+            && self.sync_state == other.sync_state
+            && self.paused_sync_roots == other.paused_sync_roots
+            && self.localscan_wakes == other.localscan_wakes
+            && self.planner_overflow == other.planner_overflow
+            && self.pending_watcher_evictions == other.pending_watcher_evictions
+    }
+}
+
+impl Eq for EngineShell {}
 
 impl EngineShell {
     /// Construct a fresh [`EngineShell`] with all subsystems at their
@@ -139,6 +334,9 @@ impl EngineShell {
             sync_state: SyncState::Initializing,
             paused_sync_roots: BTreeSet::new(),
             localscan_wakes: 0,
+            planner_overflow: Vec::new(),
+            pending_watcher_evictions: Vec::new(),
+            last_dispatched_batch: Vec::new(),
         }
     }
 
@@ -186,7 +384,10 @@ impl EngineShell {
             self.scheduler.max_parallel_uploads,
             self.scheduler.max_parallel_downloads,
             self.scheduler.queued_operations.len(),
-            self.scheduler.next_batch().len(),
+            self.scheduler
+                .queued_operations
+                .len()
+                .min(self.scheduler.max_parallel_uploads + self.scheduler.max_parallel_downloads),
             unresolved_conflicts,
             self.uploads.active_count(),
             self.downloads.active_count(),
@@ -201,9 +402,19 @@ impl EngineShell {
     /// with the resulting [`PlannedOperation`]s. Returns the next ready
     /// batch.
     pub fn ingest_candidates(&mut self, candidates: &[SyncCandidate]) -> &[PlannedOperation] {
-        let operations = self.planner.plan(candidates);
-        self.scheduler.replace_queue(operations);
-        self.scheduler.next_batch()
+        // Audit-04 P2-6: prepend the previous tick's overflow so deferred
+        // work is re-planned before fresh candidates, then capture any
+        // new overflow that falls off this tick's per-tick cap.
+        let combined = self.merge_with_overflow(candidates);
+        let (operations, overflow) = self.planner.plan_with_overflow(&combined);
+        self.planner_overflow = overflow;
+        match single_sync_id(&combined) {
+            Some(sync_id) => self
+                .scheduler
+                .replace_queue_for_sync_id(sync_id, operations),
+            None => self.scheduler.replace_queue(operations),
+        }
+        &self.scheduler.queued_operations
     }
 
     /// Plan a slice of [`SyncCandidate`]s with delete-policy filtering
@@ -212,14 +423,61 @@ impl EngineShell {
     /// This is the primary entry point for the sync loop, which knows
     /// the per-root [`planner::DeletePolicy`] derived from `SyncType`
     /// and the global `propagate_deletes` config flag.
+    ///
+    /// # Queue replacement semantics
+    ///
+    /// When all `candidates` share a single `sync_id`, the replacement is
+    /// **scoped** to that root's queue entries only (`replace_queue_for_sync_id`),
+    /// so cross-root work queued by a concurrent root is not clobbered.
+    /// When candidates span multiple roots (unusual in practice), a full
+    /// queue replacement is performed and a `warn!` is emitted by the
+    /// planner so the caller is aware.
     pub fn ingest_candidates_filtered(
         &mut self,
         candidates: &[SyncCandidate],
         delete_policy: &planner::DeletePolicy,
     ) -> &[PlannedOperation] {
-        let operations = self.planner.plan_filtered(candidates, delete_policy);
-        self.scheduler.replace_queue(operations);
-        self.scheduler.next_batch()
+        let combined = self.merge_with_overflow(candidates);
+        let (operations, overflow) = self
+            .planner
+            .plan_filtered_with_overflow(&combined, delete_policy);
+        self.planner_overflow = overflow;
+        match single_sync_id(&combined) {
+            Some(sync_id) => self
+                .scheduler
+                .replace_queue_for_sync_id(sync_id, operations),
+            None => self.scheduler.replace_queue(operations),
+        }
+        &self.scheduler.queued_operations
+    }
+
+    /// Merge the persisted planner overflow buffer with a fresh batch of
+    /// candidates. Called on the ingest hot path to replay deferred work
+    /// before new candidates. The overflow buffer is cleared by the
+    /// caller once the planner returns the new (possibly empty)
+    /// overflow list.
+    fn merge_with_overflow(&self, candidates: &[SyncCandidate]) -> Vec<SyncCandidate> {
+        if self.planner_overflow.is_empty() {
+            return candidates.to_vec();
+        }
+        let mut combined = Vec::with_capacity(self.planner_overflow.len() + candidates.len());
+        combined.extend(self.planner_overflow.iter().cloned());
+        combined.extend(candidates.iter().cloned());
+        combined
+    }
+
+    /// Drain the dead-letter buffer so an external persister (the sync
+    /// loop) can serialize it. The engine keeps a cleared buffer
+    /// afterwards; the caller is responsible for restoring it at
+    /// startup via [`Self::restore_planner_overflow`].
+    pub fn drain_planner_overflow(&mut self) -> Vec<SyncCandidate> {
+        std::mem::take(&mut self.planner_overflow)
+    }
+
+    /// Restore the dead-letter buffer from persisted state. Intended
+    /// for bootstrap only; does not merge with existing overflow.
+    pub fn restore_planner_overflow(&mut self, candidates: Vec<SyncCandidate>) {
+        self.planner_overflow = candidates;
     }
 
     /// Normalize a remote diff batch into sync candidates, plan them, and
@@ -341,7 +599,7 @@ impl EngineShell {
         self.scheduler
             .queued_operations
             .iter()
-            .filter_map(|operation| self.conflict_resolver.resolve(operation))
+            .filter_map(|operation| self.conflict_resolver.resolve(operation, None, None))
             .collect()
     }
 
@@ -383,7 +641,7 @@ impl EngineShell {
         };
 
         let resolution = temp_resolver
-            .resolve(op)
+            .resolve(op, None, None)
             .ok_or_else(|| "conflict resolver returned None (internal error)".to_owned())?;
 
         // Remove the resolved conflict from the queue.
@@ -404,13 +662,20 @@ impl EngineShell {
     }
 
     /// Advance one transfer cycle: pop the next scheduler batch and hand
-    /// it to the upload/download coordinators. Returns the next ready
-    /// batch (which may be empty if all work is now in-flight).
+    /// it to the upload/download coordinators. Returns the dispatched
+    /// batch (which may be empty if all work is now in-flight or the
+    /// queue was empty).
+    ///
+    /// Uses [`Scheduler::next_batch`] which enforces per-root fairness
+    /// so that a single high-throughput sync root cannot monopolize the
+    /// batch window and starve siblings. Items are removed from the
+    /// queue atomically by `next_batch`.
     pub fn advance_transfer_cycle(&mut self) -> &[PlannedOperation] {
-        let batch = self.scheduler.next_batch().to_vec();
+        let batch = self.scheduler.next_batch();
         self.uploads.accept_batch(&batch);
         self.downloads.accept_batch(&batch);
-        self.scheduler.next_batch()
+        self.last_dispatched_batch = batch;
+        &self.last_dispatched_batch
     }
 
     /// Mark the transfer at `path` as completed in either the upload or
@@ -431,11 +696,94 @@ impl EngineShell {
     /// Remove all queued and in-flight work associated with `sync_id`
     /// across the scheduler and both transfer coordinators. Used when a
     /// sync root is removed.
+    ///
+    /// pcloud-rs-774: also records `sync_id` in the pending-watcher-
+    /// eviction queue so the embedding runtime can drop the associated
+    /// [`pcloud_fs::fs_watcher::FsWatcher`] handle on its next cycle
+    /// tick. The engine does not own the watcher directly; see
+    /// [`Self::drain_watcher_evictions`].
     pub fn evict_sync_root(&mut self, sync_id: SyncId) {
         self.scheduler.evict_sync_id(sync_id);
         self.uploads.evict_sync_id(sync_id);
         self.downloads.evict_sync_id(sync_id);
         self.paused_sync_roots.remove(&sync_id);
+        // Deduplicate: if the caller evicts the same root twice before
+        // the runtime drains, we only signal once.
+        if !self.pending_watcher_evictions.contains(&sync_id) {
+            self.pending_watcher_evictions.push(sync_id);
+        }
+    }
+
+    /// Drain the pending-watcher-eviction queue. The embedding runtime
+    /// should call this after each cycle (or whenever it processes
+    /// engine-driven eviction notifications) and drop the corresponding
+    /// [`pcloud_fs::fs_watcher::FsWatcher`] handles.
+    ///
+    /// pcloud-rs-774.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pcloud_engine::EngineShell;
+    /// use pcloud_model::ids::SyncId;
+    ///
+    /// let mut shell = EngineShell::new();
+    /// shell.evict_sync_root(SyncId::new(7));
+    /// let drained = shell.drain_watcher_evictions();
+    /// assert_eq!(drained, vec![SyncId::new(7)]);
+    /// // Draining is idempotent: the queue is now empty.
+    /// assert!(shell.drain_watcher_evictions().is_empty());
+    /// ```
+    pub fn drain_watcher_evictions(&mut self) -> Vec<SyncId> {
+        std::mem::take(&mut self.pending_watcher_evictions)
+    }
+
+    /// Drain the scheduler's queued operations in a stable order suitable
+    /// for durable persistence. Items are sorted by `(sync_id, priority,
+    /// path)` so the on-disk representation is deterministic across
+    /// restarts and across hosts.
+    ///
+    /// pcloud-rs-774: called by the sync loop runtime to serialise the
+    /// queue into the `value_kv` store between cycles.
+    pub fn drain_scheduler_queue(&mut self) -> Vec<PlannedOperation> {
+        let mut ops = std::mem::take(&mut self.scheduler.queued_operations);
+        ops.sort_by(|a, b| {
+            a.sync_id()
+                .get()
+                .cmp(&b.sync_id().get())
+                .then(a.priority().cmp(&b.priority()))
+                .then(a.path().cmp(b.path()))
+        });
+        ops
+    }
+
+    /// Snapshot the scheduler's queued operations in the same stable
+    /// order as [`Self::drain_scheduler_queue`] without mutating the
+    /// queue. Preferred persistence path so the live queue keeps serving
+    /// `advance_transfer_cycle` while the serialised copy is written.
+    ///
+    /// pcloud-rs-774.
+    #[must_use]
+    pub fn snapshot_scheduler_queue(&self) -> Vec<PlannedOperation> {
+        let mut ops = self.scheduler.queued_operations.clone();
+        ops.sort_by(|a, b| {
+            a.sync_id()
+                .get()
+                .cmp(&b.sync_id().get())
+                .then(a.priority().cmp(&b.priority()))
+                .then(a.path().cmp(b.path()))
+        });
+        ops
+    }
+
+    /// Restore the scheduler queue from a persisted snapshot. Performs a
+    /// full `replace_queue` so the planner's own priority-then-path
+    /// ordering is applied for in-memory dispatch. Intended for
+    /// bootstrap only.
+    ///
+    /// pcloud-rs-774.
+    pub fn restore_scheduler_queue(&mut self, operations: Vec<PlannedOperation>) {
+        self.scheduler.replace_queue(operations);
     }
 
     /// Mark a sync root as paused and drop any scheduled work for it so it
@@ -907,5 +1255,92 @@ mod tests {
         assert!(engine.mark_transfer_failed("docs/remote.txt", "checksum mismatch"));
         assert!(engine.summary().contains("completed_uploads=1"));
         assert!(engine.summary().contains("failed_downloads=1"));
+    }
+
+    /// pcloud-rs-774: `evict_sync_root` must signal the runtime to drop
+    /// the corresponding `FsWatcher` handle. The engine cannot drop the
+    /// watcher directly (it does not own it), so it records the id in
+    /// the pending-watcher-eviction queue which the runtime drains.
+    #[test]
+    fn evict_sync_root_drops_fs_watcher() {
+        let mut engine = EngineShell::new();
+        // Drain is empty before any eviction.
+        assert!(engine.drain_watcher_evictions().is_empty());
+
+        engine.evict_sync_root(SyncId::new(11));
+        engine.evict_sync_root(SyncId::new(12));
+        // Re-evicting the same id is deduplicated.
+        engine.evict_sync_root(SyncId::new(11));
+
+        let drained = engine.drain_watcher_evictions();
+        assert_eq!(drained.len(), 2);
+        assert!(drained.contains(&SyncId::new(11)));
+        assert!(drained.contains(&SyncId::new(12)));
+
+        // Draining is idempotent.
+        assert!(engine.drain_watcher_evictions().is_empty());
+    }
+
+    /// pcloud-rs-774: the scheduler queue must round-trip across a
+    /// simulated restart via `drain_scheduler_queue` →
+    /// `restore_scheduler_queue`, preserving both content and per-sync
+    /// stable ordering.
+    #[test]
+    fn queue_persists_across_restart() {
+        use pcloud_model::sync::PlannedOperation;
+
+        let mut engine = EngineShell::new();
+        let _ = engine.ingest_candidates(&[
+            SyncCandidate {
+                sync_id: SyncId::new(2),
+                source: ChangeSource::Remote,
+                path: "b/remote.bin".to_owned(),
+                entry_kind: EntryKind::File,
+                change_kind: ChangeKind::Upsert,
+                remote_file_id: Some(RemoteFileId::new(20)),
+                remote_folder_id: None,
+            },
+            SyncCandidate {
+                sync_id: SyncId::new(1),
+                source: ChangeSource::Local,
+                path: "a/local.txt".to_owned(),
+                entry_kind: EntryKind::File,
+                change_kind: ChangeKind::Upsert,
+                remote_file_id: None,
+                remote_folder_id: None,
+            },
+        ]);
+
+        assert!(!engine.scheduler.queued_operations.is_empty());
+        let expected_len = engine.scheduler.queued_operations.len();
+
+        // Stable snapshot: sort is (sync_id, priority, path).
+        let snapshot_a = engine.snapshot_scheduler_queue();
+        let snapshot_b = engine.snapshot_scheduler_queue();
+        assert_eq!(snapshot_a, snapshot_b, "snapshot ordering must be stable");
+        // First element belongs to sync_id=1 (lowest).
+        assert_eq!(snapshot_a[0].sync_id(), SyncId::new(1));
+
+        // Persist (drain) then restore into a fresh shell.
+        let persisted = engine.drain_scheduler_queue();
+        assert!(engine.scheduler.queued_operations.is_empty());
+        assert_eq!(persisted.len(), expected_len);
+
+        let mut restored = EngineShell::new();
+        restored.restore_scheduler_queue(persisted);
+        assert_eq!(restored.scheduler.queued_operations.len(), expected_len);
+
+        // Dispatch order must still be coherent after restore.
+        let batch: Vec<PlannedOperation> = restored.scheduler.queued_operations.clone();
+        assert!(
+            batch
+                .iter()
+                .any(|op| op.sync_id() == SyncId::new(1) && op.path() == "a/local.txt")
+        );
+        assert!(
+            batch
+                .iter()
+                .any(|op| op.sync_id() == SyncId::new(2) && op.path() == "b/remote.bin")
+        );
     }
 }

@@ -270,19 +270,14 @@ fn normalize_entry(entry: &LocalScanEntry) -> Result<SyncCandidate, LocalScanErr
     })
 }
 
+/// Thin wrapper over [`crate::is_valid_relative_path`] that maps the
+/// shared boolean predicate to the local typed error.
 fn validate_relative_path(path: &str) -> Result<(), LocalScanError> {
-    let trimmed = path.trim();
-    if trimmed.is_empty()
-        || trimmed.starts_with('/')
-        || trimmed.starts_with("./")
-        || trimmed.contains('\\')
-        || trimmed
-            .split('/')
-            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
-    {
-        return Err(LocalScanError::InvalidPath(path.to_owned()));
+    if crate::is_valid_relative_path(path) {
+        Ok(())
+    } else {
+        Err(LocalScanError::InvalidPath(path.to_owned()))
     }
-    Ok(())
 }
 
 #[cfg(test)]

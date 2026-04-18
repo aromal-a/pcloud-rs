@@ -58,8 +58,9 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
-use std::collections::{HashMap, VecDeque};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+
+use lru::LruCache;
 
 /// Default FUSE page size. Matches the 64 KiB page size used by the
 /// reference C client's block cache.
@@ -111,6 +112,11 @@ pub struct PageCacheStats {
     pub bytes_resident: usize,
     /// Total number of pages currently resident in the cache.
     pub pages_resident: usize,
+    /// Total bytes rejected by [`PageCache::put`] because a single page
+    /// exceeded `max_bytes` and would immediately self-evict. Lifetime
+    /// counter; exposed as an observability signal so operators can
+    /// notice misconfigured page-size vs. cache-size combinations.
+    pub bytes_rejected_oversized: u64,
 }
 
 impl PageCacheStats {
@@ -126,42 +132,61 @@ impl PageCacheStats {
     }
 }
 
-#[derive(Debug)]
+/// Cached page entry. Holds the page bytes behind an [`Arc`] so that a
+/// `get` returns a cheap refcount bump instead of a full memcpy.
+#[derive(Debug, Clone)]
 struct Slot {
-    bytes: Vec<u8>,
+    bytes: Arc<Vec<u8>>,
 }
 
+/// Inner state of the page cache.
+///
+/// # LRU ordering — true O(1) via [`lru::LruCache`]
+///
+/// `entries` is an [`lru::LruCache`] backed by an intrusive doubly-linked
+/// list threaded through the hash map. Every primitive operation is a
+/// constant-time pointer manipulation:
+///
+/// * `get` — splice the node out of its current list position and relink
+///   it at the MRU end (O(1), exact).
+/// * `put` — insert at the MRU end and, while over-quota, pop from the
+///   LRU end (each pop is O(1) — no index shifting).
+/// * `invalidate_file` — iterates once to collect victims and `pop`s each
+///   in O(1).
+///
+/// This replaces an earlier `IndexMap` layout whose `shift_remove_index(0)`
+/// path was O(n) in the index vector despite O(1) amortised advertising.
 #[derive(Debug)]
 struct Inner {
     config: PageCacheConfig,
-    entries: HashMap<PageKey, Slot>,
-    /// LRU ordering: front is LRU, back is MRU.
-    order: VecDeque<PageKey>,
+    /// LRU-ordered map. The internal intrusive list keeps `get`/`put`/
+    /// eviction all at true O(1), never O(n).
+    entries: LruCache<PageKey, Slot>,
     bytes_resident: usize,
     hits: u64,
     misses: u64,
+    bytes_rejected_oversized: u64,
 }
 
 impl Inner {
     fn new(config: PageCacheConfig) -> Self {
+        // `LruCache::unbounded()` never auto-evicts; we enforce the byte
+        // quota explicitly via `evict_until_fits`. This keeps eviction
+        // policy (byte-based) decoupled from LRU structure (pointer-based).
         Self {
             config,
-            entries: HashMap::new(),
-            order: VecDeque::new(),
+            entries: LruCache::unbounded(),
             bytes_resident: 0,
             hits: 0,
             misses: 0,
+            bytes_rejected_oversized: 0,
         }
     }
 
-    fn touch(&mut self, key: &PageKey) {
-        if let Some(pos) = self.order.iter().position(|k| k == key) {
-            if let Some(k) = self.order.remove(pos) {
-                self.order.push_back(k);
-            }
-        }
-    }
-
+    /// Evict LRU pages until `resident_bytes + incoming_bytes <= max_bytes`.
+    ///
+    /// `LruCache::pop_lru` is O(1): it unlinks the tail node from the
+    /// intrusive list and removes the hash entry in a single pointer swap.
     fn evict_until_fits(&mut self, incoming_bytes: usize) {
         while self
             .bytes_resident
@@ -169,12 +194,10 @@ impl Inner {
             .saturating_sub(self.config.max_bytes)
             > 0
         {
-            let Some(oldest) = self.order.pop_front() else {
+            let Some((_, slot)) = self.entries.pop_lru() else {
                 break;
             };
-            if let Some(slot) = self.entries.remove(&oldest) {
-                self.bytes_resident = self.bytes_resident.saturating_sub(slot.bytes.len());
-            }
+            self.bytes_resident = self.bytes_resident.saturating_sub(slot.bytes.len());
         }
     }
 }
@@ -216,38 +239,53 @@ impl PageCache {
         self.inner.lock().map(|g| g.config).unwrap_or_default()
     }
 
-    /// Lookup a page. On hit the entry is promoted to MRU.
-    pub fn get(&self, key: PageKey) -> Option<Vec<u8>> {
+    /// Lookup a page. On hit the entry is promoted to MRU position and the
+    /// page bytes are returned as an [`Arc`] clone — an O(1) atomic refcount
+    /// bump rather than a full `Vec` copy. Callers that only need a slice can
+    /// dereference the `Arc`; callers that need an owned buffer for async I/O
+    /// can cheaply `Arc::clone` the handle.
+    pub fn get(&self, key: PageKey) -> Option<Arc<Vec<u8>>> {
         let mut inner = self.inner.lock().ok()?;
+        // `LruCache::get` is the O(1) promote-to-MRU path: it splices the
+        // node's list links without touching any other entries.
         if let Some(slot) = inner.entries.get(&key) {
-            let bytes = slot.bytes.clone();
+            let bytes = Arc::clone(&slot.bytes);
             inner.hits = inner.hits.saturating_add(1);
-            inner.touch(&key);
             return Some(bytes);
         }
         inner.misses = inner.misses.saturating_add(1);
         None
     }
 
-    /// Insert or replace a page. Evicts LRU pages to stay at or below
-    /// `max_bytes`. Pages larger than `max_bytes` are silently dropped
-    /// (they would immediately evict themselves).
+    /// Insert or replace a page. Wraps `bytes` in an [`Arc`] so that future
+    /// `get` calls return cheap refcount clones. Evicts LRU pages to stay at
+    /// or below `max_bytes`. Pages larger than `max_bytes` are silently
+    /// dropped (they would immediately evict themselves on the next insert).
     pub fn put(&self, key: PageKey, bytes: Vec<u8>) {
         let Ok(mut inner) = self.inner.lock() else {
             return;
         };
         let new_len = bytes.len();
         if new_len > inner.config.max_bytes {
+            // Oversized page: would immediately self-evict. Bump the
+            // observability counter so operators can correlate misses
+            // with misconfiguration (page_size > max_bytes).
+            inner.bytes_rejected_oversized = inner
+                .bytes_rejected_oversized
+                .saturating_add(new_len as u64);
             return;
         }
-        if let Some(old) = inner.entries.remove(&key) {
+        if let Some(old) = inner.entries.pop(&key) {
             inner.bytes_resident = inner.bytes_resident.saturating_sub(old.bytes.len());
-            inner.order.retain(|k| k != &key);
         }
         inner.evict_until_fits(new_len);
-        inner.entries.insert(key, Slot { bytes });
+        inner.entries.put(
+            key,
+            Slot {
+                bytes: Arc::new(bytes),
+            },
+        );
         inner.bytes_resident = inner.bytes_resident.saturating_add(new_len);
-        inner.order.push_back(key);
     }
 
     /// Drop every page belonging to `file_id`.
@@ -257,16 +295,14 @@ impl PageCache {
         };
         let to_remove: Vec<PageKey> = inner
             .entries
-            .keys()
-            .filter(|k| k.file_id == file_id)
-            .copied()
+            .iter()
+            .filter_map(|(k, _)| (k.file_id == file_id).then_some(*k))
             .collect();
         for key in to_remove {
-            if let Some(slot) = inner.entries.remove(&key) {
+            if let Some(slot) = inner.entries.pop(&key) {
                 inner.bytes_resident = inner.bytes_resident.saturating_sub(slot.bytes.len());
             }
         }
-        inner.order.retain(|k| k.file_id != file_id);
     }
 
     /// Clear the entire cache. Does not reset hit/miss counters.
@@ -275,7 +311,6 @@ impl PageCache {
             return;
         };
         inner.entries.clear();
-        inner.order.clear();
         inner.bytes_resident = 0;
     }
 
@@ -291,6 +326,7 @@ impl PageCache {
             misses: inner.misses,
             bytes_resident: inner.bytes_resident,
             pages_resident: inner.entries.len(),
+            bytes_rejected_oversized: inner.bytes_rejected_oversized,
         }
     }
 
@@ -336,7 +372,7 @@ mod tests {
         assert!(c.get(key).is_none());
         c.put(key, vec![7u8; 64]);
         let got = c.get(key).expect("hit");
-        assert_eq!(got, vec![7u8; 64]);
+        assert_eq!(*got, vec![7u8; 64]);
         let stats = c.stats();
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.misses, 1);
@@ -476,6 +512,28 @@ mod tests {
             },
             vec![0u8; 128],
         );
+        assert_eq!(c.len(), 0);
+    }
+
+    #[test]
+    fn oversized_page_increments_rejection_counter() {
+        let c = PageCache::new(cfg(64, 64));
+        assert_eq!(c.stats().bytes_rejected_oversized, 0);
+        c.put(
+            PageKey {
+                file_id: 1,
+                page_index: 0,
+            },
+            vec![0u8; 128],
+        );
+        c.put(
+            PageKey {
+                file_id: 1,
+                page_index: 1,
+            },
+            vec![0u8; 256],
+        );
+        assert_eq!(c.stats().bytes_rejected_oversized, 128 + 256);
         assert_eq!(c.len(), 0);
     }
 

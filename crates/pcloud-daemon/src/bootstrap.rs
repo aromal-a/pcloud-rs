@@ -405,6 +405,20 @@ pub fn bootstrap_shell() -> Result<RuntimeShell, BootstrapError> {
 /// Returns a [`BootstrapError`] on config-validation, directory
 /// provisioning, store, vault, or credential bootstrap failure.
 pub fn bootstrap_with_config(config: ConfigProfile) -> Result<RuntimeShell, BootstrapError> {
+    // TODO(bd-1du.sec-sandbox): Apply Linux landlock + seccomp-BPF syscall
+    // filtering immediately after directory provisioning so the daemon is
+    // confined to pCloud-relevant syscalls for its lifetime. See audit-04
+    // §2-opus M-3. The syscall allowlist should cover:
+    //   read, write, open/openat, close, fstat, getdents64,
+    //   socket (AF_UNIX, AF_INET, AF_INET6), connect, accept4,
+    //   sendmsg, recvmsg, futex, epoll_*, timerfd_*, signalfd4,
+    //   getrandom, mmap/munmap (PROT_READ|PROT_WRITE, no PROT_EXEC).
+    // Landlock: restrict FS access to config_dir, state_dir, runtime_dir,
+    // cache_dir, and explicitly-mounted FUSE mountpoints.
+    // macOS/Windows equivalents (Sandbox.kext, AppContainer) can be added
+    // once the Linux path is stable. Do not implement here without a
+    // cargo-feature gate (`sandbox`) so the daemon remains functional on
+    // kernels that pre-date landlock (< 5.13).
     config.validate()?;
     for (path, mode) in [
         (&config.paths.config_dir, config.runtime.config_dir_mode),
@@ -445,7 +459,17 @@ pub fn bootstrap_with_config(config: ConfigProfile) -> Result<RuntimeShell, Boot
         config.features.durable_auth_tokens_enabled = enabled;
     }
     if let Some(api_server) = store.repositories.preferences.api_server_binapi.as_deref() {
-        config.api.apply_api_server_hint(api_server);
+        match config.api.apply_api_server_hint(api_server) {
+            Ok(()) => log::info!(
+                "pcloudd bootstrap: applied api_server hint from preferences: {}",
+                api_server
+            ),
+            Err(reason) => log::error!(
+                "pcloudd bootstrap: rejecting api_server hint from preferences: {} — {}",
+                api_server,
+                reason
+            ),
+        }
     }
     let mut auth = SessionManager::new();
     let auth_runtime = AuthRuntime::from_config(&config);

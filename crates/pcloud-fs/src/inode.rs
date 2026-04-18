@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 
+use crate::errors::FsError;
 use crate::fuse_adapter::FsEntryKind;
 
 /// FUSE root inode, fixed by the kernel protocol.
@@ -59,6 +60,13 @@ struct InodeTableInner {
     /// path → ino
     by_path: HashMap<String, u64>,
     next_ino: u64,
+    /// ino → kernel lookup reference count.
+    ///
+    /// Incremented by one for every successful `lookup` or `readdir` reply
+    /// sent to the kernel. Decremented by the kernel's `forget(ino, nlookup)`
+    /// message. When the count reaches zero the kernel has released all
+    /// references and the inode entry may be evicted from the map.
+    lookup_counts: HashMap<u64, u64>,
 }
 
 impl InodeTableInner {
@@ -78,6 +86,7 @@ impl InodeTableInner {
             by_ino,
             by_path,
             next_ino: ROOT_INODE + 1,
+            lookup_counts: HashMap::new(),
         }
     }
 }
@@ -124,12 +133,54 @@ impl InodeTable {
         inner.by_path.get(path).copied()
     }
 
-    /// Insert-or-return: idempotent. Returns `(ino, generation)`.
+    /// Insert-or-return with mandatory lookup-count bootstrap. Returns
+    /// `Ok((ino, generation))`.
+    ///
+    /// Unlike [`Self::insert_or_get`], this constructor guarantees that
+    /// `lookup_counts` has an entry (initialised to zero) for the
+    /// returned inode. This is the **required** insertion path for any
+    /// call site that will subsequently advertise `ino` to the kernel
+    /// via a FUSE reply: the kernel's `forget(ino, nlookup)` message
+    /// depends on a live counter, and without one
+    /// [`Self::forget`] is a silent no-op that leaks the inode
+    /// unboundedly.
+    ///
+    /// Prefer this constructor for all production insertion sites.
+    /// [`Self::insert_or_get`] remains available for internal
+    /// book-keeping paths that never surface the inode to the kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FsError::InodeSpaceExhausted`] when the 64-bit inode
+    /// number space overflows.
+    pub fn insert_with_lookup(&self, path: &str, kind: FsEntryKind) -> Result<(u64, u64), FsError> {
+        let (ino, generation) = self.insert_or_get(path, kind)?;
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("inode table mutex must not be poisoned");
+        inner.lookup_counts.entry(ino).or_insert(0);
+        Ok((ino, generation))
+    }
+
+    /// Insert-or-return: idempotent. Returns `Ok((ino, generation))`.
     ///
     /// If `path` is already registered, the existing inode is returned and
     /// the kind is refreshed to `kind` (cheap correction after a type flip
     /// detected in a remote listing).
-    pub fn insert_or_get(&self, path: &str, kind: FsEntryKind) -> (u64, u64) {
+    ///
+    /// **Deprecated for kernel-facing insertion paths:** prefer
+    /// [`Self::insert_with_lookup`] whenever the caller will emit `ino`
+    /// to the FUSE kernel. That path guarantees `lookup_counts` has an
+    /// entry so that `forget()` can correctly evict on the last kernel
+    /// release. Retaining this method for internal book-keeping where
+    /// the inode is never surfaced to the kernel.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FsError::InodeSpaceExhausted`] when the 64-bit inode
+    /// number space overflows. This should never occur in practice.
+    pub fn insert_or_get(&self, path: &str, kind: FsEntryKind) -> Result<(u64, u64), FsError> {
         let mut inner = self
             .inner
             .lock()
@@ -137,14 +188,14 @@ impl InodeTable {
         if let Some(&ino) = inner.by_path.get(path) {
             if let Some(entry) = inner.by_ino.get_mut(&ino) {
                 entry.kind = kind;
-                return (ino, entry.generation);
+                return Ok((ino, entry.generation));
             }
         }
         let ino = inner.next_ino;
         inner.next_ino = inner
             .next_ino
             .checked_add(1)
-            .expect("inode number space exhausted");
+            .ok_or(FsError::InodeSpaceExhausted)?;
         inner.by_ino.insert(
             ino,
             InodeEntry {
@@ -154,7 +205,7 @@ impl InodeTable {
             },
         );
         inner.by_path.insert(path.to_owned(), ino);
-        (ino, 1)
+        Ok((ino, 1))
     }
 
     /// Invalidate the entry at `path`. Bumps the generation, removes the
@@ -206,6 +257,75 @@ impl InodeTable {
         self.len() == 0
     }
 
+    /// Increment the kernel lookup reference count for `ino` by one.
+    ///
+    /// Call this once for every successful `lookup` or `readdir` reply that
+    /// names `ino` to the FUSE kernel. The kernel will later balance each
+    /// such increment with a `forget(ino, nlookup)` message.
+    pub fn increment_lookup(&self, ino: u64) {
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("inode table mutex must not be poisoned");
+        *inner.lookup_counts.entry(ino).or_insert(0) += 1;
+    }
+
+    /// Decrement the kernel lookup reference count for `ino` by `nlookup`.
+    ///
+    /// When the count reaches zero the entry is evicted from both the
+    /// forward and reverse maps, freeing memory. The root inode is never
+    /// evicted regardless of the count.
+    ///
+    /// Defensive behaviour when `lookup_counts` has no entry for `ino`:
+    /// a kernel `forget` for an untracked inode means the insertion
+    /// site bypassed [`Self::insert_with_lookup`]. We log a warning
+    /// (development signal) and evict the entry anyway so the forward/
+    /// reverse maps do not leak.
+    pub fn forget(&self, ino: u64, nlookup: u64) {
+        if ino == ROOT_INODE {
+            return;
+        }
+        let mut inner = self
+            .inner
+            .lock()
+            .expect("inode table mutex must not be poisoned");
+        match inner.lookup_counts.get_mut(&ino) {
+            Some(count) => {
+                *count = count.saturating_sub(nlookup);
+                if *count == 0 {
+                    inner.lookup_counts.remove(&ino);
+                    if let Some(entry) = inner.by_ino.remove(&ino) {
+                        inner.by_path.remove(&entry.path);
+                        log::trace!("inode {} evicted from map (kernel forget)", ino);
+                    }
+                }
+            }
+            None => {
+                // Untracked insertion site leaked an inode to the
+                // kernel without calling increment_lookup. Evict
+                // anyway so memory is reclaimed; surface a warning so
+                // the offending call site can be fixed.
+                if let Some(entry) = inner.by_ino.remove(&ino) {
+                    inner.by_path.remove(&entry.path);
+                    log::warn!(
+                        "inode {} forgotten without a lookup_counts entry; \
+                         call site should use InodeTable::insert_with_lookup",
+                        ino
+                    );
+                }
+            }
+        }
+    }
+
+    /// Return the current kernel lookup reference count for `ino`, if any.
+    /// Primarily useful in tests.
+    pub fn lookup_count(&self, ino: u64) -> u64 {
+        self.inner
+            .lock()
+            .map(|g| g.lookup_counts.get(&ino).copied().unwrap_or(0))
+            .unwrap_or(0)
+    }
+
     /// Bump the generation counter for `ino` without evicting it. Used when
     /// the kind/metadata shape changes but the path↔ino binding is stable.
     pub fn bump_generation(&self, ino: u64) -> Option<u64> {
@@ -235,8 +355,8 @@ mod tests {
     #[test]
     fn insert_or_get_is_idempotent() {
         let t = InodeTable::new();
-        let (a, gen_a) = t.insert_or_get("/docs", FsEntryKind::Directory);
-        let (b, gen_b) = t.insert_or_get("/docs", FsEntryKind::Directory);
+        let (a, gen_a) = t.insert_or_get("/docs", FsEntryKind::Directory).unwrap();
+        let (b, gen_b) = t.insert_or_get("/docs", FsEntryKind::Directory).unwrap();
         assert_eq!(a, b);
         assert_eq!(gen_a, gen_b);
         assert_ne!(a, ROOT_INODE);
@@ -245,16 +365,16 @@ mod tests {
     #[test]
     fn insert_allocates_monotonic_inos() {
         let t = InodeTable::new();
-        let (a, _) = t.insert_or_get("/a", FsEntryKind::RegularFile);
-        let (b, _) = t.insert_or_get("/b", FsEntryKind::RegularFile);
-        let (c, _) = t.insert_or_get("/c", FsEntryKind::RegularFile);
+        let (a, _) = t.insert_or_get("/a", FsEntryKind::RegularFile).unwrap();
+        let (b, _) = t.insert_or_get("/b", FsEntryKind::RegularFile).unwrap();
+        let (c, _) = t.insert_or_get("/c", FsEntryKind::RegularFile).unwrap();
         assert!(a < b && b < c);
     }
 
     #[test]
     fn invalidate_path_bumps_generation_on_reinsert() {
         let t = InodeTable::new();
-        let (ino_old, gen_old) = t.insert_or_get("/x", FsEntryKind::RegularFile);
+        let (ino_old, gen_old) = t.insert_or_get("/x", FsEntryKind::RegularFile).unwrap();
         assert_eq!(gen_old, 1);
 
         let evicted = t.invalidate_path("/x");
@@ -262,14 +382,14 @@ mod tests {
         assert_eq!(t.resolve(ino_old), None);
         assert_eq!(t.ino_for_path("/x"), None);
 
-        let (ino_new, _) = t.insert_or_get("/x", FsEntryKind::RegularFile);
+        let (ino_new, _) = t.insert_or_get("/x", FsEntryKind::RegularFile).unwrap();
         assert_ne!(ino_new, ino_old, "new inode must not reuse evicted slot");
     }
 
     #[test]
     fn invalidate_ino_evicts_path_mapping() {
         let t = InodeTable::new();
-        let (ino, _) = t.insert_or_get("/y", FsEntryKind::Directory);
+        let (ino, _) = t.insert_or_get("/y", FsEntryKind::Directory).unwrap();
         assert_eq!(t.invalidate_ino(ino), Some("/y".to_owned()));
         assert_eq!(t.ino_for_path("/y"), None);
     }
@@ -285,7 +405,7 @@ mod tests {
     #[test]
     fn bump_generation_increments() {
         let t = InodeTable::new();
-        let (ino, g0) = t.insert_or_get("/z", FsEntryKind::RegularFile);
+        let (ino, g0) = t.insert_or_get("/z", FsEntryKind::RegularFile).unwrap();
         let g1 = t.bump_generation(ino).unwrap();
         let g2 = t.bump_generation(ino).unwrap();
         assert_eq!(g0, 1);
@@ -296,8 +416,8 @@ mod tests {
     #[test]
     fn kind_refresh_on_reinsert_preserves_ino() {
         let t = InodeTable::new();
-        let (ino, _) = t.insert_or_get("/q", FsEntryKind::RegularFile);
-        let (ino2, _) = t.insert_or_get("/q", FsEntryKind::Directory);
+        let (ino, _) = t.insert_or_get("/q", FsEntryKind::RegularFile).unwrap();
+        let (ino2, _) = t.insert_or_get("/q", FsEntryKind::Directory).unwrap();
         assert_eq!(ino, ino2);
         let (_, _, kind) = t.resolve(ino).unwrap();
         assert_eq!(kind, FsEntryKind::Directory);
@@ -315,7 +435,7 @@ mod tests {
                 for i in 0..64 {
                     // Overlapping path space across threads is deliberate.
                     let path = format!("/race/{}", i % 16);
-                    let (ino, _) = t.insert_or_get(&path, FsEntryKind::RegularFile);
+                    let (ino, _) = t.insert_or_get(&path, FsEntryKind::RegularFile).unwrap();
                     seen.push((path, ino, tid));
                 }
                 seen

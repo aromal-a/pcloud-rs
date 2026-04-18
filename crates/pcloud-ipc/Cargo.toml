@@ -14,10 +14,12 @@ description = "Local IPC codec and transport (owner-only UNIX sockets) for pclou
 
 [dependencies]
 libc = "0.2"
+log.workspace = true
 pcloud-model = { path = "../pcloud-model" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+zeroize = "1.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Planned (bd-xplat-macos): LOCAL_PEERCRED via libc (already unconditional).

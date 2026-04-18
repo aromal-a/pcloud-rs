@@ -40,9 +40,10 @@ use std::{
 };
 
 use rustls::pki_types::ServerName;
-use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+use rustls::{ClientConnection, StreamOwned};
 use thiserror::Error;
 
+use crate::tls::shared_config;
 use crate::{
     EncodedRequest, FrameParseError, ResponseParseError,
     auth_api::{ApiServerHintConsumer, ProtocolTransport},
@@ -63,10 +64,22 @@ use crate::{
 ///
 /// ## Security notes
 ///
-/// [`Self::use_tls`] **must** be `true` in any non-test profile. The
-/// production bootstrap path refuses to construct a transport with
-/// `use_tls = false`; this field remains public only so that local
-/// test harnesses can exercise the plaintext code path.
+/// `use_tls` is a **private** field. Callers cannot construct a
+/// `TransportConfig` with TLS disabled by struct-literal — the only
+/// ways to obtain a config are [`Self::production`] (TLS-on, the only
+/// safe choice for any deployed profile) and [`Self::dev_plaintext`]
+/// (TLS-off, expressly named so any accidental production use is
+/// obvious at the call site). This closes the audit-04 H-1 gap where
+/// a public boolean let in-process callers silently bypass the
+/// bootstrap TLS gate.
+///
+/// ## Keep-alive policy
+///
+/// The transport does **not** pool connections. Every `execute` / `execute_with_body`
+/// call opens a fresh TCP (+ TLS) session. This matches the historical pCloud
+/// binary-protocol client behaviour and keeps the retry/error model simple.
+/// If connection setup latency becomes a bottleneck, a pooling layer should
+/// be added above this struct rather than inside it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransportConfig {
     /// DNS name or literal IP used for the TCP connect.
@@ -81,18 +94,135 @@ pub struct TransportConfig {
     ///
     /// Should match the CN / SAN of the server certificate.
     pub server_name: String,
-    /// If `true`, wrap the TCP stream in rustls with
-    /// `webpki-roots`.
-    ///
-    /// Must be `true` outside of tests. The field is *not* checked
-    /// here — enforcement lives in the daemon bootstrap — so this
-    /// struct remains usable for local integration tests.
-    pub use_tls: bool,
+    /// Private TLS flag. Set at construction via [`Self::production`]
+    /// or [`Self::dev_plaintext`]; read via [`Self::use_tls`]. Kept
+    /// private so that struct-literal construction cannot bypass the
+    /// bootstrap TLS gate.
+    use_tls: bool,
     /// Timeout for the initial `TcpStream::connect_timeout` call.
     pub connect_timeout: Duration,
     /// Deadline applied to each read / write syscall **and** to the
     /// overall deadline loop that drives them.
     pub read_timeout: Duration,
+    /// Sleep duration injected between `Interrupted` / `WouldBlock` retries
+    /// inside the write/read deadline loops. The default is 10 ms, which
+    /// amortizes syscall overhead without burning CPU on tight-loop retries.
+    /// Tests may set this to `Duration::ZERO` for instant retries.
+    pub interrupt_retry_delay: Duration,
+    /// Hard upper bound on the entire request/response cycle, from the first
+    /// write byte to the last read byte. If the total time spent on a single
+    /// `execute` call exceeds this value the call returns
+    /// [`TransportError::Io`] with `ErrorKind::TimedOut`. The default is
+    /// 5 minutes, which is generous enough to accommodate large uploads while
+    /// still preventing an indefinitely wedged connection from blocking a
+    /// caller forever.
+    pub total_request_timeout: Duration,
+    /// Maximum number of bytes allowed in a single framed response.
+    ///
+    /// Protects against a malicious or malfunctioning server sending an
+    /// arbitrarily large length prefix that would cause an OOM allocation.
+    /// The default is 64 MiB, which comfortably accommodates all known
+    /// pCloud binary-protocol responses.
+    pub max_response_bytes: usize,
+}
+
+impl TransportConfig {
+    /// Default `TcpStream::connect_timeout` used by the constructors.
+    pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+    /// Default per-syscall read/write timeout used by the constructors.
+    pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
+    /// Default `Interrupted` / `WouldBlock` retry backoff.
+    pub const DEFAULT_INTERRUPT_RETRY_DELAY: Duration = Duration::from_millis(10);
+    /// Default whole-request deadline.
+    pub const DEFAULT_TOTAL_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+    /// Default 64 MiB response-frame cap.
+    pub const DEFAULT_MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+
+    /// Build a production (TLS-on) transport config.
+    ///
+    /// This is the only constructor appropriate for any deployed
+    /// profile. `server_name` should match the host certificate's
+    /// CN/SAN — pass the same value as `host` for the common case.
+    #[must_use]
+    pub fn production(host: impl Into<String>, port: u16, server_name: impl Into<String>) -> Self {
+        Self {
+            host: host.into(),
+            port,
+            server_name: server_name.into(),
+            use_tls: true,
+            connect_timeout: Self::DEFAULT_CONNECT_TIMEOUT,
+            read_timeout: Self::DEFAULT_READ_TIMEOUT,
+            interrupt_retry_delay: Self::DEFAULT_INTERRUPT_RETRY_DELAY,
+            total_request_timeout: Self::DEFAULT_TOTAL_REQUEST_TIMEOUT,
+            max_response_bytes: Self::DEFAULT_MAX_RESPONSE_BYTES,
+        }
+    }
+
+    /// Build a plaintext (TLS-off) transport config for local
+    /// integration tests and development-mode endpoints.
+    ///
+    /// The explicit `dev_plaintext` name makes any accidental use in a
+    /// production context obvious at the call site. The daemon
+    /// bootstrap rejects plaintext transports in production profiles
+    /// (see `pcloud-config::api::ApiMode::Plaintext`).
+    #[must_use]
+    pub fn dev_plaintext(
+        host: impl Into<String>,
+        port: u16,
+        server_name: impl Into<String>,
+    ) -> Self {
+        Self {
+            host: host.into(),
+            port,
+            server_name: server_name.into(),
+            use_tls: false,
+            connect_timeout: Self::DEFAULT_CONNECT_TIMEOUT,
+            read_timeout: Self::DEFAULT_READ_TIMEOUT,
+            interrupt_retry_delay: Self::DEFAULT_INTERRUPT_RETRY_DELAY,
+            total_request_timeout: Self::DEFAULT_TOTAL_REQUEST_TIMEOUT,
+            max_response_bytes: Self::DEFAULT_MAX_RESPONSE_BYTES,
+        }
+    }
+
+    /// Construct a transport config with explicit TLS selection and
+    /// caller-supplied timeouts.
+    ///
+    /// This is the daemon/backend hot path: the daemon has already
+    /// validated the deployment profile via `pcloud-config::ApiMode`
+    /// (which rejects plaintext in production), so by the time the
+    /// backend calls here the `use_tls` decision is policy-correct.
+    /// Keeping a single bool parameter (rather than two constructors)
+    /// lets the backend switch on `ApiMode` without conditional
+    /// struct-literal duplication.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_tls(
+        use_tls: bool,
+        host: impl Into<String>,
+        port: u16,
+        server_name: impl Into<String>,
+        connect_timeout: Duration,
+        read_timeout: Duration,
+    ) -> Self {
+        Self {
+            host: host.into(),
+            port,
+            server_name: server_name.into(),
+            use_tls,
+            connect_timeout,
+            read_timeout,
+            interrupt_retry_delay: Self::DEFAULT_INTERRUPT_RETRY_DELAY,
+            total_request_timeout: Self::DEFAULT_TOTAL_REQUEST_TIMEOUT,
+            max_response_bytes: Self::DEFAULT_MAX_RESPONSE_BYTES,
+        }
+    }
+
+    /// Read-only accessor for the private TLS flag.
+    #[must_use]
+    #[inline]
+    pub fn use_tls(&self) -> bool {
+        self.use_tls
+    }
 }
 
 /// Synchronous, TLS-capable transport for the pCloud binary
@@ -168,6 +298,17 @@ pub enum TransportError {
     /// [`ResponseParseError`]).
     #[error("response body was invalid: {0}")]
     ResponseBody(#[from] ResponseParseError),
+    /// Response frame exceeds the maximum permitted size.
+    ///
+    /// Protects against a malicious or malfunctioning server sending an
+    /// arbitrarily large length prefix that would cause an OOM allocation.
+    #[error("response frame too large: {actual} bytes exceeds {limit}-byte limit")]
+    ResponseTooLarge {
+        /// Actual frame length as reported by the server.
+        actual: usize,
+        /// Configured maximum (currently 64 MiB).
+        limit: usize,
+    },
 }
 
 impl BinaryApiTransport {
@@ -179,17 +320,11 @@ impl BinaryApiTransport {
     /// # Examples
     ///
     /// ```no_run
-    /// use std::time::Duration;
     /// use pcloud_proto::transport::{BinaryApiTransport, TransportConfig};
     ///
-    /// let transport = BinaryApiTransport::new(TransportConfig {
-    ///     host: "bineapi.pcloud.com".into(),
-    ///     port: 443,
-    ///     server_name: "bineapi.pcloud.com".into(),
-    ///     use_tls: true,
-    ///     connect_timeout: Duration::from_secs(10),
-    ///     read_timeout: Duration::from_secs(30),
-    /// });
+    /// let transport = BinaryApiTransport::new(
+    ///     TransportConfig::production("bineapi.pcloud.com", 443, "bineapi.pcloud.com"),
+    /// );
     /// ```
     #[must_use]
     pub fn new(config: TransportConfig) -> Self {
@@ -244,11 +379,9 @@ impl BinaryApiTransport {
     /// ```no_run
     /// # use pcloud_proto::binary_api::{BinaryParam, BinaryParamValue, encode_request};
     /// # use pcloud_proto::transport::{BinaryApiTransport, TransportConfig};
-    /// # use std::time::Duration;
-    /// # let transport = BinaryApiTransport::new(TransportConfig {
-    /// #     host: "".into(), port: 0, server_name: "".into(), use_tls: true,
-    /// #     connect_timeout: Duration::ZERO, read_timeout: Duration::ZERO,
-    /// # });
+    /// # let transport = BinaryApiTransport::new(
+    /// #     TransportConfig::production("bineapi.pcloud.com", 443, "bineapi.pcloud.com"),
+    /// # );
     /// let req = encode_request("upload_write", &[], Some(4)).unwrap();
     /// let _ = transport.execute_with_body(&req, b"data");
     /// ```
@@ -259,10 +392,10 @@ impl BinaryApiTransport {
     ) -> Result<Value, TransportError> {
         let config = self.config();
         let stream = connect_socket(&config)?;
-        if config.use_tls {
+        if config.use_tls() {
             execute_tls(stream, &config, request, body)
         } else {
-            execute_plain(stream, request, body)
+            execute_plain(stream, &config, request, body)
         }
     }
 }
@@ -274,6 +407,14 @@ impl ApiServerHintConsumer for BinaryApiTransport {
         }
 
         let (host, port) = parse_api_server_hint(api_server);
+
+        // Safety gate: only accept API-server hints that point to known-safe
+        // pCloud domains. An attacker who can inject a forged hint must not
+        // be able to redirect traffic to an arbitrary host.
+        if !is_known_safe_host(&host) {
+            return;
+        }
+
         let mut config = self
             .config
             .write()
@@ -286,33 +427,79 @@ impl ApiServerHintConsumer for BinaryApiTransport {
     }
 }
 
+/// Returns `true` when the host is a known-safe pCloud API endpoint.
+///
+/// Production API-server hints returned by the server must resolve to
+/// a `*.pcloud.com` or `*.pcloud.link` domain. Accepting arbitrary
+/// hosts would let a compromised hint redirect traffic to an
+/// attacker-controlled endpoint.
+///
+/// Literal IP addresses are rejected — the pCloud API only issues
+/// hostname hints. Test overrides (plaintext, loopback) bypass this
+/// check because they never call `apply_api_server_hint`.
+fn is_known_safe_host(host: &str) -> bool {
+    let h = host.to_ascii_lowercase();
+    h.ends_with(".pcloud.com")
+        || h == "pcloud.com"
+        || h.ends_with(".pcloud.link")
+        || h == "pcloud.link"
+}
+
+/// Attempt a TCP connect to each resolved address in turn, returning
+/// the first successful stream (happy-eyeballs-style sequential
+/// fallback). The per-address timeout is the configured
+/// `connect_timeout`. On total failure the last connection error is
+/// returned.
 fn connect_socket(config: &TransportConfig) -> Result<TcpStream, TransportError> {
-    let mut addresses = (config.host.as_str(), config.port)
+    let addresses: Vec<_> = (config.host.as_str(), config.port)
         .to_socket_addrs()
-        .map_err(TransportError::Connect)?;
-    let address = addresses
-        .next()
-        .ok_or_else(|| TransportError::InvalidAddress {
+        .map_err(TransportError::Connect)?
+        .collect();
+
+    if addresses.is_empty() {
+        return Err(TransportError::InvalidAddress {
             host: config.host.clone(),
             port: config.port,
-        })?;
-    let stream = TcpStream::connect_timeout(&address, config.connect_timeout)
-        .map_err(TransportError::Connect)?;
-    stream
-        .set_read_timeout(Some(config.read_timeout))
-        .map_err(TransportError::SocketConfig)?;
-    stream
-        .set_write_timeout(Some(config.read_timeout))
-        .map_err(TransportError::SocketConfig)?;
-    Ok(stream)
+        });
+    }
+
+    let mut last_err: Option<io::Error> = None;
+    for address in &addresses {
+        match TcpStream::connect_timeout(address, config.connect_timeout) {
+            Ok(stream) => {
+                stream
+                    .set_read_timeout(Some(config.read_timeout))
+                    .map_err(TransportError::SocketConfig)?;
+                stream
+                    .set_write_timeout(Some(config.read_timeout))
+                    .map_err(TransportError::SocketConfig)?;
+                return Ok(stream);
+            }
+            Err(e) => {
+                last_err = Some(e);
+            }
+        }
+    }
+
+    Err(TransportError::Connect(last_err.unwrap_or_else(|| {
+        io::Error::new(io::ErrorKind::AddrNotAvailable, "no addresses resolved")
+    })))
 }
 
 fn execute_plain(
     mut stream: TcpStream,
+    config: &TransportConfig,
     request: &EncodedRequest,
     body: &[u8],
 ) -> Result<Value, TransportError> {
-    send_and_receive(&mut stream, request, body, Duration::from_secs(15))
+    send_and_receive(
+        &mut stream,
+        request,
+        body,
+        config.total_request_timeout,
+        config.interrupt_retry_delay,
+        config.max_response_bytes,
+    )
 }
 
 fn execute_tls(
@@ -321,18 +508,19 @@ fn execute_tls(
     request: &EncodedRequest,
     body: &[u8],
 ) -> Result<Value, TransportError> {
-    let mut roots = RootCertStore::empty();
-    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-    let tls_config = ClientConfig::builder()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
+    let tls_config = shared_config();
     let server_name = ServerName::try_from(config.server_name.clone())
         .map_err(|_| TransportError::InvalidServerName(config.server_name.clone()))?;
-    let connection =
-        ClientConnection::new(Arc::new(tls_config), server_name).map_err(TransportError::Tls)?;
+    let connection = ClientConnection::new(tls_config, server_name).map_err(TransportError::Tls)?;
     let mut tls_stream = StreamOwned::new(connection, stream);
-    send_and_receive(&mut tls_stream, request, body, config.read_timeout)
+    send_and_receive(
+        &mut tls_stream,
+        request,
+        body,
+        config.total_request_timeout,
+        config.interrupt_retry_delay,
+        config.max_response_bytes,
+    )
 }
 
 fn send_and_receive<S>(
@@ -340,21 +528,29 @@ fn send_and_receive<S>(
     request: &EncodedRequest,
     body: &[u8],
     timeout: Duration,
+    interrupt_delay: Duration,
+    max_response_bytes: usize,
 ) -> Result<Value, TransportError>
 where
     S: Read + Write,
 {
-    write_all_with_deadline(stream, &request.bytes, timeout)?;
+    write_all_with_deadline(stream, &request.bytes, timeout, interrupt_delay)?;
     if !body.is_empty() {
-        write_all_with_deadline(stream, body, timeout)?;
+        write_all_with_deadline(stream, body, timeout, interrupt_delay)?;
     }
-    flush_with_deadline(stream, timeout)?;
+    flush_with_deadline(stream, timeout, interrupt_delay)?;
 
     let mut header = [0u8; 4];
-    read_exact_with_deadline(stream, &mut header, timeout)?;
+    read_exact_with_deadline(stream, &mut header, timeout, interrupt_delay)?;
     let frame_len = parse_response_frame_len(&header)? as usize;
+    if frame_len > max_response_bytes {
+        return Err(TransportError::ResponseTooLarge {
+            actual: frame_len,
+            limit: max_response_bytes,
+        });
+    }
     let mut body = vec![0u8; frame_len];
-    read_exact_with_deadline(stream, &mut body, timeout)?;
+    read_exact_with_deadline(stream, &mut body, timeout, interrupt_delay)?;
 
     let mut frame = Vec::with_capacity(4 + frame_len);
     frame.extend_from_slice(&header);
@@ -367,6 +563,7 @@ fn write_all_with_deadline<S>(
     stream: &mut S,
     mut buf: &[u8],
     timeout: Duration,
+    interrupt_delay: Duration,
 ) -> Result<(), TransportError>
 where
     S: Write,
@@ -381,14 +578,20 @@ where
                 )));
             }
             Ok(written) => buf = &buf[written..],
-            Err(err) if is_retryable_io(&err) && Instant::now() < deadline => backoff(),
+            Err(err) if is_retryable_io(&err) && Instant::now() < deadline => {
+                backoff(interrupt_delay);
+            }
             Err(err) => return Err(TransportError::Io(err)),
         }
     }
     Ok(())
 }
 
-fn flush_with_deadline<S>(stream: &mut S, timeout: Duration) -> Result<(), TransportError>
+fn flush_with_deadline<S>(
+    stream: &mut S,
+    timeout: Duration,
+    interrupt_delay: Duration,
+) -> Result<(), TransportError>
 where
     S: Write,
 {
@@ -396,7 +599,9 @@ where
     loop {
         match stream.flush() {
             Ok(()) => return Ok(()),
-            Err(err) if is_retryable_io(&err) && Instant::now() < deadline => backoff(),
+            Err(err) if is_retryable_io(&err) && Instant::now() < deadline => {
+                backoff(interrupt_delay);
+            }
             Err(err) => return Err(TransportError::Io(err)),
         }
     }
@@ -406,6 +611,7 @@ fn read_exact_with_deadline<S>(
     stream: &mut S,
     mut buf: &mut [u8],
     timeout: Duration,
+    interrupt_delay: Duration,
 ) -> Result<(), TransportError>
 where
     S: Read,
@@ -423,13 +629,26 @@ where
                 let (_, remainder) = buf.split_at_mut(read);
                 buf = remainder;
             }
-            Err(err) if is_retryable_io(&err) && Instant::now() < deadline => backoff(),
+            Err(err) if is_retryable_io(&err) && Instant::now() < deadline => {
+                backoff(interrupt_delay);
+            }
             Err(err) => return Err(TransportError::Io(err)),
         }
     }
     Ok(())
 }
 
+/// Returns `true` for I/O errors that are safe to retry inside the
+/// per-request deadline loop.
+///
+/// Only `Interrupted` (EINTR — system call interrupted by a signal) and
+/// `WouldBlock` (EAGAIN — non-blocking socket not yet ready) qualify.
+/// Errors such as `BrokenPipe`, `ConnectionReset`, `ConnectionAborted`,
+/// and `TimedOut` indicate that the connection or the request is
+/// irrecoverably broken and must not be silently swallowed by the inner
+/// retry loop — they should surface immediately so the outer
+/// `pcloud-resilience` retry layer can decide whether to re-attempt
+/// with a fresh connection.
 fn is_retryable_io(err: &io::Error) -> bool {
     matches!(
         err.kind(),
@@ -437,8 +656,10 @@ fn is_retryable_io(err: &io::Error) -> bool {
     )
 }
 
-fn backoff() {
-    thread::sleep(Duration::from_millis(10));
+fn backoff(delay: Duration) {
+    if !delay.is_zero() {
+        thread::sleep(delay);
+    }
 }
 
 fn parse_api_server_hint(api_server: &str) -> (String, Option<u16>) {
@@ -495,13 +716,16 @@ mod tests {
         )
         .expect("request should encode");
 
-        let transport = BinaryApiTransport::new(TransportConfig {
-            host: address.ip().to_string(),
-            port: address.port(),
-            server_name: "localhost".to_owned(),
-            use_tls: false,
-            connect_timeout: Duration::from_secs(2),
-            read_timeout: Duration::from_secs(2),
+        let transport = BinaryApiTransport::new({
+            let mut cfg = TransportConfig::dev_plaintext(
+                address.ip().to_string(),
+                address.port(),
+                "localhost",
+            );
+            cfg.connect_timeout = Duration::from_secs(2);
+            cfg.read_timeout = Duration::from_secs(2);
+            cfg.total_request_timeout = Duration::from_secs(30);
+            cfg
         });
 
         let response = transport
@@ -514,14 +738,11 @@ mod tests {
 
     #[test]
     fn api_server_hint_updates_transport_host_and_port() {
-        let transport = BinaryApiTransport::new(TransportConfig {
-            host: "bineapi.pcloud.com".to_owned(),
-            port: 443,
-            server_name: "bineapi.pcloud.com".to_owned(),
-            use_tls: true,
-            connect_timeout: Duration::from_secs(2),
-            read_timeout: Duration::from_secs(2),
-        });
+        let transport = BinaryApiTransport::new(TransportConfig::production(
+            "bineapi.pcloud.com",
+            443,
+            "bineapi.pcloud.com",
+        ));
 
         transport.apply_api_server_hint("bineapi-eu.pcloud.com:8443");
 
@@ -529,5 +750,34 @@ mod tests {
         assert_eq!(config.host, "bineapi-eu.pcloud.com");
         assert_eq!(config.server_name, "bineapi-eu.pcloud.com");
         assert_eq!(config.port, 8443);
+    }
+
+    #[test]
+    fn api_server_hint_rejected_for_non_pcloud_domain() {
+        let transport = BinaryApiTransport::new(TransportConfig::production(
+            "bineapi.pcloud.com",
+            443,
+            "bineapi.pcloud.com",
+        ));
+
+        // Attacker-supplied redirect to a non-pCloud host must be silently ignored.
+        transport.apply_api_server_hint("evil.attacker.example.com:443");
+
+        let config = transport.config();
+        // Host must not have changed.
+        assert_eq!(config.host, "bineapi.pcloud.com");
+        assert_eq!(config.port, 443);
+    }
+
+    #[test]
+    fn is_known_safe_host_matches_pcloud_domains() {
+        use super::is_known_safe_host;
+        assert!(is_known_safe_host("bineapi.pcloud.com"));
+        assert!(is_known_safe_host("pcloud.com"));
+        assert!(is_known_safe_host("api.pcloud.link"));
+        assert!(!is_known_safe_host("evil.example.com"));
+        assert!(!is_known_safe_host("notpcloud.com"));
+        assert!(!is_known_safe_host("pcloud.com.evil.io"));
+        assert!(!is_known_safe_host("192.168.1.1"));
     }
 }

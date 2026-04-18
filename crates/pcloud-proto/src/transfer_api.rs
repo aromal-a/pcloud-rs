@@ -210,7 +210,7 @@ where
     ) -> Result<DownloadLink, TransferApiError<T::Error>> {
         let request = GetFileLinkRequest {
             file_id,
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             forced_host,
         };
         let encoded = request.encode()?;
@@ -254,7 +254,7 @@ where
         file_size: u64,
     ) -> Result<UploadSession, TransferApiError<T::Error>> {
         let request = UploadCreateRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             parent_folder_id,
             file_name: file_name.into(),
             file_size,
@@ -295,7 +295,7 @@ where
         upload_id: u64,
     ) -> Result<(), TransferApiError<T::Error>> {
         let request = UploadDeleteRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             upload_id,
         };
         let encoded = request.encode()?;
@@ -319,7 +319,7 @@ where
         file_id: u64,
     ) -> Result<RenamedFileResponse, TransferApiError<T::Error>> {
         let request = DeleteFileRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             file_id,
         };
         let encoded = request.encode()?;
@@ -346,7 +346,7 @@ where
         to_name: impl Into<String>,
     ) -> Result<RenamedFileResponse, TransferApiError<T::Error>> {
         let request = RenameFileRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             file_id,
             to_folder_id,
             to_name: to_name.into(),
@@ -372,7 +372,7 @@ where
         chunk_id: u64,
     ) -> Result<UploadInfo, TransferApiError<T::Error>> {
         let request = UploadInfoRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             upload_id,
             chunk_id,
         };
@@ -411,7 +411,7 @@ where
     /// separately from the same socket; see `BlockChecksumHeader::decode`
     /// and `decode_block_checksums`.
     ///
-    /// TODO(spec §9.5): live-API verification required before relying on
+    /// TODO(bd-1du, spec §9.5): live-API verification required before relying on
     /// pipelining this ahead of `upload_write` responses draining.
     pub fn upload_blockchecksums_begin(
         &self,
@@ -419,7 +419,7 @@ where
         upload_id: u64,
     ) -> Result<(), TransferApiError<T::Error>> {
         let request = UploadBlockChecksumsRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             upload_id,
         };
         let encoded = request.encode()?;
@@ -443,7 +443,7 @@ where
         hash: u64,
     ) -> Result<ChecksumLink, TransferApiError<T::Error>> {
         let request = GetChecksumLinkRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             file_id,
             hash,
         };
@@ -495,7 +495,7 @@ where
             ));
         }
         let request = UploadWriteFromFileRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             upload_id,
             upload_offset,
             chunk_id,
@@ -522,7 +522,7 @@ where
         body_len: u64,
     ) -> Result<crate::EncodedRequest, TransferApiError<T::Error>> {
         let request = UploadFileRequest {
-            auth_token: auth_token.into(),
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             parent_folder_id,
             filename: filename.into(),
             nopartial: true,

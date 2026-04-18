@@ -320,6 +320,7 @@ fn full_mount_readdir_read_write_fsync_unmount_cycle() {
             // Force upload only on explicit fsync/flush, not on write().
             flush_threshold_bytes: u64::MAX,
             flush_interval: Duration::from_secs(3600),
+            ..WritePathOptions::default()
         },
     );
 
@@ -388,6 +389,7 @@ fn kernel_create_write_fsync_unlink_rename_remount_cycle() {
         WritePathOptions {
             flush_threshold_bytes: u64::MAX,
             flush_interval: Duration::from_secs(3600),
+            ..WritePathOptions::default()
         },
     ));
 

@@ -73,6 +73,24 @@ impl Planner {
     /// ```
     #[must_use]
     pub fn plan(&self, candidates: &[SyncCandidate]) -> Vec<PlannedOperation> {
+        self.plan_with_overflow(candidates).0
+    }
+
+    /// Plan executable operations and additionally return the candidates
+    /// that were **skipped because the per-tick operation cap was
+    /// reached**.
+    ///
+    /// The returned overflow list contains the original `SyncCandidate`s
+    /// (not planned operations) so callers can persist them verbatim in
+    /// a dead-letter store and replay them on the next planning tick.
+    /// Audit-04 P2-6: previously over-cap candidates were dropped with
+    /// only a `warn!` log and had to be re-discovered by the next full
+    /// scan; persisting them closes that silent-drop window.
+    #[must_use]
+    pub fn plan_with_overflow(
+        &self,
+        candidates: &[SyncCandidate],
+    ) -> (Vec<PlannedOperation>, Vec<SyncCandidate>) {
         let mut sorted = candidates.to_vec();
         sorted.sort_by(|left, right| {
             left.path
@@ -100,7 +118,42 @@ impl Planner {
             }
         }
 
-        operations
+        // Collect skipped candidates for dead-letter persistence. The
+        // sync-loop adapter is responsible for writing this list to the
+        // `value_kv` store so a crash between planner overflow and the
+        // next full scan does not drop them silently.
+        let overflow: Vec<SyncCandidate> = sorted[idx..].to_vec();
+        if !overflow.is_empty() {
+            let skipped_ops = {
+                let mut count = 0usize;
+                let mut scan = idx;
+                while scan < sorted.len() {
+                    let path = &sorted[scan].path;
+                    while scan < sorted.len() && &sorted[scan].path == path {
+                        scan += 1;
+                    }
+                    count += 1;
+                }
+                count
+            };
+            let mut affected_ids = std::collections::BTreeSet::new();
+            for skipped in &overflow {
+                affected_ids.insert(skipped.sync_id.get());
+            }
+            let ids_str = affected_ids
+                .iter()
+                .map(|id| id.to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            log::warn!(
+                "planner cap exceeded: deferring {} operations for sync_id(s)=[{}] \
+                 to the dead-letter overflow buffer (will replay next tick)",
+                skipped_ops,
+                ids_str,
+            );
+        }
+
+        (operations, overflow)
     }
 }
 
@@ -259,10 +312,24 @@ impl Planner {
         candidates: &[SyncCandidate],
         delete_policy: &DeletePolicy,
     ) -> Vec<PlannedOperation> {
-        self.plan(candidates)
+        self.plan_filtered_with_overflow(candidates, delete_policy)
+            .0
+    }
+
+    /// [`Self::plan_filtered`] variant that additionally returns the
+    /// per-tick overflow candidates. See [`Self::plan_with_overflow`].
+    #[must_use]
+    pub fn plan_filtered_with_overflow(
+        &self,
+        candidates: &[SyncCandidate],
+        delete_policy: &DeletePolicy,
+    ) -> (Vec<PlannedOperation>, Vec<SyncCandidate>) {
+        let (ops, overflow) = self.plan_with_overflow(candidates);
+        let filtered = ops
             .into_iter()
             .filter(|op| !delete_policy.suppresses(op))
-            .collect()
+            .collect();
+        (filtered, overflow)
     }
 }
 

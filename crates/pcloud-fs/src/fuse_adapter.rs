@@ -453,6 +453,15 @@ pub trait FuseAdapter: Send + Sync + 'static {
         Err(ENOSYS)
     }
 
+    /// FUSE `forget`. Called by the kernel to release `nlookup` references
+    /// to `ino`. Adapters that maintain a lookup-reference count (e.g.
+    /// [`ProtoFuseAdapter`]) must decrement it and evict the inode table
+    /// entry when the count reaches zero.
+    ///
+    /// The default implementation is a no-op and is correct for adapters
+    /// that do not track kernel lookup references (e.g. read-only stubs).
+    fn forget_ino(&self, _ino: Ino, _nlookup: u64) {}
+
     // ---------------------------------------------------------------------
     // Phase-5 cross-platform write/maintenance surface.
     //
@@ -1059,7 +1068,7 @@ impl<B: FolderBackend, F: FileBackend> ProtoFuseAdapter<B, F> {
             }
         }
         let listing = self.backend.list_contents(path)?;
-        let (dir_ino, _) = self.inodes.insert_or_get(path, FsEntryKind::Directory);
+        let (dir_ino, _) = self.inodes.insert_or_get(path, FsEntryKind::Directory)?;
         let mut child_entries = Vec::with_capacity(listing.entries.len());
         for entry in &listing.entries {
             let child_path = join_child(path, &entry.name).map_err(path_err_to_fs)?;
@@ -1068,7 +1077,7 @@ impl<B: FolderBackend, F: FileBackend> ProtoFuseAdapter<B, F> {
             } else {
                 FsEntryKind::RegularFile
             };
-            let (ino, _) = self.inodes.insert_or_get(&child_path, kind);
+            let (ino, _) = self.inodes.insert_or_get(&child_path, kind)?;
             if !entry.is_folder {
                 if let Some(file_id) = entry.file_id {
                     if let Ok(mut ids) = self.file_ids.lock() {
@@ -1216,6 +1225,13 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
         }
     }
 
+    /// Decrement the kernel lookup reference count for `ino` by `nlookup`
+    /// and evict the inode table entry when it reaches zero. Called by the
+    /// fuser shim's `forget` handler.
+    fn forget_ino(&self, ino: Ino, nlookup: u64) {
+        self.inodes.forget(ino, nlookup);
+    }
+
     fn lookup(&self, parent: Ino, name: &str) -> Result<EntryAttr, i32> {
         let parent_path = self.path_from_ino(parent)?;
         let child_path =
@@ -1290,7 +1306,8 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
         // immediately without another `listfolder` round-trip.
         let (ino, _) = self
             .inodes
-            .insert_or_get(&child_path, FsEntryKind::Directory);
+            .insert_or_get(&child_path, FsEntryKind::Directory)
+            .map_err(|e| e.to_errno())?;
         let attr = self.build_attr(ino, FsEntryKind::Directory, 0);
         self.publish_local_entry(parent_path, name, attr.clone());
         Ok(attr)
@@ -1337,9 +1354,7 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
         let file_id = match self.resolve_file_id(ino) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!(
-                    "[pcloud-adapter] open ino={ino} resolve_file_id FAILED: {e:?}"
-                );
+                eprintln!("[pcloud-adapter] open ino={ino} resolve_file_id FAILED: {e:?}");
                 return Err(e.to_errno());
             }
         };
@@ -1365,6 +1380,8 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
                 let shared = Arc::new(handle);
                 let mut tbl = self.handles.lock().map_err(|_| crate::errors::EIO)?;
                 tbl.by_ino.entry(ino).or_insert_with(|| Arc::clone(&shared));
+                // INVARIANT: the entry was just inserted via `or_insert_with`
+                // on the line above; the key is guaranteed to be present.
                 Arc::clone(tbl.by_ino.get(&ino).expect("just-inserted"))
             }
         };
@@ -1408,9 +1425,7 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
 
         let page_size = self.options.page_cache.page_size as u64;
         if page_size == 0 {
-            eprintln!(
-                "[pcloud-adapter] read handle={handle} page_size=0 — fatal config"
-            );
+            eprintln!("[pcloud-adapter] read handle={handle} page_size=0 — fatal config");
             return Err(crate::errors::EIO);
         }
         let mut out = Vec::with_capacity(len);
@@ -1425,7 +1440,12 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
                 page_index,
             };
             // Load page (cache or backend).
-            let page_bytes = if let Some(b) = self.page_cache.get(page_key) {
+            // `PageCache::get` returns `Arc<Vec<u8>>` so a cache hit is a
+            // pointer bump rather than a 64 KiB memcpy (P5.1). On a miss we
+            // wrap the fetched bytes in `Arc` before caching so the same
+            // allocation is shared without a second copy.
+            let page_bytes: std::sync::Arc<Vec<u8>> = if let Some(b) = self.page_cache.get(page_key)
+            {
                 b
             } else {
                 let fetched = match self
@@ -1449,8 +1469,12 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
                 // Only cache full pages; a short trailing page is cached
                 // anyway because it represents the EOF boundary and serving
                 // it from cache on repeat reads is correct.
-                self.page_cache.put(page_key, fetched.clone());
-                fetched
+                self.page_cache.put(page_key, fetched);
+                // Re-fetch from cache to get the Arc-wrapped copy; avoids a
+                // second clone by reusing the Arc the cache just stored.
+                // If the put was silently dropped (oversized page), fall back
+                // to an empty Arc so the EOF branch below fires cleanly.
+                self.page_cache.get(page_key).unwrap_or_default()
             };
 
             let page_off = (cursor - page_start) as usize;
@@ -1519,7 +1543,10 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
         } else {
             format!("{parent_path}/{name}")
         };
-        let (ino, _gen) = self.inodes.insert_or_get(&full, FsEntryKind::RegularFile);
+        let (ino, _gen) = self
+            .inodes
+            .insert_or_get(&full, FsEntryKind::RegularFile)
+            .map_err(|e| e.to_errno())?;
         writer.create(ino, parent_path, name)?;
         // Publish the freshly-created entry into the metadata cache + the
         // parent's cached children list so subsequent `lookup(parent,

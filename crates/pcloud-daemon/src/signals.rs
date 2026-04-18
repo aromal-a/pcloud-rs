@@ -280,13 +280,25 @@ fn install_handler(sig: libc::c_int, handler: extern "C" fn(libc::c_int)) -> io:
     // Intentionally do not set SA_RESTART: we WANT blocking syscalls such as
     // accept(2) to return EINTR so the serve loop can observe the shutdown
     // flag and exit promptly. The serve loop treats EINTR as a non-error.
+    // SAFETY: `std::mem::zeroed()` is valid for `libc::sigaction` — the type
+    // is a plain C struct with no invariants beyond having been filled in
+    // before being passed to `sigaction(2)`. We fill in `sa_sigaction` and
+    // `sa_mask` before the syscall.
     let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
     sa.sa_sigaction = handler as usize;
     // Clear the whole signal mask while the handler runs; the handler itself
     // is trivial and async-signal-safe so this is fine.
+    // SAFETY: `&mut sa.sa_mask` is a valid pointer to an initialized
+    // `sigset_t` (zeroed above); `sigemptyset(3)` only reads/writes that
+    // memory and has no other preconditions.
     unsafe {
         libc::sigemptyset(&mut sa.sa_mask);
     }
+    // SAFETY: `sig` is a valid signal number supplied by our callers
+    // (SIGTERM, SIGINT, SIGHUP — all in the portable range). `&sa` is
+    // fully initialized above. The null `oldact` pointer is explicitly
+    // documented by POSIX as acceptable when the previous action is not
+    // needed. This call is async-signal-safe on Linux.
     let rc = unsafe { libc::sigaction(sig, &sa, std::ptr::null_mut()) };
     if rc != 0 {
         return Err(io::Error::last_os_error());
@@ -295,11 +307,18 @@ fn install_handler(sig: libc::c_int, handler: extern "C" fn(libc::c_int)) -> io:
 }
 
 fn install_ignore(sig: libc::c_int) -> io::Result<()> {
+    // SAFETY: `std::mem::zeroed()` is valid for `libc::sigaction` — same
+    // rationale as `install_handler` above. `sa_sigaction` is overwritten
+    // with `SIG_IGN` and `sa_mask` is filled by `sigemptyset` before use.
     let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
     sa.sa_sigaction = libc::SIG_IGN;
+    // SAFETY: `&mut sa.sa_mask` is a valid pointer to a zeroed `sigset_t`;
+    // `sigemptyset(3)` only writes into it with no other preconditions.
     unsafe {
         libc::sigemptyset(&mut sa.sa_mask);
     }
+    // SAFETY: same rationale as the `sigaction` call in `install_handler`.
+    // `sig` is SIGPIPE, a valid signal number; `&sa` is fully initialized.
     let rc = unsafe { libc::sigaction(sig, &sa, std::ptr::null_mut()) };
     if rc != 0 {
         return Err(io::Error::last_os_error());

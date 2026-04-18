@@ -109,5 +109,9 @@ path = "src/main.rs"
 name = "sync_root_canonicalize"
 harness = false
 
+[[bench]]
+name = "vault_open_close"
+harness = false
+
 [lints]
 workspace = true

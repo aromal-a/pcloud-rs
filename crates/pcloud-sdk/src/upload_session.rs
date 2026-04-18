@@ -690,7 +690,7 @@ pub(crate) fn run_upload(daemon: &mut EmbeddedDaemon, request: UploadRequest) ->
     let total = bytes.len() as u64;
     let (session, tx) = UploadSession::new(total);
 
-    let _ = &request.conflict_mode; // TODO: thread once the wire supports ifhash.
+    let _ = &request.conflict_mode; // TODO(bd-1du): thread once the wire supports ifhash.
 
     tx.send_modify(|p| p.state = UploadState::Uploading);
 

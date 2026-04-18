@@ -21,7 +21,9 @@ pcloud-proto = { path = "../pcloud-proto" }
 pcloud-resilience = { path = "../pcloud-resilience" }
 pcloud-secret = { path = "../pcloud-secret" }
 glob = "0.3"
+indexmap.workspace = true
 log = "0.4"
+lru.workspace = true
 notify.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -29,14 +31,18 @@ sha2.workspace = true
 tempfile = "3"
 thiserror.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+# libc is needed on every Unix target (Linux, macOS, FreeBSD, NetBSD, ...)
+# for `geteuid` in the staging-dir ownership check (audit-04 P2-4b).
+libc = { workspace = true }
+
 [target.'cfg(target_os = "linux")'.dependencies]
 fuser.workspace = true
-libc.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # NOTE: fuse-t binding is via direct C FFI in pcloud-fs/src/platform/macos_ffi.rs,
 # not a separate crate. Phase-1 scaffolding; not yet validated on macOS hardware.
-libc = { workspace = true }
+# libc is pulled in by the broader `cfg(unix)` stanza above.
 
 [target.'cfg(windows)'.dependencies]
 # PHASE-1 SCAFFOLDING (bd-1du.4): WinFSP adapter via hand-rolled FFI.
@@ -61,6 +67,10 @@ harness = false
 
 [[bench]]
 name = "chunked_flush"
+harness = false
+
+[[bench]]
+name = "writeback_flush"
 harness = false
 
 [lints]

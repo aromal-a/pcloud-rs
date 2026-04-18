@@ -138,6 +138,7 @@ lto = true
 panic = "abort"
 
 [workspace.dependencies]
+pcloud-observability = { path = "crates/pcloud-observability" }
 aes-gcm = { version = "0.10", default-features = false, features = ["aes", "alloc"] }
 argon2 = "0.5"
 # `battery` is the cross-platform notebook-battery-state crate used by
@@ -154,13 +155,16 @@ notify = { version = "6", default-features = false, features = ["macos_fsevent"]
 fuser = "0.16"
 getrandom = "0.2"
 hmac = "0.12"
+indexmap = "2"
 libc = "0.2"
 log = "0.4"
+lru = "0.12"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha2 = "0.10"
 sha3 = "0.10"
 subtle = "2.5"
+rpassword = "7.3"
 thiserror = "2.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zstd = { version = "0.13", default-features = false }

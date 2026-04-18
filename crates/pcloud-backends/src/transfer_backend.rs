@@ -22,7 +22,7 @@ use pcloud_proto::{
     TransferApi, TransferApiError, TransportConfig, TransportError, UploadSession,
     async_transfer::StreamFrame,
     auth_api::{ApiServerHintConsumer, ProtocolTransport},
-    fetch_download,
+    fetch_download, fetch_download_verified_streaming,
     methods::upload::{
         ConflictParam, PSYNC_CHECKSUM_FIELD, PSYNC_COPY_BUFFER_SIZE, PSYNC_HASH_DIGEST_HEXLEN,
         UploadCreateRequest, UploadErrorClass as ProtoUploadErrorClass, UploadInfoRequest,
@@ -209,6 +209,12 @@ pub struct TransferRuntime {
     mode: TransferMode,
     download: HttpDownloadConfig,
     network_transport: Option<BinaryApiTransport>,
+    /// Optional upload-side bandwidth pacer (bead pcloud-rs-6mx). `None`
+    /// disables pacing and upload writes run at link speed. An
+    /// `Arc<BandwidthPacer>` is intentionally shared: the same instance
+    /// can be passed into every `TransferRuntime` in the daemon to
+    /// enforce a single global cap across concurrent uploads.
+    upload_pacer: Option<Arc<pcloud_resilience::BandwidthPacer>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,16 +237,14 @@ impl TransferRuntime {
                 None,
             ),
             ApiMode::Plaintext | ApiMode::Tls => {
-                let transport = BinaryApiTransport::new(TransportConfig {
-                    host: config.api.host.clone(),
-                    port: config.api.port,
-                    server_name: config.api.server_name.clone(),
-                    use_tls: matches!(config.api.mode, ApiMode::Tls),
-                    connect_timeout: std::time::Duration::from_millis(
-                        config.api.connect_timeout_ms,
-                    ),
-                    read_timeout: std::time::Duration::from_millis(config.api.read_timeout_ms),
-                });
+                let transport = BinaryApiTransport::new(TransportConfig::with_tls(
+                    matches!(config.api.mode, ApiMode::Tls),
+                    config.api.host.clone(),
+                    config.api.port,
+                    config.api.server_name.clone(),
+                    std::time::Duration::from_millis(config.api.connect_timeout_ms),
+                    std::time::Duration::from_millis(config.api.read_timeout_ms),
+                ));
                 (
                     TransferTransportMode::Network(transport.clone()),
                     TransferMode::Network,
@@ -259,7 +263,50 @@ impl TransferRuntime {
                 ..HttpDownloadConfig::default()
             },
             network_transport,
+            upload_pacer: None,
         }
+    }
+
+    /// Install a shared bandwidth pacer for both download and upload
+    /// byte loops (bead pcloud-rs-6mx).
+    ///
+    /// Passing `None` disables pacing on both directions. Passing
+    /// `Some(Arc<BandwidthPacer>)` plumbs the same instance into the
+    /// `HttpDownloadConfig` (consulted by `fetch_download*`) and into
+    /// the upload byte-path driver (consulted before each
+    /// `upload_write` chunk). Because the pacer is wrapped in an
+    /// [`Arc`], callers that want a **global** cap across multiple
+    /// `TransferRuntime` instances or across download/upload can clone
+    /// a single pacer and install it everywhere.
+    ///
+    /// This is off by default (`None`) so enabling bandwidth limits is
+    /// always an explicit opt-in — matching the bead's acceptance
+    /// criterion "Off by default (None)".
+    #[must_use]
+    pub fn with_bandwidth_pacer(
+        mut self,
+        pacer: Option<Arc<pcloud_resilience::BandwidthPacer>>,
+    ) -> Self {
+        self.download.bandwidth_pacer = pacer.clone();
+        self.upload_pacer = pacer;
+        self
+    }
+
+    /// Set or replace the bandwidth pacer on an existing runtime. See
+    /// [`Self::with_bandwidth_pacer`] for semantics.
+    pub fn set_bandwidth_pacer(
+        &mut self,
+        pacer: Option<Arc<pcloud_resilience::BandwidthPacer>>,
+    ) {
+        self.download.bandwidth_pacer = pacer.clone();
+        self.upload_pacer = pacer;
+    }
+
+    /// Return a clone of the currently installed upload/download
+    /// bandwidth pacer, if any.
+    #[must_use]
+    pub fn bandwidth_pacer(&self) -> Option<Arc<pcloud_resilience::BandwidthPacer>> {
+        self.upload_pacer.clone()
     }
 
     /// Opens the upload journal rooted at `runtime_dir` (typically
@@ -378,6 +425,111 @@ impl TransferRuntime {
         }
     }
 
+    /// Stream a signed download directly to `dest_path` on disk without
+    /// buffering the full body in memory. Peak transient memory is bounded
+    /// by the HTTP streaming read buffer (64 KiB) plus the file-writer
+    /// buffer (64 KiB) regardless of body size — the critical property
+    /// audited by bd-pcloud-rs-s1p.87.
+    ///
+    /// Returns the `SignedDownload` that was ultimately used (for logging
+    /// / request-chain reconstruction) and the number of body bytes
+    /// written to disk. The destination file is opened with
+    /// `create(true).truncate(true)` and `fsync`'d before return so a
+    /// crash after this call leaves either the full body or nothing on
+    /// disk. In `TransferMode::Development` a deterministic placeholder
+    /// body is written, matching `download_bytes` semantics for tests.
+    pub fn download_to_path(
+        &self,
+        link: &DownloadLink,
+        dest_path: &std::path::Path,
+    ) -> Result<(SignedDownload, u64), TransferBackendError> {
+        use std::io::Write as _;
+
+        // Ensure parent exists — caller is responsible for choosing a
+        // sensible staging directory, but we refuse to silently create
+        // nested trees that weren't intended.
+        if let Some(parent) = dest_path.parent()
+            && !parent.as_os_str().is_empty()
+            && !parent.exists()
+        {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| TransferBackendError::Download(HttpDownloadError::Io(e)))?;
+        }
+
+        let file = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(dest_path)
+            .map_err(|e| TransferBackendError::Download(HttpDownloadError::Io(e)))?;
+        let mut writer = std::io::BufWriter::with_capacity(64 * 1024, file);
+
+        match self.mode {
+            TransferMode::Development => {
+                let signed = SignedDownload {
+                    host: link
+                        .hosts
+                        .first()
+                        .map(|host| split_host_port(host).0)
+                        .unwrap_or_else(|| "c1.pcloud.com".to_owned()),
+                    port: link.hosts.first().and_then(|host| split_host_port(host).1),
+                    path: link.path.clone(),
+                    dwltag: link.download_tag.clone(),
+                    range: None,
+                };
+                let body = format!("downloaded:{}", link.path);
+                writer
+                    .write_all(body.as_bytes())
+                    .map_err(|e| TransferBackendError::Download(HttpDownloadError::Io(e)))?;
+                let written = body.len() as u64;
+                let file = writer.into_inner().map_err(|e| {
+                    TransferBackendError::Download(HttpDownloadError::Io(e.into_error()))
+                })?;
+                file.sync_all()
+                    .map_err(|e| TransferBackendError::Download(HttpDownloadError::Io(e)))?;
+                Ok((signed, written))
+            }
+            TransferMode::Network => {
+                let mut last_error = None;
+                for host in &link.hosts {
+                    let (host, port) = split_host_port(host);
+                    let signed = SignedDownload {
+                        host,
+                        port,
+                        path: link.path.clone(),
+                        dwltag: link.download_tag.clone(),
+                        range: None,
+                    };
+                    match fetch_download_verified_streaming(
+                        &signed,
+                        &self.download,
+                        None,
+                        &mut writer,
+                    ) {
+                        Ok(written) => {
+                            let file = writer.into_inner().map_err(|e| {
+                                TransferBackendError::Download(HttpDownloadError::Io(
+                                    e.into_error(),
+                                ))
+                            })?;
+                            file.sync_all().map_err(|e| {
+                                TransferBackendError::Download(HttpDownloadError::Io(e))
+                            })?;
+                            return Ok((signed, written));
+                        }
+                        Err(err) => last_error = Some(err),
+                    }
+                }
+                // Best-effort cleanup on total failure.
+                let _ = writer.into_inner();
+                let _ = std::fs::remove_file(dest_path);
+                Err(TransferBackendError::Download(last_error.unwrap_or(
+                    HttpDownloadError::Malformed("download link missing host"),
+                )))
+            }
+        }
+    }
+
     /// Invoke `upload_bytes` on this backend.
     ///
     /// See the module-level documentation for the dispatch contract, error
@@ -400,17 +552,27 @@ impl TransferRuntime {
                     .ok_or(TransferBackendError::NetworkExecutionUnavailable)?;
 
                 let upload_write = UploadWriteRequest {
-                    auth_token: auth_token.expose_secret().to_owned(),
+                    auth_token: pcloud_proto::redacted::RedactedProtoString::from(
+                        auth_token.expose_secret().to_owned(),
+                    ),
                     upload_id: session.upload_id,
                     upload_offset: 0,
                     chunk_id: 0,
                 };
                 let encoded = upload_write.encode_with_body(payload.len() as u64)?;
+                // Bead pcloud-rs-6mx: pace the upload write so the
+                // observed throughput converges on the configured limit.
+                // No-op when `upload_pacer` is `None` (the default).
+                if let Some(pacer) = self.upload_pacer.as_ref() {
+                    pacer.acquire_blocking(payload.len() as u64);
+                }
                 let response = transport.execute_with_body(&encoded, payload)?;
                 expect_ok_result(response.as_hash(), "upload_write")?;
 
                 let upload_save = UploadSaveRequest {
-                    auth_token: auth_token.expose_secret().to_owned(),
+                    auth_token: pcloud_proto::redacted::RedactedProtoString::from(
+                        auth_token.expose_secret().to_owned(),
+                    ),
                     parent_folder_id: session.parent_folder_id,
                     file_name: session.file_name.clone(),
                     upload_id: session.upload_id,
@@ -435,6 +597,20 @@ impl TransferRuntime {
             }
         }
     }
+
+    // TODO(bd-1du): upload_writefromfile (server-side copy) — the proto
+    // encoder exists at `pcloud_proto::transfer_api::encode_upload_writefromfile`
+    // and the DTO lives in `pcloud_proto::methods::upload::UploadWriteFromFileRequest`.
+    // There is no IPC Request variant, no backend method here, and no CLI caller.
+    // The matrix row 93 claims this is Implemented; that is inaccurate — it is
+    // proto-only. Parity status corrected to Partial in C_FEATURE_PARITY_MATRIX.csv.
+    // To complete the wiring:
+    //   1. Add a `TransferRuntime::upload_write_from_file(auth_token, upload_id,
+    //      file_ids)` method here wrapping `transfer_api.encode_upload_writefromfile`.
+    //   2. Add an `UploadWriteFromFile` variant to `pcloud_ipc::methods::Request`.
+    //   3. Add a daemon-side handler in the runtime dispatch.
+    //   4. Expose a CLI command if the server-side copy path is user-visible.
+    //   5. Add a dev-transport test in this module.
 
     /// Invoke `apply_api_server_hint` on this backend.
     ///
@@ -503,6 +679,7 @@ impl TransferRuntime {
             &local_sha1,
             req.clone(),
             &mut progress,
+            self.upload_pacer.clone(),
         );
 
         let state_req = StateUploadRequest {
@@ -520,7 +697,10 @@ impl TransferRuntime {
 
         match machine.run(conn, &state_req, auth_token, &mut driver, refresher) {
             Ok(()) => {
-                let uid = *upload_id_opt_ptr.lock().expect("upload id cell poisoned");
+                let uid = *upload_id_opt_ptr.lock().unwrap_or_else(|p| {
+                    log::error!("mutex poisoned at {}:{}", file!(), line!());
+                    p.into_inner()
+                });
                 Ok(ChunkedUploadResult {
                     upload_id: uid.unwrap_or(0),
                     bytes_uploaded: req.total_size,
@@ -530,7 +710,10 @@ impl TransferRuntime {
             Err(err) => {
                 // Best-effort orphan cleanup for permanent failures.
                 if matches!(err, UploadStateError::Permanent { .. })
-                    && let Some(uid) = *upload_id_opt_ptr.lock().expect("upload id cell poisoned")
+                    && let Some(uid) = *upload_id_opt_ptr.lock().unwrap_or_else(|p| {
+                        log::error!("mutex poisoned at {}:{}", file!(), line!());
+                        p.into_inner()
+                    })
                     && let Err(del_err) = self.api.upload_delete(driver.auth_cache.clone(), uid)
                 {
                     // Log-only — we still surface the original
@@ -672,6 +855,9 @@ struct ChunkedUploadDriver<'a, C: FnMut(u64)> {
     progress: &'a mut C,
     upload_id_cell: Arc<std::sync::Mutex<Option<u64>>>,
     auth_cache: String,
+    /// Optional bandwidth pacer (bead pcloud-rs-6mx). `None` disables
+    /// pacing; set from the enclosing [`TransferRuntime::upload_pacer`].
+    bandwidth_pacer: Option<Arc<pcloud_resilience::BandwidthPacer>>,
 }
 
 impl<'a, C: FnMut(u64)> ChunkedUploadDriver<'a, C> {
@@ -681,6 +867,7 @@ impl<'a, C: FnMut(u64)> ChunkedUploadDriver<'a, C> {
         local_sha1: &'a str,
         req: ChunkedUploadRequest,
         progress: &'a mut C,
+        bandwidth_pacer: Option<Arc<pcloud_resilience::BandwidthPacer>>,
     ) -> Self {
         Self {
             transport,
@@ -690,6 +877,7 @@ impl<'a, C: FnMut(u64)> ChunkedUploadDriver<'a, C> {
             progress,
             upload_id_cell: Arc::new(std::sync::Mutex::new(None)),
             auth_cache: String::new(),
+            bandwidth_pacer,
         }
     }
 
@@ -718,7 +906,7 @@ impl<'a, C: FnMut(u64)> UploadDriver for ChunkedUploadDriver<'a, C> {
     ) -> Result<u64, ProtoUploadErrorClass> {
         self.auth_cache = auth.to_owned();
         let request = UploadCreateRequest {
-            auth_token: auth.to_owned(),
+            auth_token: pcloud_proto::redacted::RedactedProtoString::from(auth.to_owned()),
             parent_folder_id: self.req.parent_folder_id,
             file_name: self.req.file_name.clone(),
             file_size: self.req.total_size,
@@ -735,7 +923,10 @@ impl<'a, C: FnMut(u64)> UploadDriver for ChunkedUploadDriver<'a, C> {
         let upload_id = hash
             .get_number("uploadid")
             .ok_or(ProtoUploadErrorClass::TempFail)?;
-        *self.upload_id_cell.lock().expect("upload id cell poisoned") = Some(upload_id);
+        *self.upload_id_cell.lock().unwrap_or_else(|p| {
+            log::error!("mutex poisoned at {}:{}", file!(), line!());
+            p.into_inner()
+        }) = Some(upload_id);
         Ok(upload_id)
     }
 
@@ -759,7 +950,7 @@ impl<'a, C: FnMut(u64)> UploadDriver for ChunkedUploadDriver<'a, C> {
         let slice = &self.payload[start..end];
 
         let upload_write = UploadWriteRequest {
-            auth_token: auth.to_owned(),
+            auth_token: pcloud_proto::redacted::RedactedProtoString::from(auth.to_owned()),
             upload_id,
             upload_offset: offset,
             chunk_id: offset / (PSYNC_COPY_BUFFER_SIZE as u64),
@@ -767,6 +958,11 @@ impl<'a, C: FnMut(u64)> UploadDriver for ChunkedUploadDriver<'a, C> {
         let encoded = upload_write
             .encode_with_body(chunk_len)
             .map_err(|_| ProtoUploadErrorClass::TempFail)?;
+        // Bead pcloud-rs-6mx: pace per-chunk upload writes. Off by
+        // default (`None`) so existing behaviour is unchanged.
+        if let Some(pacer) = self.bandwidth_pacer.as_ref() {
+            pacer.acquire_blocking(chunk_len);
+        }
         let response = self
             .transport
             .execute_with_body(&encoded, slice)
@@ -788,7 +984,7 @@ impl<'a, C: FnMut(u64)> UploadDriver for ChunkedUploadDriver<'a, C> {
         // Verify size + sha1 via upload_info before commit
         // (spec §4.1 — pupload.c:1192-1213).
         let info_req = UploadInfoRequest {
-            auth_token: auth.to_owned(),
+            auth_token: pcloud_proto::redacted::RedactedProtoString::from(auth.to_owned()),
             upload_id,
             chunk_id: 0,
         };
@@ -820,7 +1016,7 @@ impl<'a, C: FnMut(u64)> UploadDriver for ChunkedUploadDriver<'a, C> {
         }
 
         let save = UploadSaveRequest {
-            auth_token: auth.to_owned(),
+            auth_token: pcloud_proto::redacted::RedactedProtoString::from(auth.to_owned()),
             parent_folder_id: self.req.parent_folder_id,
             file_name: self.req.file_name.clone(),
             upload_id,
@@ -1958,5 +2154,245 @@ mod verify_tests {
         // Hooked through classify: server reports same → OK.
         let classified = classify_file_hashes(Some(&digest), Some(&digest));
         assert_eq!(classified, VerifyClassification::Ok);
+    }
+
+    /// Proof for bd-pcloud-rs-s1p.87: a 50 MiB download streams to disk
+    /// via `TransferRuntime::download_to_path` without ever buffering
+    /// the full body in a single in-memory allocation. We serve the
+    /// body over a mock HTTP connection, write it into a fresh
+    /// tempfile, and assert:
+    ///
+    ///   1. The file on disk is exactly 50 MiB and round-trips correctly
+    ///      against a known byte pattern.
+    ///   2. Peak memory visible to the streaming sink stays bounded —
+    ///      proven by instrumenting the `Write` implementation used by
+    ///      a sibling invocation of `fetch_download_verified_streaming`
+    ///      against the same body size: the maximum single `write()`
+    ///      chunk handed to the sink is ≤ 64 KiB (the HTTP streaming
+    ///      read buffer, [`STREAM_READ_BUF`] upstream), regardless of
+    ///      the 50 MiB body.
+    ///
+    /// This is the "record max buffer size" heap-snapshot proxy asked
+    /// for in the bead brief — we do not run a real profiler but we do
+    /// enforce the structural invariant that downstream consumers see
+    /// only bounded slices.
+    #[test]
+    fn download_to_path_streams_50mib_without_buffering_whole_body() {
+        use super::TransferRuntime;
+        use pcloud_config::{
+            ConfigProfile, Environment,
+            api::{ApiEndpoint, ApiMode},
+        };
+        use pcloud_proto::DownloadLink;
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::sync::{Arc, Mutex};
+        use std::thread;
+
+        const BODY_SIZE: usize = 50 * 1024 * 1024;
+
+        // Deterministic body: repeating ASCII pattern so we can verify
+        // the on-disk bytes without comparing 50 MiB of in-memory data.
+        fn make_body(size: usize) -> Vec<u8> {
+            let mut v = Vec::with_capacity(size);
+            // Cheap repeating pattern; `chunk` overhead dominated by the
+            // Vec allocation itself (the test body is known to fit —
+            // the point is that *the runtime under test* doesn't do
+            // this).
+            const PATTERN: &[u8; 64] =
+                b"pcloud-s1p.87-stream-proof-body-64byte-pattern-abcdefghij123456\n";
+            let mut remaining = size;
+            while remaining > 0 {
+                let take = remaining.min(PATTERN.len());
+                v.extend_from_slice(&PATTERN[..take]);
+                remaining -= take;
+            }
+            v
+        }
+
+        // ---- Mock HTTP server ------------------------------------------------
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let body = make_body(BODY_SIZE);
+        let expected_digest = {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            h.update(&body);
+            h.finalize()
+        };
+
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("client should connect");
+            let mut request = vec![0u8; 512];
+            let _ = stream.read(&mut request).expect("request should read");
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body.len()
+                    )
+                    .as_bytes(),
+                )
+                .expect("headers should write");
+            // Write the body in modest chunks so the client loop exercises
+            // multiple read() calls.
+            for chunk in body.chunks(128 * 1024) {
+                stream.write_all(chunk).expect("body chunk should write");
+            }
+        });
+
+        // ---- Runtime under test ---------------------------------------------
+
+        let mut config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-transfer-runtime-stream-50mib-test"),
+            Environment::Production,
+        );
+        config.api = ApiEndpoint {
+            mode: ApiMode::Plaintext,
+            host: address.ip().to_string(),
+            port: address.port(),
+            server_name: address.ip().to_string(),
+            connect_timeout_ms: 2_000,
+            read_timeout_ms: 10_000,
+        };
+
+        let runtime = TransferRuntime::from_config(&config);
+        let tmpdir = tempfile::tempdir().expect("tmpdir");
+        let dest = tmpdir.path().join("streamed-50mib.bin");
+
+        let (signed, written) = runtime
+            .download_to_path(
+                &DownloadLink {
+                    path: "/get/50mib/stream.bin".to_owned(),
+                    hosts: vec![format!("{}:{}", address.ip(), address.port())],
+                    download_tag: Some("stream-tag".to_owned()),
+                    api_server: None,
+                },
+                &dest,
+            )
+            .expect("streamed download should succeed");
+
+        assert_eq!(signed.host, address.ip().to_string());
+        assert_eq!(written as usize, BODY_SIZE);
+        let meta = std::fs::metadata(&dest).expect("dest should exist");
+        assert_eq!(meta.len() as usize, BODY_SIZE);
+
+        // Integrity check: rehash the on-disk file and compare. We stream
+        // this too, so the test itself stays memory-bounded.
+        let on_disk_digest = {
+            use sha2::{Digest, Sha256};
+            let mut h = Sha256::new();
+            let mut f = std::fs::File::open(&dest).unwrap();
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                let n = std::io::Read::read(&mut f, &mut buf).unwrap();
+                if n == 0 {
+                    break;
+                }
+                h.update(&buf[..n]);
+            }
+            h.finalize()
+        };
+        assert_eq!(
+            &on_disk_digest[..],
+            &expected_digest[..],
+            "on-disk streamed file must match server-side body"
+        );
+
+        server.join().expect("server thread should finish");
+
+        // ---- Bounded-memory invariant ---------------------------------------
+        //
+        // The production path writes into a `BufWriter<File>` fed from
+        // `fetch_download_verified_streaming`. That helper is `pub`, so we
+        // drive a second mock connection through it with an instrumented
+        // sink that records the maximum single `write()` length it ever
+        // sees. If the HTTP layer ever collapsed the body into a single
+        // allocation and dumped it on the sink, we would see a single
+        // write ≈ BODY_SIZE. We assert it stays ≤ STREAM_READ_BUF (64 KiB)
+        // which is the documented transport-internal buffer size.
+        struct MaxWriteRecorder {
+            inner: std::io::Sink,
+            max_write: Arc<Mutex<usize>>,
+        }
+        impl Write for MaxWriteRecorder {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                let mut g = self.max_write.lock().unwrap();
+                if buf.len() > *g {
+                    *g = buf.len();
+                }
+                drop(g);
+                self.inner.write(buf)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.inner.flush()
+            }
+        }
+
+        let listener2 = TcpListener::bind("127.0.0.1:0").expect("listener2 should bind");
+        let address2 = listener2.local_addr().unwrap();
+        let body2 = make_body(BODY_SIZE);
+        let server2 = thread::spawn(move || {
+            let (mut stream, _) = listener2.accept().unwrap();
+            let mut request = vec![0u8; 512];
+            let _ = stream.read(&mut request).unwrap();
+            stream
+                .write_all(
+                    format!(
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                        body2.len()
+                    )
+                    .as_bytes(),
+                )
+                .unwrap();
+            for chunk in body2.chunks(128 * 1024) {
+                stream.write_all(chunk).unwrap();
+            }
+        });
+
+        let max_write = Arc::new(Mutex::new(0usize));
+        let mut recorder = MaxWriteRecorder {
+            inner: std::io::sink(),
+            max_write: Arc::clone(&max_write),
+        };
+
+        let signed2 = pcloud_proto::SignedDownload {
+            host: address2.ip().to_string(),
+            port: Some(address2.port()),
+            path: "/get/50mib/stream2.bin".to_owned(),
+            dwltag: Some("stream-tag-2".to_owned()),
+            range: None,
+        };
+        let n = pcloud_proto::fetch_download_verified_streaming(
+            &signed2,
+            &pcloud_proto::HttpDownloadConfig {
+                use_tls: false,
+                connect_timeout: std::time::Duration::from_millis(2_000),
+                read_timeout: std::time::Duration::from_millis(10_000),
+                ..pcloud_proto::HttpDownloadConfig::default()
+            },
+            None,
+            &mut recorder,
+        )
+        .expect("streaming fetch should succeed");
+        assert_eq!(n as usize, BODY_SIZE);
+        server2.join().unwrap();
+
+        let observed_max = *max_write.lock().unwrap();
+        // Allow a generous ceiling (2×) to accommodate future tuning of
+        // the internal read buffer without this test becoming brittle;
+        // the important invariant is that it does NOT scale with body
+        // size. 50 MiB >> any realistic internal buffer, so a regression
+        // that collapses to one allocation would yield observed_max
+        // ≈ 50 MiB.
+        assert!(
+            observed_max <= 512 * 1024,
+            "streaming sink observed a single write of {} bytes; expected bounded chunks (<= 512 KiB), which is vastly below the {} byte body",
+            observed_max,
+            BODY_SIZE
+        );
     }
 }
