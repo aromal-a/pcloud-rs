@@ -3,7 +3,7 @@
 > **TL;DR** — start the daemon, log in, prove you're in:
 >
 > ```bash
-> systemctl --user start pcloud-daemon          # or `pcloudc start`
+> systemctl --user start pcloudd          # or `pcloudc start`
 > pcloudc login -u you@example.com               # interactive; prompts for password + 2FA
 > printf '%s' "$PASS" | pcloudc login \
 >   --user you@example.com --password-stdin      # scripted alternative
@@ -83,9 +83,9 @@ Pick **one** path per host. Do not start the daemon with `sudo`.
 
 ```bash
 # Linux — systemd (recommended)
-systemctl --user start pcloud-daemon
-systemctl --user enable pcloud-daemon           # optional: start on login
-systemctl --user status pcloud-daemon           # verify "active (running)"
+systemctl --user start pcloudd
+systemctl --user enable pcloudd           # optional: start on login
+systemctl --user status pcloudd           # verify "active (running)"
 
 # macOS — launchd (installed by brew / .pkg)
 brew services start pcloud-rs                    # if Homebrew-installed
@@ -103,10 +103,10 @@ pcloudc start
 
 What each command does:
 
-- `systemctl --user start pcloud-daemon` — tells systemd's user
+- `systemctl --user start pcloudd` — tells systemd's user
   manager to activate the unit. Exit code 0 means active; a non-zero
   exit or `status: failed` means read the journal:
-  `journalctl --user -u pcloud-daemon -n 50`.
+  `journalctl --user -u pcloudd -n 50`.
 - `pcloudc start` — the cross-platform fallback. Spawns
   `pcloud-daemon` detached, redirects stdio to
   `~/.pcloud/state/daemon.log`, and returns once the IPC socket is
@@ -418,9 +418,9 @@ Refusing to connect: socket mode is 0666, expected 0600.
 Stop the daemon, delete the runtime dir, restart:
 
 ```bash
-systemctl --user stop pcloud-daemon
+systemctl --user stop pcloudd
 rm -rf ~/.local/state/pcloud-rs
-systemctl --user start pcloud-daemon
+systemctl --user start pcloudd
 ```
 
 ```

@@ -1,0 +1,327 @@
+crates/pcloud-cli/src/prompt.rs:151:    unsafe { libc::isatty(0) == 1 }
+crates/pcloud-cli/src/prompt.rs:169:    if unsafe { libc::tcgetattr(fd, original.as_mut_ptr()) } != 0 {
+crates/pcloud-cli/src/prompt.rs:173:    let original = unsafe { original.assume_init() };
+crates/pcloud-cli/src/prompt.rs:180:    if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) } != 0 {
+crates/pcloud-cli/src/prompt.rs:190:            unsafe {
+crates/pcloud-cli/src/doctor.rs:733:    let mut out: libc::statvfs = unsafe { std::mem::zeroed() };
+crates/pcloud-cli/src/doctor.rs:734:    let rc = unsafe { libc::statvfs(c.as_ptr(), &mut out) };
+crates/pcloud-cli/src/app.rs:2993:        unsafe { std::env::remove_var(&var) };
+crates/pcloud-cli/src/main.rs:917:    unsafe {
+crates/pcloud-cli/src/main.rs:1033:    let send_rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+crates/pcloud-cli/src/main.rs:1176:    let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGHUP) };
+crates/pcloud-cli/src/main.rs:1790:                unsafe { std::env::remove_var(var) };
+crates/pcloud-crypto/src/lib.rs:153:    #[error("unsafe policy: master key persistence is forbidden")]
+crates/pcloud-daemon/src/signals.rs:283:    let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
+crates/pcloud-daemon/src/signals.rs:287:    unsafe {
+crates/pcloud-daemon/src/signals.rs:290:    let rc = unsafe { libc::sigaction(sig, &sa, std::ptr::null_mut()) };
+crates/pcloud-daemon/src/signals.rs:298:    let mut sa: libc::sigaction = unsafe { std::mem::zeroed() };
+crates/pcloud-daemon/src/signals.rs:300:    unsafe {
+crates/pcloud-daemon/src/signals.rs:303:    let rc = unsafe { libc::sigaction(sig, &sa, std::ptr::null_mut()) };
+crates/pcloud-daemon/src/mount_runtime.rs:625:    let rc = unsafe { libc::kill(pid, 0) };
+crates/pcloud-daemon/src/vault/dpapi.rs:68:        unsafe { std::slice::from_raw_parts(self.blob.pbData, self.blob.cbData as usize) }
+crates/pcloud-daemon/src/vault/dpapi.rs:80:            unsafe {
+crates/pcloud-daemon/src/vault/dpapi.rs:127:        let status = unsafe {
+crates/pcloud-daemon/src/vault/dpapi.rs:166:        let status = unsafe {
+crates/pcloud-fs/src/fuse_adapter.rs:749:        let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+crates/pcloud-fs/src/mount_service.rs:137:            let current_uid = unsafe { libc::geteuid() };
+crates/pcloud-fs/src/mount_service.rs:319:unsafe impl Send for MacosMountInner {}
+crates/pcloud-fs/src/mount_service.rs:321:unsafe impl Sync for MacosMountInner {}
+crates/pcloud-fs/src/mount_service.rs:344:unsafe impl Send for WindowsInner {}
+crates/pcloud-fs/src/mount_service.rs:346:unsafe impl Sync for WindowsInner {}
+crates/pcloud-fs/src/mount_service.rs:480:        unsafe {
+crates/pcloud-fs/src/mount_service.rs:488:        unsafe {
+crates/pcloud-fs/src/mount_service.rs:508:        unsafe {
+crates/pcloud-fs/src/mount_service.rs:525:        unsafe {
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:364:unsafe impl Sync for FSP_FILE_SYSTEM_INTERFACE {}
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:365:unsafe impl Send for FSP_FILE_SYSTEM_INTERFACE {}
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:371:pub type FnFspFileSystemCreate = unsafe extern "system" fn(
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:379:    unsafe extern "system" fn(file_system: PFspFileSystem, mount_point: PCWSTR) -> NTSTATUS;
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:382:    unsafe extern "system" fn(file_system: PFspFileSystem, thread_count: c_ulong) -> NTSTATUS;
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:384:pub type FnFspFileSystemStopDispatcher = unsafe extern "system" fn(file_system: PFspFileSystem);
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:386:pub type FnFspFileSystemDelete = unsafe extern "system" fn(file_system: PFspFileSystem);
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:389:    unsafe extern "system" fn(file_system: PFspFileSystem, user_context: *mut c_void);
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:392:    unsafe extern "system" fn(file_system: PFspFileSystem) -> *mut c_void;
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:406:pub type FnFspFileSystemAddDirInfo = unsafe extern "system" fn(
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:446:unsafe impl Sync for WinFspLibrary {}
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:447:unsafe impl Send for WinFspLibrary {}
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:470:    let module = unsafe { LoadLibraryW(PCWSTR(name.as_ptr())) };
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:484:    unsafe fn resolve<T: Copy>(module: HANDLE, name: &[u8]) -> Result<T, String> {
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:507:    unsafe fn resolve_optional<T: Copy>(module: HANDLE, name: &[u8]) -> Option<T> {
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:513:        p.map(|f| unsafe { std::mem::transmute_copy::<_, T>(&f) })
+crates/pcloud-fs/src/platform/winfsp_ffi.rs:517:    let lib = unsafe {
+crates/pcloud-fs/src/platform/windows.rs:268:    let status = unsafe {
+crates/pcloud-fs/src/platform/windows.rs:278:        unsafe {
+crates/pcloud-fs/src/platform/windows.rs:289:    unsafe { (lib.fsp_set_user_context)(fs, adapter_raw) };
+crates/pcloud-fs/src/platform/windows.rs:295:    let status = unsafe { (lib.fsp_set_mount_point)(fs, winfsp_ffi::PCWSTR(mp_utf16.as_ptr())) };
+crates/pcloud-fs/src/platform/windows.rs:298:        unsafe {
+crates/pcloud-fs/src/platform/windows.rs:310:    let status = unsafe { (lib.fsp_start_dispatcher)(fs, 0) };
+crates/pcloud-fs/src/platform/windows.rs:313:        unsafe {
+crates/pcloud-fs/src/platform/windows.rs:341:unsafe fn adapter_from_fs<'a>(fs: PFspFileSystem) -> Option<&'a dyn FuseAdapter> {
+crates/pcloud-fs/src/platform/windows.rs:353:    let ctx_ptr = unsafe { fsp_get_user_context_global(fs) };
+crates/pcloud-fs/src/platform/windows.rs:359:    let outer = unsafe { &*(ctx_ptr as *const Box<dyn FuseAdapter>) };
+crates/pcloud-fs/src/platform/windows.rs:372:unsafe fn fsp_get_user_context_global(fs: PFspFileSystem) -> *mut c_void {
+crates/pcloud-fs/src/platform/windows.rs:382:        Some(f) => unsafe { f(fs) },
+crates/pcloud-fs/src/platform/windows.rs:529:unsafe fn fill_file_info(info: *mut FileInfo, attr: &EntryAttr) {
+crates/pcloud-fs/src/platform/windows.rs:542:    unsafe {
+crates/pcloud-fs/src/platform/windows.rs:562:unsafe fn file_context_ref<'a>(ptr: *mut c_void) -> Option<&'a FileContext> {
+crates/pcloud-fs/src/platform/windows.rs:567:        Some(unsafe { &*(ptr as *const FileContext) })
+crates/pcloud-fs/src/platform/windows.rs:586:        let (total, free) = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:593:        unsafe {
+crates/pcloud-fs/src/platform/windows.rs:618:        let adapter = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:624:        let path = match unsafe { pwstr_to_posix_string(file_name) } {
+crates/pcloud-fs/src/platform/windows.rs:640:            unsafe { *file_attributes = v };
+crates/pcloud-fs/src/platform/windows.rs:654:                    let avail = unsafe { *security_descriptor_size };
+crates/pcloud-fs/src/platform/windows.rs:656:                    unsafe { *security_descriptor_size = sd.len() };
+crates/pcloud-fs/src/platform/windows.rs:664:                        unsafe {
+crates/pcloud-fs/src/platform/windows.rs:677:                    unsafe { *security_descriptor_size = 0 };
+crates/pcloud-fs/src/platform/windows.rs:705:    let ok = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) };
+crates/pcloud-fs/src/platform/windows.rs:712:    let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut needed) };
+crates/pcloud-fs/src/platform/windows.rs:715:        let _ = unsafe { windows::Win32::Foundation::CloseHandle(token) };
+crates/pcloud-fs/src/platform/windows.rs:720:    let ok = unsafe {
+crates/pcloud-fs/src/platform/windows.rs:730:    let _ = unsafe { windows::Win32::Foundation::CloseHandle(token) };
+crates/pcloud-fs/src/platform/windows.rs:735:    let tu = unsafe { &*(buf.as_ptr() as *const TOKEN_USER) };
+crates/pcloud-fs/src/platform/windows.rs:745:    if unsafe { ConvertSidToStringSidW(sid, &mut sid_string) }.is_err() {
+crates/pcloud-fs/src/platform/windows.rs:750:    while unsafe { *sid_string.0.add(len) } != 0 && len < 256 {
+crates/pcloud-fs/src/platform/windows.rs:754:    let sid_slice = unsafe { std::slice::from_raw_parts(sid_string.0, len) };
+crates/pcloud-fs/src/platform/windows.rs:757:    unsafe {
+crates/pcloud-fs/src/platform/windows.rs:767:    let ok = unsafe {
+crates/pcloud-fs/src/platform/windows.rs:779:    let bytes = unsafe { std::slice::from_raw_parts(psd.0 as *const u8, sd_len as usize) }.to_vec();
+crates/pcloud-fs/src/platform/windows.rs:781:    unsafe {
+crates/pcloud-fs/src/platform/windows.rs:798:        let adapter = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:803:        let path = match unsafe { pwstr_to_posix_string(file_name) } {
+crates/pcloud-fs/src/platform/windows.rs:818:            unsafe { *file_context = Box::into_raw(ctx) as *mut c_void };
+crates/pcloud-fs/src/platform/windows.rs:821:        unsafe { fill_file_info(file_info, &attr) };
+crates/pcloud-fs/src/platform/windows.rs:856:        let adapter = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:862:        let path = match unsafe { pwstr_to_posix_string(file_name) } {
+crates/pcloud-fs/src/platform/windows.rs:920:            unsafe { *file_context = Box::into_raw(ctx) as *mut c_void };
+crates/pcloud-fs/src/platform/windows.rs:923:        unsafe { fill_file_info(file_info, &attr) };
+crates/pcloud-fs/src/platform/windows.rs:940:        let adapter = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:945:        let ctx = match unsafe { file_context_ref(file_context) } {
+crates/pcloud-fs/src/platform/windows.rs:977:        unsafe { fill_file_info(file_info, &attr) };
+crates/pcloud-fs/src/platform/windows.rs:998:            unsafe { *bytes_transferred = 0 };
+crates/pcloud-fs/src/platform/windows.rs:1001:        let adapter = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:1005:        let ctx = match unsafe { file_context_ref(file_context) } {
+crates/pcloud-fs/src/platform/windows.rs:1020:            unsafe { std::slice::from_raw_parts(buffer as *const u8, length as usize).to_vec() };
+crates/pcloud-fs/src/platform/windows.rs:1039:                    unsafe { *bytes_transferred = length };
+crates/pcloud-fs/src/platform/windows.rs:1050:        unsafe { fill_file_info(file_info, &attr) };
+crates/pcloud-fs/src/platform/windows.rs:1065:        let adapter = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:1069:        let ctx = match unsafe { file_context_ref(file_context) } {
+crates/pcloud-fs/src/platform/windows.rs:1084:        unsafe { fill_file_info(file_info, &attr) };
+crates/pcloud-fs/src/platform/windows.rs:1108:        let adapter = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:1112:        let ctx = match unsafe { file_context_ref(file_context) } {
+crates/pcloud-fs/src/platform/windows.rs:1174:        unsafe { fill_file_info(file_info, &attr) };
+crates/pcloud-fs/src/platform/windows.rs:1187:        let adapter = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:1191:        let ctx = match unsafe { file_context_ref(file_context) } {
+crates/pcloud-fs/src/platform/windows.rs:1218:        let adapter = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:1223:        let from = match unsafe { pwstr_to_posix_string(file_name) } {
+crates/pcloud-fs/src/platform/windows.rs:1227:        let to = match unsafe { pwstr_to_posix_string(new_file_name) } {
+crates/pcloud-fs/src/platform/windows.rs:1305:        let boxed = unsafe { Box::from_raw(file_context as *mut FileContext) };
+crates/pcloud-fs/src/platform/windows.rs:1310:            if let Some(adapter) = unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:1329:            unsafe { *bytes_transferred = 0 };
+crates/pcloud-fs/src/platform/windows.rs:1332:        let adapter = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:1337:        let ctx = match unsafe { file_context_ref(file_context) } {
+crates/pcloud-fs/src/platform/windows.rs:1367:            unsafe {
+crates/pcloud-fs/src/platform/windows.rs:1373:            unsafe { *bytes_transferred = n as u32 };
+crates/pcloud-fs/src/platform/windows.rs:1398:        let adapter = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:1402:        let ctx = match unsafe { file_context_ref(file_context) } {
+crates/pcloud-fs/src/platform/windows.rs:1411:        unsafe { fill_file_info(file_info, &attr) };
+crates/pcloud-fs/src/platform/windows.rs:1428:            unsafe { *bytes_transferred = 0 };
+crates/pcloud-fs/src/platform/windows.rs:1431:        let adapter = match unsafe { adapter_from_fs(fs) } {
+crates/pcloud-fs/src/platform/windows.rs:1435:        let ctx = match unsafe { file_context_ref(file_context) } {
+crates/pcloud-fs/src/platform/windows.rs:1450:        let marker_s = unsafe { pwstr_to_posix_string(marker) };
+crates/pcloud-fs/src/platform/windows.rs:1492:            unsafe {
+crates/pcloud-fs/src/platform/windows.rs:1508:                let ok = unsafe {
+crates/pcloud-fs/src/platform/windows.rs:1545:            let _ = unsafe { add(std::ptr::null(), buffer, length, bytes_transferred) };
+crates/pcloud-fs/src/platform/windows.rs:1640:pub unsafe fn pwstr_to_posix_string(p: winfsp_ffi::PCWSTR) -> Option<String> {
+crates/pcloud-fs/src/platform/windows.rs:1647:    while unsafe { *p.0.add(len) } != 0 {
+crates/pcloud-fs/src/platform/windows.rs:1655:    let slice = unsafe { std::slice::from_raw_parts(p.0, len) };
+crates/pcloud-fs/src/platform/macos.rs:199:    let chan = unsafe { macos_ffi::fuse_mount(mount_point_c.as_ptr(), &mut args) };
+crates/pcloud-fs/src/platform/macos.rs:215:    let session = unsafe {
+crates/pcloud-fs/src/platform/macos.rs:226:        unsafe { macos_ffi::fuse_unmount(mount_point_c.as_ptr(), chan) };
+crates/pcloud-fs/src/platform/macos.rs:233:    unsafe { macos_ffi::fuse_session_add_chan(session, chan) };
+crates/pcloud-fs/src/platform/macos.rs:244:    unsafe impl Send for SessionPtr {}
+crates/pcloud-fs/src/platform/macos.rs:256:            let _rc = unsafe { macos_ffi::fuse_session_loop(sp.0) };
+crates/pcloud-fs/src/platform/macos.rs:262:            unsafe {
+crates/pcloud-fs/src/platform/macos.rs:303:unsafe fn adapter_from_userdata<'a>(ud: *mut std::ffi::c_void) -> Option<&'a dyn FuseAdapter> {
+crates/pcloud-fs/src/platform/macos.rs:310:    let bx = unsafe { &*(ud as *const Box<dyn FuseAdapter>) };
+crates/pcloud-fs/src/platform/macos.rs:322:unsafe fn adapter_from_req<'a>(req: macos_ffi::fuse_req_t) -> Option<&'a dyn FuseAdapter> {
+crates/pcloud-fs/src/platform/macos.rs:330:    let ud = unsafe { macos_ffi::fuse_req_userdata(req) };
+crates/pcloud-fs/src/platform/macos.rs:332:    unsafe { adapter_from_userdata(ud) }
+crates/pcloud-fs/src/platform/macos.rs:348:    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+crates/pcloud-fs/src/platform/macos.rs:413:            unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:419:        let name_str = match unsafe { std::ffi::CStr::from_ptr(name) }.to_str() {
+crates/pcloud-fs/src/platform/macos.rs:423:                unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:429:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:433:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:442:                unsafe { macos_ffi::fuse_reply_entry(req, &param) };
+crates/pcloud-fs/src/platform/macos.rs:450:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:456:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:474:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:478:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:487:                unsafe { macos_ffi::fuse_reply_attr(req, &st, ATTR_TIMEOUT_SECS) };
+crates/pcloud-fs/src/platform/macos.rs:492:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:498:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:517:            unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:521:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:525:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:534:                unsafe { (*fi).fh = handle_id };
+crates/pcloud-fs/src/platform/macos.rs:537:                unsafe { macos_ffi::fuse_reply_open(req, fi) };
+crates/pcloud-fs/src/platform/macos.rs:542:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:549:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:571:            unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:575:        let handle_id = unsafe { (*fi).fh };
+crates/pcloud-fs/src/platform/macos.rs:577:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:584:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:605:                    unsafe { (*fi).fh = h };
+crates/pcloud-fs/src/platform/macos.rs:613:                    unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:629:                unsafe { macos_ffi::fuse_reply_buf(req, bytes.as_ptr(), bytes.len()) };
+crates/pcloud-fs/src/platform/macos.rs:636:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:643:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:665:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:669:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:677:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:713:            let needed = unsafe {
+crates/pcloud-fs/src/platform/macos.rs:731:        unsafe { macos_ffi::fuse_reply_buf(req, buf.as_ptr(), used) };
+crates/pcloud-fs/src/platform/macos.rs:735:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:751:            unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:755:        let handle_id = unsafe { (*fi).fh };
+crates/pcloud-fs/src/platform/macos.rs:757:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:761:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:770:        unsafe { macos_ffi::fuse_reply_err(req, err) };
+crates/pcloud-fs/src/platform/macos.rs:774:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:804:            unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:810:        let data = unsafe { std::slice::from_raw_parts(buf as *const u8, size) };
+crates/pcloud-fs/src/platform/macos.rs:812:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:816:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:827:                unsafe { macos_ffi::fuse_reply_write(req, count) };
+crates/pcloud-fs/src/platform/macos.rs:832:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:838:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:868:            unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:872:        let name_str = match unsafe { std::ffi::CStr::from_ptr(name) }.to_str() {
+crates/pcloud-fs/src/platform/macos.rs:876:                unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:881:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:885:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:900:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:912:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:926:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:936:        unsafe { (*fi).fh = new_ino };
+crates/pcloud-fs/src/platform/macos.rs:939:        unsafe { macos_ffi::fuse_reply_create(req, &param, fi) };
+crates/pcloud-fs/src/platform/macos.rs:943:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:963:            unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:967:        let name_str = match unsafe { std::ffi::CStr::from_ptr(name) }.to_str() {
+crates/pcloud-fs/src/platform/macos.rs:971:                unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:976:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:980:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:989:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:1000:        unsafe { macos_ffi::fuse_reply_err(req, err) };
+crates/pcloud-fs/src/platform/macos.rs:1004:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1026:            unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:1030:        let name_str = match unsafe { std::ffi::CStr::from_ptr(name) }.to_str() {
+crates/pcloud-fs/src/platform/macos.rs:1034:                unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:1039:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:1043:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1052:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:1061:                unsafe { macos_ffi::fuse_reply_entry(req, &param) };
+crates/pcloud-fs/src/platform/macos.rs:1065:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:1071:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1091:            unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:1095:        let name_str = match unsafe { std::ffi::CStr::from_ptr(name) }.to_str() {
+crates/pcloud-fs/src/platform/macos.rs:1099:                unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:1104:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:1108:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1117:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:1132:        unsafe { macos_ffi::fuse_reply_err(req, err) };
+crates/pcloud-fs/src/platform/macos.rs:1136:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1159:            unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:1163:        let from_name = match unsafe { std::ffi::CStr::from_ptr(name) }.to_str() {
+crates/pcloud-fs/src/platform/macos.rs:1167:                unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:1172:        let to_name = match unsafe { std::ffi::CStr::from_ptr(newname) }.to_str() {
+crates/pcloud-fs/src/platform/macos.rs:1176:                unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:1181:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:1185:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1194:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:1202:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:1223:        unsafe { macos_ffi::fuse_reply_err(req, err) };
+crates/pcloud-fs/src/platform/macos.rs:1227:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1242:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:1246:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1255:        unsafe { macos_ffi::fuse_reply_err(req, err) };
+crates/pcloud-fs/src/platform/macos.rs:1259:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1280:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:1284:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1293:        unsafe { macos_ffi::fuse_reply_err(req, err) };
+crates/pcloud-fs/src/platform/macos.rs:1297:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1320:            unsafe { macos_ffi::fuse_reply_err(req, libc::EINVAL) };
+crates/pcloud-fs/src/platform/macos.rs:1325:        let requested_size = unsafe { (*attr).st_size };
+crates/pcloud-fs/src/platform/macos.rs:1327:        let adapter = match unsafe { adapter_from_req(req) } {
+crates/pcloud-fs/src/platform/macos.rs:1331:                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1343:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:1354:                unsafe { macos_ffi::fuse_reply_attr(req, &st, ATTR_TIMEOUT_SECS) };
+crates/pcloud-fs/src/platform/macos.rs:1358:                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+crates/pcloud-fs/src/platform/macos.rs:1364:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1381:        let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+crates/pcloud-fs/src/platform/macos.rs:1386:        unsafe { macos_ffi::fuse_reply_statfs(req, &st) };
+crates/pcloud-fs/src/platform/macos.rs:1390:        unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+crates/pcloud-fs/src/platform/macos.rs:1521:    let handle = unsafe { libc::dlopen(path_c.as_ptr(), libc::RTLD_LAZY | libc::RTLD_GLOBAL) };
+crates/pcloud-fs/src/platform/macos.rs:1526:        let err = unsafe {
+crates/pcloud-fs/src/platform/macos.rs:1690:    let count = unsafe { libc::getmntinfo(&mut mntbuf, libc::MNT_NOWAIT) };
+crates/pcloud-fs/src/platform/macos.rs:1698:    let entries = unsafe { std::slice::from_raw_parts(mntbuf, count as usize) };
+crates/pcloud-fs/src/platform/macos.rs:1740:    let cstr = unsafe { std::ffi::CStr::from_ptr(ptr) };
+crates/pcloud-fs/src/platform/macos_ffi.rs:288:unsafe extern "C" {
+crates/pcloud-fs/src/platform/bsd.rs:193:    let count = unsafe { libc::getmntinfo(&mut mntbuf, libc::MNT_NOWAIT) };
+crates/pcloud-fs/src/platform/bsd.rs:201:    let entries = unsafe { std::slice::from_raw_parts(mntbuf, count as usize) };
+crates/pcloud-fs/src/platform/bsd.rs:248:    let count = unsafe { libc::getmntinfo(&mut mntbuf, libc::MNT_NOWAIT) };
+crates/pcloud-fs/src/platform/bsd.rs:258:    let entries = unsafe { std::slice::from_raw_parts(mntbuf, count as usize) };
+crates/pcloud-fs/src/platform/bsd.rs:299:    let cstr = unsafe { std::ffi::CStr::from_ptr(ptr) };
+crates/pcloud-fs/src/platform/bsd.rs:357:        unsafe {
+crates/pcloud-fs/src/platform/bsd.rs:375:                unsafe {
+crates/pcloud-fs/src/platform/bsd.rs:382:    unsafe {
+crates/pcloud-fs/src/platform/bsd.rs:442:                let rc = unsafe { libc::unmount(c.as_ptr(), libc::MNT_FORCE) };
+crates/pcloud-fs/src/platform/linux.rs:92:        unsafe {
+crates/pcloud-fs/src/platform/linux.rs:106:                unsafe {
+crates/pcloud-fs/src/platform/linux.rs:113:    unsafe {
+crates/pcloud-fs/src/platform/linux.rs:186:                let rc = unsafe { libc::umount2(c.as_ptr(), libc::MNT_DETACH) };
+crates/pcloud-ipc/src/auth.rs:67:    unsafe { libc::geteuid() }
+crates/pcloud-ipc/src/transport.rs:139:            let ret = unsafe {
+crates/pcloud-ipc/src/platform/linux.rs:42:        let rc = unsafe {
+crates/pcloud-ipc/src/platform/linux.rs:69:        let rc = unsafe {
+crates/pcloud-ipc/src/platform/linux.rs:105:    let rc = unsafe {
+crates/pcloud-ipc/src/platform/unix.rs:53:    let rc = unsafe { libc::getpeereid(fd, &mut uid as *mut _, &mut gid as *mut _) };
+crates/pcloud-ipc/src/platform/windows.rs:97:            unsafe {
+crates/pcloud-ipc/src/platform/windows.rs:120:            unsafe {
+crates/pcloud-ipc/src/platform/windows.rs:166:        let handle = unsafe {
+crates/pcloud-ipc/src/platform/windows.rs:182:            let err = unsafe { GetLastError() };
+crates/pcloud-ipc/src/platform/windows.rs:232:        let connected = unsafe { ConnectNamedPipe(self.handle, None) };
+crates/pcloud-ipc/src/platform/windows.rs:235:            let code = unsafe { GetLastError() };
+crates/pcloud-ipc/src/platform/windows.rs:279:    let ok = unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) };
+crates/pcloud-ipc/src/platform/windows.rs:293:    let ok = unsafe { GetNamedPipeClientProcessId(pipe, &mut pid) };
+crates/pcloud-ipc/src/platform/windows.rs:303:    let process = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) }
+crates/pcloud-ipc/src/platform/windows.rs:309:    let ok = unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) };
+crates/pcloud-ipc/src/platform/windows.rs:325:    let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut needed) };
+crates/pcloud-ipc/src/platform/windows.rs:333:    let ok = unsafe {
+crates/pcloud-ipc/src/platform/windows.rs:348:    let token_user = unsafe { &*(buf.as_ptr() as *const TOKEN_USER) };
+crates/pcloud-ipc/src/platform/windows.rs:358:    let ok = unsafe { ConvertSidToStringSidW(sid, &mut out) };
+crates/pcloud-ipc/src/platform/windows.rs:365:    let s = unsafe { out.to_string().map_err(|_| last_os_err())? };
+crates/pcloud-ipc/src/platform/windows.rs:368:    unsafe {
+crates/pcloud-ipc/src/platform/windows.rs:390:        let ok = unsafe {
+crates/pcloud-ipc/src/platform/windows.rs:415:            unsafe {
+crates/pcloud-ipc/src/platform/windows.rs:430:            unsafe {
+crates/pcloud-ipc/src/platform/windows.rs:456:    let code = unsafe { GetLastError() };
+crates/pcloud-ipc/src/platform/windows.rs:467:    unsafe { EqualSid(a, b).is_ok() }
+crates/pcloud-compat/src/folder_list.rs:214:        let header_bytes: &[u8] = unsafe {
+crates/pcloud-compat/src/folder_list.rs:225:            let entry_bytes: &[u8] = unsafe {
+crates/pcloud-compat/src/folder_list.rs:250:    unsafe {
+crates/pcloud-compat/src/folder_list.rs:267:        unsafe {
+crates/pcloud-compat/src/shm_producer.rs:167:    let key = unsafe { libc::ftok(cpath.as_ptr(), FTOK_PROJ_ID) };
+crates/pcloud-compat/src/shm_producer.rs:195:unsafe impl Send for ShmSegment {}
+crates/pcloud-compat/src/shm_producer.rs:212:        let shmid = unsafe { libc::shmget(key, PSYNC_SHM_SIZE as size_t, libc::IPC_CREAT | mode) };
+crates/pcloud-compat/src/shm_producer.rs:223:        let rc = unsafe { libc::shmctl(shmid, libc::IPC_STAT, stat.as_mut_ptr()) };
+crates/pcloud-compat/src/shm_producer.rs:231:        let stat = unsafe { stat.assume_init() };
+crates/pcloud-compat/src/shm_producer.rs:233:        let my_uid = unsafe { libc::geteuid() };
+crates/pcloud-compat/src/shm_producer.rs:242:        let addr = unsafe { libc::shmat(shmid, std::ptr::null(), 0) };
+crates/pcloud-compat/src/shm_producer.rs:282:        unsafe {
+crates/pcloud-compat/src/shm_producer.rs:307:        unsafe {
+crates/pcloud-compat/src/shm_producer.rs:335:        let rc = unsafe { libc::shmctl(self.shmid, libc::IPC_RMID, std::ptr::null_mut()) };
+crates/pcloud-compat/src/shm_producer.rs:362:        let _ = unsafe { libc::shmdt(self.mapping.as_ptr().cast::<c_void>()) };
+crates/pcloud-web/src/routes.rs:58:const CSP: &str = "default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'";
+crates/pcloud-backends/src/snapshot.rs:195:    #[error("snapshot archive contains unsafe path entry")]

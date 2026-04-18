@@ -1,5 +1,62 @@
 # C Feature Parity Review
 
+## Audit 03 Review — 2026-04-18
+
+A line-level reconciliation of `C_FEATURE_PARITY_MATRIX.csv` against the
+source tree was performed under `bd-1du.10`. Scope: verify matrix counts
+match reality, spot-check 20 rows for reachable code, confirm all
+`Rejected` rows have rationales, and repair any stale citations.
+
+Findings:
+
+- **Correct matrix count is 156 / 2 / 0 / 28 (186 rows).** The earlier
+  STATUS headline of 158 / 0 / 0 / 28 was wrong: a prior wave flipped
+  some rows to `Implemented` in narrative but never updated the CSV.
+  This review trusts the CSV and aligns the STATUS file to it.
+- **Two genuine Partial rows remain.** They are narrow IPC/CLI wiring
+  gaps, not missing features:
+    - **Row 93** (`transfers,upload wire methods`) — the
+      `upload_writefromfile` server-side-copy proto encoder
+      (`pcloud_proto::methods::upload::UploadWriteFromFileRequest`) is
+      implemented but unreachable: no `Request::UploadWriteFromFile` IPC
+      variant, no `TransferRuntime` method, no daemon dispatcher, no
+      CLI caller. All other upload wire methods are live-wired.
+    - **Row 149** (`links,ptree_public_link`) — id-based tree-public-
+      link create is wired end-to-end; path-based CLI exists
+      (`Command::CreateTreeLinkFromPaths`) but resolves paths client-
+      side and routes through `Request::CreateTreePublicLink`. A
+      dedicated `Request::CreateTreePublicLinkFromPaths` variant is the
+      remaining wiring work.
+- **All 28 `Rejected` rows match `REJECTED-RATIONALES-14042026.md`**
+  one-to-one by row number. No orphan rationales, no unjustified
+  Rejections.
+- **Three stale path citations were repaired in the CSV.** Rows 69
+  (`psync_get_sync_suggestions`), 70 (`psync_is_folder_syncable`), and
+  75 (`diff polling`) cited `crates/pcloud-daemon/src/sync_*.rs`; those
+  files moved to `crates/pcloud-backends/src/` in a prior refactor. The
+  implementations themselves were always real; only the path labels
+  drifted.
+- **Spot-check of 20 random `Implemented` rows was clean** — all cited
+  files or the implementation keywords named in the notes are present
+  in the source tree.
+
+Filesystem / mount parity (`bd-1du.4`): substantially landed on the
+direct-shim path. Linux FUSE read+write is live-verified end-to-end on a
+real kernel mount (write-unmount-remount-readback byte-identical, gated
+on `PCLOUD_LIVE_E2E=1` / `PCLOUD_FUSE_TEST=1`). Remaining work is chunked
+`upload_write` pipelining for sustained multi-GiB writes, plus macOS
+`fuse-t` and Windows WinFSP hardware verification — all out of AI scope.
+
+Final parity gate (`bd-1du.10`): matrix is now verified and internally
+consistent. The two Partial rows, closure of the chunked-pipelining
+follow-up, and human reviewer sign-off are the remaining blockers. See
+[`PARITY-PROOF-CHECKLIST.md`](./PARITY-PROOF-CHECKLIST.md) for the
+line-level closure checklist. This review does **not** claim full parity
+or production readiness; the honesty constraint in `CLAUDE.md` remains
+in force.
+
+---
+
 ## How to read this document
 
 If you are new to the parity effort, read this section first.
@@ -43,9 +100,18 @@ Open parity beads:
 The remaining work is now narrow and proof-oriented:
 
 - final parity gating, truth-surface reconciliation, and release-proof work remain open under `bd-1du.10`
-- **no Partial rows remain** in the matrix as of 2026-04-16
-- all previously Partial rows (76, 85, 92, 93, 94, 187) are now Implemented
-- the remaining work is purely the final parity-proof gate (`bd-1du.10`): release/docs wording, live verification of edge cases, and explicit confirmation that all `Implemented` rows are backed by code and tests (see [`STATUS.md`](./STATUS.md) for current counts)
+- **two Partial rows remain** in the matrix as of 2026-04-18 (Audit 03):
+    - Row 93 — `upload_writefromfile` server-side-copy IPC wiring gap
+    - Row 149 — `ptree_public_link` path-based IPC variant
+- previously Partial rows 76, 85, 92, 94, and 187 have been Implemented;
+  rows 93 and 149 remain Partial because narrow IPC/CLI wiring is still
+  missing above an already-landed backend
+- the remaining work is the final parity-proof gate (`bd-1du.10`): close
+  the two Partial rows, land macOS/Windows FUSE hardware verification,
+  re-run the nine-gate CI, and obtain human reviewer sign-off (see
+  [`STATUS.md`](./STATUS.md) for current counts and
+  [`PARITY-PROOF-CHECKLIST.md`](./PARITY-PROOF-CHECKLIST.md) for the
+  line-level closure list)
 
 ### What Is No Longer Open
 

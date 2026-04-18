@@ -282,7 +282,7 @@ FAANG-ops (correlate a customer ticket across CLI and daemon logs):
 ```bash
 TP=$(uuidgen | tr -d - | tr A-F a-f)
 pcloudc --trace-id "$TP" sync-list
-journalctl -u pcloud-daemon --since "5m ago" | grep "$TP"
+journalctl -u pcloudd --since "5m ago" | grep "$TP"
 ```
 
 **Honest limitations.** Span id is **not** cryptographic — a
@@ -1560,7 +1560,7 @@ a live environment cannot persist itself.
   that line into support tickets; it's enough to locate every log
   message for the call.
 - **Log correlation.** The daemon includes the same trace id in every
-  structured log line, so `journalctl -u pcloud-daemon | grep <id>`
+  structured log line, so `journalctl -u pcloudd | grep <id>`
   gives you the full server-side picture.
 
 See the enterprise tracing doc (`docs/book/src/enterprise/tracing.md`)
@@ -1575,7 +1575,7 @@ Ten recipes. All shell-only; no `jq`.
 ### 10.1 Liveness probe
 
 ```bash
-pcloudc -q status || systemctl restart pcloud-daemon
+pcloudc -q status || systemctl restart pcloudd
 ```
 
 ### 10.2 Token health for CI
@@ -1664,7 +1664,7 @@ fi
 TID=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
 pcloudc --trace-id "$TID" sync-add "$L" "$R"
 pcloudc --trace-id "$TID" sync-list
-journalctl -u pcloud-daemon --since "-5m" | grep "$TID"
+journalctl -u pcloudd --since "-5m" | grep "$TID"
 ```
 
 ---

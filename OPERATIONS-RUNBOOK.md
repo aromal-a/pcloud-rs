@@ -10,24 +10,26 @@ path still has open parity gaps (`bd-1du`, `bd-1du.4`, `bd-1du.10`; see
 Build:
 
 ```bash
-cd .
+cd /path/to/pcloud-rs
 cargo build --release -p pcloud-daemon -p pcloud-cli
 ```
 
 Start the daemon (foreground, for debugging):
 
 ```bash
-target/release/pcloud-daemon --config ~/.config/pcloud-rs/config.toml
+PCLOUD_ROOT=~/.config/pcloud-rs target/release/pcloudd serve
 ```
 
 Start the daemon (background, production shape):
 
 ```bash
-target/release/pcloud-daemon \
-  --config /etc/pcloud-rs/config.toml \
-  --log-format json \
-  --log-level info &
+PCLOUD_ROOT=/etc/pcloud-rs PCLOUD_LOG_LEVEL=info \
+  target/release/pcloudd serve &
 ```
+
+Note: `pcloudd` does not accept `--config`, `--log-format`, or `--log-level` flags.
+Configuration is via environment variables (`PCLOUD_ROOT`, `PCLOUD_ENV`,
+`PCLOUD_API_MODE`, `PCLOUD_LOG_LEVEL`). See `pcloudd --help` for the full list.
 
 On startup, the daemon will:
 
@@ -173,8 +175,9 @@ Check: `pcloud-cli sync list` and inspect `/proc/self/mountinfo`.
 Symptom: `store.open: migration v<N> failed`.
 
 Fix: **do not delete the store**. Capture the log and file a bead. As a
-temporary fallback, start with `--read-only` (skips writes) to extract
-state before repair.
+temporary fallback, set `PCLOUD_ENV=development` and stop any active sync
+to reduce writes while extracting state before repair. (`pcloudd` has no
+`--read-only` flag; rely on environment-level configuration instead.)
 
 ### Crypto locked — requested op needs unlocked shell
 
@@ -225,7 +228,7 @@ credential and file a bead.
 
 State locations (default XDG paths):
 
-- Config: `~/.config/pcloud-rs/config.toml`
+- Config: `~/.config/pcloud-rs/config.json`
 - Store: `~/.local/share/pcloud-rs/store.sqlite` (+ `-wal`, `-shm`)
 - Auth vault: `~/.local/share/pcloud-rs/vault.dat`
 - Page cache / staging: `~/.cache/pcloud-rs/`
@@ -251,12 +254,24 @@ rm -rf ~/.local/share/pcloud-rs ~/.config/pcloud-rs
 tar -xzf pcloud-rs-state-<date>.tgz -C ~
 chmod 0700 ~/.local/share/pcloud-rs
 chmod 0600 ~/.local/share/pcloud-rs/vault.dat
-systemctl --user start pcloud-daemon  # or launch manually
+systemctl --user start pcloudd  # or launch manually
 pcloud-cli status
 ```
 
 The vault is UID-bound; restoring on a different UID will be rejected —
 you must re-authenticate instead.
+
+## Troubleshooting: Sync Queue Stuck
+
+If `pcloudc status` shows queue depth > 0 but no transfers are completing:
+
+1. Check for active conflicts: `pcloudc conflict list`
+2. Check daemon logs: `journalctl -u pcloudd -n 100`
+3. Check network connectivity to pCloud API: `pcloudc health`
+4. Check available disk space (downloads may pause on low disk): `df -h`
+5. Check upload sessions for stuck sessions: `pcloudc upload list`
+6. Force a full re-scan: `pcloudc sync status` (shows per-root state)
+7. If a stall is suspected, restart the daemon: `systemctl restart pcloudd`
 
 ## Escalation
 
@@ -270,22 +285,34 @@ you must re-authenticate instead.
 Fresh single-host install. Do not reuse a vault copied from another UID.
 
 1. Install the binaries:
-   - Debian/Ubuntu: `sudo apt install pcloud-rs` (from the project APT repo)
-   - Fedora/RHEL: `sudo dnf install pcloud-rs`
-   - Arch: `sudo pacman -S pcloud-rs` (AUR) or `yay -S pcloud-rs-git`
-   - Nix: `nix profile install github:pcloud-rs/pcloud-rs#pcloud-rs`
-   - From source: see `README.md` for `cargo install --path` steps.
+
+   > **Note:** Distribution packages are not yet published. Install from source:
+   > ```bash
+   > git clone https://github.com/ezechiel203/pcloud-rs
+   > cd pcloud-rs
+   > cargo build --release -p pcloud-daemon -p pcloud-cli
+   > sudo cp target/release/pcloudd /usr/local/bin/
+   > sudo cp target/release/pcloudc /usr/local/bin/
+   > ```
+   >
+   > **Aspirational (repos not yet published):** Once distribution packages are available:
+   > ```bash
+   > # Debian/Ubuntu:   sudo apt install pcloud-rs
+   > # Fedora/RHEL:     sudo dnf install pcloud-rs
+   > # Arch (AUR):      yay -S pcloud-rs-git
+   > # Nix:             nix profile install github:ezechiel203/pcloud-rs#pcloud-rs
+   > ```
 2. Create the dedicated state directories with correct perms:
    ```bash
    install -d -m 0700 ~/.config/pcloud-rs ~/.local/share/pcloud-rs ~/.cache/pcloud-rs
    ```
-3. Drop a minimal production config at `~/.config/pcloud-rs/config.toml`
+3. Drop a minimal production config at `~/.config/pcloud-rs/config.json`
    (profile = `production`, TLS enforced, vault persistence explicitly
    opted in if desired).
 4. Enable the systemd user unit:
    ```bash
    systemctl --user daemon-reload
-   systemctl --user enable --now pcloud-daemon
+   systemctl --user enable --now pcloudd
    ```
 5. Verify:
    ```bash
@@ -293,7 +320,7 @@ Fresh single-host install. Do not reuse a vault copied from another UID.
    pcloudc --json status        # stable envelope for scripts
    ```
    `auth=Authenticated` in the status summary plus a `daemon.started`
-   event in the journal (`journalctl --user -u pcloud-daemon`) confirm
+   event in the journal (`journalctl --user -u pcloudd`) confirm
    a clean install.
 6. Log in: `pcloudc login <user>` and complete TFA if prompted.
 7. Capture the install fingerprint:
@@ -324,14 +351,14 @@ DB migrations in scope for routine upgrades).
    touching binaries.
 3. Stop the daemon cleanly:
    ```bash
-   systemctl --user stop pcloud-daemon
+   systemctl --user stop pcloudd
    ```
    Confirm exit via `daemon.stopped` in the journal.
 4. Install the new binaries (same package manager as first install).
    Do not mix package sources.
 5. Restart:
    ```bash
-   systemctl --user start pcloud-daemon
+   systemctl --user start pcloudd
    ```
 6. Verify:
    ```bash
@@ -349,8 +376,8 @@ DB migrations in scope for routine upgrades).
 
 **Config migration notes.** The config loader transparently migrates
 envelope versions v0 and v1 to the current schema in-memory; your
-on-disk `config.toml` is not rewritten. If you added new fields to
-control a new feature, copy them into `config.toml` explicitly — the
+on-disk `config.json` is not rewritten. If you added new fields to
+control a new feature, copy them into `config.json` explicitly — the
 upgrade will not invent them for you. If `/health` is not `ok` after
 restart, roll back immediately (next section) rather than continuing
 to investigate with users online.
@@ -363,7 +390,7 @@ is forward-compatible within a minor series.
 
 1. Stop the failing daemon:
    ```bash
-   systemctl --user stop pcloud-daemon
+   systemctl --user stop pcloudd
    ```
 2. Reinstall the previously pinned version. Confirm by sha256:
    ```bash
@@ -380,7 +407,7 @@ is forward-compatible within a minor series.
    Ensure the parent directory is `0700` and owned by the target UID.
 4. Start the daemon and verify:
    ```bash
-   systemctl --user start pcloud-daemon
+   systemctl --user start pcloudd
    pcloudc status
    ```
 5. If the status summary does not report `auth=Authenticated`, delete
@@ -401,7 +428,7 @@ Backup:
 
 1. Stop the daemon to avoid copying a half-written vault:
    ```bash
-   systemctl --user stop pcloud-daemon
+   systemctl --user stop pcloudd
    ```
 2. Copy the vault with perms preserved:
    ```bash
@@ -448,7 +475,7 @@ concern, not an application concern.
 3. On Arch: `sudo trust extract-compat`.
 4. Restart the daemon so `rustls` picks up the refreshed root store:
    ```bash
-   systemctl --user restart pcloud-daemon
+   systemctl --user restart pcloudd
    ```
 5. Verify TLS continues to negotiate:
    ```bash
@@ -469,8 +496,8 @@ daemon is down.
 
 1. **Daemon down?**
    ```bash
-   systemctl --user status pcloud-daemon
-   journalctl --user -u pcloud-daemon -n 200
+   systemctl --user status pcloudd
+   journalctl --user -u pcloudd -n 200
    ```
    Look for a `daemon.stopped` with non-zero exit or a panic.
 2. **IPC socket orphaned?** If the journal shows `bind: Address already
@@ -478,14 +505,14 @@ daemon is down.
    ```bash
    ls -l $XDG_RUNTIME_DIR/pcloud-rs/daemon.sock
    rm $XDG_RUNTIME_DIR/pcloud-rs/daemon.sock
-   systemctl --user start pcloud-daemon
+   systemctl --user start pcloudd
    ```
 3. **Mount orphaned?** A prior crash may have left a FUSE mount
    attached. Use the built-in recovery path:
    ```bash
    pcloudc mount --force-umount
    # or, equivalently, via env before restart:
-   PCLOUD_FORCE_UMOUNT=1 systemctl --user restart pcloud-daemon
+   PCLOUD_FORCE_UMOUNT=1 systemctl --user restart pcloudd
    ```
 4. **Journal corrupted?** On startup, journal replay errors are logged
    as `journal.replay.failed`. Capture the log, stop the daemon, and
@@ -521,7 +548,7 @@ When a FUSE mount is wedged and a graceful unmount fails:
    ```
 4. Restart the daemon:
    ```bash
-   PCLOUD_FORCE_UMOUNT=1 systemctl --user restart pcloud-daemon
+   PCLOUD_FORCE_UMOUNT=1 systemctl --user restart pcloudd
    ```
 5. On startup the journal replay will roll forward any staged writes
    that had been committed locally but not yet uploaded. Entries that
@@ -550,11 +577,11 @@ rotation procedure is:
    Rust client does not yet drive `change_crypto_pass` end-to-end.
 4. Stop the daemon:
    ```bash
-   systemctl --user stop pcloud-daemon
+   systemctl --user stop pcloudd
    ```
 5. Restart and re-unlock with the new password:
    ```bash
-   systemctl --user start pcloud-daemon
+   systemctl --user start pcloudd
    pcloudc crypto start
    ```
 6. Verify via `pcloudc status crypto` (prints the `crypto=` inline

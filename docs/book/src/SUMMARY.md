@@ -43,7 +43,7 @@
 - [RC Soak (30-day)](./operations/rc-soak.md)
 - [Partial Transfers (Resume)](./operations/partial-transfers.md)
 - [Web UI](./operations/web-ui.md)
-- [Integrity Sweeper](../../parity/integrity-sweeper.md)
+- [Integrity Sweeper](./parity/integrity-sweeper.md)
 - [Backup Snapshots](./operations/backup-snapshots.md)
 - [Packaging Matrix](./operations/packaging-matrix.md)
 - [Platforms]()

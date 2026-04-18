@@ -2,7 +2,106 @@
 
 Single source of truth for Rust parity counts.
 
-_Last reviewed: 2026-04-16._
+_Last reviewed: 2026-04-18 (post-audit-04 correction)._
+
+## 2026-04-18 update — audit-04 parity honesty correction
+
+Three independent audit-04 findings (§1-opus CRITICAL-1, §7-opus
+CRITICAL-1/2, §8-sonnet M-1) proved that row 93 was mis-implemented: the
+prior `upload_write_from_file_ipc` handler at
+`crates/pcloud-daemon/src/runtime.rs:2483-2575` read a **local file**
+and drove a fresh `upload_create`+`upload_bytes`, while the C
+`upload_writefromfile` primitive is a **server-side copy from a remote
+pCloud `fileid`** (params `fileid`/`hash`/`offset`/`count`). The local-
+file shim also had an OOM vector (unbounded `std::fs::read`) and
+silently discarded the `offset` parameter. Row 93 is therefore reverted
+to `Partial`.
+
+In parallel, an Opus-validated grep of the workspace confirmed audit-04
+§1-sonnet H-01/H-02: rows 26 (`psync_tfa_has_devices`) and 27
+(`psync_tfa_type`) have **zero** implementing code. The orchestrator
+exposes only the TFA-code-resend helpers, not `has_devices`/`tfa_type`
+queries. Both rows flip to `Partial`.
+
+Actions landed (this audit-04 wave):
+
+- **Row 93** reverted to `Partial`. `Request::UploadWriteFromFile` IPC
+  variant + proptest round-trip intentionally retained; daemon handler
+  now returns `"not yet wired: requires server-side copy via
+  UploadWriteFromFileRequest (bd-1du)"`. `pcloudc upload from-file`
+  CLI subcommand removed along with its `Command::UploadFromFile`
+  variant, inputs fields, and mapping.
+- **Rows 26 and 27** flipped to `Partial` with audit-04 rationale.
+- **Rate-limit bucket** for `Request::CreateTreePublicLinkFromPaths`
+  and `Request::UploadWriteFromFile` mapped to `Expensive` in
+  `crates/pcloud-daemon/src/rate_limit.rs` (siblings
+  `CreateTreePublicLink` / bulk uploads are `Expensive`).
+- **Audit-log path redaction** for the upload-write-from-file handler
+  is moot: the removed local-file shim is the only code that logged a
+  raw `local_path`. The stub handler emits no audit line.
+
+**Headline now: 155 / 3 / 0 / 28 (186 rows).** CSV parse confirms
+(Python `csv` module).
+
+Remaining `bd-1du.10` blockers are no longer AI-scoped:
+- Cross-platform mount hardware verification (macOS fuse-t, Windows
+  WinFSP) — requires physical hardware.
+- Reviewer human sign-off.
+
+See [`PARITY-PROOF-CHECKLIST.md`](./PARITY-PROOF-CHECKLIST.md).
+
+## 2026-04-18 — Audit 03 parity-matrix reconciliation (superseded)
+
+A line-level reconciliation of `C_FEATURE_PARITY_MATRIX.csv` against the
+source tree was performed as part of the `bd-1du.10` final-parity-proof
+closure work. Findings:
+
+- **The CSV is authoritative and now reads 156 / 2 / 0 / 28 (186 rows).**
+  The previously-reported 158 / 0 / 0 / 28 headline in this file was wrong:
+  it double-counted two rows that were flipped to Implemented in earlier
+  waves as if they had cleared the matrix, when in fact the CSV still
+  carried two rows at `Partial` status. The headline has been corrected
+  to reflect what `awk`/`csv`-parse actually returns.
+- **Two genuine Partial rows remain.** Both are narrow wiring gaps, not
+  missing features:
+    - **Row 93** (`transfers,upload wire methods`): the
+      `upload_writefromfile` server-side-copy proto encoder
+      (`pcloud_proto::methods::upload::UploadWriteFromFileRequest`) is
+      implemented but has no `Request::UploadWriteFromFile` IPC variant,
+      no `TransferRuntime` method, no daemon dispatcher, and no CLI
+      caller. All other upload wire methods (uploadfile, upload_create,
+      upload_write, upload_info, upload_save, upload_delete,
+      upload_blockchecksums, getchecksumlink) are live-wired end-to-end.
+      TODO marker at `crates/pcloud-backends/src/transfer_backend.rs:445`.
+    - **Row 149** (`links,ptree_public_link`): id-based tree-public-link
+      create is wired end-to-end (proto + backend + IPC + CLI). The
+      path-based CLI (`pcloudc publink create-tree-from-paths` /
+      `Command::CreateTreeLinkFromPaths`) exists and accepts paths, but
+      internally resolves them client-side and routes through the
+      id-based `Request::CreateTreePublicLink` IPC variant. Full path-
+      based parity with the C `ptree_public_link` signature requires a
+      `Request::CreateTreePublicLinkFromPaths` IPC variant so the daemon
+      does server-side resolution with the daemon's auth context.
+- **Three stale path citations were repaired.** Rows 69
+  (`psync_get_sync_suggestions`), 70 (`psync_is_folder_syncable`), and
+  75 (`diff polling`) cited `crates/pcloud-daemon/src/sync_*.rs`, but
+  those files were moved to `crates/pcloud-backends/src/` in a prior
+  refactor. The citations in the CSV have been updated to the current
+  file paths. The implementations themselves were always real; only the
+  path labels drifted.
+- **All 28 Rejected rows match `REJECTED-RATIONALES-14042026.md`**
+  one-to-one by row number. No Rejected row lacks a rationale; no
+  rationale is orphaned.
+
+No row flipped between `Implemented` / `Partial` / `Missing` / `Rejected`
+status in this audit. The audit is a truth-surface reconciliation, not a
+feature-completeness gate. The headline count **156 / 2 / 0 / 28 (186)**
+is the honest current reading of the CSV.
+
+The `bd-1du.10` gate remains open. Two Partial rows plus reviewer human
+sign-off are the remaining blockers. See
+[`PARITY-PROOF-CHECKLIST.md`](./PARITY-PROOF-CHECKLIST.md) for the
+line-level checklist that must be green before the gate closes.
 
 ## 2026-04-16 update — four beads closed in parallel (bd-1du.5, .4.6, .4.6.1, .10 docs)
 
@@ -368,14 +467,14 @@ Every other document must link here and avoid hard-coded totals.
 |---|---|---|
 | Release posture | **Pre-alpha** | Not production-ready; `bd-1du.10` is still open. |
 | Parity rows total | **186** | Row source: [`C_FEATURE_PARITY_MATRIX.csv`](./C_FEATURE_PARITY_MATRIX.csv) |
-| Implemented | **158** | Retained-path feature coverage |
-| Partial | **0** | — |
+| Implemented | **155** | Retained-path feature coverage |
+| Partial | **3** | Rows 26 (`psync_tfa_has_devices` no impl), 27 (`psync_tfa_type` no impl), 93 (`upload_writefromfile` server-side-copy not wired) — audit-04 corrections |
 | Missing | **0** | No un-triaged C surface remains |
 | Rejected | **28** | Ghosts, stubs, insecure-legacy — see [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md) |
 | Test suite | **2029 passed / 0 failed / 46 ignored** | O-wave gate: all green; +1 ignored (live-gated). |
 | Workspace crates | **23+** including enterprise crates (`pcloud-idp`, `pcloud-policy`, `pcloud-fleet`, `pcloud-kms`, `pcloud-session`) and first-party plugins. |
 | ADRs landed | **18** | `docs/adr/0001`–`0018` |
-| Open parity beads | **3** | `bd-1du`, `bd-1du.4`, `bd-1du.10` (plus scaffolding bead `bd-1du.4.6.1` for the integrity sweeper; plus new-scope bead `bd-1du.5` for a deletion-safe backup sync flavor — not a parity row) |
+| Open parity beads | **3** | `bd-1du`, `bd-1du.4`, `bd-1du.10` — see "Open Parity Beads" section. Non-parity engineering beads (`bd-1du.4.6.1`, `bd-1du.5`) are listed separately under "Open Engineering Beads". |
 | Tier-1 live platforms | Linux x86_64/aarch64 | macOS and Windows scaffolded + CI-compiled; mounts not hardware-verified |
 
 Do **not** claim full parity, production readiness, enterprise
@@ -389,8 +488,8 @@ Source: [`C_FEATURE_PARITY_MATRIX.csv`](./C_FEATURE_PARITY_MATRIX.csv)
 | Metric       | Count |
 |--------------|-------|
 | Total rows   | 186   |
-| Implemented  | 158   |
-| Partial      | 0     |
+| Implemented  | 155   |
+| Partial      | 3     |
 | Missing      | 0     |
 | Rejected     | 28    |
 
@@ -399,11 +498,32 @@ Rejected-row per-item justification lives in
 
 ## Open Parity Beads
 
+These beads track rows on the C feature parity matrix and gate
+`bd-1du.10` closure:
+
 - `bd-1du`     — Close verified C-to-Rust feature parity gaps (epic)
 - `bd-1du.4`   — Replace filesystem shell with real mounted-drive parity
-- `bd-1du.4.6.1` — Integrity sweeper (background scrub) — scaffolding only (config block, skip-list parser, rate-limiter primitive); see `docs/parity/integrity-sweeper.md`
-- `bd-1du.5`   — Deletion-safe backup sync flavor (new scope, **not a C-parity row**). The CLI surface now accepts `backup` / `upload-only` / `up` / `local-to-remote` aliases for `--type`, but all four currently map to the same `SyncType::UploadOnly` semantics, which DOES propagate local deletions to the remote. This bead tracks landing a fourth flavor (or an `UploadOnly` variant flag) whose semantics are "never delete on remote when local deletes". Until then, users needing deletion-safe archival must use `backup snapshot-create` (GPG-encrypted tarball, content-addressed). Parity-matrix counts unchanged.
 - `bd-1du.10`  — Prove and gate final C parity claims
+
+## Open Engineering Beads (non-parity)
+
+These beads track engineering scope that is **not** a C parity row and
+therefore does **not** gate `bd-1du.10` closure. They are listed here so
+they stay visible without being conflated with parity work (per
+audit-04 §1-opus M-3):
+
+- `bd-1du.4.6.1` — Integrity sweeper (background scrub) — scaffolding
+  only (config block, skip-list parser, rate-limiter primitive);
+  see `docs/parity/integrity-sweeper.md`. No C-side counterpart.
+- `bd-1du.5`   — Deletion-safe backup sync flavor (new scope). The CLI
+  surface accepts `backup` / `upload-only` / `up` / `local-to-remote`
+  aliases for `--type`, but all four map to the same
+  `SyncType::UploadOnly` semantics, which propagates local deletions
+  to the remote. This bead tracks landing a fourth flavor (or an
+  `UploadOnly` variant flag) whose semantics are "never delete on
+  remote when local deletes". Until then, users needing deletion-safe
+  archival must use `backup snapshot-create` (GPG-encrypted tarball,
+  content-addressed).
 
 `bd-1du.10` is still open. Do **not** claim full parity, production
 readiness, enterprise readiness, or drop-in replacement status while it
@@ -411,8 +531,36 @@ remains open.
 
 ## Remaining Partial Rows
 
-**None.** All 158 retained rows are `Implemented`. The 28 `Rejected`
-rows have per-item justification in
+Three rows remain Partial after the 2026-04-18 audit-04 correction:
+
+- **Row 26** — `auth,psync_tfa_has_devices`. Workspace grep finds
+  zero implementing code. The orchestrator exposes TFA-resend helpers
+  (`send_two_factor_sms`, `send_two_factor_notification`) but no
+  surface to query whether the authenticated account has TFA devices
+  enrolled. Needs a `SessionManager` accessor + IPC + CLI, or an
+  explicit `Rejected` rationale if adaptive TFA UI is out of scope.
+- **Row 27** — `auth,psync_tfa_type`. Workspace grep finds zero
+  implementing code. The challenge token flow tracks only a single
+  `TwoFactorRequired` boolean, not which TFA method (sms/totp/
+  notification/recovery) is active. Needs a `TfaMethod` enum sourced
+  from the server challenge response + IPC/CLI, or `Rejected`.
+- **Row 93** — `transfers,upload wire methods`. The
+  `upload_writefromfile` proto encoder is implemented
+  (`pcloud_proto::methods::upload::UploadWriteFromFileRequest`). The
+  `Request::UploadWriteFromFile` IPC variant is defined and proptest-
+  round-tripped, but the daemon handler is a stub returning
+  `"not yet wired: requires server-side copy via
+  UploadWriteFromFileRequest (bd-1du)"`. A prior local-file shim was
+  intentionally removed after audit 04 found a semantic mismatch (C
+  does server-side copy from a remote `fileid`; the shim read local
+  disk). Needs `TransferRuntime::upload_write_from_file` method that
+  invokes `UploadWriteFromFileRequest` on the wire, a real handler
+  body, and CLI re-wiring. TODO at
+  `crates/pcloud-backends/src/transfer_backend.rs:445`.
+
+All three are tracked under `bd-1du.10` and block the parity gate.
+
+The 28 `Rejected` rows have per-item justification in
 [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md).
 
 Previously Partial rows and their closure dates:

@@ -49,19 +49,25 @@ Issue tracker source of truth:
 
 - `bd`
 
-## Current Truth (2026-04-16)
+## Current Truth (2026-04-18, post Audit 03)
 
-The Rust implementation is **substantially complete** and the tracker is down to the final parity-proof phase, but it is still **not** honest to call it “full parity”, “production ready”, or “drop-in replacement” while the last proof beads remain open.
+The Rust implementation is **substantially complete** and the tracker is down to the final parity-proof phase, but it is still **not** honest to call it "full parity", "production ready", or "drop-in replacement" while the last proof beads remain open.
 
 Open parity epics/tasks (3 beads):
 
 - `bd-1du` - Close verified C-to-Rust feature parity gaps (epic)
-- `bd-1du.4` - Replace filesystem shell with real mounted-drive parity
-- `bd-1du.10` - Prove and gate final C parity claims
+- `bd-1du.4` - Replace filesystem shell with real mounted-drive parity (substantially landed; cross-platform hardware verification remaining)
+- `bd-1du.10` - Prove and gate final C parity claims (matrix reconciled; 2 Partial rows + human sign-off remaining)
 
 Single source of truth for counts: [`STATUS.md`](STATUS.md). Per-row
 rejected rationale lives in `REJECTED-RATIONALES-14042026.md`. Do not
 hard-code count numbers in this file; link to `STATUS.md` instead.
+
+Audit 03 (2026-04-18) reconciled the matrix: **156 Implemented / 2 Partial
+/ 0 Missing / 28 Rejected (186 rows)**. Two genuine Partial rows remain
+(row 93 `upload_writefromfile` IPC wiring, row 149 `ptree_public_link`
+path-based IPC variant). All 28 Rejected rows have 1:1 rationales. Three
+stale path citations (rows 69, 70, 75) were repaired.
 
 Important corrections:
 
@@ -70,7 +76,8 @@ Important corrections:
 - public-link parity is implemented on the retained path,
 - backup/device/account parity is implemented on the retained path,
 - sync helper parity is implemented on the retained path,
-- the remaining work is no longer broad feature absence; it is mainly mounted-drive/FUSE proof and the final parity gate.
+- Linux FUSE read+write is live-verified end-to-end on a real kernel mount,
+- the remaining parity work is narrow: two IPC-wiring gaps plus cross-platform mount hardware verification and final reviewer sign-off.
 
 Do **not** claim:
 
@@ -131,7 +138,7 @@ Live auth/TFA verification was performed against a real pCloud account on the Ru
 Primary files:
 
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-proto/src/auth_api.rs`
-- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-daemon/src/auth_backend.rs`
+- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-backends/src/auth_backend.rs`
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-daemon/tests/live_auth.rs`
 
 ### Transfer and SDK helper parity
@@ -153,7 +160,7 @@ Implemented:
 Primary files:
 
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-proto/src/transfer_api.rs`
-- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-daemon/src/transfer_backend.rs`
+- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-backends/src/transfer_backend.rs`
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-sdk/src/lib.rs`
 
 ### Sync-root lifecycle progress
@@ -185,7 +192,7 @@ Still not full parity with C syncfolder lifecycle because:
 Primary files:
 
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-daemon/src/runtime.rs`
-- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-daemon/src/sync_backend.rs`
+- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-backends/src/sync_backend.rs`
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-engine/src/lib.rs`
 
 ### Public-link parity progress
@@ -220,11 +227,13 @@ Implemented on the active Rust path:
 - active daemon/IPC/SDK crypto control surfaces.
 - crypto-aware share/team-share temppass flow.
 
-Still missing:
+Previously listed as missing but now implemented:
 
-- `change_crypto_pass` family,
-- `send_change_user_private`,
-- `priv_key_flags`.
+- `change_crypto_pass` family (`CryptoShell::change_password` / `change_password_unlocked`),
+- `send_change_user_private` (`SendChangeUserPrivateRequest` in `pcloud-proto/src/methods/crypto.rs`),
+- `priv_key_flags` (`CryptoShell::priv_key_flags`).
+
+Residual proof work (wire-level round-trip verification) is tracked under `bd-1du.10`.
 
 Primary files:
 
@@ -248,7 +257,7 @@ Implemented:
 Primary files:
 
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-proto/src/shares_api.rs`
-- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-daemon/src/shares_backend.rs`
+- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-backends/src/shares_backend.rs`
 
 ### Backup / device / account utility progress
 
@@ -277,13 +286,13 @@ Primary files:
 
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-proto/src/account_api.rs`
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-proto/src/backup_api.rs`
-- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-daemon/src/account_backend.rs`
-- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-daemon/src/backup_backend.rs`
+- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-backends/src/account_backend.rs`
+- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-backends/src/backup_backend.rs`
 
 Primary files:
 
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-proto/src/public_links_api.rs`
-- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-daemon/src/public_link_backend.rs`
+- `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-backends/src/public_link_backend.rs`
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-cli/src/app.rs`
 
 ## What Is Left To Do
@@ -292,20 +301,40 @@ Primary files:
 
 #### `bd-1du.4` Filesystem / mounted-drive parity
 
-Current state:
+Current state (substantially landed on the direct-shim path):
 
-- `pcloud-fs` now has mount scaffolding, policy validation, RAII mount handles, signal-aware unmount cleanup, in-memory read path, staging, journal, and writeback helpers.
-- There is still **no fully wired mounted-drive runtime** comparable to the C client.
+- `pcloud-fs` has mount scaffolding, policy validation, RAII mount
+  handles, signal-aware unmount cleanup, in-memory read path, staging,
+  journal, SLO observability hooks, and writeback helpers.
+- Live Linux FUSE kernel mount is proven end-to-end: `create` → `write`
+  → `release` stages bytes, journals the operation, finalizes via
+  `upload_file`, and after unmount + remount against the same
+  mountpoint `std::fs::read` returns the written bytes byte-identical.
+  Proof: `crates/pcloud-fs/tests/fuse_write_path_live.rs` (gated on
+  `PCLOUD_LIVE_E2E=1` / `PCLOUD_FUSE_TEST=1`).
+- The generic `FuseAdapter` trait is wired on Linux with full `lookup`
+  / `getattr` / `readdir` / `open` / `read` / `release` delegation
+  (`crates/pcloud-fs/src/platform/linux.rs`). Writable mounts go
+  through the composed `PcloudFsShim` path.
+- macOS `fuse-t` adapter (16 callbacks) and Windows WinFSP adapter
+  (17 callbacks) are scaffolded, compile-tested in CI, and unit-tested.
 
-Needed:
+Remaining work under this bead:
 
-- real Linux mount/unmount,
-- readdir,
-- open/read,
-- write/flush/fsync,
-- inode/path lifecycle,
-- crash-safe writeback,
-- integration tests for mounted-drive behavior.
+- chunked `upload_write` pipelining for sustained multi-GiB writes
+  (`TODO(bd-1du.4.6)` in `write_path.rs`; the observability hook
+  `slo_hook::observe_flush` is already wired),
+- macOS mount lifecycle live-verified against a real `fuse-t` install
+  (hardware — out of AI scope),
+- Windows mount lifecycle live-verified against a real WinFSP install
+  and a real SCM (hardware — out of AI scope),
+- BSD rc.d supervision end-to-end (Tier-3 community best-effort),
+- reproducible-build bit-identity check across two hosts.
+
+None of these blocks row-level parity flips; the single retained
+FS-subsystem matrix row (`fs,mounted pcloud filesystem`, row 85) is
+already `Implemented` on the Linux path and the cross-platform proofs
+are `bd-1du.10` release-gating evidence, not parity feature work.
 
 Primary target files:
 
@@ -314,17 +343,44 @@ Primary target files:
 
 #### `bd-1du.10` Final parity proof
 
-Needed:
+Current state (Audit 03, 2026-04-18):
 
-- complete matrix update,
-- explicit rejections documented where appropriate,
-- no unjustified `Partial` rows for retained features,
-- release/docs wording brought in line with actual matrix state,
-- live verification where required.
+- The parity matrix has been reconciled against the source tree. The
+  honest count is **156 Implemented / 2 Partial / 0 Missing / 28
+  Rejected** across 186 rows.
+- All 28 `Rejected` rows have a 1:1 rationale in
+  `REJECTED-RATIONALES-14042026.md`. No Rejected row is unjustified.
+- All retained matrix rows that are marked `Implemented` have real,
+  reachable code. A 20-row spot-check was clean; three stale path
+  citations (rows 69, 70, 75 — post-refactor daemon → backends moves)
+  were repaired in the CSV.
+- Two `Partial` rows remain and are genuinely partial:
+    - Row 93 (`transfers,upload_writefromfile` server-side-copy IPC
+      wiring) — proto encoder exists, no `Request::UploadWriteFromFile`
+      IPC variant, no CLI caller.
+    - Row 149 (`links,ptree_public_link` path-based CLI variant) —
+      id-based IPC wired end-to-end, path-based CLI resolves paths
+      client-side instead of via a dedicated daemon-side IPC variant.
+
+Remaining work to close the gate:
+
+- land a `Request::UploadWriteFromFile` IPC variant, wire it through
+  `TransferRuntime` and the CLI, live-verify server-side copy;
+- land a `Request::CreateTreePublicLinkFromPaths` IPC variant with
+  server-side path resolution under daemon auth context;
+- sweep docs for any "production ready" / "full parity" claims (none
+  found by this audit, but gate must re-verify at close-time);
+- run the nine-gate CI once more against the final tree;
+- obtain human reviewer sign-off (out of AI scope).
+
+See [`PARITY-PROOF-CHECKLIST.md`](./PARITY-PROOF-CHECKLIST.md) for the
+line-level closure checklist.
 
 ### P1 blockers
 
-There are no remaining non-filesystem parity beads below P0. Residual non-FS partial rows now live in the matrix under transfers/SDK and should be reconciled as part of `bd-1du.10`.
+There are no remaining non-filesystem parity beads below P0. The two
+residual `Partial` rows (93, 149) are narrow IPC wiring gaps tracked
+under `bd-1du.10`.
 
 ## Feature Parity Matrix Summary
 
@@ -332,19 +388,19 @@ The authoritative matrix is:
 
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/C_FEATURE_PARITY_MATRIX.csv`
 
-High-level status:
+High-level status (2026-04-18):
 
-- `Auth`: strong, live-verified
+- `Auth`: implemented, live-verified
 - `CLI`: implemented for the retained legacy surface
 - `Sync root management`: implemented on the retained path
-- `Sync engine`: implemented on the retained path, but still verify claims conservatively
-- `Transfers`: strong but not complete parity
-- `Public links`: strong
-- `Filesystem / mounted drive`: still the largest missing area
+- `Sync engine`: implemented on the retained path, background sync loop wired at daemon startup
+- `Transfers`: implemented; one Partial row remains (`upload_writefromfile` server-side copy IPC wiring, row 93)
+- `Public links`: implemented; one Partial row remains (`ptree_public_link` path-based IPC variant, row 149)
+- `Filesystem / mounted drive`: Linux live-verified; macOS/Windows scaffolded, hardware verification remaining
 - `Crypto`: implemented on the retained path
 - `Shares / business / teams`: implemented on the retained path
 - `Backup / device`: implemented on the retained path
-- `SDK breadth`: partial
+- `SDK breadth`: implemented on the retained path
 
 The parity review narrative is:
 

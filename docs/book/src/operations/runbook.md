@@ -24,7 +24,7 @@ Related chapters:
 
 ```bash
 target/release/pcloud-daemon \
-  --config /etc/pcloud-rs/config.toml \
+  --config /etc/pcloud-rs/config.json \
   --log-format json \
   --log-level info
 ```
@@ -94,14 +94,14 @@ Fresh single-host install. Do not reuse a vault copied from another UID.
    ```bash
    install -d -m 0700 ~/.config/pcloud-rs ~/.local/share/pcloud-rs ~/.cache/pcloud-rs
    ```
-3. Drop a minimal `production` `config.toml` at
-   `~/.config/pcloud-rs/config.toml` (TLS enforced, vault persistence
+3. Drop a minimal `production` `config.json` at
+   `~/.config/pcloud-rs/config.json` (TLS enforced, vault persistence
    opted in if desired).
 4. Enable the service (Linux example; see per-platform chapters for
    launchd, SCM, rc.d):
    ```bash
    systemctl --user daemon-reload
-   systemctl --user enable --now pcloud-daemon
+   systemctl --user enable --now pcloudd
    ```
 5. Verify:
    ```bash
@@ -133,12 +133,12 @@ sha256sum "$(command -v pcloud-daemon)" > /tmp/pre-upgrade.sha
 # 2. Snapshot the vault (see Playbook 4)
 
 # 3. Stop cleanly
-systemctl --user stop pcloud-daemon
+systemctl --user stop pcloudd
 
 # 4. Install new binary (same package source)
 
 # 5. Restart and verify
-systemctl --user start pcloud-daemon
+systemctl --user start pcloudd
 pcloudc doctor --json
 pcloudc status                 # check auth=Authenticated, engine summary
 pcloudc --version              # confirm daemon version banner matches target
@@ -157,7 +157,7 @@ forward-compatible within a minor series.
 
 ```bash
 # 1. Stop the failing daemon
-systemctl --user stop pcloud-daemon
+systemctl --user stop pcloudd
 
 # 2. Reinstall the previously pinned version, verify sha256
 sha256sum "$(command -v pcloud-daemon)"
@@ -168,7 +168,7 @@ install -m 0600 /secure/backup/auth_token.dat ~/.config/pcloud-rs/auth_token.dat
 install -m 0600 /secure/backup/auth_token.meta ~/.config/pcloud-rs/auth_token.meta
 
 # 4. Start and verify
-systemctl --user start pcloud-daemon
+systemctl --user start pcloudd
 pcloudc status
 ```
 
@@ -184,18 +184,18 @@ The vault holds durable auth tokens (opt-in). It is UID-bound, mode
 Backup:
 
 ```bash
-systemctl --user stop pcloud-daemon
+systemctl --user stop pcloudd
 install -m 0600 ~/.config/pcloud-rs/auth_token* /secure/backup/
-systemctl --user start pcloud-daemon
+systemctl --user start pcloudd
 ```
 
 Restore:
 
 ```bash
-systemctl --user stop pcloud-daemon
+systemctl --user stop pcloudd
 install -d -m 0700 ~/.config/pcloud-rs
 install -m 0600 /secure/backup/auth_token* ~/.config/pcloud-rs/
-systemctl --user start pcloud-daemon
+systemctl --user start pcloudd
 pcloudc status
 ```
 
@@ -225,7 +225,7 @@ sudo update-ca-trust extract
 sudo trust extract-compat
 
 # Then restart the daemon
-systemctl --user restart pcloud-daemon
+systemctl --user restart pcloudd
 pcloudc status              # confirm engine summary re-establishes API calls
 ```
 
@@ -391,7 +391,7 @@ gpg --list-keys dr-team@example.com              # confirm recipient present
 test -w /var/backups/pcloud-rs && echo OK         # confirm destination writable
 ```
 
-Configure `[backup]` in `config.toml`:
+Configure `[backup]` in `config.json`:
 
 ```toml
 [backup]
@@ -971,11 +971,11 @@ stat -c '%a %U %G %n' ~/.config/pcloud-rs ~/.config/pcloud-rs/auth_token* 2>/dev
 **Remediate.**
 
 ```bash
-systemctl --user stop pcloud-daemon
+systemctl --user stop pcloudd
 chmod 0700 ~/.config/pcloud-rs
 chmod 0600 ~/.config/pcloud-rs/auth_token*
 chown "$(id -u):$(id -g)" ~/.config/pcloud-rs/auth_token*
-systemctl --user start pcloud-daemon
+systemctl --user start pcloudd
 pcloudc --field vault_ok doctor          # expect: true
 ```
 
@@ -1019,14 +1019,14 @@ grep -E '"password"|"token"' /var/log/pcloud-rs/daemon.log   # must be empty
 # 1. Invalidate the daemon-side token immediately.
 pcloudc logout
 # 2. Remove the local vault (daemon must be stopped to delete safely).
-systemctl --user stop pcloud-daemon
+systemctl --user stop pcloudd
 rm -f ~/.config/pcloud-rs/auth_token*
 # 3. Revoke upstream sessions via the pCloud web UI
 #    (Settings -> Active sessions -> Terminate all).
 # 4. Rotate the account password via the web UI.
 # 5. Re-authenticate on trusted hosts only; opt back into persistence
 #    only on hosts that still need it.
-systemctl --user start pcloud-daemon
+systemctl --user start pcloudd
 pcloudc login "$PCLOUD_USER"
 pcloudc authsave                        # opt-in
 ```
@@ -1144,7 +1144,7 @@ sudo umount /path/to/mount
 
 - Confirm `mount | grep pcloud` is empty.
 - Restart the daemon to rebuild the mount supervisor cleanly:
-  `systemctl --user restart pcloud-daemon`.
+  `systemctl --user restart pcloudd`.
 
 **Prevent.**
 
@@ -1176,7 +1176,7 @@ appear on the server.
 pcloudc fs-status
 pcloudc --json fs-status
 pcloudc --field pending_writes --field oldest_pending_age_s fs-status
-journalctl --user -u pcloud-daemon -n 500 | grep -E 'upload|sidecar|writeback'
+journalctl --user -u pcloudd -n 500 | grep -E 'upload|sidecar|writeback'
 ```
 
 **Remediate.**
@@ -1187,7 +1187,7 @@ journalctl --user -u pcloud-daemon -n 500 | grep -E 'upload|sidecar|writeback'
 pcloudc sync-localscan
 
 # 2. Cycle the daemon to flush the writeback scheduler.
-systemctl --user restart pcloud-daemon
+systemctl --user restart pcloudd
 
 # 3. If the upload queue still does not drain, replay sidecars explicitly.
 pcloudc pending
@@ -1293,14 +1293,14 @@ ls -lt ~/.local/share/pcloud-rs/journal/upload-sidecars/ | head
 
 ```bash
 # 1. Graceful restart — the write-path enumerator runs on boot.
-systemctl --user restart pcloud-daemon
+systemctl --user restart pcloudd
 pcloudc pending
 
 # 2. If a sidecar cannot be replayed, quarantine it by hand:
-systemctl --user stop pcloud-daemon
+systemctl --user stop pcloudd
 mv ~/.local/share/pcloud-rs/journal/upload-sidecars/<bad> \
    ~/.local/share/pcloud-rs/journal/quarantine/
-systemctl --user start pcloud-daemon
+systemctl --user start pcloudd
 pcloudc pending
 ```
 
@@ -1499,14 +1499,14 @@ pcloudc --field rate_limited status
 - If urgent, reduce concurrency in config and restart:
 
 ```toml
-# config.toml
+# config.json
 [transfer]
 max_concurrent_uploads   = 2
 max_concurrent_downloads = 2
 ```
 
 ```bash
-systemctl --user restart pcloud-daemon
+systemctl --user restart pcloudd
 ```
 
 **Cleanup.**
@@ -1728,11 +1728,11 @@ ls -l /secure/recovered/*.tar.gpg
 pcloudc backup-snapshot-verify /secure/recovered/2026-04-14.tar.gpg
 
 # 3. Stop any running daemon, then restore.
-systemctl --user stop pcloud-daemon 2>/dev/null || true
+systemctl --user stop pcloudd 2>/dev/null || true
 pcloudc backup-snapshot-restore /secure/recovered/2026-04-14.tar.gpg --yes
 
 # 4. Start and validate.
-systemctl --user start pcloud-daemon
+systemctl --user start pcloudd
 pcloudc status
 pcloudc audit-verify
 ```
@@ -1823,14 +1823,14 @@ iostat -xm 5 3
 **Remediate.**
 
 ```toml
-# config.toml — reduce the sweeper rate and pause on battery.
+# config.json — reduce the sweeper rate and pause on battery.
 [profile.features.integrity_sweeper]
 rate_files_per_minute = 15
 pause_on_battery      = true
 ```
 
 ```bash
-systemctl --user restart pcloud-daemon
+systemctl --user restart pcloudd
 pcloudc integrity-status
 ```
 
@@ -2005,7 +2005,7 @@ pcloudc --json status | grep -i prom
 **Remediate.**
 
 ```toml
-# config.toml — enable and bind the exporter.
+# config.json — enable and bind the exporter.
 [observability.prometheus]
 enabled = true
 listen  = "127.0.0.1:9301"
@@ -2013,7 +2013,7 @@ mode    = "restricted"
 ```
 
 ```bash
-systemctl --user restart pcloud-daemon
+systemctl --user restart pcloudd
 curl -s http://127.0.0.1:9301/metrics | head
 ```
 
@@ -2055,14 +2055,14 @@ df -h "$(dirname /var/log/pcloud-rs/audit.jsonl)"
 
 ```bash
 # 1. Stop the daemon.
-systemctl --user stop pcloud-daemon
+systemctl --user stop pcloudd
 
 # 2. Preserve the current audit log as evidence.
 mv /var/log/pcloud-rs/audit.jsonl \
    /var/log/pcloud-rs/audit.jsonl.broken-$(date +%s)
 
 # 3. Let the daemon start a fresh chain anchored on an identity row.
-systemctl --user start pcloud-daemon
+systemctl --user start pcloudd
 pcloudc audit-verify                    # expect: ok=true on fresh chain
 ```
 
@@ -2087,7 +2087,7 @@ pcloudc audit-verify                    # expect: ok=true on fresh chain
   The status payload reports `enabled`, `last_result` (`never_run`,
   `pass`, or `fail`), `chain_length`, `total_passes`,
   `total_failures`, `last_error`, and `last_run_ts`. Configure the
-  schedule and optional checkpoint path in `config.toml`:
+  schedule and optional checkpoint path in `config.json`:
 
   ```toml
   [features.audit_verifier]
@@ -2133,7 +2133,7 @@ until [ "$(pcloudc --field in_flight_uploads status)" = "0" ] \
 done
 
 # 3. Graceful restart — journal replay resumes any pending items.
-systemctl --user restart pcloud-daemon
+systemctl --user restart pcloudd
 
 # 4. Un-pause after the new daemon reports ready.
 pcloudc --field ready doctor
@@ -2186,7 +2186,7 @@ pcloudc migrate-from-c --from /legacy/pcloud
 pcloudc migrate-from-c --from /legacy/pcloud --force-overwrite
 
 # 4. Start the new daemon and validate.
-systemctl --user start pcloud-daemon
+systemctl --user start pcloudd
 pcloudc status
 pcloudc sync-list
 pcloudc audit-verify
@@ -2232,12 +2232,12 @@ pcloudc backup-snapshot-verify "$(ls -t /var/backups/pcloud-rs/*.tar.gpg | head 
 ```bash
 # 1. Graceful drain and restart with the new binary.
 pcloudc pause
-systemctl --user stop pcloud-daemon
+systemctl --user stop pcloudd
 # ...install new binary...
-systemctl --user start pcloud-daemon
+systemctl --user start pcloudd
 
 # 2. Watch the migration land.
-journalctl --user -u pcloud-daemon -f | grep -E 'store\.migration\.(applied|failed)'
+journalctl --user -u pcloudd -f | grep -E 'store\.migration\.(applied|failed)'
 
 # 3. Validate.
 pcloudc --field ready doctor

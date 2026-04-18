@@ -1,7 +1,5 @@
 # pcloud-rs-rust-dev
 
-[![Feature Surface](https://img.shields.io/badge/surface-OIDC%20%7C%20Policy%20%7C%20Fleet%20%7C%20KMS%20%7C%20DLP%20%7C%20HA%2FDR%20%7C%20OTel%20%7C%20Plugins%20%7C%20Web%20UI%20%7C%20Partial--Resume%20%7C%20Backup%20Snapshots%20%7C%20Integrity%20Sweeper-brightgreen)](./docs/roadmap-complete.md)
-
 Developer entry point for the Rust rewrite of the pCloud client. Cross-platform
 target (Linux Tier 1; macOS + Windows Tier 2; FreeBSD/NetBSD/OpenBSD Tier 3).
 The legacy C/C++ client has been removed from this fork; its sources remain

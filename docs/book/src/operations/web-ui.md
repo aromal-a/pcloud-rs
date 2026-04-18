@@ -62,6 +62,14 @@ recipes, and the accessibility bar the UI is held to.
    boundary.
 6. **Secrets redaction.** `/settings` prints paths, modes, and
    booleans — never the token, password, or API keys.
+7. **Web session token delivered via file, not stderr.** At startup
+   the session token is written to
+   `$XDG_RUNTIME_DIR/pcloud-daemon/web-token` with mode `0600`.
+   The log line `pcloud-web: session token written to <path>` tells
+   operators where to look; the token value itself is never logged.
+   Reading it: `cat "$XDG_RUNTIME_DIR/pcloud-daemon/web-token"`.
+   This avoids the token appearing in systemd-journal output, Docker
+   log collectors, or any other process that can read stderr/journal.
 
 ## 4. Step-by-step procedure
 
@@ -74,6 +82,15 @@ cargo run -p pcloud-web
 
 Default bind: `127.0.0.1:17650`. Daemon socket auto-discovered from
 the shared runtime directory.
+
+After startup, retrieve the session token from the runtime file:
+
+```bash
+cat "$XDG_RUNTIME_DIR/pcloud-daemon/web-token"
+```
+
+The token is written with mode `0600` (owner-read only). The daemon
+logs the file path at `INFO` level but never logs the token value.
 
 Release builds:
 

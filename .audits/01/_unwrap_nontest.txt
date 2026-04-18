@@ -1,0 +1,117 @@
+crates/pcloud-proto/src/transport.rs:212:            .expect("transport config lock should not be poisoned")
+crates/pcloud-proto/src/transport.rs:280:            .expect("transport config lock should not be poisoned");
+crates/pcloud-auth/src/lifecycle.rs:67:        let mut guard = self.now.lock().expect("test clock mutex poisoned");
+crates/pcloud-auth/src/lifecycle.rs:73:        let mut guard = self.now.lock().expect("test clock mutex poisoned");
+crates/pcloud-cli/src/app.rs:1480:    let command = parse_command(args).expect("CLI command should parse");
+crates/pcloud-cli/src/app.rs:1481:    parse_inputs_for_command(&command, args).expect("CLI inputs should resolve")
+crates/pcloud-config/src/integrity_sweeper.rs:215:        let mut g = self.inner.lock().expect("manual clock poisoned");
+crates/pcloud-config/src/integrity_sweeper.rs:288:        let mut state = self.state.lock().expect("token bucket poisoned");
+crates/pcloud-crypto/src/metadata.rs:98:        .expect("HMAC-SHA256 accepts any key length");
+crates/pcloud-crypto/src/content.rs:129:        .expect("HMAC-SHA256 accepts any key length");
+crates/pcloud-crypto/src/content.rs:189:    getrandom(&mut nonce_bytes).expect("OS randomness must be available");
+crates/pcloud-crypto/src/keys.rs:90:            .expect("OS randomness should be available for crypto salt generation");
+crates/pcloud-crypto/src/keys.rs:158:            .expect("fixed argon2 output length should be valid");
+crates/pcloud-crypto/src/keys.rs:181:            .expect("HMAC-SHA256 accepts any key length");
+crates/pcloud-crypto/src/password_scorer.rs:551:            .expect("HMAC-SHA512 accepts any key length");
+crates/pcloud-crypto/src/password_scorer.rs:560:                .expect("HMAC-SHA512 accepts any key length");
+crates/pcloud-crypto/src/share_temppass.rs:215:            .expect("HMAC-SHA256 accepts any key length");
+crates/pcloud-crypto/src/lib.rs:540:            .expect("OS randomness should be available for DEK generation");
+crates/pcloud-crypto/src/lib.rs:861:            .expect("OS randomness should be available for crypto salt rotation");
+crates/pcloud-crypto/src/lib.rs:986:        .expect("HMAC-SHA256 accepts any key length");
+crates/pcloud-daemon/src/sync_loop.rs:500:        .expect("failed to spawn sync loop thread");
+crates/pcloud-daemon/src/sync_loop_runtime.rs:577:        .expect("failed to open sync loop store connection");
+crates/pcloud-daemon/src/audit_verifier_service.rs:454:            .expect("spawn audit verifier scheduler thread");
+crates/pcloud-daemon/src/audit_verifier_service.rs:570:    let stopped = wake.stopped.lock().expect("audit verifier wake poisoned");
+crates/pcloud-daemon/src/audit_verifier_service.rs:577:        .expect("audit verifier wake poisoned");
+crates/pcloud-daemon/src/transfer_bridge.rs:198:        let cs = chunk_size.expect("chunk_size is Some when use_chunked is true");
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:801:            .expect("spawn integrity sweeper thread");
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:920:        let mut g = self.skip_globs.lock().expect("skip globs poisoned");
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:929:        self.skip_globs.lock().expect("skip globs poisoned").len()
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:955:                .expect("scheduler wake poisoned");
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:1015:            self.skip_globs.lock().expect("skip_globs poisoned").clone(),
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:1039:            .expect("spawn integrity sweeper scheduler thread");
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:1163:    if let Some(tx) = tick_notify.lock().expect("tick_notify poisoned").as_ref() {
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:1202:    let roots = sweep_roots.lock().expect("sweep_roots poisoned").clone();
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:1203:    let fetcher = checksum_fetcher.lock().expect("fetcher poisoned").clone();
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:1206:        .expect("skip_globs poisoned")
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:1288:    let stopped = wake.stopped.lock().expect("scheduler wake poisoned");
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:1295:        .expect("scheduler wake poisoned");
+crates/pcloud-daemon/src/integrity_sweeper_service.rs:1344:    let mut progress = shared.progress.lock().expect("progress poisoned");
+crates/pcloud-daemon/src/mount_runtime.rs:801:            .expect("PcloudShimAdapter shim already consumed");
+crates/pcloud-daemon/src/mount_runtime.rs:838:            .expect("PcloudProtoAdapter adapter already consumed");
+crates/pcloud-daemon/src/mount_runtime.rs:967:        let w = writer_slot.lock().expect("writer slot");
+crates/pcloud-fs/src/inode.rs:136:            .expect("inode table mutex must not be poisoned");
+crates/pcloud-fs/src/inode.rs:147:            .expect("inode number space exhausted");
+crates/pcloud-fs/src/inode.rs:171:            .expect("inode table mutex must not be poisoned");
+crates/pcloud-fs/src/inode.rs:189:            .expect("inode table mutex must not be poisoned");
+crates/pcloud-fs/src/write_journal.rs:285:        let magic = u32::from_le_bytes(header[..4].try_into().unwrap());
+crates/pcloud-fs/src/write_journal.rs:290:        let payload_len = u32::from_le_bytes(header[4..8].try_into().unwrap());
+crates/pcloud-fs/src/write_journal.rs:291:        let crc_expected = u32::from_le_bytes(header[8..12].try_into().unwrap());
+crates/pcloud-fs/src/integrity_sweeper.rs:392:            .expect("rate-limit request size 1 ≤ capacity")
+crates/pcloud-fs/src/integrity_sweeper.rs:409:                .expect("rate-limit request size 1 ≤ capacity");
+crates/pcloud-fs/src/fuse_adapter.rs:1366:                Arc::clone(tbl.by_ino.get(&ino).expect("just-inserted"))
+crates/pcloud-fs/src/platform/macos.rs:1583:    argv.push(CString::new("pcloud-rs").expect("literal has no NUL"));
+crates/pcloud-fs/src/platform/macos.rs:1584:    argv.push(CString::new("-o").expect("literal has no NUL"));
+crates/pcloud-fs/src/platform/macos.rs:1585:    argv.push(CString::new("rw").expect("literal has no NUL"));
+crates/pcloud-fs/src/platform/macos.rs:1586:    argv.push(CString::new("-o").expect("literal has no NUL"));
+crates/pcloud-fs/src/platform/macos.rs:1587:    argv.push(CString::new("allow_other").expect("literal has no NUL"));
+crates/pcloud-fs/src/platform/macos.rs:1588:    argv.push(CString::new("-o").expect("literal has no NUL"));
+crates/pcloud-fs/src/platform/macos.rs:1589:    argv.push(CString::new("defer_permissions").expect("literal has no NUL"));
+crates/pcloud-fs/src/platform/macos.rs:1595:        argv.push(CString::new("-o").expect("literal has no NUL"));
+crates/pcloud-observability/src/exporter.rs:213:        .expect("set_nonblocking on listener");
+crates/pcloud-observability/src/metrics.rs:314:        let mut guard = user_histograms().lock().expect("user_histograms mutex");
+crates/pcloud-plugin-api/src/lib.rs:218:        let payload = serde_json::to_vec(self).expect("manifest is always serializable");
+crates/pcloud-plugin-api/src/lib.rs:869:        Ok(self.loaded.last().expect("just pushed"))
+crates/pcloud-plugin-api/src/lib.rs:970:            let h = handler_opt.take().expect("handler consumed exactly once");
+crates/pcloud-sdk/src/upload_session.rs:376:            .expect("chunked mutex poisoned")
+crates/pcloud-sdk/src/upload_session.rs:414:            .expect("chunked mutex poisoned")
+crates/pcloud-sdk/src/upload_session.rs:423:            .expect("upload session outcome mutex poisoned");
+crates/pcloud-sdk/src/upload_session.rs:438:            .expect("upload session outcome mutex poisoned");
+crates/pcloud-sdk/src/upload_session.rs:464:            .expect("chunked mutex poisoned") = Some(ChunkedState {
+crates/pcloud-sdk/src/upload_session.rs:498:            let guard = self.inner.chunked.lock().expect("chunked mutex poisoned");
+crates/pcloud-sdk/src/upload_session.rs:511:            let mut guard = self.inner.chunked.lock().expect("chunked mutex poisoned");
+crates/pcloud-sdk/src/upload_session.rs:560:            let guard = self.inner.chunked.lock().expect("chunked mutex poisoned");
+crates/pcloud-sdk/src/upload_session.rs:591:                    .expect("upload session outcome mutex poisoned");
+crates/pcloud-sdk/src/upload_session.rs:619:                .expect("upload session outcome mutex poisoned") = Some(Err(hm_twin));
+crates/pcloud-sdk/src/upload_session.rs:641:            .expect("upload session outcome mutex poisoned") = Some(Ok(meta.clone()));
+crates/pcloud-sdk/src/upload_session.rs:651:            .expect("chunked mutex poisoned")
+crates/pcloud-sdk/src/upload_session.rs:662:            .expect("chunked mutex poisoned")
+crates/pcloud-sdk/src/upload_session.rs:686:                .expect("upload session outcome mutex poisoned") = Some(Err(err));
+crates/pcloud-sdk/src/upload_session.rs:736:        .expect("upload session outcome mutex poisoned") = Some(outcome);
+crates/pcloud-store/src/repositories/audit.rs:434:        .expect("HMAC-SHA256 accepts any key length");
+crates/pcloud-resilience/src/clock.rs:111:        let mut guard = self.inner.lock().expect("manual clock mutex poisoned");
+crates/pcloud-resilience/src/rate_limit.rs:158:        let mut state = self.state.lock().expect("token-bucket mutex poisoned");
+crates/pcloud-resilience/src/rate_limit.rs:196:        let mut state = self.state.lock().expect("token-bucket mutex poisoned");
+crates/pcloud-resilience/src/rate_limit.rs:225:        let mut state = self.state.lock().expect("token-bucket mutex poisoned");
+crates/pcloud-resilience/src/pacing.rs:115:        let mut st = self.state.lock().expect("pacer mutex poisoned");
+crates/pcloud-resilience/src/pacing.rs:123:        self.state.lock().expect("pacer mutex poisoned").limit
+crates/pcloud-resilience/src/pacing.rs:140:            let mut st = self.state.lock().expect("pacer mutex poisoned");
+crates/pcloud-resilience/src/pacing.rs:177:            let mut st = self.state.lock().expect("pacer mutex poisoned");
+crates/pcloud-compat/src/rpc_codec.rs:214:        let type_code = u32::from_ne_bytes(buf[0..4].try_into().expect("4 bytes"));
+crates/pcloud-compat/src/rpc_codec.rs:215:        let length = u64::from_ne_bytes(buf[8..16].try_into().expect("8 bytes"));
+crates/pcloud-compat/src/shm_producer.rs:249:        let mapping = NonNull::new(addr.cast::<PsyncShm>()).expect("shmat returned non-null");
+crates/pcloud-mockserver/src/lib.rs:508:    let mut state = state.lock().expect("mock state poisoned");
+crates/pcloud-mockserver/src/lib.rs:778:    let body_bytes = serde_json::to_vec(body).expect("canned JSON must serialize");
+crates/pcloud-web/src/routes.rs:564:    getrandom::getrandom(&mut buf).expect("getrandom");
+crates/pcloud-idp/src/jwks.rs:157:        let mut state = self.state.lock().expect("jwks cache mutex poisoned");
+crates/pcloud-idp/src/jwks.rs:167:            let state = self.state.lock().expect("jwks cache mutex poisoned");
+crates/pcloud-idp/src/jwks.rs:180:            let state = self.state.lock().expect("jwks cache mutex poisoned");
+crates/pcloud-idp/src/jwks.rs:186:        let state = self.state.lock().expect("jwks cache mutex poisoned");
+crates/pcloud-fleet/src/lib.rs:482:        let mut g = self.last.lock().expect("fleet rate-limiter mutex poisoned");
+crates/pcloud-kms/src/lib.rs:430:                    .expect("failed to build local tokio runtime");
+crates/pcloud-kms/src/lib.rs:434:            .expect("kms async bridge thread panicked")
+crates/pcloud-kms/src/lib.rs:440:            .expect("failed to build local tokio runtime");
+crates/pcloud-plugin-backup-schedule/src/lib.rs:709:        .expect("epoch is always a valid timestamp")
+crates/pcloud-backends/src/mock.rs:88:            .expect("mock recorder mutex poisoned")
+crates/pcloud-backends/src/mock.rs:95:            .expect("mock recorder mutex poisoned")
+crates/pcloud-backends/src/mock.rs:102:            .expect("mock recorder mutex poisoned")
+crates/pcloud-backends/src/mock.rs:109:            .expect("mock recorder mutex poisoned")
+crates/pcloud-backends/src/mock.rs:258:            .expect("mock proto canned mutex poisoned")
+crates/pcloud-backends/src/mock.rs:267:            .expect("mock proto canned mutex poisoned");
+crates/pcloud-backends/src/mock.rs:295:            .expect("mock proto canned mutex poisoned")
+crates/pcloud-backends/src/path_resolver.rs:189:        let mut cache = self.cache.lock().expect("cache mutex poisoned");
+crates/pcloud-backends/src/path_resolver.rs:202:        let mut cache = self.cache.lock().expect("cache mutex poisoned");
+crates/pcloud-backends/src/path_resolver.rs:556:        .expect("normalised path always contains '/'");
+crates/pcloud-backends/src/upload_sessions.rs:279:        self.by_id.get(&id).expect("just inserted")
+crates/pcloud-backends/src/transfer_backend.rs:523:                let uid = *upload_id_opt_ptr.lock().expect("upload id cell poisoned");
+crates/pcloud-backends/src/transfer_backend.rs:533:                    && let Some(uid) = *upload_id_opt_ptr.lock().expect("upload id cell poisoned")

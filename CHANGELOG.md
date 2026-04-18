@@ -2026,3 +2026,11 @@ Full dossier: `docs/book/src/architecture/performance.md`.
 - Parity claims: the project explicitly does **not** claim "full parity",
   "production ready", "enterprise ready", or "drop-in replacement". See
   `CLAUDE.md` and `CONTRIBUTING.md`.
+
+## [0.1.0] - Unreleased
+
+Initial pre-release of the Rust rewrite. See [[Unreleased]](#unreleased) for current changes.
+
+This version tracks the first tagged release once the workspace reaches a publishable state.
+No tag has been cut yet; the version number is pinned in `Cargo.toml` as `0.1.0` per
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) convention for pre-releases.

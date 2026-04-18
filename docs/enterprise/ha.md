@@ -1,3 +1,8 @@
+> **Pre-alpha scaffold — not live / not production-verified.** This document
+> describes design and unit-tested code that has not been validated against a
+> real production deployment. Do not treat it as a shippable capability.
+> See `CLAUDE.md` and `docs/enterprise/README.md` for the honesty rules.
+
 # High Availability for pcloud-rs
 
 > **Status:** Tier 1 **landed** (per-UID isolation via XDG + `SO_PEERCRED`).

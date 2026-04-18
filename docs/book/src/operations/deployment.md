@@ -26,7 +26,7 @@ container, Kubernetes, reverse-proxied web UI) documents:
 - A **pinned release** with sha256, signature (cosign or GPG), and
   release-note URL. Never deploy `latest`.
 - A **config repository** with signed commits that holds
-  `config.toml` templates per profile (`staging`, `production`).
+  `config.json` templates per profile (`staging`, `production`).
 - A **fleet tool** (Ansible, Chef, Puppet, Salt, Intune, Jamf,
   Workspace ONE) able to push files, restart services, and verify
   sha256 before activation.
@@ -273,7 +273,7 @@ Pre-requirements:
 - keep the previous package available in your artefact repo for at
   least two upgrade cycles,
 - keep the previous `SHA256SUMS.prev.txt` and signature,
-- keep the previous `config.toml` template tagged in the config repo.
+- keep the previous `config.json` template tagged in the config repo.
 
 Procedure:
 

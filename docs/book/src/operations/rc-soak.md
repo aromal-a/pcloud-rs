@@ -189,7 +189,7 @@ Any **one** of the following terminates the soak immediately:
 ### Rollback procedure
 
 1. Mark the run `FAILED` in the scorecard and in `bd-1du.10`.
-2. Freeze all soak hosts: `systemctl stop pcloud-daemon` on Linux/BSD,
+2. Freeze all soak hosts: `systemctl stop pcloudd` on Linux/BSD,
    equivalent on macOS/Windows.
 3. Capture forensics: full `/var/lib/pcloud/`, `/var/log/pcloud-soak/`,
    core dumps, and last 24 h of `/metrics` snapshots to the archive

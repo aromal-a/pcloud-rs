@@ -1,0 +1,27 @@
+crates/pcloud-proto/src/transfer_api.rs:414:    /// TODO(spec §9.5): live-API verification required before relying on
+crates/pcloud-proto/src/methods/upload.rs:68:    // TODO(spec §9.3, `pupload.c:1495-1509`): C always emits `ifhash`. A true
+crates/pcloud-proto/src/methods/upload.rs:601:/// TODO(spec §9.2): live-API verification required before trusting this
+crates/pcloud-cli/src/app.rs:2:// **GATING:** none (portable; uses Linux-only idioms — see TODO(bd-xplat)).
+crates/pcloud-cli/src/app.rs:23:        // TODO(bd-xplat): Linux-only — needs cfg gate or platform trait abstraction. See PLAN_CROSSPLATFORM.md §2.
+crates/pcloud-cli/src/app.rs:160:        // TODO(bd-xplat): Linux-only — needs cfg gate or platform trait abstraction. See PLAN_CROSSPLATFORM.md §2.
+crates/pcloud-daemon/src/metrics_server.rs:184:// TODO(P0.3 follow-up): wire `slo.incr_upload_started()` and
+crates/pcloud-daemon/src/mount_runtime.rs:43://! under `bd-1du.4.6` (see `TODO(bd-1du.4.6)` in
+crates/pcloud-daemon/src/runtime.rs:19:// wiring is tracked under bd-1du.4.6.1 — see TODO in
+crates/pcloud-daemon/src/runtime.rs:5116:    /// H14 PR4 — TODO(bd-1du.4.6.1): bootstrap caller for the integrity
+crates/pcloud-daemon/src/vault/mod.rs:9://! All four backends are real implementations — no `unimplemented!()`
+crates/pcloud-engine/src/local_scan.rs:163:///     other => panic!("expected IncrementalOnly, got {other:?}"),
+crates/pcloud-fs/src/fuser_shim.rs:17:// **GATING:** none (portable; uses Linux-only idioms — see TODO(bd-xplat)).
+crates/pcloud-fs/src/fuser_shim.rs:25:// TODO(bd-xplat): Linux-only — needs cfg gate or platform trait abstraction. See PLAN_CROSSPLATFORM.md §2.
+crates/pcloud-fs/src/mount_orphan.rs:64://! # Windows: TODO
+crates/pcloud-fs/src/platform/windows.rs:647:        // TODO(bd-xplat-windows): validate actual SDDL parsing against a
+crates/pcloud-fs/src/platform/windows.rs:690:/// TODO(bd-xplat-windows): add a proper integration test on Windows; the
+crates/pcloud-fs/src/platform/windows.rs:1248:/// # Why this is a permanent no-op (not a TODO)
+crates/pcloud-ipc/src/methods.rs:7://! under `TODO(bd-xplat)`.
+crates/pcloud-ipc/src/methods.rs:10:// **GATING:** none (portable; uses Linux-only idioms — see TODO(bd-xplat)).
+crates/pcloud-ipc/src/platform/mod.rs:8://! - Windows    → `platform::windows::WindowsIpc` (named pipes + SID check) — STUB
+crates/pcloud-sdk/src/lib.rs:1351:    /// and `TODO(stub)` markers.
+crates/pcloud-sdk/src/upload_session.rs:693:    let _ = &request.conflict_mode; // TODO(bd-1du.10): thread once the wire supports ifhash.
+crates/pcloud-resilience/src/metered.rs:40://! Linux-specific — see the `TODO(bd-xplat)` marker inside the private
+crates/pcloud-resilience/src/metered.rs:45:// **GATING:** none (portable; uses Linux-only idioms — see TODO(bd-xplat)).
+crates/pcloud-resilience/src/metered.rs:120:    // TODO(bd-xplat): Linux-only — needs cfg gate or platform trait abstraction. See PLAN_CROSSPLATFORM.md §2.
+crates/pcloud-backends/src/folder_backend.rs:403:        // TODO(bd-1du.10): wire to the binary API `listrevisions`

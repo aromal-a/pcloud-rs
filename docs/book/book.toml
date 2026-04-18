@@ -7,8 +7,8 @@ multilingual = false
 src = "src"
 
 [output.html]
-git-repository-url = "https://github.com/pcloudcom/pcloud-rs"
-edit-url-template = "https://github.com/pcloudcom/pcloud-rs/edit/main/docs/book/{path}"
+git-repository-url = "https://github.com/ezechiel203/pcloud-rs"
+edit-url-template = "https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/{path}"
 default-theme = "navy"
 preferred-dark-theme = "navy"
 

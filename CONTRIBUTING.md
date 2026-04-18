@@ -25,7 +25,7 @@ below.
 
 ## Scope
 
-Contributions are welcome to the `` workspace. The legacy C/C++
+Contributions are welcome to the `pcloud-rs` workspace. The legacy C/C++
 client (`pcloud-rs/main.cpp`, `pclsync_lib.cpp`, `pclsync/`) is in
 maintenance mode — bug fixes only, no new feature parity shims, unless
 directly needed by the Rust rewrite.
@@ -35,7 +35,7 @@ directly needed by the Rust rewrite.
 ### Toolchain
 
 - Rust edition: **2024**, workspace resolver 3.
-- Rust toolchain: pinned via `rust-toolchain.toml` in ``.
+- Rust toolchain: pinned via `rust-toolchain.toml` in `pcloud-rs`.
   Install `rustup` and let it pick the pinned channel automatically.
 - Components required: `rustfmt`, `clippy`.
 
@@ -69,7 +69,7 @@ bd list --status=open
 
 ## Daily Workflow
 
-All commands run from the `` directory.
+All commands run from the `pcloud-rs` directory.
 
 ```bash
 cd /home/ezechiel203/Projects/FORKS/pcloud-rs/

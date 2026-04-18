@@ -16,7 +16,7 @@ code trees live side-by-side in the repository:
   capability auditing and as a behavioural reference while the Rust rewrite
   catches up on the long tail of features. New development on this tree is
   limited to security fixes.
-- **Rust workspace** — ``. The forward-looking implementation:
+- **Rust workspace** — `pcloud-rs`. The forward-looking implementation:
   typed protocol clients, a daemon/runtime split, secure local IPC, SQLite
   persistence, and an embeddable SDK. All new features land here.
 
@@ -99,7 +99,7 @@ projected-filesystem (ProjFS) backend; that surface is still gated behind
                        pCloud API (eapi/api.pcloud.com)
 ```
 
-Each box is a crate in the `` workspace. Crates are thin and
+Each box is a crate in the `pcloud-rs` workspace. Crates are thin and
 composable: `pcloud-proto` owns the wire format, backends own side
 effects, the daemon owns the lifecycle, and the CLI/SDK are just two
 different front doors to the same IPC surface. The separation means you

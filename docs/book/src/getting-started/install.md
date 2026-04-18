@@ -165,8 +165,8 @@ user unit is **enabled but not started** — the installer never starts
 a service automatically. Start it yourself:
 
 ```bash
-systemctl --user start pcloud-daemon
-systemctl --user status pcloud-daemon    # expect "active (running)"
+systemctl --user start pcloudd
+systemctl --user status pcloudd    # expect "active (running)"
 ```
 
 > **Expert tip.** On Debian images managed by `apt-daily`, pin the

@@ -42,17 +42,23 @@ intentionally Rejected. See the CSV for full notes per row.
 
 | Operation | Rust entry | C counterpart | Status |
 |-----------|-----------|---------------|--------|
-| add sync | `SyncRuntime::add_root` | `psync_add_sync_by_path` / `_by_folderid` | P (`bd-1du.3`) |
+| add sync | `SyncRuntime::add_root` | `psync_add_sync_by_path` / `_by_folderid` | I |
 | list     | `SyncRuntime::list_roots` | `psync_get_sync_list` | I |
 | remove   | `SyncRuntime::remove_root` | `psync_delete_sync` | I |
 | pause    | IPC `SyncRootPause` | `psync_sync_pause` (per-root) | I |
 | resume   | IPC `SyncRootResume` | `psync_sync_resume` | I |
 | change type | IPC `SyncRootChangeType` | `psync_change_synctype` | I |
-| is-syncable helpers | partial | `psync_is_folder_syncable` family | P |
+| is-syncable helpers | `sync_backend.rs` / `mount_discovery.rs` | `psync_is_folder_syncable` family | I |
 | suggestions | `sync_suggest.rs` | `psync_suggest_folders` | I |
 | global pause/resume | — | `psync_pause` / `psync_resume` | R (per-root only) |
 
 ## Transfers (`pcloud-proto::transfer_api`, `async_transfer`, `http_download`)
+
+Row 93 (`upload_writefromfile` server-side copy) is **Partial**: the proto
+encoder and IPC variant exist; the daemon handler intentionally returns
+`not-yet-wired` after audit 04 found the prior shim was a local-file re-upload
+rather than a server-side copy from a remote `fileid`. See
+`crates/pcloud-backends/src/transfer_backend.rs:445` and `bd-1du`.
 
 | Operation | Rust entry | C counterpart | Status |
 |-----------|-----------|---------------|--------|
@@ -60,11 +66,12 @@ intentionally Rejected. See the CSV for full notes per row.
 | `upload_create` | `TransferApi::upload_create` | `psync_upload_create` | I |
 | `upload_write` | `TransferApi::upload_write` | `psync_upload_write` | I |
 | `upload_save` | `TransferApi::upload_save` | `psync_upload_save` | I |
+| `upload_writefromfile` (server-side copy) | proto encoder exists; handler not yet wired | `upload_writefromfile` | P (row 93, `bd-1du`) |
 | signed HTTP download | `http_download::execute` | internal | I |
 | SDK `upload_file` / `_as` | `EmbeddedDaemon::upload_file{_as}` | convenience | I |
 | SDK `upload_data` / `_as` | `EmbeddedDaemon::upload_data{_as}` | convenience | I |
 | SDK `download_file` | `EmbeddedDaemon::download_file` | convenience | I |
-| per-download state query | — | `psync_get_download_state` | M |
+| per-download state query | — | `psync_download_state` | R (C body is a `return 0` stub; Rust transfer runtime exposes real per-transfer state via IPC) |
 
 ## Public links (`pcloud-proto::public_links_api`)
 
@@ -73,7 +80,7 @@ intentionally Rejected. See the CSV for full notes per row.
 | file link create | `create_file_public_link` | `psync_file_public_link` | I |
 | folder link create | `create_folder_public_link{_with_options}` | `psync_folder_public_link{_full}` | I |
 | tree link create (ids) | `create_tree_public_link` | `psync_tree_public_link` | I |
-| tree link create (paths) | — | path-based shape | P (`bd-1du.9`) |
+| tree link create (paths) | `Request::CreateTreePublicLinkFromPaths` / `PublicLinkPathResolver` | path-based shape | I |
 | list publinks | `list_public_links` | `psync_list_publinks` | I |
 | list uploadlinks | `list_upload_links` | `psync_list_uploadlinks` | I |
 | show link | `show_public_link` | `psync_show_publink` | I |
@@ -86,7 +93,7 @@ intentionally Rejected. See the CSV for full notes per row.
 | bookmarks / pins | helpers in `public_link_backend` | `psync_*_bookmark` | I |
 | link cache warmup | — | C-internal helper | R |
 
-## Crypto (`pcloud-crypto`, `pcloud-proto::crypto_api`) — `bd-1du.5`
+## Crypto (`pcloud-crypto`, `pcloud-proto::crypto_api`)
 
 | Operation | Rust entry | C counterpart | Status |
 |-----------|-----------|---------------|--------|
@@ -99,10 +106,10 @@ intentionally Rejected. See the CSV for full notes per row.
 | priv key flags | `Request::GetCryptoPrivKeyFlags` | `psync_crypto_priv_key_flags` | I |
 | hint | `CryptoShell::get_hint` | `psync_crypto_hint` | I |
 | status | `Request::GetCryptoStatus` | `psync_crypto_*` getters | I |
-| encrypted file content path | — | FUSE-integrated | M (depends on `bd-1du.4`) |
-| reset | partial via stop+setup | `psync_crypto_reset` | P |
+| encrypted file content path | FUSE-integrated (Linux live; macOS/Windows scaffold) | FUSE-integrated | I |
+| reset | `CryptoShell::reset` / stop+setup | `psync_crypto_reset` | I |
 
-## Shares / business / teams (`pcloud-proto::shares_api`) — `bd-1du.7`
+## Shares / business / teams (`pcloud-proto::shares_api`)
 
 | Operation | Rust entry | C counterpart | Status |
 |-----------|-----------|---------------|--------|
@@ -114,18 +121,18 @@ intentionally Rejected. See the CSV for full notes per row.
 | crypto account team share | `SharesApi::crypto_account_team_share` | `psync_crypto_account_teamshare` | I |
 | contacts | `SharesRuntime::list_contacts` | `psync_contactlist` | I |
 | my teams | `SharesRuntime::list_my_teams` | `psync_list_myteams` | I |
-| stop share (multi-id) | partial | `psync_account_stopshare` | P |
-| per-share permission modify | — | `psync_modify_share` | M |
-| incoming/outgoing share mgmt | — | full surface | M |
+| stop share (multi-id) | `SharesApi::account_stop_share` | `psync_account_stopshare` | I |
+| per-share permission modify | `SharesApi::modify_share` | `psync_modify_share` | I |
+| accept/decline/cancel share requests | `SharesApi::accept/decline/cancel_share_request` | `psync_accept/decline/cancel_share_request` | I |
 
-## Backup / device (`pcloud-proto::backup_api`) — `bd-1du.8`
+## Backup / device (`pcloud-proto::backup_api`)
 
 | Operation | Rust entry | C counterpart | Status |
 |-----------|-----------|---------------|--------|
 | create backup | `BackupApi::create_backup` / SDK `create_backup` | `psync_create_backup` | I (no auto local sync-root) |
 | stop device | `BackupApi::stop_device` / SDK `stop_device` | `psync_stopdevice` | I |
 | delete backup device | SDK `delete_backup_device` | `psync_delete_backup_device` | I (local-state only) |
-| delete backup | — | `psync_delete_backup` | M |
+| delete backup | `BackupApi::stop_backup` / `BackupRuntime::delete_backup_with_cascade` / SDK `delete_backup` | `psync_delete_backup` | I |
 | list devices | — | commented-out in C header | R (ghost) |
 | device monitor cb | — | commented-out in C header | R (ghost) |
 | update check | — | declared in C header | R (no body linked in this fork) |
@@ -144,16 +151,22 @@ intentionally Rejected. See the CSV for full notes per row.
 | has value | `ValuesRepository::has(kind)` | approximate in C | I (stricter) |
 | has subscription / billing expiry | — | `psync_has_subscription`, etc. | R (account/userinfo path) |
 
-## Filesystem / mounted drive (`pcloud-fs`) — `bd-1du.4`
+## Filesystem / mounted drive (`pcloud-fs`)
+
+Linux FUSE read+write is live-verified end-to-end. macOS (`fuse-t`) and Windows
+(WinFSP) adapters are scaffolded and compile-tested; hardware verification is
+pending (`bd-1du.4` cross-platform proof). The parity matrix carries one row
+for this subsystem (`fs,mounted pcloud filesystem`) and it is `Implemented`
+on the Linux path.
 
 | Operation | Rust entry | C counterpart | Status |
 |-----------|-----------|---------------|--------|
-| mount | `pcloud-fs::mount_service` | `pfs_*` | M |
-| unmount | — | `pfs_unmount` | M |
-| readdir | in-memory only | `pfs_readdir` | P |
-| read | in-memory shell | `pfs_read` | P |
-| write / flush / fsync | staging + journal helpers | `pfs_write` etc. | M (active FUSE missing) |
-| stat | in-memory | `pfs_stat` | P |
+| mount (Linux) | `MountService::mount` / `MountService::mount_fuser` | `pfs_*` | I (Linux live; macOS/Windows scaffold) |
+| unmount | `MountHandle::Drop` / `MountService::unmount` | `pfs_unmount` | I (Linux live; macOS/Windows scaffold) |
+| readdir | `FuseAdapter::readdir` / `lookup` / `getattr` | `pfs_readdir` | I |
+| read | `FuseAdapter::read` / `open` / `release` | `pfs_read` | I |
+| write / flush / fsync | `WritePathService` via `PcloudFsShim` / `ProtoFuseAdapter` | `pfs_write` etc. | I (chunked multi-GiB pipelining is a perf follow-up, not a parity gap) |
+| stat | `FuseAdapter::getattr` / SDK `stat_path` | `pfs_stat` | I |
 
 ## IPC method index
 

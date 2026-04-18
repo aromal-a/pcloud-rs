@@ -1,5 +1,10 @@
 # Security Model
 
+> **Note:** For the architecture-scoped security invariants (IPC socket modes, vault lifecycle,
+> audit hash-chain, panic guard) with per-invariant test citations, see
+> [Architecture: Security Model](../architecture/security-model.md).
+> This page covers the threat model, attacker classes, trust boundaries, and review evidence.
+
 This chapter describes the security posture of the Rust `pcloud-rs` rewrite: who the attackers are, where the trust boundaries live, what the daemon guarantees, and what remains the operator's responsibility. It is paired with the companion chapters [Secrets Handling](./secrets.md) and [Threat Model (STRIDE)](./threat-model.md).
 
 The Rust rewrite is deliberately **stricter** than the legacy C client. Where the legacy behaviour conflicts with normal enterprise security expectations, the Rust path keeps the secure default and the legacy behaviour is documented as intentionally dropped (see ADR 0007).
