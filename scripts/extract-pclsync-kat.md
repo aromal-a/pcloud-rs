@@ -1,299 +1,129 @@
-# extract-pclsync-kat — Human Walkthrough
+# Extract pclsync-compat KAT fixtures
 
-This document is the step-by-step companion to `scripts/extract-pclsync-kat.sh`.
-Read it in full before you run the script.
-
----
-
-## What this does
-
-The script extracts real C-client-produced ciphertext and key material from a
-live pCloud account into `crates/pcloud-crypto/tests/fixtures/pclsync_v2/`.
-Those files are used by the Wave 1 Rust KAT tests to verify that the Rust
-crypto primitives produce byte-identical output to the official pclsync
-implementation.
-
----
-
-## One-way operation — read this first
-
-**Crypto setup on a pCloud account is one-way.**
-
-Once you run `crypto setup` via `pcloudcc`, pCloud generates a key pair on
-the server bound to the password you supply.  You cannot undo this without
-contacting pCloud support.  If your account already has crypto enabled with a
-real password you care about, **do not run this script** — it will attempt to
-set up crypto again and will likely fail or corrupt your existing setup.
-
-Options if your account already has crypto:
-
-1. Use a **dedicated throwaway pCloud account** for the KAT extraction.
-   This is the recommended approach.
-2. If you have already run `crypto setup` with the KAT password on a
-   dedicated account, skip Step 7 (crypto setup) in the script and go
-   straight to the folder creation step.
-
----
+Run this once (or re-run any time) to capture real ciphertext + key material
+from your pCloud account into the Rust test-fixture directory. The extracted
+blobs drive `crates/pcloud-crypto/tests/pclsync_compat_kat_live.rs`, which is
+the byte-level interop proof for the PclsyncCompat crypto backend.
 
 ## Prerequisites
 
-Before running the script, verify:
+### One-time account setup (via the pCloud **web UI**)
 
-1. **pcloudcc binary** is at the repo root and is executable:
+`pcloudcc` does not expose `crypto setup` or `mkdir` at runtime. Setup and
+folder creation must happen in the official client once per account.
 
-   ```
-   ls -l ./pcloudcc
-   chmod +x ./pcloudcc
-   ```
+1. Make sure pCloud Crypto is active on your account. (It is, per session
+   context — the account already passes unlock with the login password.)
+2. Open <https://my.pcloud.com> and sign in.
+3. Navigate to **Crypto Folder** (the top-level encrypted root).
+4. Create a sub-folder called exactly `pclsync-kat-v1` (no quotes, no
+   leading/trailing whitespace).
+5. Upload the fixture file
+   `crates/pcloud-crypto/tests/fixtures/pclsync_v2/kat-plaintext-v1.bin`
+   into that sub-folder using the web UI's **Upload** button.
+   - The file must end up at `Crypto Folder / pclsync-kat-v1 / kat-plaintext-v1.bin`.
+   - Size on the server must show 4096 bytes. If it says anything else,
+     the upload was corrupted — delete and re-upload.
+   - The web UI encrypts client-side; what the pCloud servers store is
+     the ciphertext we need to capture.
 
-2. **.env file** exists at the repo root and contains your pCloud credentials
-   for the KAT account (not your personal account):
+### Local environment
 
-   ```
-   PCLOUD_USERNAME=your-kat-account@example.com
-   PCLOUD_PASSWORD=your-login-password
-   ```
+- `PCLOUD_USERNAME` and `PCLOUD_PASSWORD` set in your shell (direnv loads
+  these from `.env` automatically).
+- 2FA must be OFF (already the case in this session). If you re-enable it
+  later, the extraction will fail at the `userinfo` call because we can't
+  programmatically submit a TFA code.
+- Python 3.9+ (stdlib only — no extra deps).
 
-   If you use direnv, `direnv allow` in the repo root is sufficient.
-   Otherwise: `source .env`
-
-3. **sqlite3** is installed:
-
-   ```
-   sqlite3 --version
-   ```
-
-4. **python3** is installed (used for byte manipulation):
-
-   ```
-   python3 --version
-   ```
-
-5. **curl** is installed.
-
-6. **No pcloudcc daemon is already running** for this account:
-
-   ```
-   pkill pcloudcc || true
-   ```
-
----
-
-## The KAT password
-
-The script uses this fixed, public password for all crypto operations:
-
-```
-pclsync-kat-fixture-v1-do-not-use-for-real
-```
-
-This password is intentionally public and embedded in the script.  It is not
-a secret.  The fixtures it produces are safe to commit because:
-
-- The wrapped private key blob is useless without this password.
-- This password must never be used for any real data.
-- The plaintext content of all fixture files is entirely synthetic.
-
----
-
-## Step-by-step run guide
-
-### 1. Open two terminal windows
-
-Terminal A: the script (`bash scripts/extract-pclsync-kat.sh`)
-Terminal B: interactive pcloudcc commands
-
-### 2. Terminal A — start the script
+## Run
 
 ```bash
-cd /path/to/pcloud-rs
-source .env        # if not using direnv
-bash scripts/extract-pclsync-kat.sh
+python3 scripts/extract-pclsync-kat.py
 ```
 
-The script will verify the binary, credentials, and create the fixture
-directory.  It will then pause and instruct you to act in Terminal B.
+Expected output:
 
-### 3. Terminal B — start the daemon
+```
+[*] plaintext sha256 = c8f5d0341d54d951a71b136e6e2afcb14d11ed8489a7ae126a8fee0df6ecf193
+[*] authenticating as gestion.docbetry@gmail.com
+[*] auth token acquired
+[*] fetching crypto_getuserkeys
+    priv_key_ver1 blob: NNN bytes
+    pub_key_ver1 blob : NNN bytes
+[*] locating crypto folder tree
+    Crypto Folder folderid=NNN
+    'pclsync-kat-v1' folderid=NNN
+    'kat-plaintext-v1.bin' fileid=NNN size=4096
+[*] fetching crypto_getfolderkey
+    folder wrapped sym_key: NNN bytes
+[*] fetching crypto_getfilekey
+    file wrapped sym_key: NNN bytes
+    file hash (u64): ...
+[*] fetching getfilelink
+    downloading https://...
+    ciphertext: 4096 bytes (or 4128 / 4144 depending on pCloud's authentication overhead)
 
-When the script prompts you, run in Terminal B:
+[+] all fixtures written to:
+    crates/pcloud-crypto/tests/fixtures/pclsync_v2/
+```
+
+On success 6 files are written (plus `README.md`):
+
+| File | Purpose |
+|---|---|
+| `kat-plaintext-v1.bin` | committed, the known-input fixture |
+| `kat-priv-key-ver1.blob` | PBKDF2-wrapped RSA-4096 priv key |
+| `kat-pub-key-ver1.blob` | user pubkey (unwrapped) |
+| `kat-folder-sym-key-wrapped.bin` | RSA-OAEP-wrapped folder sym key |
+| `kat-file-sym-key-wrapped.bin` | RSA-OAEP-wrapped file sym key |
+| `kat-file-hash.txt` | pCloud file-hash (u64 decimal) |
+| `kat-ciphertext-v1.bin` | server-served raw ciphertext |
+| `README.md` | auto-generated provenance |
+
+## Run the Rust KAT
 
 ```bash
-./pcloudcc --username $PCLOUD_USERNAME --password --daemonize
+export PCLOUD_KAT_PASSWORD='<your login password>'
+cargo test -p pcloud-crypto --test pclsync_compat_kat_live -- --ignored
 ```
 
-Enter your pCloud login password when prompted.  Wait until you see a
-message indicating login success (e.g., "pCloud account logged in").
+The test:
 
-Return to Terminal A and press ENTER.
+1. Loads `kat-plaintext-v1.bin`, computes expected SHA-256.
+2. Parses `kat-priv-key-ver1.blob` → extracts PBKDF2 salt + encrypted RSA-DER.
+3. Derives KEK from `PCLOUD_KAT_PASSWORD` + salt via
+   `pclsync_kdf::derive_kek`.
+4. Unwraps the encrypted RSA-DER with
+   `pclsync_modes::aes256_ctr_pclsync_xor_inplace`.
+5. Parses the DER into an `rsa::RsaPrivateKey`.
+6. RSA-OAEP-unwraps `kat-file-sym-key-wrapped.bin` →
+   `pclsync_rsa::SymKeyVer1`.
+7. Splits `kat-ciphertext-v1.bin` into 4096-byte sectors + 32-byte tag per
+   sector (+ Merkle tree tail if `file size > 4096`).
+8. Calls `pclsync_sector::open_sector` for sector 0.
+9. Asserts the decrypted plaintext SHA-256 matches the expected.
 
-### 4. Terminal B — crypto setup
+A successful run is the proof that pcloud-rs's PclsyncCompat backend
+decrypts exactly what the official pCloud clients produce — **the
+byte-level interop KAT** referenced by bead `pcloud-rs-s1p.13`.
 
-When the script prompts for crypto setup, run in Terminal B:
+## Caveats / troubleshooting
 
-```bash
-./pcloudcc --commands_only
-```
+- **"userinfo did not return an 'auth' token"**: your account has 2FA on,
+  or the login password is wrong, or the account is locked. Check
+  <https://my.pcloud.com> by signing in through the browser.
+- **"folder 'pclsync-kat-v1' not found"**: the web-UI folder wasn't
+  created, or the name has a typo / invisible whitespace. Delete and
+  recreate with the exact name above.
+- **ciphertext size != 4096**: pCloud's direct download may include an
+  authentication trailer (up to 32 bytes per sector + a small Merkle
+  root). 4128 or similar sizes are normal — the Rust test handles them.
+- **Re-running**: safe. The script overwrites all the extracted artefacts
+  in place; the web-UI setup does NOT need to be redone.
 
-At the `pcloudcc>` prompt:
+## Cleanup (optional, after you're satisfied the KAT works)
 
-```
-crypto setup
-```
-
-When asked for the crypto password, type **exactly**:
-
-```
-pclsync-kat-fixture-v1-do-not-use-for-real
-```
-
-Confirm it when prompted again.  Type `exit` or press Ctrl-D to leave the
-interactive session.
-
-Return to Terminal A and press ENTER.
-
-### 5. Terminal B — create and mark the KAT folder
-
-The script will print the folder name it generated (e.g., `kat-fixture-v1-20260418-123456`).
-In Terminal B:
-
-```bash
-./pcloudcc --commands_only
-```
-
-At the prompt:
-
-```
-mkdir /kat-fixture-v1-<timestamp>
-crypto folder /kat-fixture-v1-<timestamp>
-exit
-```
-
-Return to Terminal A and press ENTER.
-
-### 6. Terminal B — upload the plaintext files
-
-When prompted, in Terminal B:
-
-```bash
-./pcloudcc --commands_only
-```
-
-At the prompt (use the exact paths printed by the script):
-
-```
-put crates/pcloud-crypto/tests/fixtures/pclsync_v2/c_client_sector_id_0_plaintext.bin /kat-fixture-v1-<timestamp>/kat_4096.bin
-put crates/pcloud-crypto/tests/fixtures/pclsync_v2/c_client_sector_id_1_plaintext.bin /kat-fixture-v1-<timestamp>/kat_5000.bin
-exit
-```
-
-Wait for each upload to complete before exiting.
-
-Return to Terminal A and press ENTER.
-
-### 7. Automated extraction
-
-From this point, the script runs automatically.  It will:
-
-- Fetch the auth token from the pcloudcc SQLite database
-- Call `listfolder` to get file IDs
-- Download ciphertext blobs via `getfilelink`
-- Call `crypto_getuserkeys` to extract the wrapped private key and PBKDF2 salt
-- Call `crypto_getfolderkeys` to extract the RSA-OAEP-wrapped folder sym key
-- Write all files to `crates/pcloud-crypto/tests/fixtures/pclsync_v2/`
-- Generate `README.md` in the fixture directory
-
-If the auth token cannot be found automatically, the script will prompt you
-to paste it.  You can retrieve it by running:
-
-```bash
-./pcloudcc --commands_only
-# then at the prompt: token
-```
-
----
-
-## After the script completes
-
-### Check the fixture directory
-
-```bash
-ls -lh crates/pcloud-crypto/tests/fixtures/pclsync_v2/
-```
-
-You should see all files listed in the fixture README.
-
-### Fill the placeholder files (Wave 1 task)
-
-Three files are placeholders that Wave 1 must fill after implementing the
-private-key decryption path:
-
-- `c_client_filename_hello_txt_aes_key.bin`
-- `c_client_filename_hello_txt_hmac_key.bin`
-- `c_client_filename_hello_txt.b32`
-
-The derivation path is:
-
-```
-PBKDF2-SHA512(KAT_CRYPTO_PASSWORD, salt, 20000, 32) → priv_key_aes_key
-AES-256-CBC-decrypt(priv_key_wrapped, priv_key_aes_key) → rsa_private_key
-RSA-OAEP-decrypt(rsa_private_key, sym_key_wrapped) → folder_sym_key
-folder_sym_key[0:32]  → AES key for filename enc
-folder_sym_key[32:64] → HMAC key for filename enc
-```
-
-### Commit the fixtures
-
-```bash
-git add crates/pcloud-crypto/tests/fixtures/pclsync_v2/
-git commit -m "feat(crypto): add pclsync_v2 KAT fixture files from C client extraction"
-```
-
-Do NOT commit:
-- `.env`
-- `./pcloudcc` (binary)
-- Any file containing your login password
-
----
-
-## Troubleshooting
-
-### "crypto_getuserkeys returned empty privatekey field"
-
-The API field name may differ by API version.  Run:
-
-```bash
-curl "https://api.pcloud.com/crypto_getuserkeys?auth=YOUR_TOKEN" | python3 -m json.tool
-```
-
-and find the correct field name, then pass the base64 value to:
-
-```bash
-python3 -c "import base64; open('path/to/file', 'wb').write(base64.b64decode('YOUR_B64'))"
-```
-
-### "listfolder failed" or "folder not found"
-
-The upload in step 6 may not have completed.  Wait a few seconds and retry.
-You can also verify in the pCloud web UI.
-
-### pcloudcc hangs on login
-
-Check that no other pcloudcc instance is running:
-
-```bash
-pkill pcloudcc
-```
-
-Then retry step 3.
-
----
-
-## Security checklist
-
-- [ ] I am using a dedicated KAT account, not my personal pCloud account.
-- [ ] I understand crypto setup is one-way per account.
-- [ ] The KAT password (`pclsync-kat-fixture-v1-do-not-use-for-real`) is
-      public and I have not used it for any real data.
-- [ ] My login password is not committed to any fixture file.
-- [ ] I will not commit `.env` or the `pcloudcc` binary.
+The fixture folder on your pCloud account (`pclsync-kat-v1`) can be
+deleted via the web UI any time. The fixture files committed to this
+repo continue to drive the offline KAT test.

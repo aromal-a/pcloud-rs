@@ -256,9 +256,11 @@ fn hmac_sha512_trunc32(
     let full = mac.finalize().into_bytes();
     let mut out = [0u8; PCLSYNC_AUTH_TAG_LEN];
     out.copy_from_slice(&full[..PCLSYNC_AUTH_TAG_LEN]);
-    // Zeroize the temporary buffer holding the full 64-byte HMAC output.
-    // `full` is a GenericArray; drop it explicitly after copy.
-    drop(full);
+    // `full` is a GenericArray<u8, _>, which is Copy — so there is no
+    // meaningful drop side-effect; the bytes live on the stack and are
+    // scrubbed only by the Zeroize-on-drop helpers used elsewhere.
+    // Nothing more to do here; explicit drop was a no-op (clippy caught).
+    let _ = full;
     out
 }
 

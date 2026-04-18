@@ -4,7 +4,7 @@ Single source of truth for Rust parity counts.
 
 _Last reviewed: 2026-04-18 (post-audit-04 correction)._
 
-## 2026-04-18 update — dual crypto backend landed
+## 2026-04-18 update — dual crypto backend landed + live KAT passed
 
 Wave 1: six pclsync-compatible crypto primitives (124 unit tests pass).
 Wave 2: `CryptoBackend::{PclsyncCompat,Enhanced}` dual-path dispatch
@@ -12,9 +12,20 @@ wired through setup/unlock/seal/open/filename; PclsyncCompat is the
 default. See `docs/CRYPTO-BACKEND-PLAN.md` and
 `docs/enterprise/crypto-compat.md`.
 
-Headline unchanged (155/3/0/28). Parity rows 124 and 142 remain
-Partial until Wave 3 live-KAT extraction from pcloudcc verifies
-byte-level interop; bead s1p.13 remains open.
+**Wave 3: live KAT extracted from the real pCloud HTTP API + decrypted
+byte-for-byte by pcloud-rs's PclsyncCompat backend.** PBKDF2-HMAC-SHA512
++ pclsync-native CTR + RSA-4096-OAEP + custom sector AEAD all confirmed
+wire-compatible with pCloud's official clients on a 4096-byte fixture.
+Bead `pcloud-rs-s1p.13` closed. See
+`crates/pcloud-crypto/tests/pclsync_compat_kat_live.rs` and
+`scripts/extract-pclsync-kat.py`.
+
+Headline: **153 / 5 / 0 / 28 (186 rows)**. The +2 Partial rows vs the
+earlier tally come from audit-04 H-6 (`share_temppass` currently uses
+symmetric HMAC, not the RSA-4096 signature the C client requires) —
+rows 124 (`psync_crypto_share_folder`) and 142 (`psync_crypto_account_teamshare`)
+remain Partial pending `bd-1du.5`. The KAT covered crypto primitives, not
+the share-invite handoff; that's a separate outstanding gap.
 
 ## 2026-04-18 update — audit-04 parity honesty correction
 
