@@ -1085,6 +1085,13 @@ mod tests {
         handle.join().expect("server thread should exit");
     }
 
+    // Global serialisation lock for connection-cap tests.  The per-peer
+    // tests mutate `ACTIVE_CONNECTIONS` / `PEER_CONNECTIONS` (process-wide
+    // statics shared across cargo's default parallel test runner) so we
+    // hold this mutex for the duration of each test to keep their delta
+    // assertions stable.
+    static PER_PEER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Verify that the per-peer cap is enforced even when the global cap
     /// has not been reached.  We set `MAX_IPC_CONNECTIONS_PER_PEER` = 32,
     /// so a single uid exhausting 32 slots should be denied a 33rd while
@@ -1097,7 +1104,7 @@ mod tests {
         use super::{ConnectionGuard, MAX_IPC_CONNECTIONS_PER_PEER, ACTIVE_CONNECTIONS, PEER_CONNECTIONS};
         use std::sync::atomic::Ordering;
 
-        // Use a test-only uid unlikely to collide with other tests.
+        let _lock = PER_PEER_TEST_LOCK.lock().unwrap();
         let test_uid: u32 = 0xBEEF_0001;
 
         // Reset any leftover state from previous tests.
@@ -1107,6 +1114,7 @@ mod tests {
                 m.remove(&test_uid);
             }
         }
+        let baseline = ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
 
         // Acquire MAX_IPC_CONNECTIONS_PER_PEER slots — all should succeed.
         let mut guards: Vec<ConnectionGuard> = (0..MAX_IPC_CONNECTIONS_PER_PEER)
@@ -1122,16 +1130,16 @@ mod tests {
             "per-peer cap should deny the ({MAX_IPC_CONNECTIONS_PER_PEER}+1)th connection"
         );
 
-        // Verify global counter matches how many we acquired.
+        // Verify global counter increased by exactly the number we acquired.
         assert_eq!(
             ACTIVE_CONNECTIONS.load(Ordering::Relaxed),
-            MAX_IPC_CONNECTIONS_PER_PEER
+            baseline + MAX_IPC_CONNECTIONS_PER_PEER
         );
 
-        // Release all guards; both counters should return to zero.
+        // Release all guards; counter returns to baseline, map entry cleared.
         guards.clear();
 
-        assert_eq!(ACTIVE_CONNECTIONS.load(Ordering::Relaxed), 0);
+        assert_eq!(ACTIVE_CONNECTIONS.load(Ordering::Relaxed), baseline);
         {
             let map = PEER_CONNECTIONS.lock().unwrap();
             assert!(
@@ -1149,6 +1157,7 @@ mod tests {
         use super::{ConnectionGuard, ACTIVE_CONNECTIONS, PEER_CONNECTIONS};
         use std::sync::atomic::Ordering;
 
+        let _lock = PER_PEER_TEST_LOCK.lock().unwrap();
         let test_uid: u32 = 0xBEEF_0002;
 
         // Reset any leftover state.
@@ -1158,6 +1167,7 @@ mod tests {
                 m.remove(&test_uid);
             }
         }
+        let baseline = ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
 
         // Acquire and immediately release one slot, three times in a row.
         for round in 0..3 {
@@ -1167,8 +1177,8 @@ mod tests {
 
             assert_eq!(
                 ACTIVE_CONNECTIONS.load(Ordering::Relaxed),
-                0,
-                "round {round}: global counter should be zero after drop"
+                baseline,
+                "round {round}: global counter should return to baseline after drop"
             );
             let map = PEER_CONNECTIONS.lock().unwrap();
             assert!(
