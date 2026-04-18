@@ -32,10 +32,9 @@ use pcloud_daemon::transport_factory::WrapDecision;
 use pcloud_proto::transport::{BinaryApiTransport, TransportConfig};
 
 fn unique_root(tag: &str) -> std::path::PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after epoch")
-        .as_nanos();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
         "pcloud-daemon-transport-factory-{tag}-{}-{nonce}",
         std::process::id()

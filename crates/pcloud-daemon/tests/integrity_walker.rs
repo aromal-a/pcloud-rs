@@ -135,10 +135,13 @@ fn walker_emits_match_mismatch_and_missing_remote_ndjson() {
 
     // Stream NDJSON events into an in-memory buffer.
     let mut ndjson_buf: Vec<u8> = Vec::new();
-    let snapshot = shell.run_once_ndjson(&mut ndjson_buf);
+    shell.run_once_ndjson(&mut ndjson_buf);
 
-    // Flush & shut down the worker so progress counters are stable.
+    // Shutdown joins the worker thread, draining all channel events so that
+    // files_hashed is stable before we read the progress snapshot.
     shell.shutdown();
+    // Take snapshot AFTER shutdown so files_hashed reflects the drained worker.
+    let snapshot = shell.progress_snapshot();
 
     // Parse each non-empty line as one IntegrityNdjsonRecord.
     let text = String::from_utf8(ndjson_buf).expect("ndjson must be utf-8");

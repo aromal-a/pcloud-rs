@@ -24,10 +24,9 @@ use pcloud_daemon::bootstrap_with_config;
 use pcloud_ipc::{Request, ResponseStatus};
 
 fn unique_root(tag: &str) -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock after epoch")
-        .as_nanos();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
         "pcloud-daemon-residency-{tag}-{}-{nonce}",
         std::process::id()

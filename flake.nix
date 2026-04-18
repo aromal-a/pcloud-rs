@@ -33,8 +33,9 @@
           buildInputs = with pkgs; [
             openssl
             sqlite
-            fuse3
             zlib
+          ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+            fuse3
           ] ++ pkgs.lib.optionals pkgs.stdenv.isDarwin [
             pkgs.libiconv
           ];
@@ -102,7 +103,7 @@
 
         devShells = {
           # Rust rewrite dev shell: rust-toolchain + pkg-config + libfuse3 +
-          # fuse-overlayfs, plus the build inputs needed by the workspace.
+          # fuse-overlayfs (Linux only), plus the build inputs needed by the workspace.
           default = pkgs.mkShell {
             inputsFrom = [ pcloud-rs ];
             packages = with pkgs; [
@@ -112,12 +113,13 @@
               rustfmt
               rust-analyzer
               pkg-config
-              fuse3
-              fuse-overlayfs
               openssl
               sqlite
               cargo-deny
               cargo-audit
+            ] ++ pkgs.lib.optionals pkgs.stdenv.isLinux [
+              fuse3
+              fuse-overlayfs
             ];
             RUST_SRC_PATH = "${pkgs.rustPlatform.rustLibSrc}";
           };

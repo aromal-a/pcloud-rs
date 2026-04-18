@@ -30,10 +30,9 @@ use pcloud_observability::metrics::{AuthResult, CryptoLockState, TransferDirecti
 use pcloud_secret::secret_string::SecretString;
 
 fn fresh_shell(label: &str) -> pcloud_daemon::RuntimeShell {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_nanos();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
     let root = std::env::temp_dir().join(format!(
         "pcloud-daemon-metrics-{label}-{}-{nonce}",
         std::process::id()

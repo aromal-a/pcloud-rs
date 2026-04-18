@@ -152,6 +152,10 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 cron = "0.12"
 directories = "5"
 notify = { version = "6", default-features = false, features = ["macos_fsevent"] }
+# fuser is Linux-only. This workspace entry is for version centralisation only.
+# The single consumer (pcloud-fs) correctly gates it under
+# [target.'cfg(target_os = "linux")'.dependencies], so it is never compiled on
+# macOS or Windows. Do NOT add it as an ungated dependency in any crate.
 fuser = "0.16"
 getrandom = "0.2"
 hmac = "0.12"

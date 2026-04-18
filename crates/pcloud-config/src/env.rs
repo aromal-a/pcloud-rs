@@ -50,6 +50,7 @@
 //! | `PCLOUD_MOUNT_CACHE_SIZE_MB`         | `mount.cache_size_mb`                            | Page-cache memory budget in MiB.             |
 //! | `PCLOUD_MOUNT_PAGE_CACHE_ENTRIES`    | `mount.page_cache_entries`                       | Max metadata-cache entries (LRU).            |
 //! | `PCLOUD_MOUNT_METADATA_TTL_SECS`    | `mount.metadata_ttl_secs`                        | Metadata-cache TTL in seconds.               |
+//! | `PCLOUD_AUTO_MOUNT_PATH`            | `mount.auto_mount_path`                          | If set, auto-mount at this path on daemon start. |
 //!
 //! Boolean env vars accept `1`/`0`, `true`/`false`, `yes`/`no`, `on`/`off`
 //! (case-insensitive). Enum values for `PCLOUD_ENV` are `dev` / `development`,
@@ -138,6 +139,11 @@ pub fn apply_env_overrides(mut profile: ConfigProfile) -> Result<ConfigProfile, 
     }
     if let Some(v) = optional_env("PCLOUD_MOUNT_METADATA_TTL_SECS") {
         profile.mount.metadata_ttl_secs = parse_u32("PCLOUD_MOUNT_METADATA_TTL_SECS", &v)?;
+    }
+    if let Some(v) = optional_env("PCLOUD_AUTO_MOUNT_PATH") {
+        if !v.is_empty() {
+            profile.mount.auto_mount_path = Some(std::path::PathBuf::from(v));
+        }
     }
 
     Ok(profile)

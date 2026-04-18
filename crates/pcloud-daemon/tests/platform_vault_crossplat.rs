@@ -24,10 +24,9 @@ use pcloud_secret::{ExposeSecret, secret_string::SecretString};
 /// created with mode `0700` so `FileVault::store` does not have to
 /// relax its expectations.
 fn fresh_vault_path(label: &str) -> std::path::PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_nanos();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
     let dir = std::env::temp_dir().join(format!(
         "pcloud-platform-vault-{label}-{}-{nonce}",
         std::process::id()
@@ -104,15 +103,15 @@ fn file_vault_clear_is_idempotent() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
-/// macOS Keychain vault is a tier-1 planned backend. Real store/load
-/// tests require a live Mac login keychain, which is not available in
-/// Linux CI. We assert only the `backend_name()` shape contract so that
-/// when the macOS target is wired up, the scaffold already exists and
-/// only needs the `unimplemented!` stub above to flip into the real
-/// test body.
+/// macOS Keychain vault backend-name contract.
+///
+/// The `KeychainVault` implementation is real (uses `security-framework`).
+/// A full store/load/clear roundtrip is covered by the unit test in
+/// `crates/pcloud-daemon/src/vault/keychain.rs`. This integration test
+/// only asserts the `backend_name()` shape so diagnostics remain stable.
 #[cfg(target_os = "macos")]
 #[test]
-fn keychain_vault_unimplemented_until_real_mac_run() {
+fn keychain_vault_backend_name_contract() {
     use pcloud_daemon::vault::keychain::KeychainVault;
     let vault = KeychainVault::new(std::env::temp_dir().join("pcloud-keychain-fallback"));
     assert_eq!(
@@ -153,10 +152,9 @@ fn dpapi_vault_unimplemented_until_real_windows_run() {
 // different target.
 
 fn fresh_tmp_path(label: &str) -> std::path::PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_nanos();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
     // Nest under a unique per-test parent so the 0700 chmod the
     // round-trip drill performs does not try to tighten the shared
     // `$TMPDIR` root (forbidden on most hosts).

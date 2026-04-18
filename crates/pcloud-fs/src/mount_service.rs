@@ -389,7 +389,6 @@ pub(crate) struct MacosMountInner {
     pub(crate) chan: *mut crate::platform::macos::macos_ffi::fuse_chan,
     pub(crate) mountpoint_cstring: std::ffi::CString,
     pub(crate) loop_thread: Option<std::thread::JoinHandle<()>>,
-    pub(crate) shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
     pub(crate) user_data: Option<Box<Box<dyn crate::fuse_adapter::FuseAdapter>>>,
 }
 
@@ -470,7 +469,6 @@ impl MountHandle {
         chan: *mut crate::platform::macos::macos_ffi::fuse_chan,
         mountpoint_cstring: std::ffi::CString,
         loop_thread: std::thread::JoinHandle<()>,
-        shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
         user_data: Box<Box<dyn crate::fuse_adapter::FuseAdapter>>,
     ) -> Self {
         Self {
@@ -479,7 +477,6 @@ impl MountHandle {
                 chan,
                 mountpoint_cstring,
                 loop_thread: Some(loop_thread),
-                shutdown,
                 user_data: Some(user_data),
             }),
         }
@@ -530,11 +527,8 @@ impl MountHandle {
     /// verification on real hardware with fuse-t installed.
     #[cfg(target_os = "macos")]
     fn teardown_macos(mut inner: MacosMountInner) {
-        use std::sync::atomic::Ordering;
         use std::sync::mpsc;
         use std::time::Duration;
-
-        inner.shutdown.store(true, Ordering::SeqCst);
 
         // SAFETY: `session` was returned by `fuse_lowlevel_new` and
         // has not been destroyed yet; `fuse_session_exit` is

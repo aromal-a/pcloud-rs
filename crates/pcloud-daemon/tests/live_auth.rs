@@ -20,10 +20,9 @@ use pcloud_daemon::{bootstrap_with_config, dispatch};
 use pcloud_ipc::{Method, Request, ResponseStatus};
 
 fn unique_live_root() -> PathBuf {
-    let nonce = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("clock should be after epoch")
-        .as_nanos();
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static SEQ: AtomicU64 = AtomicU64::new(0);
+    let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
     env::temp_dir().join(format!("pcloud-live-auth-{}-{nonce}", std::process::id()))
 }
 

@@ -2,41 +2,33 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
     "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  User LaunchAgent for the pcloud-rs client.
+  User LaunchAgent for the pcloud-rs daemon (pcloudd).
 
   PLATFORM: macOS 11+.
 
-  Install:
-    sed "s|{{USER_HOME}}|$HOME|g" com.pcloud.pcloud-rs.plist \
-      > ~/Library/LaunchAgents/com.pcloud.pcloud-rs.plist
-    mkdir -p ~/Library/Logs/pcloud-rs
-    launchctl load -w ~/Library/LaunchAgents/com.pcloud.pcloud-rs.plist
-
-  The {{USER_HOME}} placeholder must be replaced with an absolute path
-  before installation (launchd does not expand $HOME in plist values).
+  Install: use packaging/macos/install.sh — it substitutes {{USER_HOME}}
+  and {{BIN_DIR}}, creates ~/Library/Logs/pcloud-rs, and loads the agent.
 
   Signing & notarization (hardened runtime required for Gatekeeper):
 
     TEAM_ID="<your-10-char-Apple-Team-ID>"
     IDENTITY="Developer ID Application: Your Name ($TEAM_ID)"
-    BINARY="/usr/local/bin/pcloudd"     # or pcloudc
+    BINARY="$BIN_DIR/pcloudd"   # or pcloudc
 
-    # 1. Sign each binary with the hardened runtime and the entitlements
-    #    plist that lives alongside this file.
+    # 1. Sign each binary with the hardened runtime + entitlements plist.
     codesign --force --options runtime \
         --entitlements packaging/macos/entitlements.plist \
         --sign "$IDENTITY" \
         "$BINARY"
 
     # 2. Notarize the disk image / pkg that wraps the signed binary.
-    #    See: https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution
     xcrun notarytool submit pcloud-rs.dmg \
         --apple-id "$APPLE_ID" \
         --team-id  "$TEAM_ID" \
         --password "$APP_SPECIFIC_PASSWORD" \
         --wait
 
-    # 3. Staple the notarization ticket so offline Gatekeeper passes.
+    # 3. Staple so offline Gatekeeper passes.
     xcrun stapler staple pcloud-rs.dmg
 
   Entitlements summary (see packaging/macos/entitlements.plist):
@@ -50,22 +42,9 @@
   com.apple.security.cs.allow-unsigned-executable-memory unless a future
   dependency genuinely requires them; both are high-value sandbox escapes.
 
-  Environment-variable accuracy (cross-checked against
-  crates/pcloud-config/src/env.rs):
-    - PCLOUD_ROOT / PCLOUD_ENV / PCLOUD_API_MODE / PCLOUD_API_HOST /
-      PCLOUD_API_SERVER_NAME / PCLOUD_LOG_LEVEL / PCLOUD_CONFIG (CLI only) /
-      PCLOUD_DURABLE_AUTH_TOKENS are **read**.
-    - PCLOUD_HOME, PCLOUD_MOUNT_POINT, PCLOUD_AUTH_VAULT, PCLOUD_API_SERVER
-      are **not** read by the Rust daemon (path is derived from PCLOUD_ROOT
-      and mount point is a per-call CLI argument). They are kept below for
-      operator readability and are silently ignored.
-
   Per-directive notes:
-    - ProgramArguments: invokes the CLI with --daemon, which in turn
-      forks/execs the daemon binary. Replace with a direct pcloudd
-      invocation if you prefer a single-process tree.
-    - ProcessType=Interactive: the client may mount a FUSE volume that
-      shows up in Finder, so launchd gives it a user-interactive QoS.
+    - ProcessType=Interactive: the daemon may mount a FUSE volume shown
+      in Finder, so launchd gives it a user-interactive QoS.
     - KeepAlive.SuccessfulExit=false + Crashed=true: respawn on crash
       but not on clean shutdown (e.g. `launchctl unload`).
 -->
@@ -76,8 +55,8 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/local/bin/pcloudc</string>
-        <string>--daemon</string>
+        <string>{{BIN_DIR}}/pcloudd</string>
+        <string>serve</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -97,6 +76,15 @@
         <true/>
     </dict>
 
+    <!-- Avoid rapid restart loops: wait 10s before restarting on crash -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <!-- Kill child processes when launchd stops the job -->
+    <key>AbandonProcessGroup</key>
+    <false/>
+
+    <!-- Interactive QoS: the daemon may mount a FUSE volume shown in Finder -->
     <key>ProcessType</key>
     <string>Interactive</string>
 
@@ -109,9 +97,15 @@
     <key>WorkingDirectory</key>
     <string>{{USER_HOME}}</string>
 
+    <!-- Raise open-file limit for FUSE: each inode keeps a handle open -->
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>8192</integer>
+    </dict>
+
     <key>EnvironmentVariables</key>
     <dict>
-        <!-- Read by the Rust daemon / CLI: -->
         <key>PCLOUD_ROOT</key>
         <string>{{USER_HOME}}/.config/pcloud</string>
         <key>PCLOUD_ENV</key>
@@ -124,15 +118,27 @@
         <string>api.pcloud.com</string>
         <key>PCLOUD_CONFIG</key>
         <string>{{USER_HOME}}/.config/pcloud/config.toml</string>
-        <!-- Compat aliases (NOT read; kept for readability): -->
-        <key>PCLOUD_HOME</key>
-        <string>{{USER_HOME}}/.pcloud</string>
-        <key>PCLOUD_MOUNT_POINT</key>
+        <!-- Set to 1 to persist auth tokens to the macOS Keychain -->
+        <key>PCLOUD_DURABLE_AUTH_TOKENS</key>
+        <string>1</string>
+        <!-- Set to an absolute path to auto-mount on daemon start -->
+        <key>PCLOUD_AUTO_MOUNT_PATH</key>
         <string>{{USER_HOME}}/pCloudDrive</string>
-        <key>PCLOUD_API_SERVER</key>
-        <string>api.pcloud.com</string>
-        <key>PCLOUD_AUTH_VAULT</key>
-        <string>{{USER_HOME}}/.config/pcloud/auth.vault</string>
     </dict>
+    <!-- Optional: launchd socket activation for faster startup -->
+    <!-- Uncomment to enable socket activation:
+    <key>Sockets</key>
+    <dict>
+        <key>pcloud-ipc</key>
+        <dict>
+            <key>SockType</key>
+            <string>Stream</string>
+            <key>SockFamily</key>
+            <string>Unix</string>
+            <key>SockPathName</key>
+            <string>{{USER_HOME}}/Library/Caches/com.pcloud.pcloud-rs/pcloud-rs-runtime/pcloud.sock</string>
+        </dict>
+    </dict>
+    -->
 </dict>
 </plist>

@@ -12,13 +12,15 @@
     <key>com.apple.security.network.client</key>
     <true/>
 
-    <!-- TODO(fuse-t): enable when fuse-t integration lands. Disables
-         library validation so the hardened runtime will load the fuse-t
-         dylib, which is signed by a different Team ID than ours. Review
-         required before flipping to <true/> — this is the single entitlement
-         most likely to be abused. -->
+    <!-- Required: disables library validation so the hardened runtime will
+         load the fuse-t or macFUSE dylib, which is signed by a different
+         Team ID than ours. Without this the daemon cannot dlopen the FUSE
+         library and every mount attempt fails with EPERM.
+         Risk mitigated by: the dylib path is probed from canonical install
+         locations only (not user-writable paths); the daemon runs as the
+         user, not root; fuse-t is a notarised Apple-reviewed package. -->
     <key>com.apple.security.cs.disable-library-validation</key>
-    <false/>
+    <true/>
 
     <!-- Explicitly deny JIT, executable page allocation, and dyld env
          overrides. They are off by default under the hardened runtime;

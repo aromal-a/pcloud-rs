@@ -252,6 +252,7 @@ pub struct LowlevelOps {
             value: *const c_char,
             size: usize,
             flags: c_int,
+            position: u32,
         ),
     >,
     pub getxattr:

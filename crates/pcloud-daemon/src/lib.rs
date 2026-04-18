@@ -123,14 +123,12 @@ mod tests {
         // Use `/tmp` (not `std::env::temp_dir()`) so the fully-qualified
         // Unix-socket path stays under SUN_LEN on macOS, where the
         // per-user tempdir `/var/folders/.../T/` alone eats 49 chars.
-        let nonce = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock should be after epoch")
-            .as_nanos();
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
         let root = std::path::PathBuf::from("/tmp").join(format!(
-            "pd-lib-{}-{}",
+            "pd-lib-{}-{nonce}",
             std::process::id(),
-            nonce % 1_000_000_000
         ));
         let config = ConfigProfile::secure_defaults(root, Environment::Development);
         bootstrap_with_config(config).expect("runtime bootstrap should succeed")

@@ -74,8 +74,11 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+#[cfg(target_os = "linux")]
 use std::process::Command;
-use std::time::{Duration, Instant};
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 
 /// Filesystem types that represent a pCloud-owned FUSE mount.
 ///
@@ -240,31 +243,55 @@ pub fn mountpoint_is_already_mounted(
     None
 }
 
-/// Attempt to unmount `path` by invoking `fusermount3 -u` (preferred,
-/// matches the kernel API version libfuse3 speaks) and falling back to
-/// `fusermount -u`.
+/// Attempt to unmount `path` via the appropriate platform helper.
 ///
-/// Returns `Ok(())` when either binary exits successfully. The `timeout`
-/// bounds the total wait for the external command; on expiry the spawned
-/// process is killed and `io::ErrorKind::TimedOut` is returned so the
-/// caller can decide whether to escalate (e.g. `umount2(MNT_DETACH)`).
+/// - **Linux**: shells out to `fusermount3 -u` (preferred) or `fusermount -u`.
+///   The `fusermount` path is the libfuse-blessed release path and cleans up
+///   auxiliary state (lock files, `/etc/mtab`-equivalent entries) that a raw
+///   `umount2` leaves behind.
+/// - **macOS**: calls `umount(2)` directly via `libc::unmount`, which is the
+///   correct release path for fuse-t (there is no `fusermount` binary on macOS).
 ///
-/// This helper deliberately shells out rather than using `umount2`:
-/// `fusermount` is the libfuse-blessed release path and cleans up the
-/// auxiliary state (lock files, `/etc/mtab`-equivalent entries) that a
-/// raw `umount2` leaves behind.
+/// Returns `Ok(())` on success. The `timeout` parameter is honoured on Linux
+/// (bounds the external command wait); on macOS `umount(2)` is synchronous so
+/// the parameter is accepted but unused.
 pub fn fusermount_unmount(path: &Path, timeout: Duration) -> io::Result<()> {
-    let candidates = ["fusermount3", "fusermount"];
-    let mut last_err: Option<io::Error> = None;
-    for bin in candidates {
-        match spawn_and_wait(bin, path, timeout) {
-            Ok(()) => return Ok(()),
-            Err(e) => last_err = Some(e),
+    #[cfg(target_os = "linux")]
+    {
+        let candidates = ["fusermount3", "fusermount"];
+        let mut last_err: Option<io::Error> = None;
+        for bin in candidates {
+            match spawn_and_wait(bin, path, timeout) {
+                Ok(()) => return Ok(()),
+                Err(e) => last_err = Some(e),
+            }
         }
+        return Err(last_err.unwrap_or_else(|| io::Error::other("no fusermount binary available")));
     }
-    Err(last_err.unwrap_or_else(|| io::Error::other("no fusermount binary available")))
+
+    #[cfg(target_os = "macos")]
+    {
+        let _ = timeout;
+        use std::ffi::CString;
+        let path_cstr = CString::new(path.as_os_str().as_encoded_bytes())
+            .map_err(|e| io::Error::other(format!("path contains NUL: {e}")))?;
+        // SAFETY: `path_cstr` is a valid NUL-terminated C string. `umount(2)`
+        // on macOS accepts flags = 0 for a normal unmount.
+        let ret = unsafe { libc::unmount(path_cstr.as_ptr(), 0) };
+        if ret == 0 {
+            return Ok(());
+        }
+        return Err(io::Error::last_os_error());
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = (path, timeout);
+        Err(io::Error::other("fusermount_unmount: unsupported platform"))
+    }
 }
 
+#[cfg(target_os = "linux")]
 fn spawn_and_wait(bin: &str, path: &Path, timeout: Duration) -> io::Result<()> {
     let mut child = Command::new(bin).arg("-u").arg(path).spawn()?;
     let deadline = Instant::now() + timeout;

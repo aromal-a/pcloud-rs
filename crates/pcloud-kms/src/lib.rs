@@ -734,7 +734,8 @@ mod pkcs11_stub {
         }
 
         /// Attempt to construct a PKCS#11 HSM provider from a vendor
-        /// module path (e.g. `/usr/lib/softhsm/libsofthsm2.so`).
+        /// module path (e.g. `/usr/lib/softhsm/libsofthsm2.so` on Linux,
+        /// `/usr/local/lib/softhsm/libsofthsm2.dylib` on macOS).
         ///
         /// # Errors
         ///
@@ -1157,8 +1158,13 @@ mod tests {
         // The error must be mapped into our taxonomy — not a panic and
         // not a silent pass.
         use pcloud_secret::secret_string::SecretString;
+        // Use a platform-appropriate non-existent path to exercise the error path.
+        #[cfg(not(target_os = "macos"))]
+        let module_path = "/nonexistent/pkcs11/module-for-pcloud-kms-tests.so";
+        #[cfg(target_os = "macos")]
+        let module_path = "/nonexistent/pkcs11/module-for-pcloud-kms-tests.dylib";
         let res = Pkcs11Hsm::new_from_module(
-            "/nonexistent/pkcs11/module-for-pcloud-kms-tests.so",
+            module_path,
             0,
             SecretString::new("0000"),
             "kek",

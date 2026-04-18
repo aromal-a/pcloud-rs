@@ -90,10 +90,43 @@ fn run(args: &[String]) -> Result<(), String> {
             let mut runtime = pcloud_daemon::bootstrap_shell()
                 .map_err(|err| format!("daemon bootstrap failed: {err}"))?;
             let socket_path = runtime.config.paths.ipc_socket_path();
+            // macOS: clean up any stale socket files in the runtime dir on startup.
+            // Unlike Linux's tmpfs /run/user/, the macOS runtime dir persists across
+            // reboots, so stale sockets from crashed daemons accumulate on disk.
+            #[cfg(target_os = "macos")]
+            if let Some(runtime_dir) = socket_path.parent() {
+                if let Ok(entries) = std::fs::read_dir(runtime_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.extension().map(|e| e == "sock").unwrap_or(false) {
+                            let _ = std::fs::remove_file(&path);
+                            log::debug!("removed stale socket: {}", path.display());
+                        }
+                    }
+                }
+            }
             let server = IpcServer::new(current_effective_uid());
-            let bound = server
-                .bind(&socket_path)
-                .map_err(|err| format!("daemon socket bind failed: {err}"))?;
+            // On macOS, try launchd socket activation first.  If launchd
+            // pre-created the socket (socket activation enabled in the plist),
+            // use it directly; otherwise fall back to binding normally.
+            let bound = {
+                #[cfg(target_os = "macos")]
+                {
+                    match server.try_launchd_socket("pcloud-ipc", &socket_path) {
+                        Ok(Some(activated)) => activated,
+                        Ok(None) => server
+                            .bind(&socket_path)
+                            .map_err(|err| format!("daemon socket bind failed: {err}"))?,
+                        Err(err) => {
+                            return Err(format!("launchd socket activation failed: {err}"));
+                        }
+                    }
+                }
+                #[cfg(not(target_os = "macos"))]
+                server
+                    .bind(&socket_path)
+                    .map_err(|err| format!("daemon socket bind failed: {err}"))?
+            };
             // Best-effort pidfile used by operator tooling (`pcloudc
             // drain`, supervision scripts). Failure to write the
             // pidfile is non-fatal — operators can fall back to
@@ -127,6 +160,23 @@ fn run(args: &[String]) -> Result<(), String> {
                 );
             } else {
                 println!("sync loop disabled by config");
+            }
+
+            // macOS auto-mount: if PCLOUD_AUTO_MOUNT_PATH is set and the daemon
+            // has a valid auth token, mount the pCloud drive automatically.
+            // This enables the LaunchAgent to bring up the mount on login without
+            // a separate `pcloudc mount` invocation.
+            #[cfg(target_os = "macos")]
+            if let Some(mp) = runtime.config.mount.auto_mount_path.clone() {
+                match attempt_auto_mount(&mut runtime, &mp) {
+                    Ok(()) => log::info!("auto-mount at {} succeeded", mp.display()),
+                    Err(e) => log::warn!(
+                        "auto-mount at {} skipped or failed: {e} \
+                         (will succeed once authenticated; run 'pcloudc mount {}' manually if needed)",
+                        mp.display(),
+                        mp.display()
+                    ),
+                }
             }
 
             // Feature-gated Prometheus scrape listener. Default OFF. When
@@ -219,6 +269,41 @@ fn write_pid_file(path: &std::path::Path) -> std::io::Result<()> {
     }
     std::fs::rename(&tmp, path)?;
     Ok(())
+}
+
+/// Attempt to auto-mount the pCloud drive at `mountpoint` on daemon startup.
+///
+/// Returns `Ok(())` if the mount succeeds. Returns `Err` if the daemon is
+/// not yet authenticated (the user must `pcloudc login` first) or if the
+/// mount fails for any other reason. Errors are non-fatal — the daemon
+/// continues serving even if auto-mount fails; the user can mount manually
+/// with `pcloudc mount <path>`.
+#[cfg(target_os = "macos")]
+fn attempt_auto_mount(
+    runtime: &mut pcloud_daemon::RuntimeShell,
+    mountpoint: &std::path::Path,
+) -> Result<(), String> {
+    use pcloud_ipc::{Request, ResponseStatus};
+    // Only auto-mount if there is a valid auth token in the vault.
+    // If the user has not logged in yet, skip silently.
+    if runtime.auth.snapshot().auth_token.is_none() {
+        return Err("no auth token (login first with 'pcloudc login')".to_string());
+    }
+    // Create the mountpoint directory if it does not exist.
+    if !mountpoint.exists() {
+        std::fs::create_dir_all(mountpoint)
+            .map_err(|e| format!("failed to create mountpoint: {e}"))?;
+    }
+    // Dispatch through the IPC runtime to reuse the existing mount path.
+    let req = Request::Mount {
+        path: mountpoint.to_path_buf(),
+    };
+    let resp = pcloud_daemon::dispatch::handle_request(runtime, req);
+    if resp.status == ResponseStatus::Ok {
+        Ok(())
+    } else {
+        Err(resp.message)
+    }
 }
 
 fn main() {

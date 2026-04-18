@@ -37,13 +37,28 @@ pub struct KeychainVault {
     /// Reserved for a future fallback path; kept so the constructor
     /// signature matches `FileVault::new`.
     _fallback_path: PathBuf,
+    /// Account key used for this vault instance. Production always uses
+    /// `ACCOUNT`; tests inject a unique key to avoid concurrent-test
+    /// collision on the same Keychain item.
+    account: &'static str,
 }
 
 impl KeychainVault {
-    /// Construct a new `KeychainVault`.
+    /// Construct a new `KeychainVault` using the production account key.
     pub fn new(fallback_path: impl Into<PathBuf>) -> Self {
         Self {
             _fallback_path: fallback_path.into(),
+            account: ACCOUNT,
+        }
+    }
+
+    /// Test-only constructor that uses a caller-supplied static account key
+    /// so concurrent tests do not race on the production Keychain item.
+    #[cfg(test)]
+    fn new_with_account(fallback_path: impl Into<PathBuf>, account: &'static str) -> Self {
+        Self {
+            _fallback_path: fallback_path.into(),
+            account,
         }
     }
 }
@@ -61,7 +76,7 @@ fn map_sec_err(err: SecError) -> AuthVaultError {
 
 impl PlatformVault for KeychainVault {
     fn load(&self) -> VaultResult<Option<AuthToken>> {
-        match get_generic_password(SERVICE, ACCOUNT) {
+        match get_generic_password(SERVICE, self.account) {
             Ok(bytes) => {
                 let utf8 = String::from_utf8(bytes).map_err(|_| {
                     AuthVaultError::InsecureMetadata(
@@ -78,11 +93,11 @@ impl PlatformVault for KeychainVault {
     fn store(&self, token: &AuthToken) -> VaultResult<()> {
         use pcloud_secret::ExposeSecret;
         let bytes = token.expose_secret().as_bytes();
-        set_generic_password(SERVICE, ACCOUNT, bytes).map_err(map_sec_err)
+        set_generic_password(SERVICE, self.account, bytes).map_err(map_sec_err)
     }
 
     fn clear(&self) -> VaultResult<()> {
-        match delete_generic_password(SERVICE, ACCOUNT) {
+        match delete_generic_password(SERVICE, self.account) {
             Ok(()) => Ok(()),
             Err(err) if err.code() == ERR_SEC_ITEM_NOT_FOUND => Ok(()),
             Err(err) => Err(map_sec_err(err)),
@@ -102,9 +117,21 @@ mod tests {
     /// Roundtrip: store → load → clear → load against the real login
     /// Keychain. Skipped by cargo test on Linux/Windows via the
     /// `target_os = "macos"` cfg gate above.
+    ///
+    /// Marked `#[ignore]` because macOS Keychain ACL enforcement means the
+    /// test binary needs to be consistently signed/entitled across runs.
+    /// Running it as part of a parallel workspace test suite can cause
+    /// -25293 (errSecAuthFailed) when a stale item from a prior binary
+    /// invocation still holds different ACLs. Run explicitly when needed:
+    ///
+    ///   cargo test -p pcloud-daemon --lib -- vault::keychain::tests::roundtrip --include-ignored
     #[test]
+    #[ignore = "requires exclusive macOS Keychain access; run explicitly with --include-ignored"]
     fn roundtrip() {
-        let vault = KeychainVault::new(std::env::temp_dir().join("pcloud-keychain-fallback"));
+        let vault = KeychainVault::new_with_account(
+            std::env::temp_dir().join("pcloud-keychain-fallback"),
+            "pcloud-auth-token-test-roundtrip",
+        );
         // Best-effort pre-clean so prior failed runs don't pollute state.
         let _ = vault.clear();
 

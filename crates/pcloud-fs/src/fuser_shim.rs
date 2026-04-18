@@ -475,6 +475,7 @@ where
             uid: self.adapter.options().uid,
             gid: self.adapter.options().gid,
             mtime_epoch: None,
+            mtime_nsec: 0,
         };
         // Publish to the adapter's metadata cache so subsequent
         // lookup/getattr/readdir calls can resolve the locally-created
@@ -892,6 +893,7 @@ mod tests {
             uid: 10,
             gid: 11,
             mtime_epoch: None,
+            mtime_nsec: 0,
         };
         let fa = file_attr_from(&attr);
         assert_eq!(fa.kind, FileType::Directory);

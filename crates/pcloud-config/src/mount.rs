@@ -62,6 +62,10 @@ pub struct MountPolicy {
     /// Example: `metadata_ttl_secs = 60`.
     #[serde(default = "default_metadata_ttl_secs")]
     pub metadata_ttl_secs: u32,
+    /// If set, the daemon auto-mounts the pCloud drive at this path on startup
+    /// when a valid auth token is available. Controlled by `PCLOUD_AUTO_MOUNT_PATH`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_mount_path: Option<std::path::PathBuf>,
 }
 
 fn default_cache_size_mb() -> u32 {

@@ -31,8 +31,8 @@
 //! storage. No bytes typed into a prompt are logged, written to
 //! history, or surfaced in `PromptError`'s `Display` output.
 
-// **PLATFORM:** Linux
-// **GATING:** #[cfg(target_os = "linux")].
+// **PLATFORM:** unix (Linux + macOS)
+// **GATING:** #[cfg(unix)] / #[cfg(not(unix))].
 
 use std::io::{self, Write};
 
@@ -156,20 +156,21 @@ impl SecretPrompt {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn is_stdin_tty() -> bool {
     // SAFETY: `isatty(fd)` is a safe POSIX syscall with no preconditions
     // beyond passing a valid fd; 0 (STDIN) is always valid for a running
     // process. It sets errno but does not read or write user memory.
+    // Available on both Linux and macOS (POSIX.1).
     unsafe { libc::isatty(0) == 1 }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(unix))]
 fn is_stdin_tty() -> bool {
     false
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(unix)]
 fn masked_tty_read() -> Result<String, PromptError> {
     use std::io::Read;
     use std::mem::MaybeUninit;
@@ -258,7 +259,7 @@ fn masked_tty_read() -> Result<String, PromptError> {
     Ok(value)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(unix))]
 fn masked_tty_read() -> Result<String, PromptError> {
     Ok(rpassword::read_password()?)
 }

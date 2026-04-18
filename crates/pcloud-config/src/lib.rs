@@ -382,6 +382,7 @@ impl ConfigProfile {
                 cache_size_mb: MountPolicy::DEFAULT_CACHE_SIZE_MB,
                 page_cache_entries: MountPolicy::DEFAULT_PAGE_CACHE_ENTRIES,
                 metadata_ttl_secs: MountPolicy::DEFAULT_METADATA_TTL_SECS,
+                auto_mount_path: None,
             },
             observability: ObservabilityFlags::secure_defaults(),
             resilience: ResiliencePolicy::secure_defaults(),

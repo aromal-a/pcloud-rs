@@ -140,7 +140,11 @@ pub const CONFIG_SCHEMA_JSON: &str = r#"{
           "required": ["allow_other","owner_only_by_default"],
           "properties": {
             "allow_other":           { "type": "boolean" },
-            "owner_only_by_default": { "type": "boolean" }
+            "owner_only_by_default": { "type": "boolean" },
+            "cache_size_mb":         { "type": "integer", "minimum": 0 },
+            "page_cache_entries":    { "type": "integer", "minimum": 0 },
+            "metadata_ttl_secs":     { "type": "integer", "minimum": 0 },
+            "auto_mount_path":       { "type": ["string","null"] }
           }
         },
         "observability": {
@@ -571,6 +575,7 @@ static MOUNT_NODE: Node = Node::Object {
                 max: None,
             },
         ),
+        ("auto_mount_path", &Node::String { enum_values: None }),
     ],
 };
 

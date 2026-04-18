@@ -1723,6 +1723,110 @@ fn run_interactive_login(
     };
     let client = IpcClient;
 
+    // Fast-path: if the daemon already holds a valid authenticated session
+    // (e.g. it loaded a vault token at startup), skip all credential
+    // prompts and jump straight to the post-login side-effects.
+    //
+    // This only fires when no explicit username or non-interactive password
+    // source was supplied — if the caller passed -u/--username or
+    // --password-env they intend a deliberate re-login.
+    if opts.username.is_none() && matches!(opts.password_source, PasswordSource::Prompt) {
+        let already_authenticated = match client.send(
+            &socket_path,
+            &Request::Plain {
+                method: Method::GetStatus,
+            },
+        ) {
+            Ok(r) => r.message.contains("auth=Authenticated"),
+            Err(_) => false,
+        };
+        if already_authenticated {
+            if !flags.quiet {
+                println!("Already authenticated — skipping login prompts.");
+            }
+            // Post-login side-effects: vault opt-in, crypto unlock, mount,
+            // userinfo. passascrypto is not applicable here (no account
+            // password available), so crypto always prompts separately.
+            if save_password {
+                if !flags.quiet {
+                    eprintln!(
+                        "WARNING: --save-password enables the auth-token vault at \
+                         ~/.pcloud/config/auth_token (mode 0600).\n\
+                         The vault stores the LONG-LIVED PCLOUD TOKEN, not the \
+                         password. Anyone with read access to that file (root, \
+                         backups, leaked dumps) can use the token to access your \
+                         account until you `pcloudc logout`. Hit Ctrl-C in the \
+                         next 2s to cancel."
+                    );
+                    std::thread::sleep(std::time::Duration::from_secs(2));
+                }
+                let req = Request::AuthPersistence { enabled: true };
+                match client.send(&socket_path, &req) {
+                    Ok(r) if flags.verbosity > 0 => eprintln!("authsave: {}", r.message),
+                    Err(e) => eprintln!("authsave failed: {e}"),
+                    _ => {}
+                }
+            }
+            if crypto_enabled {
+                let crypto_pw = match SecretPrompt::new("Crypto password").read_secret() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("crypto prompt failed: {e}");
+                        return ExitCode::Auth;
+                    }
+                };
+                let req = Request::CryptoUnlock {
+                    password: crypto_pw.into(),
+                };
+                match client.send(&socket_path, &req) {
+                    Ok(r) if flags.verbosity > 0 => eprintln!("crypto: {}", r.message),
+                    Err(e) => eprintln!("crypto failed: {e}"),
+                    _ => {}
+                }
+            }
+            if let Some(req_path) = mountpoint_request.as_deref() {
+                let target = if req_path.is_empty() {
+                    cfg.mountpoint.clone().unwrap_or_else(|| {
+                        std::env::var_os("HOME")
+                            .map(std::path::PathBuf::from)
+                            .unwrap_or_default()
+                            .join("pCloudDrive")
+                    })
+                } else {
+                    std::path::PathBuf::from(req_path)
+                };
+                if let Err(e) = std::fs::create_dir_all(&target) {
+                    eprintln!("mountpoint create failed ({}): {e}", target.display());
+                    return ExitCode::GenericError;
+                }
+                let _ = std::fs::set_permissions(
+                    &target,
+                    std::os::unix::fs::PermissionsExt::from_mode(0o700),
+                );
+                let req = Request::Mount {
+                    path: target.clone(),
+                };
+                match client.send(&socket_path, &req) {
+                    Ok(r) if !flags.quiet => println!("mount: {}", r.message),
+                    Err(e) => {
+                        eprintln!("mount failed ({}): {e}", target.display());
+                        return ExitCode::GenericError;
+                    }
+                    _ => {}
+                }
+            }
+            let info_req = Request::Plain {
+                method: Method::GetUserInfo,
+            };
+            if let Ok(info) = client.send(&socket_path, &info_req)
+                && !flags.quiet
+            {
+                println!("{}", info.message);
+            }
+            return ExitCode::Ok;
+        }
+    }
+
     // Username: use flag/config if supplied, otherwise prompt.
     let username = match username_pre {
         Some(u) => {
