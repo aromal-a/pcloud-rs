@@ -142,6 +142,9 @@ pub fn backend_label(request: &Request) -> &'static str {
         | Request::AuthPersistence { .. } => "auth",
         Request::CryptoUnlock { .. }
         | Request::CryptoSetup { .. }
+        | Request::CryptoSetupV2 { .. }
+        | Request::CryptoGetFolderKey { .. }
+        | Request::CryptoGetFileKey { .. }
         | Request::CryptoMkdir { .. }
         | Request::CryptoChangePassword { .. }
         | Request::CryptoChangePasswordUnlocked { .. } => "crypto",

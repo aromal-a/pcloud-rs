@@ -14,6 +14,26 @@ Source: waves 1-9 captured in `FINAL-PARITY-PROOF-WAVE*.md`,
 
 ## [Unreleased]
 
+### Dual crypto backend: pclsync-compat + enhanced (2026-04-18)
+
+**Added**
+
+- Dual crypto backend: `pclsync-compat` (default, interoperable with
+  official pCloud apps) and `enhanced` (opt-in, stricter AEAD,
+  NOT interoperable). See `docs/enterprise/crypto-compat.md`.
+- Six new pclsync-compatible primitives behind `pclsync-v2` feature:
+  PBKDF2-HMAC-SHA512 KEK, RSA-4096+OAEP, AES-CTR (native + standard),
+  CBC-CTS CS3, custom sector AEAD, 128-ary Merkle hash tree,
+  reversible filename encoding.
+
+**Changed**
+
+- `pcloudc crypto setup` now prompts for backend; scripts can pass
+  `--backend {pclsync-compat|enhanced}` with `--acknowledge-not-interop`
+  required for `enhanced`.
+- Daemon logs `crypto unlocked: backend=<NAME>` at every unlock.
+- `pcloudc crypto status` first line shows active backend.
+
 ### Four parallel closures: deletion-safe sync, FUSE SLO hook, integrity walker NDJSON, parity doc sweep (2026-04-16)
 
 **Added**

@@ -13,6 +13,7 @@ base64 = "0.22"
 getrandom.workspace = true
 hmac.workspace = true
 log.workspace = true
+pbkdf2.workspace = true
 pcloud-kms = { path = "../pcloud-kms" }
 pcloud-secret = { path = "../pcloud-secret" }
 serde.workspace = true
@@ -22,15 +23,36 @@ thiserror.workspace = true
 unicode-normalization = "0.1"
 zeroize.workspace = true
 
+# pclsync-v2 wire-compat deps (gated). RSA-4096 + RSAES-OAEP-SHA1 mirror the
+# mbedtls configuration used by the C client's pcryptofolder.c / pssl.c.
+rsa = { workspace = true, optional = true }
+pkcs1 = { workspace = true, optional = true }
+sha1 = { workspace = true, optional = true }
+static_assertions = { workspace = true, optional = true }
+aes = { version = "0.8", optional = true }
+cbc = { version = "0.1", optional = true }
+ctr = { version = "0.9", optional = true }
+cipher = { version = "0.4", optional = true }
+rand_core = { version = "0.6", optional = true }
+
 [features]
 # OFF by default — enables legacy C-compat PBKDF2-HMAC-SHA-512 5000-iter
 # password derivation for byte-equivalent interop with the legacy C client
 # auth path. When disabled (the secure default) the OWASP 2023 iteration
 # count is used instead (see password_scorer::PBKDF2_ITERS_OWASP).
 legacy-c-compat = []
+# Default feature set: activates pclsync-v2 so the PclsyncCompat backend
+# dispatch is compiled into the default build (Wave 2 Stage 2).
+default = ["pclsync-v2"]
+# Wave 1 pclsync-v2 rewrite gate. Enables primitives that mirror the legacy
+# pclsync C wire format (PBKDF2-HMAC-SHA512 KEK derivation, RSA-OAEP wrapping,
+# CBC-CS sector cipher, base32 filename encoding). OFF during Wave 1 so the
+# existing Argon2/GCM path keeps building unchanged.
+pclsync-v2 = ["dep:rsa", "dep:pkcs1", "dep:sha1", "dep:static_assertions", "dep:aes", "dep:cbc", "dep:cipher", "dep:rand_core", "dep:ctr"]
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
+hex-literal = "0.4"
 proptest = "1.5"
 serde_json.workspace = true
 

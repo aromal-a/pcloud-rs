@@ -24,6 +24,7 @@ mod app;
 #[allow(unsafe_code)]
 mod commands;
 mod completion;
+mod crypto_setup_picker;
 mod config;
 #[allow(unsafe_code)]
 mod doctor;
@@ -475,8 +476,30 @@ fn run(argv: &[String]) -> ExitCode {
                         //   v=0 (default): just the response message
                         //   v>=1: prefix with command + status
                         //   v>=2: also include the daemon banner
+                        //
+                        // Stage 4b.4: for crypto commands we translate
+                        // well-known server result codes to human-friendly
+                        // messages before rendering; the original daemon
+                        // string is preserved at v>=1 via the `[command
+                        // status] message` prefix.
+                        let rendered_msg =
+                            if matches!(
+                                command,
+                                commands::Command::CryptoSetupV2
+                                    | commands::Command::SubmitCryptoPassword
+                                    | commands::Command::CryptoGetFolderKey
+                                    | commands::Command::CryptoGetFileKey
+                                    | commands::Command::CryptoStatus
+                            ) && !matches!(
+                                response.status,
+                                pcloud_ipc::ResponseStatus::Ok
+                            ) {
+                                translate_server_result_code(&response.message)
+                            } else {
+                                response.message.clone()
+                            };
                         let line = match flags.verbosity {
-                            0 => response.message.clone(),
+                            0 => rendered_msg.clone(),
                             1 => format!(
                                 "[{:?} {:?}] {}",
                                 command, response.status, response.message
@@ -491,7 +514,29 @@ fn run(argv: &[String]) -> ExitCode {
                         };
                         let rendered = output::RenderedOutput::from_message(line);
                         if !rendered.title.is_empty() {
+                            // Stage 4b.4 UX: prepend a `Backend:` line for
+                            // `crypto status` and append a `(backend: ...)`
+                            // suffix to `crypto start` / `unlock-crypto`.
+                            // The daemon response does not currently carry
+                            // a structured backend field — see
+                            // `crypto_status` in
+                            // crates/pcloud-daemon/src/runtime.rs. Until
+                            // the IPC response is widened (tracked under
+                            // bd-1du.10 Stage 6), this renderer extracts
+                            // what it can from the response message and
+                            // otherwise emits an honest 'unknown' marker
+                            // rather than silently skipping the line.
+                            if let Some(prefix) =
+                                render_backend_prefix(&command, &response)
+                            {
+                                println!("{prefix}");
+                            }
                             println!("{}", rendered.title);
+                            if let Some(suffix) =
+                                render_backend_suffix(&command, &response)
+                            {
+                                println!("{suffix}");
+                            }
                         }
                     }
                 }
@@ -664,6 +709,132 @@ fn label_for(command: &commands::Command) -> String {
 /// against `app::parse_inputs_for_command` to confirm it does not
 /// consume variable-length positional arguments that a user might
 /// have meant literally. Additions require the same audit.
+/// Translate well-known pCloud server result codes to human-friendly
+/// messages for the Stage 4b.4 crypto commands. If `message` does not
+/// contain a recognised code, it is returned verbatim so the caller
+/// still surfaces whatever the server said. Tokens are matched
+/// conservatively: we search for the literal `"result=<code>"` /
+/// `"code=<code>"` / `" <code>"` substring and require a digit
+/// boundary so `"12110"` does not match `"2110"`.
+///
+/// Recognised codes (subset — only those documented in the Stage 4b.4
+/// spec are translated; everything else is surfaced as
+/// `result=<code>: <server-provided message>`):
+///
+/// | Code | Human text                                                                     |
+/// |------|-------------------------------------------------------------------------------|
+/// | 1000 | not logged in                                                                 |
+/// | 2000 | can't connect to pCloud server                                                |
+/// | 2110 | crypto already set up — use 'crypto change-password' to rotate                 |
+fn translate_server_result_code(message: &str) -> String {
+    const TABLE: &[(u32, &str)] = &[
+        (1000, "not logged in"),
+        (2000, "can't connect to pCloud server"),
+        (
+            2110,
+            "crypto already set up — use 'crypto change-password' to rotate",
+        ),
+    ];
+    for (code, human) in TABLE {
+        let patterns = [
+            format!("result={code}"),
+            format!("code={code}"),
+            format!(" {code}"),
+        ];
+        for pat in &patterns {
+            if let Some(idx) = message.find(pat.as_str()) {
+                // Digit-boundary guard: the char immediately after the
+                // match must not be another digit (rejects 21100).
+                let after = idx + pat.len();
+                let next_is_digit = message[after..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_digit());
+                if !next_is_digit {
+                    return format!("{human} (server result={code})");
+                }
+            }
+        }
+    }
+    // Unknown code — surface the raw message so operators can still
+    // see the server-provided detail. This is the "Other codes: surface
+    // the raw code + server-provided message" branch from the spec.
+    message.to_owned()
+}
+
+/// Extract a `backend=<value>` token from `response.message` if the
+/// daemon emitted one. Returns `None` if the field is not present so
+/// the caller can fall back to the `"unknown"` renderer.
+///
+/// The daemon's current `crypto_status` handler in
+/// `crates/pcloud-daemon/src/runtime.rs` does **not** emit this token.
+/// The parsing hook is here so widening the IPC response under
+/// bd-1du.10 Stage 6 becomes a pure daemon change with zero CLI
+/// churn — add `backend=<name>` to the status/unlock response and
+/// this function starts returning `Some(...)` without further edits.
+///
+/// Daemon emits `backend=<name>` as one token in the comma-separated
+/// status / start messages; this extracts it without allocating. If/when
+/// the daemon grows a typed `CryptoStatusPayload` (tracked as a separate
+/// follow-up), this helper can be retired.
+fn scrape_backend_token(message: &str) -> Option<&str> {
+    for part in message.split(|c: char| c == ',' || c.is_whitespace()) {
+        if let Some(rest) = part.strip_prefix("backend=") {
+            let rest = rest.trim_matches('"');
+            if !rest.is_empty() {
+                return Some(rest);
+            }
+        }
+    }
+    None
+}
+
+/// For `crypto status`, render a leading line of the form:
+/// `Backend: pclsync-compat` or
+/// `Backend: enhanced  (⚠ not interoperable with pCloud apps)`.
+///
+/// Returns `None` for every other command (the regular title renders
+/// unchanged).
+fn render_backend_prefix(
+    command: &commands::Command,
+    response: &pcloud_ipc::Response,
+) -> Option<String> {
+    if !matches!(command, commands::Command::CryptoStatus) {
+        return None;
+    }
+    match scrape_backend_token(&response.message) {
+        Some("enhanced") => {
+            Some("Backend: enhanced  (⚠ not interoperable with pCloud apps)".to_owned())
+        }
+        Some(other) => Some(format!("Backend: {other}")),
+        // Daemon always emits `backend=<name>` now; if we reach this arm
+        // we are talking to a pre-Wave-2 daemon. Render nothing rather
+        // than surfacing "unknown" to the user.
+        None => None,
+    }
+}
+
+/// For `crypto start` / `unlock-crypto`, append a `(backend: ...)`
+/// tail to the success line. See [`render_backend_prefix`] for the
+/// daemon-side TODO.
+fn render_backend_suffix(
+    command: &commands::Command,
+    response: &pcloud_ipc::Response,
+) -> Option<String> {
+    if !matches!(command, commands::Command::SubmitCryptoPassword) {
+        return None;
+    }
+    if !matches!(response.status, pcloud_ipc::ResponseStatus::Ok) {
+        return None;
+    }
+    match scrape_backend_token(&response.message) {
+        Some(name) => Some(format!("Unlocked (backend: {name})")),
+        // Pre-Wave-2 daemon without `backend=` in the response: keep
+        // the renderer silent rather than surfacing "unknown".
+        None => None,
+    }
+}
+
 fn command_accepts_bare_fields(command: &commands::Command) -> bool {
     use commands::Command as C;
     matches!(

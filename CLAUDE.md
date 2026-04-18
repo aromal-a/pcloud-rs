@@ -241,6 +241,23 @@ Primary files:
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-daemon/src/runtime.rs`
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/crates/pcloud-crypto/src/share_temppass.rs`
 
+### Crypto: dual-backend model
+
+Two backends live in `crates/pcloud-crypto`:
+
+- **`CryptoBackend::PclsyncCompat`** (default) — byte-compatible with
+  the official pCloud C client (pcloudcc, pCloud Drive, iOS/Android).
+  Scheme: PBKDF2-HMAC-SHA512 + RSA-4096-OAEP + custom sector AEAD.
+  See `docs/crypto-reference-pclsync.md` for the full spec.
+
+- **`CryptoBackend::Enhanced`** (opt-in) — stricter AEAD (AES-256-GCM)
+  + Argon2id KDF. NOT interoperable with pCloud apps. Users must
+  pass `--acknowledge-not-interop` to select this backend.
+
+The two are wire-incompatible by design. Profile metadata records
+the active backend; unlock dispatches accordingly; cross-backend
+unlock returns `BackendMismatch` with no silent fallback.
+
 ### Shares / business / team parity progress
 
 Implemented:

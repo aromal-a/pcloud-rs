@@ -271,6 +271,17 @@ pub fn help_text() -> &'static str {
         "                           transiently (SecretString, zeroised on drop).\n",
         "    crypto (c) stop        Lock crypto; zeroise active key material.\n",
         "    crypto (c) status      Reports `setup/started/state/folders/hint`.\n",
+        "    crypto (c) setup       Set up the crypto profile. Defaults to the\n",
+        "                           interop-safe pclsync-compat backend; pass\n",
+        "                           `--backend enhanced --acknowledge-not-interop`\n",
+        "                           to opt into stricter AES-256-GCM + Argon2id\n",
+        "                           crypto (NOT readable by official pCloud apps).\n",
+        "                           Without --backend on a tty, an interactive\n",
+        "                           picker prompts for a choice.\n",
+        "    crypto (c) get-folder-key <FOLDER_ID>\n",
+        "                           Fetch + cache a folder's wrapped sym-key.\n",
+        "    crypto (c) get-file-key <FILE_ID>\n",
+        "                           Fetch + cache a file's wrapped sym-key.\n",
         "    unlock-crypto <PW>     Canonical unlock form.\n",
         "    lock-crypto            Canonical lock form.\n",
         "\n",
@@ -489,6 +500,8 @@ fn flag_takes_value(token: &str) -> bool {
             | "--zstd-level"
             | "--type"
             | "--max"
+            | "--backend"
+            | "--hint"
     )
 }
 
@@ -645,11 +658,14 @@ pub fn normalize_args(args: &[String]) -> Result<(Command, Vec<String>), Command
                 (Command::CryptoChangePasswordUnlocked, 2)
             }
             "hint" => (Command::CryptoHint, 2),
+            "setup" | "setup-v2" => (Command::CryptoSetupV2, 2),
+            "get-folder-key" | "folder-key" => (Command::CryptoGetFolderKey, 2),
+            "get-file-key" | "file-key" => (Command::CryptoGetFileKey, 2),
             other => return Err(CommandParseError::UnknownCommand(format!("crypto {other}"))),
         },
         (Some("crypto" | "c"), None) => {
             return Err(CommandParseError::UnknownCommand(
-                "crypto (missing subcommand: start|stop|status|reset|hint|priv-key-flags|send-change-private|change-password|change-password-unlocked)"
+                "crypto (missing subcommand: start|stop|status|reset|hint|priv-key-flags|send-change-private|change-password|change-password-unlocked|setup|get-folder-key|get-file-key)"
                     .to_owned(),
             ));
         }
@@ -1033,6 +1049,18 @@ fn allowed_flags_for(command: &Command) -> &'static [&'static str] {
         Command::CryptoChangePassword | Command::CryptoChangePasswordUnlocked => {
             &["--password-stdin", "--password-env"]
         }
+        // `crypto setup [--backend <name>] [--acknowledge-not-interop]
+        // [--hint <TEXT>]` — dual-backend setup selector. Backend and hint
+        // take values; `--acknowledge-not-interop` is a standalone gate.
+        // Also accepts the standard password-source flags so scripted
+        // callers can feed the passphrase securely.
+        Command::CryptoSetupV2 => &[
+            "--backend",
+            "--acknowledge-not-interop",
+            "--hint",
+            "--password-stdin",
+            "--password-env",
+        ],
         // Everything else takes positionals only. Note that `-` alone
         // (often meaning stdin) is handled as a positional by
         // `reject_unknown_subcommand_flags` and never fails this check.
@@ -1092,6 +1120,9 @@ fn command_display(command: &Command) -> &'static str {
         Command::CryptoChangePassword => "crypto change-password",
         Command::CryptoChangePasswordUnlocked => "crypto change-password-unlocked",
         Command::CryptoHint => "crypto hint",
+        Command::CryptoSetupV2 => "crypto setup",
+        Command::CryptoGetFolderKey => "crypto get-folder-key",
+        Command::CryptoGetFileKey => "crypto get-file-key",
         // Sync subcommands
         Command::SyncSuggest => "sync suggest",
         Command::SyncIsSyncable => "sync is-syncable",
@@ -1292,6 +1323,10 @@ fn canonical_token_for(command: &Command) -> String {
         Command::CryptoChangePassword => "crypto-change-password",
         Command::CryptoChangePasswordUnlocked => "crypto-change-password-unlocked",
         Command::CryptoHint => "crypto-hint",
+        // ── Crypto dual-backend (Stage 4b.4) ─────────────────────────────
+        Command::CryptoSetupV2 => "crypto-setup-v2",
+        Command::CryptoGetFolderKey => "crypto-get-folder-key",
+        Command::CryptoGetFileKey => "crypto-get-file-key",
         // ── Sync (Group A) ──────────────────────────────────────────────
         Command::SyncSuggest => "sync-suggest",
         Command::SyncIsSyncable => "sync-is-syncable",
@@ -1469,6 +1504,10 @@ fn parse_single_token(token: &str) -> Result<Command, CommandParseError> {
         "crypto-change-password" | "crypto-change-pass" => Command::CryptoChangePassword,
         "crypto-change-password-unlocked" => Command::CryptoChangePasswordUnlocked,
         "crypto-hint" => Command::CryptoHint,
+        // ── Crypto dual-backend (Stage 4b.4) single-token aliases ────────
+        "crypto-setup" | "crypto-setup-v2" => Command::CryptoSetupV2,
+        "crypto-get-folder-key" | "crypto-folder-key" => Command::CryptoGetFolderKey,
+        "crypto-get-file-key" | "crypto-file-key" => Command::CryptoGetFileKey,
         // ── Sync (Group A) single-token aliases ──────────────────────────
         "sync-suggest" => Command::SyncSuggest,
         "sync-is-syncable" | "sync-syncable" => Command::SyncIsSyncable,
@@ -2750,8 +2789,168 @@ pub fn parse_inputs_for_command(
                 inputs.tree_link_paths = paths;
             }))
         }
+        Command::CryptoSetupV2 => {
+            // Resolve --backend / --acknowledge-not-interop / --hint,
+            // running the interactive picker on a tty when --backend is
+            // absent. Errors here surface as ExitCode::Usage via
+            // PromptError::Io(InvalidInput) from the caller.
+            let resolution = resolve_crypto_setup_flags(raw_args)?;
+            let (backend, ack, hint) = match resolution {
+                CryptoSetupResolution::Resolved {
+                    backend,
+                    acknowledge_not_interop,
+                    hint,
+                } => (backend, acknowledge_not_interop, hint),
+                CryptoSetupResolution::NeedsInteractive { hint } => {
+                    use std::io::{BufReader, stdin, stdout};
+                    if !is_stdin_tty_for_picker() {
+                        return Err(invalid_input(
+                            "--backend is required in non-interactive mode (stdin is not a terminal)",
+                        ));
+                    }
+                    let mut reader = BufReader::new(stdin());
+                    let mut out = stdout();
+                    match crate::crypto_setup_picker::run_picker(&mut reader, &mut out) {
+                        crate::crypto_setup_picker::PickerOutcome::Selected {
+                            backend,
+                            acknowledge_not_interop,
+                        } => (backend, acknowledge_not_interop, hint),
+                        crate::crypto_setup_picker::PickerOutcome::Aborted(msg) => {
+                            return Err(invalid_input_owned(msg));
+                        }
+                    }
+                }
+            };
+            // Read the passphrase securely. `read_password_securely`
+            // prefers `--password-stdin` / `--password-env`, otherwise
+            // falls back to an interactive no-echo prompt.
+            let crypto_password = if args.iter().any(|a| a == "--password-stdin")
+                || args.iter().any(|a| a == "--password-env")
+            {
+                read_password_securely(args)?
+            } else {
+                SecretString::new(SecretPrompt::new("New crypto passphrase").read_secret()?)
+            };
+            Ok(build_inputs(trust_device, recovery_code, |inputs| {
+                inputs.crypto_setup_backend = backend;
+                inputs.crypto_setup_acknowledge_not_interop = ack;
+                inputs.crypto_setup_hint = hint;
+                inputs.crypto_password = crypto_password;
+            }))
+        }
+        Command::CryptoGetFolderKey => {
+            let folder_id: u64 = match args.get(2) {
+                Some(v) => v
+                    .parse()
+                    .map_err(|_| invalid_input("get-folder-key: FOLDER_ID must be numeric"))?,
+                None => {
+                    return Err(invalid_input(
+                        "get-folder-key: <FOLDER_ID> is required",
+                    ));
+                }
+            };
+            Ok(build_inputs(trust_device, recovery_code, |inputs| {
+                inputs.crypto_folder_key_folder_id = folder_id;
+            }))
+        }
+        Command::CryptoGetFileKey => {
+            let file_id: u64 = match args.get(2) {
+                Some(v) => v
+                    .parse()
+                    .map_err(|_| invalid_input("get-file-key: FILE_ID must be numeric"))?,
+                None => {
+                    return Err(invalid_input("get-file-key: <FILE_ID> is required"));
+                }
+            };
+            Ok(build_inputs(trust_device, recovery_code, |inputs| {
+                inputs.crypto_file_key_file_id = file_id;
+            }))
+        }
         _ => Ok(build_inputs(trust_device, recovery_code, |_| {})),
     }
+}
+
+/// Outcome of pre-dispatch flag resolution for `crypto setup`. Either
+/// every knob was supplied explicitly on the command line (`Resolved`),
+/// or `--backend` was absent and the caller must drop into the
+/// interactive picker (`NeedsInteractive`). The non-interactive
+/// rejection path is surfaced as [`PromptError::Io`] at the call site
+/// — it is not represented here because the distinction only matters
+/// once we can inspect the tty.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CryptoSetupResolution {
+    Resolved {
+        backend: pcloud_ipc::methods::CryptoBackendIpc,
+        acknowledge_not_interop: bool,
+        hint: Option<String>,
+    },
+    NeedsInteractive {
+        hint: Option<String>,
+    },
+}
+
+/// Parse `--backend`, `--acknowledge-not-interop`, `--hint` flags for
+/// `crypto setup`. Enforces the Stage 4b.4 rule that
+/// `--backend enhanced` requires `--acknowledge-not-interop`. The
+/// acknowledgement flag is allowed (but inert) for the
+/// `pclsync-compat` branch.
+///
+/// Returns [`CryptoSetupResolution::NeedsInteractive`] when the caller
+/// did not specify `--backend`; the caller then decides whether to
+/// open the interactive picker (tty) or reject with
+/// [`crate::exit_code::ExitCode::Usage`] (not a tty).
+pub fn resolve_crypto_setup_flags(
+    args: &[String],
+) -> Result<CryptoSetupResolution, PromptError> {
+    let hint = parse_flag_string(args, "--hint")?;
+    let ack = args
+        .iter()
+        .any(|a| a == "--acknowledge-not-interop");
+    match parse_flag_string(args, "--backend")? {
+        None => Ok(CryptoSetupResolution::NeedsInteractive { hint }),
+        Some(value) => match value.as_str() {
+            "pclsync-compat" | "pclsync_compat" | "compat" => {
+                Ok(CryptoSetupResolution::Resolved {
+                    backend: pcloud_ipc::methods::CryptoBackendIpc::PclsyncCompat,
+                    acknowledge_not_interop: ack,
+                    hint,
+                })
+            }
+            "enhanced" => {
+                if !ack {
+                    // Exact error wording required by the Stage 4b.4 spec.
+                    let msg = concat!(
+                        "--backend enhanced requires --acknowledge-not-interop\n",
+                        "\n",
+                        "The 'enhanced' backend uses stronger crypto (AES-256-GCM + Argon2id) but is\n",
+                        "NOT compatible with the official pCloud apps (desktop, web, mobile, iOS,\n",
+                        "Android). Files you encrypt with this backend will not decrypt in any\n",
+                        "pCloud app.\n",
+                        "\n",
+                        "Re-run with --acknowledge-not-interop if you understand and accept this.",
+                    );
+                    return Err(invalid_input(msg));
+                }
+                Ok(CryptoSetupResolution::Resolved {
+                    backend: pcloud_ipc::methods::CryptoBackendIpc::Enhanced,
+                    acknowledge_not_interop: true,
+                    hint,
+                })
+            }
+            other => Err(invalid_input_owned(format!(
+                "--backend: unknown value '{other}' (expected pclsync-compat or enhanced)"
+            ))),
+        },
+    }
+}
+
+/// Return `true` when stdin is attached to a terminal. Kept at this
+/// layer so the `crypto setup` dispatcher can distinguish interactive
+/// vs scripted invocation before deciding whether to run the picker
+/// or reject with [`crate::exit_code::ExitCode::Usage`].
+fn is_stdin_tty_for_picker() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal()
 }
 
 /// Parse a `change-link-expire` value into a unix-seconds timestamp.
@@ -3022,12 +3221,29 @@ fn build_inputs(
         backup_create_parent_folder_name: None,
         backup_device_folder_id: 0,
         tree_link_paths: Vec::new(),
+        crypto_setup_backend: pcloud_ipc::methods::CryptoBackendIpc::PclsyncCompat,
+        crypto_setup_acknowledge_not_interop: false,
+        crypto_setup_hint: None,
+        crypto_folder_key_folder_id: 0,
+        crypto_file_key_file_id: 0,
     };
     update(&mut inputs);
     inputs
 }
 
 fn invalid_input(message: &'static str) -> PromptError {
+    PromptError::Io(std::io::Error::new(
+        std::io::ErrorKind::InvalidInput,
+        message,
+    ))
+}
+
+/// Dynamic-string variant of [`invalid_input`] used by dispatchers that
+/// build their error messages at runtime (e.g. `crypto setup` carrying
+/// a rejected `--backend=<value>` or forwarding an aborted picker
+/// reason). Returns the same [`PromptError::Io`] shape so exit-code
+/// classification stays identical.
+fn invalid_input_owned(message: String) -> PromptError {
     PromptError::Io(std::io::Error::new(
         std::io::ErrorKind::InvalidInput,
         message,
@@ -4822,5 +5038,218 @@ mod tests {
             std::path::PathBuf::from("/tmp/snap.tar.gpg")
         );
         assert!(inputs.snapshot_yes);
+    }
+
+    // ── Stage 4b.4: crypto dual-backend CLI UX ──────────────────────────
+
+    #[test]
+    fn crypto_setup_enhanced_without_ack_is_rejected() {
+        let args = argv(&["crypto", "setup", "--backend", "enhanced"]);
+        let err = super::resolve_crypto_setup_flags(&args)
+            .expect_err("enhanced without ack must be rejected");
+        let msg = err.to_string();
+        // The error must name the missing flag so the operator can
+        // self-correct without digging through docs.
+        assert!(
+            msg.contains("--acknowledge-not-interop"),
+            "error must cite --acknowledge-not-interop: {msg}"
+        );
+        // And it must explain why (interop break with official apps).
+        assert!(
+            msg.contains("NOT compatible") || msg.contains("not compatible"),
+            "error must explain interop break: {msg}"
+        );
+    }
+
+    #[test]
+    fn crypto_setup_pclsync_compat_ack_ignored() {
+        // --acknowledge-not-interop is allowed but inert on the
+        // interop-safe branch (scripted idempotency).
+        let args = argv(&[
+            "crypto",
+            "setup",
+            "--backend",
+            "pclsync-compat",
+            "--acknowledge-not-interop",
+        ]);
+        let res =
+            super::resolve_crypto_setup_flags(&args).expect("pclsync-compat is always accepted");
+        match res {
+            super::CryptoSetupResolution::Resolved {
+                backend,
+                acknowledge_not_interop,
+                hint,
+            } => {
+                assert_eq!(backend, pcloud_ipc::methods::CryptoBackendIpc::PclsyncCompat);
+                // Ack flag is recorded verbatim but the daemon ignores
+                // it for this branch — the CLI does not silently strip
+                // it so post-hoc audit of the IPC request still shows
+                // what the caller asked for.
+                assert!(acknowledge_not_interop);
+                assert!(hint.is_none());
+            }
+            other => panic!("expected Resolved, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn crypto_setup_enhanced_with_ack_and_hint_is_accepted() {
+        let args = argv(&[
+            "crypto",
+            "setup",
+            "--backend",
+            "enhanced",
+            "--acknowledge-not-interop",
+            "--hint",
+            "my-hint",
+        ]);
+        let res = super::resolve_crypto_setup_flags(&args).expect("ack clears the gate");
+        match res {
+            super::CryptoSetupResolution::Resolved {
+                backend,
+                acknowledge_not_interop,
+                hint,
+            } => {
+                assert_eq!(backend, pcloud_ipc::methods::CryptoBackendIpc::Enhanced);
+                assert!(acknowledge_not_interop);
+                assert_eq!(hint.as_deref(), Some("my-hint"));
+            }
+            other => panic!("expected Resolved, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn crypto_setup_without_backend_flags_needs_interactive() {
+        let args = argv(&["crypto", "setup"]);
+        let res = super::resolve_crypto_setup_flags(&args).expect("no flags is not an error");
+        match res {
+            super::CryptoSetupResolution::NeedsInteractive { hint } => {
+                assert!(hint.is_none());
+            }
+            other => panic!("expected NeedsInteractive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn crypto_setup_unknown_backend_rejected() {
+        let args = argv(&["crypto", "setup", "--backend", "hexapod"]);
+        let err = super::resolve_crypto_setup_flags(&args).expect_err("unknown backend must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("hexapod"), "error must echo the bad value: {msg}");
+        assert!(
+            msg.contains("pclsync-compat") && msg.contains("enhanced"),
+            "error must list the valid values: {msg}"
+        );
+    }
+
+    #[test]
+    fn crypto_setup_hint_carries_through_interactive_branch() {
+        let args = argv(&["crypto", "setup", "--hint", "remember-my-phrase"]);
+        let res = super::resolve_crypto_setup_flags(&args).unwrap();
+        match res {
+            super::CryptoSetupResolution::NeedsInteractive { hint } => {
+                assert_eq!(hint.as_deref(), Some("remember-my-phrase"));
+            }
+            other => panic!("expected NeedsInteractive, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn crypto_get_folder_key_parses_folder_id() {
+        let args = argv(&["crypto", "get-folder-key", "4242"]);
+        let cmd = parse_command(&args).unwrap();
+        assert_eq!(cmd, Command::CryptoGetFolderKey);
+        let inputs = parse_inputs_for_command(&cmd, &args).unwrap();
+        assert_eq!(inputs.crypto_folder_key_folder_id, 4242);
+    }
+
+    #[test]
+    fn crypto_get_folder_key_missing_id_errors() {
+        let args = argv(&["crypto", "get-folder-key"]);
+        let cmd = parse_command(&args).unwrap();
+        let err = parse_inputs_for_command(&cmd, &args).expect_err("missing id must fail");
+        assert!(err.to_string().contains("FOLDER_ID"));
+    }
+
+    #[test]
+    fn crypto_get_file_key_parses_file_id() {
+        let args = argv(&["crypto", "get-file-key", "9001"]);
+        let cmd = parse_command(&args).unwrap();
+        assert_eq!(cmd, Command::CryptoGetFileKey);
+        let inputs = parse_inputs_for_command(&cmd, &args).unwrap();
+        assert_eq!(inputs.crypto_file_key_file_id, 9001);
+    }
+
+    #[test]
+    fn crypto_setup_command_resolves_in_two_token_form() {
+        let args = argv(&["crypto", "setup"]);
+        let cmd = parse_command(&args).unwrap();
+        assert_eq!(cmd, Command::CryptoSetupV2);
+    }
+
+    #[test]
+    fn crypto_setup_command_resolves_in_single_token_alias() {
+        let args = argv(&["crypto-setup-v2"]);
+        let cmd = parse_command(&args).unwrap();
+        assert_eq!(cmd, Command::CryptoSetupV2);
+    }
+
+    #[test]
+    fn crypto_setup_into_request_lowers_to_crypto_setup_v2_ipc_variant() {
+        use crate::commands::SecretInputs;
+        use pcloud_ipc::Request;
+        use pcloud_ipc::methods::CryptoBackendIpc;
+        use pcloud_secret::secret_string::SecretString;
+
+        // Build a stub SecretInputs mirroring what the dispatcher
+        // would have filled in for `crypto setup --backend enhanced
+        // --acknowledge-not-interop --hint my-hint`.
+        let mut inputs = super::build_inputs(false, false, |_| {});
+        inputs.crypto_setup_backend = CryptoBackendIpc::Enhanced;
+        inputs.crypto_setup_acknowledge_not_interop = true;
+        inputs.crypto_setup_hint = Some("my-hint".to_owned());
+        inputs.crypto_password = SecretString::new("pw".to_owned());
+        let _ = &inputs as &SecretInputs; // type-check only.
+
+        let req = Command::CryptoSetupV2.into_request(&inputs);
+        match req {
+            Request::CryptoSetupV2 {
+                backend,
+                acknowledge_not_interop,
+                hint,
+                ..
+            } => {
+                assert_eq!(backend, CryptoBackendIpc::Enhanced);
+                assert!(acknowledge_not_interop);
+                assert_eq!(hint.as_deref(), Some("my-hint"));
+            }
+            other => panic!("expected Request::CryptoSetupV2, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn crypto_get_folder_key_into_request_forwards_folder_id() {
+        use pcloud_ipc::Request;
+
+        let mut inputs = super::build_inputs(false, false, |_| {});
+        inputs.crypto_folder_key_folder_id = 1234;
+        let req = Command::CryptoGetFolderKey.into_request(&inputs);
+        match req {
+            Request::CryptoGetFolderKey { folder_id } => assert_eq!(folder_id, 1234),
+            other => panic!("expected CryptoGetFolderKey, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn crypto_get_file_key_into_request_forwards_file_id() {
+        use pcloud_ipc::Request;
+
+        let mut inputs = super::build_inputs(false, false, |_| {});
+        inputs.crypto_file_key_file_id = 5678;
+        let req = Command::CryptoGetFileKey.into_request(&inputs);
+        match req {
+            Request::CryptoGetFileKey { file_id } => assert_eq!(file_id, 5678),
+            other => panic!("expected CryptoGetFileKey, got {other:?}"),
+        }
     }
 }

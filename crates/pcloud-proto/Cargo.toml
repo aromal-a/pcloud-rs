@@ -17,6 +17,7 @@ description = "Typed pCloud protocol clients (auth, transfer, shares, public lin
 file-history-http = ["dep:serde_json"]
 
 [dependencies]
+base64 = "0.22"
 pcloud-config = { path = "../pcloud-config" }
 pcloud-model = { path = "../pcloud-model" }
 pcloud-resilience = { path = "../pcloud-resilience" }

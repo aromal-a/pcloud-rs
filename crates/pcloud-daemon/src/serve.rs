@@ -82,6 +82,7 @@ fn is_privileged_request(req: &Request) -> bool {
                 | Method::SendCryptoChangeUserPrivate
         } | Request::AccountChangePassword { .. }
             | Request::CryptoSetup { .. }
+            | Request::CryptoSetupV2 { .. }
             | Request::CryptoChangePassword { .. }
             | Request::CryptoChangePasswordUnlocked { .. }
             | Request::AuthPersistence { .. }
@@ -111,6 +112,9 @@ fn request_kind_name(req: &Request) -> &'static str {
         },
         Request::AccountChangePassword { .. } => "AccountChangePassword",
         Request::CryptoSetup { .. } => "CryptoSetup",
+        Request::CryptoSetupV2 { .. } => "CryptoSetupV2",
+        Request::CryptoGetFolderKey { .. } => "CryptoGetFolderKey",
+        Request::CryptoGetFileKey { .. } => "CryptoGetFileKey",
         Request::CryptoChangePassword { .. } => "CryptoChangePassword",
         Request::CryptoChangePasswordUnlocked { .. } => "CryptoChangePasswordUnlocked",
         Request::AuthPersistence { .. } => "AuthPersistence",

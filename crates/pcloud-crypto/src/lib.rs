@@ -85,6 +85,49 @@ pub mod policy;
 /// strictly stronger secret handling (AEAD + detached HMAC signature).
 pub mod share_temppass;
 
+/// Wave 1 pclsync-v2 wire-compat primitives. Gated off the default build so
+/// the active Argon2/GCM path is untouched during incremental rollout.
+#[cfg(feature = "pclsync-v2")]
+pub mod pclsync_kdf;
+
+/// Wave 1 / Primitive B — pclsync-compatible RSA-4096 keypair generation and
+/// RSAES-OAEP (SHA-1 hash + SHA-1 MGF1, empty label) wrap/unwrap for the
+/// `sym_key_ver1` symmetric key bundle. Mirrors the mbedtls defaults used by
+/// the legacy C client (`pclsync/pssl.c` and `pclsync/pcryptofolder.c`).
+#[cfg(feature = "pclsync-v2")]
+pub mod pclsync_rsa;
+
+/// Wave 1 / Primitive D — pclsync-compatible per-sector AEAD
+/// (`pcrypto_encode_sec` / `pcrypto_decode_sec`). Byte-for-byte interop with
+/// the legacy C client's sector cipher (`pclsync/pcrypto.c`).
+#[cfg(feature = "pclsync-v2")]
+pub mod pclsync_sector;
+
+/// Wave 1 / Primitive C — AES-256-CTR (priv-key wrap) and AES-256-CBC-CS3
+/// (per-sector data cipher) primitives.
+#[cfg(feature = "pclsync-v2")]
+pub mod pclsync_modes;
+
+/// Wave 1 / Primitive E — 128-ary Merkle authentication tree over per-sector
+/// tags. Mirrors the `pfs_crpt_*` tree layout in `pclsync/pfscrypto.c`.
+#[cfg(feature = "pclsync-v2")]
+pub mod pclsync_auth_tree;
+
+/// Wave 1 / Primitive F — pclsync-compatible reversible filename
+/// encoding (`pcrypto_encode_text` / `pcrypto_decode_text` + base32
+/// envelope, `pclsync/pcrypto.c:273..390` and
+/// `pclsync/putil.c:189..271`). Byte-for-byte interop with the legacy
+/// C client's directory-listing wire format.
+#[cfg(feature = "pclsync-v2")]
+pub mod pclsync_filename;
+
+/// Wave 2 Stage 2+3 — PclsyncCompat profile codec (priv_key_ver1 /
+/// pub_key_ver1 blob build+parse), KEK-wrap roundtrip for the RSA
+/// private key, and runtime state (live RSA key + folder/file sym-key
+/// caches). See module docs for the C struct reference citations.
+#[cfg(feature = "pclsync-v2")]
+pub mod pclsync_compat_profile;
+
 /// Lifecycle state machine (`NotSetup` / `Locked` / `Unlocking` / `Unlocked`).
 pub mod state;
 
@@ -105,6 +148,48 @@ use pcloud_secret::secret_string::SecretString;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use thiserror::Error;
+
+/// Which crypto scheme a profile uses. See `docs/CRYPTO-BACKEND-PLAN.md`
+/// and `docs/enterprise/crypto-compat.md`.
+///
+/// Wire-incompatible with each other by design: once a profile is
+/// sealed under one backend, files cannot be decrypted under the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CryptoBackend {
+    /// Byte-compatible with the official pCloud C client, desktop,
+    /// iOS/Android apps, and web. Uses PBKDF2-HMAC-SHA512 + RSA-4096 +
+    /// custom sector AEAD. **Default for new profiles.**
+    PclsyncCompat,
+    /// Stricter AEAD (AES-256-GCM) + Argon2id KDF. Opt-in only.
+    /// Files encrypted under this backend will NOT decrypt in the
+    /// official pCloud apps. Requires explicit user acknowledgement.
+    Enhanced,
+}
+
+impl Default for CryptoBackend {
+    fn default() -> Self {
+        Self::PclsyncCompat
+    }
+}
+
+impl std::fmt::Display for CryptoBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::PclsyncCompat => "pclsync-compat",
+            Self::Enhanced => "enhanced",
+        })
+    }
+}
+
+impl CryptoBackend {
+    /// Returns `true` iff files encrypted under this backend can be
+    /// decrypted by the official pCloud C client and apps.
+    #[must_use]
+    pub const fn interoperable_with_pcloud_apps(self) -> bool {
+        matches!(self, Self::PclsyncCompat)
+    }
+}
 
 /// Crate identifier used in audit/telemetry records.
 ///
@@ -214,6 +299,60 @@ pub enum CryptoError {
     /// Protects against automated brute-force of the crypto password.
     #[error("brute-force lockout: too many consecutive failed unlock attempts")]
     BruteForceLockedOut,
+    /// The profile on disk is sealed under a different backend than the
+    /// caller requested at runtime. Mixing backends would silently corrupt
+    /// ciphertext; the shell refuses the operation outright.
+    #[error("backend mismatch: profile sealed under {expected}, caller requested {provided}")]
+    BackendMismatch {
+        /// Backend the persisted profile was sealed under.
+        expected: CryptoBackend,
+        /// Backend the caller asked the shell to use.
+        provided: CryptoBackend,
+    },
+    /// The requested operation is not yet wired for the PclsyncCompat
+    /// backend. Tracked by `bd-1du.10` Stage 4 (IPC + folder-key cache
+    /// plumbing for sector/filename ops + real RSA change-password flow).
+    #[error("operation not yet wired for pclsync-compat backend (bd-1du.10)")]
+    NotYetWired,
+    /// A PclsyncCompat sector operation was invoked without a `file_id`
+    /// in its [`SectorContext`]. Unlike the Enhanced backend — which
+    /// derives a per-file key from the caller-supplied seed — the
+    /// PclsyncCompat backend looks up the file's `SymKeyVer1` by
+    /// server-assigned `file_id`, so the caller MUST thread an id
+    /// through the API. Stage 4b resolves this for every IPC caller.
+    #[error("pclsync-compat sector operation requires a file_id")]
+    MissingFileId,
+    /// A PclsyncCompat filename / folder operation was invoked without
+    /// a `folder_id`. The parent folder's `SymKeyVer1` is used to
+    /// encode child filenames, so callers must pass the parent id.
+    #[error("pclsync-compat filename operation requires a folder_id")]
+    MissingFolderId,
+    /// The PclsyncCompat sym-key cache does not contain an entry for
+    /// the requested `file_id`. The daemon is expected to call
+    /// `crypto_getfilekey`, RSA-OAEP-unwrap the returned blob into a
+    /// `SymKeyVer1`, populate
+    /// [`pclsync_compat_profile::PclsyncCompatState::cache_file_key`],
+    /// and retry.
+    #[error("pclsync-compat file key not cached: file_id={file_id}")]
+    FileKeyNotCached {
+        /// The server-assigned file id whose sym-key is missing.
+        file_id: u64,
+    },
+    /// The PclsyncCompat sym-key cache does not contain an entry for
+    /// the requested `folder_id`. The daemon is expected to call
+    /// `crypto_getfolderkey`, RSA-OAEP-unwrap the result, populate
+    /// [`pclsync_compat_profile::PclsyncCompatState::cache_folder_key`],
+    /// and retry.
+    #[error("pclsync-compat folder key not cached: folder_id={folder_id}")]
+    FolderKeyNotCached {
+        /// The server-assigned folder id whose sym-key is missing.
+        folder_id: u64,
+    },
+    /// PclsyncCompat profile codec / unwrap failure. Always mapped to
+    /// an opaque error variant so the underlying RSA / DER / padding
+    /// taxonomy does not leak to the user.
+    #[error("pclsync-compat profile error")]
+    PclsyncCompat,
     /// Per-session AES-256-GCM nonce budget exhausted. With 96-bit random
     /// nonces, the safe encryption budget for a single key is ~2^32
     /// operations. The shell refuses further [`CryptoShell::seal_sector`]
@@ -259,6 +398,125 @@ pub struct CryptoFolderEntry {
     pub parent_folder_id: Option<CryptoFolderId>,
     /// Deterministic encrypted filename (hex-encoded HMAC-SHA256 tag).
     pub encrypted_name: String,
+}
+
+/// Caller-supplied context for a sector operation under the PclsyncCompat
+/// backend.
+///
+/// The Enhanced backend derives a per-file key from a caller-owned seed
+/// and therefore does not need any server-assigned id. PclsyncCompat, by
+/// contrast, looks up the file's `SymKeyVer1` by `file_id` in the cache
+/// populated lazily from `crypto_getfilekey`. This struct threads the id
+/// through the API without disturbing existing Enhanced call sites.
+///
+/// For Enhanced call sites, use [`SectorContext::enhanced()`] (all
+/// fields `None`). For PclsyncCompat, use [`SectorContext::for_file`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SectorContext {
+    /// Server-assigned file id whose `SymKeyVer1` should be fetched
+    /// from the PclsyncCompat sym-key cache. Ignored by Enhanced.
+    pub file_id: Option<u64>,
+}
+
+impl SectorContext {
+    /// Construct a context suitable for Enhanced sector operations
+    /// (all fields `None`). Accepted by PclsyncCompat only as an error
+    /// sentinel — returns [`CryptoError::MissingFileId`].
+    #[must_use]
+    pub const fn enhanced() -> Self {
+        Self { file_id: None }
+    }
+
+    /// Construct a PclsyncCompat sector context bound to `file_id`.
+    #[must_use]
+    pub const fn for_file(file_id: u64) -> Self {
+        Self { file_id: Some(file_id) }
+    }
+}
+
+/// A sealed sector frame returned by [`CryptoShell::seal_sector_with_context`].
+///
+/// Carries the ciphertext byte block plus, for the PclsyncCompat backend,
+/// a 32-byte detached auth tag. The Enhanced backend emits a monolithic
+/// AES-GCM frame (ciphertext ++ auth-tag-inline) and leaves `auth_tag`
+/// set to `None`. The PclsyncCompat backend emits raw sector ciphertext
+/// and a detached 32-byte tag that must be persisted alongside the
+/// ciphertext in the Merkle-like auth-sector tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SealedSectorFrame {
+    /// Sector ciphertext. For Enhanced this is the full AES-GCM frame;
+    /// for PclsyncCompat it is the raw sector ciphertext (same length
+    /// as plaintext).
+    pub ciphertext: Vec<u8>,
+    /// PclsyncCompat detached 32-byte auth tag. `None` on the Enhanced
+    /// path (tag is inlined into `ciphertext`).
+    pub auth_tag: Option<[u8; 32]>,
+}
+
+/// Result of [`CryptoShell::mkdir_with_context`] — a created encrypted
+/// folder entry plus, for the PclsyncCompat backend, a freshly generated
+/// `SymKeyVer1` that the daemon must RSA-OAEP-wrap to the user's public
+/// key and upload via `crypto_mkdir` before caching it back into
+/// [`pclsync_compat_profile::PclsyncCompatState::cache_folder_key`].
+///
+/// Enhanced callers see `sym_key = None`.
+///
+/// The symmetric key material is wrapped by `SymKeyVer1` (which holds
+/// `Zeroizing` buffers internally) and is never logged or serialized.
+#[cfg(feature = "pclsync-v2")]
+#[derive(Debug)]
+pub struct CreatedCryptoFolder {
+    /// Local bookkeeping entry (folder id + encoded filename + parent
+    /// link).
+    pub entry: CryptoFolderEntry,
+    /// PclsyncCompat: freshly generated folder sym-key, ready for
+    /// RSA-OAEP wrap. `None` for Enhanced.
+    pub sym_key: Option<pclsync_rsa::SymKeyVer1>,
+}
+
+/// Enhanced-only companion to [`CreatedCryptoFolder`] when the crate is
+/// built without the `pclsync-v2` feature flag. Kept as a distinct
+/// type (not `#[cfg]`-hidden fields on `CreatedCryptoFolder`) so
+/// feature flips never change the public shape in a way that would
+/// silently break downstream `match` arms.
+#[cfg(not(feature = "pclsync-v2"))]
+#[derive(Debug)]
+pub struct CreatedCryptoFolder {
+    /// Local bookkeeping entry.
+    pub entry: CryptoFolderEntry,
+}
+
+/// Result of [`CryptoShell::change_password_with_context`] for the
+/// PclsyncCompat backend.
+///
+/// Carries the new `priv_key_ver1` blob (RSA priv DER re-wrapped under
+/// a fresh salt and the new-password KEK), the new pub-key fingerprint,
+/// and the `flags` word that the daemon must post via
+/// `crypto_changeuserkeys`.
+///
+/// The shell state (`pclsync_compat.priv_key_ver1_blob` and
+/// `pclsync_compat.pub_fingerprint`) is updated in-place before this
+/// is returned, so a successful call means local-side rotation has
+/// already committed. The daemon is expected to upload atomically —
+/// a failed upload leaves the shell ahead of the server, which is
+/// safe: the stale priv blob has already been wiped, and a subsequent
+/// retry is idempotent because the daemon resends the same blob.
+///
+/// The wrapped DER blob is held in a `Zeroizing<Vec<u8>>` so an
+/// accidental copy is zeroed on drop. We never expose the plaintext
+/// DER or the derived KEK to the caller.
+#[cfg(feature = "pclsync-v2")]
+#[derive(Debug)]
+pub struct ChangePasswordResult {
+    /// New `priv_key_ver1` blob to be uploaded.
+    pub new_priv_key_ver1_blob: zeroize::Zeroizing<Vec<u8>>,
+    /// New pub-key fingerprint (non-secret, safe to log).
+    pub new_pub_fingerprint: [u8; 32],
+    /// `flags` word from the priv_key_ver1 struct (caller-controlled,
+    /// opaque to this layer).
+    pub flags: u32,
 }
 
 /// Construct the default `Box<dyn KmsProvider>` (always [`pcloud_kms::NullKms`]).
@@ -442,6 +700,63 @@ pub struct CryptoShell {
     /// restarts so crash-then-retry loops cannot sidestep the backoff.
     #[serde(with = "atomic_u64_serde", default = "default_atomic_u64")]
     pub last_fail_at: std::sync::atomic::AtomicU64,
+    /// Crypto scheme this profile is sealed under.
+    ///
+    /// Stored as `Option` so that historical Enhanced profiles (written
+    /// before the `CryptoBackend` enum existed) can be detected by
+    /// absence of the field and migrated through
+    /// [`Self::effective_backend`]. Fresh profiles always set this to
+    /// `Some(_)`; loaders and savers downstream of Stage 2/3 must round-
+    /// trip it faithfully and never silently flip it.
+    #[serde(default)]
+    pub backend: Option<CryptoBackend>,
+    /// PclsyncCompat persisted profile (priv_key_ver1 blob, pub_key_ver1
+    /// blob, pub fingerprint, flags). `None` for profiles sealed under
+    /// the Enhanced backend. See
+    /// [`pclsync_compat_profile::PclsyncCompatProfile`] for the layout.
+    #[cfg(feature = "pclsync-v2")]
+    #[serde(default)]
+    pub pclsync_compat: Option<pclsync_compat_profile::PclsyncCompatProfile>,
+    /// Runtime-only PclsyncCompat state (live RSA private key + sym-key
+    /// caches). Populated by `start_pclsync_compat`; cleared by `stop`.
+    /// Never serialised.
+    #[cfg(feature = "pclsync-v2")]
+    #[serde(skip)]
+    pub pclsync_compat_state: Option<pclsync_compat_profile::PclsyncCompatState>,
+}
+
+impl CryptoShell {
+    /// Returns the effective backend for this profile.
+    ///
+    /// Decision: the persisted `backend` field is the **ground truth
+    /// when present**. When it is absent (historical profile written
+    /// before Wave 2 Stage 1) we fall back to a sentinel inference:
+    /// a historical profile that has already completed `setup()` will
+    /// have `keys.setup_fingerprint == Some(_)`. Those profiles were
+    /// necessarily written under the Enhanced (Argon2id) path — that
+    /// was the only backend that existed before Wave 2 — so we infer
+    /// [`CryptoBackend::Enhanced`] in that case. If the profile has
+    /// never been set up (`setup_fingerprint` is `None`) there is no
+    /// historical ciphertext to honor, so we return the current
+    /// [`CryptoBackend::default()`] (= `PclsyncCompat`).
+    ///
+    /// This method is read-only: it does not mutate `self.backend`.
+    /// Stage 2 loaders are responsible for rewriting the profile with
+    /// the inferred value on first load so the inference only runs
+    /// once per migration.
+    #[must_use]
+    pub fn effective_backend(&self) -> CryptoBackend {
+        if let Some(b) = self.backend {
+            return b;
+        }
+        // Sentinel: historical Enhanced profile (pre-Wave-2) if setup
+        // has already been completed.
+        if self.keys.setup_fingerprint.is_some() {
+            CryptoBackend::Enhanced
+        } else {
+            CryptoBackend::default()
+        }
+    }
 }
 
 /// Default constructor used by serde for [`CryptoShell::consecutive_failures`]
@@ -504,7 +819,8 @@ impl fmt::Debug for CryptoShell {
             .field("hint", &self.hint)
             .field("kms", &self.kms.name())
             .field("mode", &self.mode.tag())
-            .finish()
+            .field("backend", &self.backend)
+            .finish_non_exhaustive()
     }
 }
 
@@ -524,6 +840,11 @@ impl Default for CryptoShell {
             sectors_sealed: std::sync::atomic::AtomicU64::new(0),
             consecutive_failures: std::sync::atomic::AtomicU32::new(0),
             last_fail_at: std::sync::atomic::AtomicU64::new(0),
+            backend: None,
+            #[cfg(feature = "pclsync-v2")]
+            pclsync_compat: None,
+            #[cfg(feature = "pclsync-v2")]
+            pclsync_compat_state: None,
         }
     }
 }
@@ -778,7 +1099,17 @@ impl CryptoShell {
     /// ```
     #[must_use]
     pub fn is_setup(&self) -> bool {
-        self.keys.setup_fingerprint.is_some()
+        if self.keys.setup_fingerprint.is_some() {
+            return true;
+        }
+        #[cfg(feature = "pclsync-v2")]
+        {
+            return self.pclsync_compat.is_some();
+        }
+        #[cfg(not(feature = "pclsync-v2"))]
+        {
+            false
+        }
     }
 
     /// `psync_crypto_isstarted` equivalent.
@@ -789,7 +1120,20 @@ impl CryptoShell {
     /// ```
     #[must_use]
     pub fn is_started(&self) -> bool {
-        self.unlock_state.is_started() && self.keys.active_key_material.is_some()
+        if !self.unlock_state.is_started() {
+            return false;
+        }
+        if self.keys.active_key_material.is_some() {
+            return true;
+        }
+        #[cfg(feature = "pclsync-v2")]
+        {
+            return self.pclsync_compat_state.is_some();
+        }
+        #[cfg(not(feature = "pclsync-v2"))]
+        {
+            false
+        }
     }
 
     /// Returns the password hint, if any. The hint is never the password
@@ -851,6 +1195,50 @@ impl CryptoShell {
         password: SecretString,
         hint: Option<String>,
     ) -> Result<(), CryptoError> {
+        // Back-compat default: preserve historical Enhanced behaviour for any
+        // existing caller that didn't opt in to a specific backend. New
+        // callers that want the PclsyncCompat default should use
+        // [`Self::setup_with_backend`].
+        self.setup_with_backend(password, hint, CryptoBackend::Enhanced)
+    }
+
+    /// Backend-aware setup. Dispatches to the per-backend setup body and
+    /// persists `self.backend = Some(backend)` on success so future
+    /// `start()` calls route correctly without re-running the sentinel
+    /// inference.
+    ///
+    /// # Errors
+    /// Same as [`Self::setup`], plus any backend-specific setup failures
+    /// (RSA keygen / OS RNG / DER serialisation for PclsyncCompat).
+    pub fn setup_with_backend(
+        &mut self,
+        password: SecretString,
+        hint: Option<String>,
+        backend: CryptoBackend,
+    ) -> Result<(), CryptoError> {
+        match backend {
+            CryptoBackend::Enhanced => self.setup_enhanced(password, hint),
+            CryptoBackend::PclsyncCompat => {
+                #[cfg(feature = "pclsync-v2")]
+                {
+                    self.setup_pclsync_compat(password, hint)
+                }
+                #[cfg(not(feature = "pclsync-v2"))]
+                {
+                    let _ = (password, hint);
+                    Err(CryptoError::NotYetWired)
+                }
+            }
+        }
+    }
+
+    /// Enhanced (Argon2id + AEAD) setup body. Formerly the whole of
+    /// [`Self::setup`]. Unchanged logic.
+    fn setup_enhanced(
+        &mut self,
+        password: SecretString,
+        hint: Option<String>,
+    ) -> Result<(), CryptoError> {
         if !self.policy.is_safe() {
             return Err(CryptoError::UnsafePolicy);
         }
@@ -860,17 +1248,54 @@ impl CryptoShell {
         if self.is_setup() {
             return Err(CryptoError::AlreadySetup);
         }
-        // Normalize to NFC so the same visual password typed on NFD (macOS)
-        // vs NFC (Linux/Windows) platforms produces the same fingerprint
-        // (H-4 in the crypto audit plan).
         let normalized = normalize_password_nfc(&password);
         let derived = self.keys.derive_key_material(&normalized);
         self.keys.setup_fingerprint = Some(keys::KeyManager::fingerprint_for(&derived));
-        // Intentionally do NOT retain the key material from setup; the user
-        // must explicitly `start` to activate a session.
         drop(derived);
         self.hint = hint;
         self.unlock_state = state::UnlockState::Locked;
+        self.backend = Some(CryptoBackend::Enhanced);
+        Ok(())
+    }
+
+    /// PclsyncCompat setup body (Wave 2 Stage 3). Generates an RSA-4096
+    /// keypair, wraps the priv DER under PBKDF2(password, salt, 20000)
+    /// via AES-256-CTR (counter = 0 per C reference), and stores the
+    /// resulting priv_key_ver1 / pub_key_ver1 blobs on the shell. The
+    /// plaintext DER priv key is zeroised before return; only ciphertext
+    /// escapes the function.
+    ///
+    /// The `CryptoShell` is a **data layer**: it does not upload the
+    /// blobs to pCloud. The daemon's `crypto_setup` IPC handler is
+    /// responsible for packaging them into `crypto_setuserkeys`
+    /// (`C_CODE/pclsync/pcryptofolder.c:168` — `papi_send2(api,
+    /// "crypto_setuserkeys", params)`). See `TODO(bd-1du.10)` in
+    /// `crates/pcloud-daemon/src/runtime.rs`.
+    #[cfg(feature = "pclsync-v2")]
+    fn setup_pclsync_compat(
+        &mut self,
+        password: SecretString,
+        hint: Option<String>,
+    ) -> Result<(), CryptoError> {
+        if !self.policy.is_safe() {
+            return Err(CryptoError::UnsafePolicy);
+        }
+        if password.is_empty() {
+            return Err(CryptoError::EmptyPassword);
+        }
+        if self.is_setup() {
+            return Err(CryptoError::AlreadySetup);
+        }
+        let normalized = normalize_password_nfc(&password);
+        let profile = pclsync_compat_profile::generate_profile(&normalized)
+            .map_err(|_| CryptoError::PclsyncCompat)?;
+        self.pclsync_compat = Some(profile);
+        self.hint = hint;
+        self.unlock_state = state::UnlockState::Locked;
+        self.backend = Some(CryptoBackend::PclsyncCompat);
+        // `setup_fingerprint` stays `None` for PclsyncCompat profiles:
+        // the Enhanced fingerprint semantics do not apply. The PclsyncCompat
+        // wrong-password gate lives in the profile's `pub_fingerprint`.
         Ok(())
     }
 
@@ -905,6 +1330,47 @@ impl CryptoShell {
     /// assert!(c.is_started());
     /// ```
     pub fn start(&mut self, password: SecretString) -> Result<(), CryptoError> {
+        // Preserve legacy pre-dispatch guards so callers that have never
+        // run setup see `NotSetup` regardless of effective backend.
+        if !self.policy.is_safe() {
+            return Err(CryptoError::UnsafePolicy);
+        }
+        if password.is_empty() {
+            return Err(CryptoError::EmptyPassword);
+        }
+        if !self.is_setup() {
+            return Err(CryptoError::NotSetup);
+        }
+        // Dispatch on the effective backend. Backend is inferred lazily from
+        // the persisted profile; see `effective_backend` for the sentinel
+        // rule. On success we write back `self.backend = Some(inferred)`
+        // so the inference only runs once per migration.
+        let effective = self.effective_backend();
+        let migrate = self.backend.is_none();
+        let res = match effective {
+            CryptoBackend::Enhanced => self.start_enhanced(password),
+            CryptoBackend::PclsyncCompat => {
+                #[cfg(feature = "pclsync-v2")]
+                {
+                    self.start_pclsync_compat(password)
+                }
+                #[cfg(not(feature = "pclsync-v2"))]
+                {
+                    let _ = password;
+                    Err(CryptoError::NotYetWired)
+                }
+            }
+        };
+        if res.is_ok() && migrate {
+            // One-time migration: stamp the inferred backend so the
+            // historical-profile sentinel never runs again.
+            self.backend = Some(effective);
+        }
+        res
+    }
+
+    /// Enhanced (Argon2id) unlock body. Formerly the whole of `start`.
+    fn start_enhanced(&mut self, password: SecretString) -> Result<(), CryptoError> {
         if !self.policy.is_safe() {
             return Err(CryptoError::UnsafePolicy);
         }
@@ -963,6 +1429,66 @@ impl CryptoShell {
         Ok(())
     }
 
+    /// PclsyncCompat unlock body (Wave 2 Stage 3). Requires the persisted
+    /// `pclsync_compat` profile to be present. Rejects wrong passwords in
+    /// constant time via the stored pub-key fingerprint **before** the
+    /// RSA private key is parsed. On success populates
+    /// `self.pclsync_compat_state` with the live priv key plus empty
+    /// sym-key caches, to be filled lazily via `crypto_getfolderkey`.
+    #[cfg(feature = "pclsync-v2")]
+    fn start_pclsync_compat(&mut self, password: SecretString) -> Result<(), CryptoError> {
+        if !self.policy.is_safe() {
+            return Err(CryptoError::UnsafePolicy);
+        }
+        if password.is_empty() {
+            return Err(CryptoError::EmptyPassword);
+        }
+        let profile = match &self.pclsync_compat {
+            Some(p) => p.clone(),
+            None => return Err(CryptoError::NotSetup),
+        };
+        if self.pclsync_compat_state.is_some() {
+            return Err(CryptoError::AlreadyStarted);
+        }
+        // Honor the same brute-force lockout as the Enhanced path.
+        let failures = self
+            .consecutive_failures
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if failures >= MAX_CONSECUTIVE_FAILURES {
+            return Err(CryptoError::BruteForceLockedOut);
+        }
+        let backoff = lockout_backoff_secs(failures);
+        if backoff > 0 {
+            let last = self.last_fail_at.load(std::sync::atomic::Ordering::Relaxed);
+            let now = unix_now_secs();
+            if last > 0 && now.saturating_sub(last) < backoff {
+                return Err(CryptoError::BruteForceLockedOut);
+            }
+        }
+
+        let normalized = normalize_password_nfc(&password);
+        self.unlock_state = state::UnlockState::Unlocking;
+        match pclsync_compat_profile::unlock_profile(&normalized, &profile) {
+            Ok(state) => {
+                self.pclsync_compat_state = Some(state);
+                self.unlock_state = state::UnlockState::Unlocked;
+                self.consecutive_failures
+                    .store(0, std::sync::atomic::Ordering::Relaxed);
+                self.last_fail_at
+                    .store(0, std::sync::atomic::Ordering::Relaxed);
+                Ok(())
+            }
+            Err(_) => {
+                self.unlock_state = state::UnlockState::Locked;
+                self.consecutive_failures
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                self.last_fail_at
+                    .store(unix_now_secs(), std::sync::atomic::Ordering::Relaxed);
+                Err(CryptoError::WrongPassword)
+            }
+        }
+    }
+
     /// `psync_crypto_stop` equivalent. Drops (and zeroizes) the active key
     /// material and returns to the locked state. Idempotent.
     ///
@@ -978,6 +1504,11 @@ impl CryptoShell {
     /// ```
     pub fn stop(&mut self) {
         self.keys.active_key_material = None;
+        #[cfg(feature = "pclsync-v2")]
+        {
+            // Drops the live RSA private key + sym-key caches.
+            self.pclsync_compat_state = None;
+        }
         // If a KMS-wrapped DEK is resident in the process-local cache,
         // evict it now so the plaintext DEK does not outlive the
         // session. `PlaintextDek` zeroizes on drop.
@@ -1244,6 +1775,9 @@ impl CryptoShell {
         new_password: SecretString,
         flags: u64,
     ) -> Result<ReencodedPrivateKey, CryptoError> {
+        // Preserve historical guards before dispatch so existing tests that
+        // expect `NotSetup`/`EmptyPassword`/`UnsafePolicy` on pre-flight
+        // inputs keep working regardless of effective backend.
         if !self.policy.is_safe() {
             return Err(CryptoError::UnsafePolicy);
         }
@@ -1252,6 +1786,36 @@ impl CryptoShell {
         }
         if !self.is_setup() {
             return Err(CryptoError::NotSetup);
+        }
+        if matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
+            #[cfg(feature = "pclsync-v2")]
+            {
+                // PclsyncCompat password-rotation: re-wrap priv_key_ver1
+                // DER under a fresh salt and the new-password KEK, then
+                // return a synthetic `ReencodedPrivateKey` carrying the
+                // new blob (hex-encoded) and an HMAC-SHA-256 signature
+                // over the blob under the *old* derived KEK — the
+                // daemon posts `crypto_changeuserkeys` with these two
+                // fields. The priv_key_ver1 blob on the shell is updated
+                // in place so local state never lags behind the server
+                // on the happy path. See
+                // [`Self::change_password_pclsync_compat`] for the full
+                // derivation; the returned `ChangePasswordResult` is
+                // repackaged into a `ReencodedPrivateKey` for signature
+                // compatibility with the Enhanced path — this keeps
+                // existing SDK / daemon callers untouched. Stage 4b
+                // wires the actual `crypto_changeuserkeys` RPC.
+                return self.change_password_pclsync_compat_reencoded(
+                    old_password,
+                    new_password,
+                    flags,
+                );
+            }
+            #[cfg(not(feature = "pclsync-v2"))]
+            {
+                let _ = (old_password, new_password, flags);
+                return Err(CryptoError::NotYetWired);
+            }
         }
 
         // Constant-time byte comparison of old and new passwords: refuse to
@@ -1291,6 +1855,419 @@ impl CryptoShell {
         }
 
         self.change_password_unlocked(new_password, flags)
+    }
+
+    /// PclsyncCompat helper used by [`Self::change_password`]. Re-wraps
+    /// the priv_key_ver1 DER under a fresh PBKDF2 salt and the new
+    /// KEK, rotates `self.pclsync_compat`, and returns a synthetic
+    /// `ReencodedPrivateKey` shaped for the existing daemon/SDK callers.
+    ///
+    /// Flow:
+    ///   1. Unlock the current profile under `old_password` to recover
+    ///      the live RSA private key (constant-time pub fingerprint
+    ///      check — wrong password is rejected before DER parse).
+    ///   2. Re-derive a fresh 64-byte salt, derive the new KEK.
+    ///   3. Serialize the live priv DER, XOR-wrap it via AES-256-CTR
+    ///      with counter=0 (matches the C client's setup path).
+    ///   4. Rebuild the priv_key_ver1 blob.
+    ///   5. Recompute the pub fingerprint under the new KEK.
+    ///   6. Commit `pclsync_compat.priv_key_ver1_blob`,
+    ///      `pclsync_compat.pub_fingerprint`, and `flags` atomically.
+    ///   7. Sign the hex-encoded new blob under an HMAC-SHA-256 keyed
+    ///      by the *old* KEK bytes so the server can verify the
+    ///      rotation came from a holder of the pre-rotation KEK.
+    #[cfg(feature = "pclsync-v2")]
+    fn change_password_pclsync_compat_reencoded(
+        &mut self,
+        old_password: SecretString,
+        new_password: SecretString,
+        flags: u64,
+    ) -> Result<ReencodedPrivateKey, CryptoError> {
+        use pcloud_secret::ExposeSecret as _;
+        use zeroize::Zeroize as _;
+        // Reject identical passwords early (constant-time byte compare).
+        {
+            let eq: bool = old_password
+                .expose_secret()
+                .as_bytes()
+                .ct_eq(new_password.expose_secret().as_bytes())
+                .into();
+            if eq {
+                return Err(CryptoError::PasswordUnchanged);
+            }
+        }
+        let new_password_norm = normalize_password_nfc(&new_password);
+        let old_password_norm = normalize_password_nfc(&old_password);
+
+        let profile = self
+            .pclsync_compat
+            .as_ref()
+            .ok_or(CryptoError::NotSetup)?
+            .clone();
+        // Constant-time wrong-password reject via profile unlock.
+        let state = pclsync_compat_profile::unlock_profile(&old_password_norm, &profile)
+            .map_err(|_| CryptoError::WrongPassword)?;
+
+        // Derive OLD KEK for signature key (safe: still authenticated).
+        let (_typ_old, _flags_old, old_salt, _ct_old) =
+            pclsync_compat_profile::PclsyncCompatProfile::parse_priv_blob(
+                &profile.priv_key_ver1_blob,
+            )
+            .map_err(|_| CryptoError::PclsyncCompat)?;
+        let old_kek = pclsync_kdf::derive_kek(&old_password_norm, &old_salt);
+
+        // Fresh salt + new KEK.
+        let mut new_salt = [0u8; pclsync_compat_profile::PCLSYNC_PBKDF2_SALT_LEN];
+        getrandom::getrandom(&mut new_salt)
+            .expect("OS randomness for PclsyncCompat salt rotation");
+        let new_kek = pclsync_kdf::derive_kek(&new_password_norm, &new_salt);
+
+        // Serialize live priv key to DER, AES-256-CTR wrap it in place.
+        let mut priv_der = pclsync_rsa::serialize_priv_key_der(state.priv_key())
+            .map_err(|_| CryptoError::PclsyncCompat)?;
+        pclsync_modes::aes256_ctr_pclsync_xor_inplace(
+            &new_kek.key,
+            &new_kek.iv,
+            0,
+            &mut priv_der,
+        );
+
+        let flags_u32 = u32::try_from(flags & u64::from(u32::MAX))
+            .unwrap_or(0);
+        let new_priv_blob = pclsync_compat_profile::PclsyncCompatProfile::build_priv_blob(
+            flags_u32,
+            &new_salt,
+            &priv_der,
+        );
+        priv_der.zeroize();
+
+        // New fingerprint is an HMAC over the (unchanged) pub blob under
+        // the new KEK — reuse pub blob bytes verbatim.
+        let mut new_fpr = [0u8; 32];
+        {
+            use hmac::{Hmac, Mac};
+            let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(&new_kek.key)
+                .expect("HMAC-SHA-256 accepts 32-byte key");
+            mac.update(&profile.pub_key_ver1_blob);
+            new_fpr.copy_from_slice(&mac.finalize().into_bytes());
+        }
+
+        // HMAC signature over the hex-encoded new blob under the OLD KEK.
+        let new_priv_hex = hex_encode(&new_priv_blob);
+        let signature = {
+            use hmac::{Hmac, Mac};
+            let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(&old_kek.key)
+                .expect("HMAC-SHA-256 accepts 32-byte key");
+            mac.update(new_priv_hex.as_bytes());
+            let out = mac.finalize().into_bytes();
+            let mut buf = [0u8; 32];
+            buf.copy_from_slice(&out);
+            buf
+        };
+
+        // Commit new profile in place.
+        if let Some(ref mut p) = self.pclsync_compat {
+            p.priv_key_ver1_blob = new_priv_blob;
+            p.pub_fingerprint = new_fpr;
+            p.flags = flags_u32;
+        }
+
+        Ok(ReencodedPrivateKey {
+            private_key_hex: new_priv_hex,
+            signature_hex: hex_encode(&signature),
+        })
+    }
+
+    /// PclsyncCompat + context-aware change-password. Returns the
+    /// structured [`ChangePasswordResult`] instead of the Enhanced-style
+    /// [`ReencodedPrivateKey`]. Stage 4b daemon callers will migrate
+    /// to this once the `crypto_changeuserkeys` RPC is wired.
+    #[cfg(feature = "pclsync-v2")]
+    pub fn change_password_with_context(
+        &mut self,
+        old_password: SecretString,
+        new_password: SecretString,
+        flags: u32,
+    ) -> Result<ChangePasswordResult, CryptoError> {
+        if !matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
+            return Err(CryptoError::NotYetWired);
+        }
+        let rekeyed = self.change_password_pclsync_compat_reencoded(
+            old_password,
+            new_password,
+            u64::from(flags),
+        )?;
+        // At this point pclsync_compat has been rotated; pull the new blob out.
+        let (blob, fpr, new_flags) = {
+            let p = self
+                .pclsync_compat
+                .as_ref()
+                .ok_or(CryptoError::PclsyncCompat)?;
+            (
+                p.priv_key_ver1_blob.clone(),
+                p.pub_fingerprint,
+                p.flags,
+            )
+        };
+        let _ = rekeyed;
+        Ok(ChangePasswordResult {
+            new_priv_key_ver1_blob: zeroize::Zeroizing::new(blob),
+            new_pub_fingerprint: fpr,
+            flags: new_flags,
+        })
+    }
+
+    /// PclsyncCompat mkdir body. Encodes the child filename under the
+    /// parent folder's cached `SymKeyVer1`, generates a fresh child
+    /// `SymKeyVer1`, records the local bookkeeping entry, and returns
+    /// both to the caller. The daemon is responsible for RSA-OAEP
+    /// wrapping the returned sym-key to the user's public key and
+    /// uploading via `crypto_mkdir`, then re-caching it on the
+    /// `PclsyncCompatState` under the server-assigned folder id.
+    ///
+    /// # Errors
+    /// - [`CryptoError::Locked`] if PclsyncCompat runtime state is absent.
+    /// - [`CryptoError::MissingFolderId`] if `parent_folder_id` is `None`.
+    /// - [`CryptoError::FolderKeyNotCached`] if the parent's sym-key is
+    ///   not populated in the cache yet.
+    /// - [`CryptoError::InvalidName`] / [`CryptoError::FolderExists`]
+    ///   on local bookkeeping failures.
+    #[cfg(feature = "pclsync-v2")]
+    fn mkdir_pclsync_compat(
+        &mut self,
+        parent_folder_id: Option<CryptoFolderId>,
+        name: &str,
+        local_folder_id: Option<CryptoFolderId>,
+    ) -> Result<CreatedCryptoFolder, CryptoError> {
+        // Lock gate first so pre-setup callers see the historical
+        // `Locked` error shape (matches the Enhanced path and the
+        // existing integration suite).
+        if self.pclsync_compat_state.is_none() {
+            return Err(CryptoError::Locked);
+        }
+        if name.is_empty() || name.contains('/') {
+            return Err(CryptoError::InvalidName);
+        }
+        let parent_id = parent_folder_id.ok_or(CryptoError::MissingFolderId)?;
+        // Encode the filename under the parent sym-key.
+        let encoded_name = {
+            let state = self
+                .pclsync_compat_state
+                .as_ref()
+                .ok_or(CryptoError::Locked)?;
+            let parent_sym = state
+                .folder_key(parent_id)
+                .ok_or(CryptoError::FolderKeyNotCached { folder_id: parent_id })?;
+            // `SymKeyVer1::hmac_key` is exactly `PCLSYNC_HMAC_KEY_LEN`
+            // bytes (= `pclsync_filename::HMAC_KEY_LEN`), so we can
+            // pass it to `FilenameKeys` by reference directly.
+            let keys = pclsync_filename::FilenameKeys {
+                aes_key: &parent_sym.aes_key,
+                hmac_key: &parent_sym.hmac_key,
+            };
+            pclsync_filename::encode_filename(keys, name)
+                .map_err(|_| CryptoError::PclsyncCompat)?
+        };
+
+        // Generate a fresh SymKeyVer1 for the new folder (aes=32 B,
+        // hmac=128 B; matches the C `sym_key_ver1` layout).
+        let sym_key = {
+            use rand_core::RngCore as _;
+            let mut sym = pclsync_rsa::SymKeyVer1::new(0);
+            rand_core::OsRng
+                .try_fill_bytes(&mut sym.aes_key)
+                .map_err(|_| CryptoError::PclsyncCompat)?;
+            rand_core::OsRng
+                .try_fill_bytes(&mut sym.hmac_key)
+                .map_err(|_| CryptoError::PclsyncCompat)?;
+            sym
+        };
+
+        // Allocate the local folder id.
+        let folder_id = match local_folder_id {
+            Some(id) => {
+                if self.folders.contains_key(&id) {
+                    return Err(CryptoError::FolderExists);
+                }
+                id
+            }
+            None => {
+                let id = self.next_local_folder_id;
+                self.next_local_folder_id = self.next_local_folder_id.saturating_add(1);
+                id
+            }
+        };
+        let entry = CryptoFolderEntry {
+            folder_id,
+            parent_folder_id,
+            encrypted_name: encoded_name,
+        };
+        self.folders.insert(folder_id, entry.clone());
+        Ok(CreatedCryptoFolder {
+            entry,
+            sym_key: Some(sym_key),
+        })
+    }
+
+    /// PclsyncCompat + context-aware mkdir. Returns the richer
+    /// [`CreatedCryptoFolder`] carrying the freshly generated
+    /// `SymKeyVer1` that the daemon must RSA-OAEP-wrap and upload.
+    ///
+    /// Enhanced callers can also use this: they get
+    /// `sym_key: None` and the same `entry` as [`Self::mkdir`].
+    #[cfg(feature = "pclsync-v2")]
+    pub fn mkdir_with_context(
+        &mut self,
+        parent_folder_id: Option<CryptoFolderId>,
+        name: &str,
+        local_folder_id: Option<CryptoFolderId>,
+    ) -> Result<CreatedCryptoFolder, CryptoError> {
+        if matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
+            return self.mkdir_pclsync_compat(parent_folder_id, name, local_folder_id);
+        }
+        let entry = self.mkdir(parent_folder_id, name, local_folder_id)?;
+        Ok(CreatedCryptoFolder {
+            entry,
+            sym_key: None,
+        })
+    }
+
+    // --------------------------------------------------------------------
+    // Stage 4b.3 additive helpers — daemon-side dispatch plumbing.
+    //
+    // These helpers are the PclsyncCompat-only cache population glue that
+    // the daemon's `CryptoGetFolderKey` / `CryptoGetFileKey` IPC dispatch
+    // arms need. They are strictly additive:
+    //
+    //   - `cache_folder_key` / `cache_file_key` accept a plaintext
+    //     `SymKeyVer1` (e.g. freshly generated on mkdir) and insert it
+    //     into the cache.
+    //   - `unwrap_and_cache_folder_key` / `unwrap_and_cache_file_key`
+    //     accept an RSA-OAEP-wrapped blob fresh from the server, unwrap
+    //     it using the unlocked private key, and insert the result.
+    //
+    // All helpers refuse with `CryptoError::Locked` when the PclsyncCompat
+    // runtime state is not resident (i.e. the shell is not unlocked), and
+    // with `CryptoError::NotYetWired` when the shell is configured for the
+    // Enhanced backend — these helpers have no meaning on that path.
+    // --------------------------------------------------------------------
+
+    /// Insert (or overwrite) a plaintext folder sym-key into the
+    /// PclsyncCompat cache. Used after a local `mkdir_with_context` which
+    /// already produced a fresh [`pclsync_rsa::SymKeyVer1`], so the caller
+    /// does not need to round-trip it through the server.
+    ///
+    /// # Errors
+    /// - [`CryptoError::NotYetWired`] on Enhanced shells.
+    /// - [`CryptoError::Locked`] if the PclsyncCompat runtime state is
+    ///   absent (shell never unlocked in this process lifetime).
+    #[cfg(feature = "pclsync-v2")]
+    pub fn cache_folder_key(
+        &mut self,
+        folder_id: u64,
+        sym: pclsync_rsa::SymKeyVer1,
+    ) -> Result<(), CryptoError> {
+        if !matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
+            return Err(CryptoError::NotYetWired);
+        }
+        let state = self
+            .pclsync_compat_state
+            .as_mut()
+            .ok_or(CryptoError::Locked)?;
+        state.cache_folder_key(folder_id, sym);
+        Ok(())
+    }
+
+    /// Insert (or overwrite) a plaintext file sym-key into the
+    /// PclsyncCompat cache.
+    ///
+    /// # Errors
+    /// Same taxonomy as [`Self::cache_folder_key`].
+    #[cfg(feature = "pclsync-v2")]
+    pub fn cache_file_key(
+        &mut self,
+        file_id: u64,
+        sym: pclsync_rsa::SymKeyVer1,
+    ) -> Result<(), CryptoError> {
+        if !matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
+            return Err(CryptoError::NotYetWired);
+        }
+        let state = self
+            .pclsync_compat_state
+            .as_mut()
+            .ok_or(CryptoError::Locked)?;
+        state.cache_file_key(file_id, sym);
+        Ok(())
+    }
+
+    /// RSA-OAEP-unwrap a server-returned wrapped sym-key blob and cache
+    /// it as the folder's `SymKeyVer1`. Mirrors the C post-processing at
+    /// `pcryptofolder.c:848-859` (`download_fldr_enckey`): decode the
+    /// base64 `"key"` field, decrypt with the user's private key, parse
+    /// the 168-byte `sym_key_ver1` structure, then commit to the cache.
+    ///
+    /// Base64 decoding is performed by the daemon before this call (the
+    /// `crypto_getfolderkey` proto response already delivers raw bytes).
+    ///
+    /// # Errors
+    /// - [`CryptoError::NotYetWired`] on Enhanced shells.
+    /// - [`CryptoError::Locked`] when the shell is not unlocked.
+    /// - [`CryptoError::PclsyncCompat`] on RSA-OAEP or sym-key parse failure
+    ///   (wire-level taxonomy is deliberately collapsed to an opaque
+    ///   error variant so OAEP padding details do not leak to the user).
+    #[cfg(feature = "pclsync-v2")]
+    pub fn unwrap_and_cache_folder_key(
+        &mut self,
+        folder_id: u64,
+        wrapped: &[u8],
+    ) -> Result<(), CryptoError> {
+        if !matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
+            return Err(CryptoError::NotYetWired);
+        }
+        let state = self
+            .pclsync_compat_state
+            .as_mut()
+            .ok_or(CryptoError::Locked)?;
+        let sym = pclsync_rsa::oaep_unwrap(state.priv_key(), wrapped)
+            .map_err(|_| CryptoError::PclsyncCompat)?;
+        state.cache_folder_key(folder_id, sym);
+        Ok(())
+    }
+
+    /// RSA-OAEP-unwrap a server-returned wrapped file-key blob and cache
+    /// it as the file's `SymKeyVer1`. Mirrors `download_file_enckey` at
+    /// `pcryptofolder.c:890-909`.
+    ///
+    /// The `hash` argument is the server-reported file-version hash; it
+    /// is recorded via `CryptoShell::cache_file_key` so subsequent
+    /// seal/open ops can cross-check the file version. The current cache
+    /// backing structure keys only by `file_id`; the hash is accepted
+    /// here for API compatibility with the IPC surface and will be wired
+    /// into cache invalidation in a follow-up (TODO(bd-1du.10)).
+    ///
+    /// # Errors
+    /// Same taxonomy as [`Self::unwrap_and_cache_folder_key`].
+    #[cfg(feature = "pclsync-v2")]
+    pub fn unwrap_and_cache_file_key(
+        &mut self,
+        file_id: u64,
+        hash: u64,
+        wrapped: &[u8],
+    ) -> Result<(), CryptoError> {
+        // TODO(bd-1du.10): thread `hash` through the cache so stale
+        // entries can be invalidated when the server bumps file version.
+        let _ = hash;
+        if !matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
+            return Err(CryptoError::NotYetWired);
+        }
+        let state = self
+            .pclsync_compat_state
+            .as_mut()
+            .ok_or(CryptoError::Locked)?;
+        let sym = pclsync_rsa::oaep_unwrap(state.priv_key(), wrapped)
+            .map_err(|_| CryptoError::PclsyncCompat)?;
+        state.cache_file_key(file_id, sym);
+        Ok(())
     }
 }
 
@@ -1339,6 +2316,12 @@ impl CryptoShell {
         self.hint = None;
         self.mode = CryptoMode::Raw;
         self.unlock_state = state::UnlockState::NotSetup;
+        self.backend = None;
+        #[cfg(feature = "pclsync-v2")]
+        {
+            self.pclsync_compat = None;
+            self.pclsync_compat_state = None;
+        }
     }
 
     /// `psync_crypto_folderid` equivalent — returns the id of an arbitrary
@@ -1380,6 +2363,24 @@ impl CryptoShell {
         name: &str,
         local_folder_id: Option<CryptoFolderId>,
     ) -> Result<CryptoFolderEntry, CryptoError> {
+        if matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
+            #[cfg(feature = "pclsync-v2")]
+            {
+                // PclsyncCompat mkdir: encode the child's filename under
+                // the parent folder's cached `SymKeyVer1`. The parent id
+                // comes in as `parent_folder_id` (`None` is treated as
+                // `MissingFolderId` for the PclsyncCompat path — every
+                // crypto folder lives under a parent folder keyed by a
+                // server-assigned id). See
+                // [`Self::mkdir_pclsync_compat`] for the full body.
+                let created = self.mkdir_pclsync_compat(parent_folder_id, name, local_folder_id)?;
+                return Ok(created.entry);
+            }
+            #[cfg(not(feature = "pclsync-v2"))]
+            {
+                return Err(CryptoError::NotYetWired);
+            }
+        }
         let key = self
             .keys
             .active_key_material
@@ -1450,6 +2451,27 @@ impl CryptoShell {
         sector_index: u32,
         plaintext: &[u8],
     ) -> Result<Vec<u8>, CryptoError> {
+        // Backend dispatch. PclsyncCompat sector ops require folder/file
+        // id + cached SymKeyVer1 plumbing (Stage 4: daemon-side
+        // `crypto_getfolderkey` wiring + extended API that threads the
+        // ids into the data layer). Until that lands, honestly refuse.
+        if matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
+            // Lock gate first to preserve the historical `Locked` shape
+            // for pre-setup callers.
+            #[cfg(feature = "pclsync-v2")]
+            if self.pclsync_compat_state.is_none() {
+                return Err(CryptoError::Locked);
+            }
+            // PclsyncCompat seal path REQUIRES a `file_id` — the legacy
+            // 3-arg signature (file_seed, sector_index, plaintext) does
+            // not thread one through, so it refuses with
+            // [`CryptoError::MissingFileId`]. Callers that need PclsyncCompat
+            // sector ops must use [`Self::seal_sector_with_context`] and
+            // supply a [`SectorContext::for_file`]. Stage 4b migrates
+            // every IPC caller.
+            let _ = (file_seed, sector_index, plaintext);
+            return Err(CryptoError::MissingFileId);
+        }
         // Enforce per-session AES-256-GCM 96-bit random-nonce budget
         // (H-2). Refuse new seals once the counter approaches
         // `u32::MAX - NONCE_BUDGET_SAFETY_MARGIN` — before birthday-bound
@@ -1540,9 +2562,151 @@ impl CryptoShell {
         sector_index: u32,
         frame: &[u8],
     ) -> Result<Vec<u8>, CryptoError> {
+        if matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
+            #[cfg(feature = "pclsync-v2")]
+            if self.pclsync_compat_state.is_none() {
+                return Err(CryptoError::Locked);
+            }
+            // See [`Self::seal_sector`] — the legacy 3-arg open path
+            // refuses PclsyncCompat with [`CryptoError::MissingFileId`].
+            // Use [`Self::open_sector_with_context`] with a PclsyncCompat
+            // `SectorContext::for_file(file_id)` plus the detached auth tag.
+            let _ = (file_seed, sector_index, frame);
+            return Err(CryptoError::MissingFileId);
+        }
         let file_key = self.derive_sector_file_key(file_seed)?;
         let pt = content::open_sector(&file_key, sector_index, frame)?;
         Ok(pt)
+    }
+
+    /// PclsyncCompat-aware sector seal.
+    ///
+    /// Enhanced call sites: pass [`SectorContext::enhanced()`] and keep
+    /// using `file_seed` as before — the returned [`SealedSectorFrame`]
+    /// has `auth_tag: None` and its `ciphertext` is the monolithic
+    /// AES-GCM frame.
+    ///
+    /// PclsyncCompat call sites: pass [`SectorContext::for_file(file_id)`].
+    /// The shell looks up `SymKeyVer1` for that `file_id` in the
+    /// PclsyncCompat sym-key cache and invokes
+    /// [`pclsync_sector::seal_sector`]. The returned
+    /// [`SealedSectorFrame`] carries raw sector ciphertext plus the
+    /// detached 32-byte `auth_tag` (which the caller must persist into
+    /// the auth-sector Merkle tree alongside the ciphertext).
+    ///
+    /// # Errors
+    /// - [`CryptoError::Locked`] if the shell is not started.
+    /// - [`CryptoError::NonceBudgetExhausted`] (Enhanced only) once the
+    ///   per-session 96-bit random-nonce budget is depleted.
+    /// - [`CryptoError::MissingFileId`] (PclsyncCompat only) when the
+    ///   caller passes `SectorContext::enhanced()`.
+    /// - [`CryptoError::FileKeyNotCached`] (PclsyncCompat only) when
+    ///   the sym-key cache has no entry for the requested `file_id`.
+    /// - [`CryptoError::NotSetup`] / [`CryptoError::PclsyncCompat`]
+    ///   if the PclsyncCompat runtime state is absent or malformed.
+    pub fn seal_sector_with_context(
+        &self,
+        file_seed: &[u8],
+        sector_index: u64,
+        plaintext: &[u8],
+        context: SectorContext,
+    ) -> Result<SealedSectorFrame, CryptoError> {
+        if matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
+            #[cfg(feature = "pclsync-v2")]
+            {
+                let file_id = context.file_id.ok_or(CryptoError::MissingFileId)?;
+                let state = self
+                    .pclsync_compat_state
+                    .as_ref()
+                    .ok_or(CryptoError::Locked)?;
+                let sym = state
+                    .file_key(file_id)
+                    .ok_or(CryptoError::FileKeyNotCached { file_id })?;
+                let keys = pclsync_sector::SectorKeys {
+                    aes_key: &sym.aes_key,
+                    hmac_key: &sym.hmac_key,
+                };
+                let sealed = pclsync_sector::seal_sector(keys, sector_index, plaintext)
+                    .map_err(|_| CryptoError::PclsyncCompat)?;
+                return Ok(SealedSectorFrame {
+                    ciphertext: sealed.ciphertext,
+                    auth_tag: Some(sealed.auth_tag),
+                });
+            }
+            #[cfg(not(feature = "pclsync-v2"))]
+            {
+                let _ = (file_seed, sector_index, plaintext, context);
+                return Err(CryptoError::NotYetWired);
+            }
+        }
+        // Enhanced path: ignore `context`, mimic legacy seal_sector.
+        let _ = context;
+        // Enhanced legacy sector-index is 32-bit; high u64 values would
+        // silently truncate, so refuse them. Out-of-range sector indices
+        // are protocol errors at the caller layer.
+        let sector_index_u32: u32 = u32::try_from(sector_index)
+            .map_err(|_| CryptoError::Content(content::ContentCryptoError::SectorIndexMismatch))?;
+        let frame = self.seal_sector(file_seed, sector_index_u32, plaintext)?;
+        Ok(SealedSectorFrame {
+            ciphertext: frame,
+            auth_tag: None,
+        })
+    }
+
+    /// PclsyncCompat-aware sector open. Mirror of
+    /// [`Self::seal_sector_with_context`].
+    ///
+    /// For Enhanced: `auth_tag` is ignored; `ciphertext` is the
+    /// monolithic AES-GCM frame returned by
+    /// [`Self::seal_sector_with_context`] / [`Self::seal_sector`].
+    ///
+    /// For PclsyncCompat: `auth_tag` MUST be the detached 32-byte tag
+    /// produced by the corresponding seal call.
+    ///
+    /// # Errors
+    /// Same taxonomy as [`Self::seal_sector_with_context`].
+    pub fn open_sector_with_context(
+        &self,
+        file_seed: &[u8],
+        sector_index: u64,
+        ciphertext: &[u8],
+        auth_tag: Option<&[u8; 32]>,
+        context: SectorContext,
+    ) -> Result<Vec<u8>, CryptoError> {
+        if matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
+            #[cfg(feature = "pclsync-v2")]
+            {
+                let file_id = context.file_id.ok_or(CryptoError::MissingFileId)?;
+                let tag = auth_tag.ok_or(CryptoError::PclsyncCompat)?;
+                let state = self
+                    .pclsync_compat_state
+                    .as_ref()
+                    .ok_or(CryptoError::Locked)?;
+                let sym = state
+                    .file_key(file_id)
+                    .ok_or(CryptoError::FileKeyNotCached { file_id })?;
+                let keys = pclsync_sector::SectorKeys {
+                    aes_key: &sym.aes_key,
+                    hmac_key: &sym.hmac_key,
+                };
+                let pt = pclsync_sector::open_sector(keys, sector_index, ciphertext, tag)
+                    .map_err(|_| CryptoError::PclsyncCompat)?;
+                return Ok(pt);
+            }
+            #[cfg(not(feature = "pclsync-v2"))]
+            {
+                let _ = (file_seed, sector_index, ciphertext, auth_tag, context);
+                return Err(CryptoError::NotYetWired);
+            }
+        }
+        // Enhanced path.
+        let _ = (auth_tag, context);
+        // Enhanced legacy sector-index is 32-bit; high u64 values would
+        // silently truncate, so refuse them. Out-of-range sector indices
+        // are protocol errors at the caller layer.
+        let sector_index_u32: u32 = u32::try_from(sector_index)
+            .map_err(|_| CryptoError::Content(content::ContentCryptoError::SectorIndexMismatch))?;
+        self.open_sector(file_seed, sector_index_u32, ciphertext)
     }
 }
 
@@ -1550,7 +2714,7 @@ impl CryptoShell {
 mod tests {
     use pcloud_secret::secret_string::SecretString;
 
-    use super::{CryptoError, CryptoShell, state::UnlockState};
+    use super::{CryptoBackend, CryptoError, CryptoShell, state::UnlockState};
 
     fn pw(s: &str) -> SecretString {
         SecretString::new(s)
@@ -2009,5 +3173,381 @@ mod tests {
         // Wrong password should still be rejected.
         c.lock();
         assert_eq!(c.unlock(pw("bad")).unwrap_err(), CryptoError::WrongPassword);
+    }
+
+    // ---- Wave 2 / Stage 1: CryptoBackend enum + profile field ----------
+
+    #[test]
+    fn crypto_backend_default_is_pclsync_compat() {
+        assert_eq!(CryptoBackend::default(), CryptoBackend::PclsyncCompat);
+    }
+
+    #[test]
+    fn crypto_backend_display_kebab_case() {
+        assert_eq!(CryptoBackend::PclsyncCompat.to_string(), "pclsync-compat");
+        assert_eq!(CryptoBackend::Enhanced.to_string(), "enhanced");
+    }
+
+    #[test]
+    fn crypto_backend_interop_flag() {
+        assert!(CryptoBackend::PclsyncCompat.interoperable_with_pcloud_apps());
+        assert!(!CryptoBackend::Enhanced.interoperable_with_pcloud_apps());
+    }
+
+    #[test]
+    fn crypto_backend_serde_roundtrip_kebab_case() {
+        let j = serde_json::to_string(&CryptoBackend::PclsyncCompat).unwrap();
+        assert_eq!(j, "\"pclsync-compat\"");
+        let back: CryptoBackend = serde_json::from_str(&j).unwrap();
+        assert_eq!(back, CryptoBackend::PclsyncCompat);
+
+        let j = serde_json::to_string(&CryptoBackend::Enhanced).unwrap();
+        assert_eq!(j, "\"enhanced\"");
+        let back: CryptoBackend = serde_json::from_str(&j).unwrap();
+        assert_eq!(back, CryptoBackend::Enhanced);
+    }
+
+    #[test]
+    fn profile_roundtrip_preserves_backend() {
+        let mut c = CryptoShell::default();
+        c.backend = Some(CryptoBackend::Enhanced);
+        let json = serde_json::to_string(&c).unwrap();
+        let back: CryptoShell = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.backend, Some(CryptoBackend::Enhanced));
+        assert_eq!(back.effective_backend(), CryptoBackend::Enhanced);
+
+        c.backend = Some(CryptoBackend::PclsyncCompat);
+        let json = serde_json::to_string(&c).unwrap();
+        let back: CryptoShell = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.backend, Some(CryptoBackend::PclsyncCompat));
+        assert_eq!(back.effective_backend(), CryptoBackend::PclsyncCompat);
+    }
+
+    #[test]
+    fn profile_without_backend_field_historical_enhanced_is_inferred() {
+        // Simulate a historical Enhanced profile: serialize a current
+        // shell that has completed setup() (so it has a
+        // setup_fingerprint), then strip the `backend` field from the
+        // JSON the way a pre-Wave-2 profile on disk looks.
+        let mut c = CryptoShell::default();
+        c.setup(pw("history"), None).unwrap();
+        assert!(c.keys.setup_fingerprint.is_some());
+        // Simulate "was never written with the field" by clearing it
+        // before serializing (None serializes to `null` with default
+        // serde; absence is handled by #[serde(default)]).
+        c.backend = None;
+        let json = serde_json::to_string(&c).unwrap();
+        // Also test the truly-absent case: strip "backend":null entirely.
+        let stripped = json.replace(",\"backend\":null", "");
+        assert!(!stripped.contains("\"backend\""));
+        let back: CryptoShell = serde_json::from_str(&stripped).unwrap();
+        assert_eq!(back.backend, None);
+        // Sentinel inference: historical fingerprint => Enhanced.
+        assert_eq!(back.effective_backend(), CryptoBackend::Enhanced);
+    }
+
+    #[test]
+    fn profile_without_backend_and_no_setup_defaults_to_pclsync_compat() {
+        // Fresh shell, never set up: no historical ciphertext exists,
+        // so the inference falls through to CryptoBackend::default().
+        let c = CryptoShell::default();
+        assert!(c.keys.setup_fingerprint.is_none());
+        assert_eq!(c.backend, None);
+        assert_eq!(c.effective_backend(), CryptoBackend::PclsyncCompat);
+    }
+
+    // --- Wave 2 Stage 2+3: PclsyncCompat dispatch tests ---
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_compat_setup_then_start_roundtrip() {
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("pclsync-pw"), Some("my hint".into()), CryptoBackend::PclsyncCompat)
+            .expect("setup pclsync-compat");
+        assert!(c.is_setup());
+        assert!(!c.is_started());
+        assert_eq!(c.backend, Some(CryptoBackend::PclsyncCompat));
+        assert!(c.pclsync_compat.is_some());
+        assert_eq!(c.get_hint(), Some("my hint"));
+
+        c.start(pw("pclsync-pw")).expect("start pclsync-compat");
+        assert!(c.is_started());
+        assert_eq!(c.unlock_state, UnlockState::Unlocked);
+        assert!(c.pclsync_compat_state.is_some());
+
+        c.stop();
+        assert!(!c.is_started());
+        assert!(c.is_setup()); // profile blob still on disk
+        assert!(c.pclsync_compat_state.is_none());
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_compat_wrong_password_rejected() {
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("right"), None, CryptoBackend::PclsyncCompat)
+            .expect("setup");
+        let err = c.start(pw("wrong")).expect_err("wrong pw");
+        assert_eq!(err, CryptoError::WrongPassword);
+        assert!(!c.is_started());
+        assert_eq!(c.unlock_state, UnlockState::Locked);
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_compat_sector_ops_without_context_return_missing_file_id() {
+        // Stage 4a: the legacy 3-arg seal_sector/open_sector signatures
+        // now surface MissingFileId on the PclsyncCompat path — callers
+        // must migrate to *_with_context. See also
+        // pclsync_sector_roundtrip_via_shell for the happy-path proof.
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("pw"), None, CryptoBackend::PclsyncCompat)
+            .expect("setup");
+        c.start(pw("pw")).expect("start");
+        let seed = [0u8; 32];
+        assert_eq!(
+            c.seal_sector(&seed, 0, b"hi").unwrap_err(),
+            CryptoError::MissingFileId
+        );
+        assert_eq!(
+            c.open_sector(&seed, 0, &[]).unwrap_err(),
+            CryptoError::MissingFileId
+        );
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_compat_mkdir_without_parent_returns_missing_folder_id() {
+        // Stage 4a: mkdir on PclsyncCompat now requires a parent id
+        // (the parent's SymKeyVer1 drives filename encoding).
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("pw"), None, CryptoBackend::PclsyncCompat)
+            .expect("setup");
+        c.start(pw("pw")).expect("start");
+        assert_eq!(
+            c.mkdir(None, "docs", None).unwrap_err(),
+            CryptoError::MissingFolderId
+        );
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_compat_change_password_rewraps_priv_key_ver1() {
+        // Stage 4a: change_password now re-wraps priv_key_ver1 under a
+        // fresh salt + new KEK. The returned ReencodedPrivateKey carries
+        // the new blob (hex) + an HMAC signature keyed by the OLD KEK.
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("old-pw"), None, CryptoBackend::PclsyncCompat)
+            .expect("setup");
+        c.start(pw("old-pw")).expect("start");
+        let old_blob = c
+            .pclsync_compat
+            .as_ref()
+            .expect("profile present")
+            .priv_key_ver1_blob
+            .clone();
+        let rekeyed = c
+            .change_password(pw("old-pw"), pw("new-pw"), 0)
+            .expect("change_password");
+        assert!(!rekeyed.private_key_hex.is_empty());
+        assert_eq!(rekeyed.signature_hex.len(), 64); // 32 bytes hex
+        // Shell state has been rotated: new priv_key_ver1 blob differs.
+        let new_blob = &c
+            .pclsync_compat
+            .as_ref()
+            .expect("profile retained")
+            .priv_key_ver1_blob;
+        assert_ne!(&old_blob, new_blob);
+        // Unlock with the new password succeeds; old is rejected.
+        c.stop();
+        c.start(pw("new-pw")).expect("unlock under new pw");
+        c.stop();
+        assert_eq!(
+            c.start(pw("old-pw")).unwrap_err(),
+            CryptoError::WrongPassword
+        );
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_compat_reset_clears_profile_and_state() {
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("pw"), None, CryptoBackend::PclsyncCompat)
+            .expect("setup");
+        c.start(pw("pw")).expect("start");
+        c.reset();
+        assert!(!c.is_setup());
+        assert!(!c.is_started());
+        assert!(c.pclsync_compat.is_none());
+        assert!(c.pclsync_compat_state.is_none());
+        assert_eq!(c.backend, None);
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn setup_enhanced_stamps_backend_enhanced() {
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("pw"), None, CryptoBackend::Enhanced)
+            .expect("setup");
+        assert_eq!(c.backend, Some(CryptoBackend::Enhanced));
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn historical_enhanced_profile_start_migrates_backend() {
+        // Simulate a historical Enhanced profile written before Wave 2:
+        // backend = None, setup_fingerprint present.
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("pw"), None, CryptoBackend::Enhanced)
+            .expect("setup");
+        // Force backend=None to emulate pre-Stage-1 persistence.
+        c.backend = None;
+        assert_eq!(c.effective_backend(), CryptoBackend::Enhanced);
+        c.start(pw("pw")).expect("start");
+        // Migration should have stamped backend on success.
+        assert_eq!(c.backend, Some(CryptoBackend::Enhanced));
+    }
+
+    // ------------------------------------------------------------------
+    // Wave 2 / Stage 4a: widened PclsyncCompat sector/filename/mkdir API
+    // ------------------------------------------------------------------
+
+    /// Build a deterministic synthetic `SymKeyVer1` for tests — uses a
+    /// fixed byte pattern for both AES and HMAC keys so expectations are
+    /// reproducible. Not a secret; test-only.
+    #[cfg(feature = "pclsync-v2")]
+    fn synth_sym_key() -> super::pclsync_rsa::SymKeyVer1 {
+        let mut s = super::pclsync_rsa::SymKeyVer1::new(0);
+        s.aes_key.fill(0x11);
+        s.hmac_key.fill(0x22);
+        s
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_sector_roundtrip_via_shell() {
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("pw"), None, CryptoBackend::PclsyncCompat)
+            .expect("setup");
+        c.start(pw("pw")).expect("start");
+        // Inject a synthetic file sym-key into the cache.
+        c.pclsync_compat_state
+            .as_mut()
+            .expect("state")
+            .cache_file_key(42, synth_sym_key());
+
+        let plaintext = vec![0xABu8; 4096];
+        let ctx = super::SectorContext::for_file(42);
+        let sealed = c
+            .seal_sector_with_context(&[], 7, &plaintext, ctx)
+            .expect("seal");
+        assert!(sealed.auth_tag.is_some());
+        assert_eq!(sealed.ciphertext.len(), plaintext.len());
+
+        let opened = c
+            .open_sector_with_context(&[], 7, &sealed.ciphertext, sealed.auth_tag.as_ref(), ctx)
+            .expect("open");
+        assert_eq!(opened, plaintext);
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_sector_missing_file_id_errors() {
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("pw"), None, CryptoBackend::PclsyncCompat)
+            .expect("setup");
+        c.start(pw("pw")).expect("start");
+        let ctx = super::SectorContext::enhanced();
+        assert_eq!(
+            c.seal_sector_with_context(&[], 0, b"hi", ctx).unwrap_err(),
+            CryptoError::MissingFileId
+        );
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_sector_file_key_not_cached_errors() {
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("pw"), None, CryptoBackend::PclsyncCompat)
+            .expect("setup");
+        c.start(pw("pw")).expect("start");
+        let ctx = super::SectorContext::for_file(999);
+        match c.seal_sector_with_context(&[], 0, b"hi", ctx) {
+            Err(CryptoError::FileKeyNotCached { file_id }) => assert_eq!(file_id, 999),
+            other => panic!("expected FileKeyNotCached, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_filename_roundtrip_via_shell_mkdir() {
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("pw"), None, CryptoBackend::PclsyncCompat)
+            .expect("setup");
+        c.start(pw("pw")).expect("start");
+        // Cache a parent folder key so filename encode can proceed.
+        c.pclsync_compat_state
+            .as_mut()
+            .expect("state")
+            .cache_folder_key(100, synth_sym_key());
+        let created = c
+            .mkdir_with_context(Some(100), "my-folder", None)
+            .expect("mkdir");
+        assert!(created.sym_key.is_some());
+        assert!(!created.entry.encrypted_name.is_empty());
+        // Encoded name round-trips through decode with the same parent
+        // sym-key (proves we used pclsync_filename::encode_filename).
+        let sym = synth_sym_key();
+        let keys = super::pclsync_filename::FilenameKeys {
+            aes_key: &sym.aes_key,
+            hmac_key: &sym.hmac_key,
+        };
+        let decoded = super::pclsync_filename::decode_filename(keys, &created.entry.encrypted_name)
+            .expect("decode");
+        assert_eq!(decoded, "my-folder");
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_mkdir_folder_key_not_cached_errors() {
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("pw"), None, CryptoBackend::PclsyncCompat)
+            .expect("setup");
+        c.start(pw("pw")).expect("start");
+        match c.mkdir_with_context(Some(7777), "x", None) {
+            Err(CryptoError::FolderKeyNotCached { folder_id }) => assert_eq!(folder_id, 7777),
+            other => panic!("expected FolderKeyNotCached, got {other:?}"),
+        }
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_mkdir_enhanced_returns_none_sym_key() {
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("pw"), None, CryptoBackend::Enhanced)
+            .expect("setup");
+        c.start(pw("pw")).expect("start");
+        let created = c
+            .mkdir_with_context(None, "top", None)
+            .expect("mkdir enhanced");
+        assert!(created.sym_key.is_none());
+        assert!(!created.entry.encrypted_name.is_empty());
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn pclsync_change_password_with_context_produces_zeroizing_blob() {
+        let mut c = CryptoShell::default();
+        c.setup_with_backend(pw("old"), None, CryptoBackend::PclsyncCompat)
+            .expect("setup");
+        c.start(pw("old")).expect("start");
+        let res = c
+            .change_password_with_context(pw("old"), pw("new"), 0)
+            .expect("change_password_with_context");
+        assert!(!res.new_priv_key_ver1_blob.is_empty());
+        assert_eq!(res.flags, 0);
+        // New blob unlocks with new pw.
+        c.stop();
+        c.start(pw("new")).expect("unlock under new");
     }
 }

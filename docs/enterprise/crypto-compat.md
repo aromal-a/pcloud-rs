@@ -5,6 +5,71 @@
 
 # Crypto Cross-Client Compatibility
 
+## Crypto Backend Selection (READ FIRST)
+
+Two crypto backends are available in `pcloud-rs`. They are **wire-incompatible**
+by design. Choose once, at `crypto setup` time — switching later requires
+re-encrypting all content.
+
+### Backend summary
+
+| Property | `pclsync-compat` (default) | `enhanced` (opt-in) |
+|---|---|---|
+| Interoperable with pCloud desktop/web/mobile apps | **Yes** | **No** |
+| Interoperable with pCloud iOS / Android | **Yes** | **No** |
+| KDF | PBKDF2-HMAC-SHA512 (20 000 iters) | Argon2id (m=19456, t=2, p=1) |
+| Sector cipher | Custom AEAD (HMAC-SHA512 tweak + CBC-CTS + AES-ECB-wrapped tag) | AES-256-GCM (16-byte tag, random 96-bit nonce) |
+| Authentication tree | 128-ary Merkle HMAC-SHA512 | Per-sector AEAD tag (no separate tree) |
+| Key wrapping | RSA-4096-OAEP + PBKDF2 KEK | HMAC-SHA256 KDFs (domain-separated) |
+| Master key zeroized on Drop | Yes (`SecretBytes`) | Yes (`SecretBytes`) |
+
+### Decision table
+
+**Choose `pclsync-compat`** (default, no extra flag needed) when:
+
+- Users also access the pCloud drive via the official desktop, web, or mobile apps.
+- You need to decrypt existing encrypted content created by `pcloudcc` or the pCloud Drive app.
+- You are migrating from the legacy C client and need uninterrupted access to existing Crypto folders.
+- You are unsure — this is always the safer choice for interoperability.
+
+**Choose `enhanced`** (opt-in, requires `--acknowledge-not-interop`) when:
+
+- The Rust client is the **only** client that will ever access this account's encrypted content.
+- You want stricter per-sector AEAD guarantees and a modern KDF (Argon2id).
+- You are running an isolated enterprise deployment with no pCloud-app users.
+- You have explicitly accepted that files encrypted with `enhanced` **cannot be opened
+  by any official pCloud application**, including pCloud Drive, iOS, Android, and the web vault.
+
+### CLI invocation
+
+```bash
+# Default (pclsync-compat — no extra flag):
+pcloudc crypto setup
+
+# Enhanced — explicit acknowledgement required:
+pcloudc crypto setup --backend enhanced --acknowledge-not-interop
+```
+
+Scripts may pass `--backend {pclsync-compat|enhanced}`. The daemon logs
+`crypto unlocked: backend=<NAME>` at every unlock. `pcloudc crypto status`
+shows the active backend on its first output line.
+
+### Warning: Enhanced files cannot be decrypted by pCloud apps
+
+> **If you choose `enhanced`, files encrypted by this client are permanently
+> inaccessible to the official pCloud desktop application, pCloud Drive,
+> pCloud iOS, pCloud Android, and the pCloud web vault.** There is no migration
+> path from `enhanced` back to `pclsync-compat` without full re-encryption.
+> Do not choose `enhanced` if any user on the account uses official pCloud apps.
+
+### Further reading
+
+- Rollout plan and phased implementation: [`docs/CRYPTO-BACKEND-PLAN.md`](../CRYPTO-BACKEND-PLAN.md)
+- pclsync crypto scheme reference: [`docs/crypto-reference-pclsync.md`](../crypto-reference-pclsync.md)
+- Security threat model comparison: see the "Two-backend threat model" section below (in `docs/enterprise/security-model.md` if it exists)
+
+---
+
 ## Warning: NOT Byte-Compatible With Legacy C Client
 
 The Rust `pcloud-rs` crypto implementation (`crates/pcloud-crypto`) uses the

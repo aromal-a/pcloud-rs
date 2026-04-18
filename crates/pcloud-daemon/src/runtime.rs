@@ -26,6 +26,7 @@ use pcloud_cache::CacheShell;
 use pcloud_crypto::CryptoShell;
 use pcloud_engine::EngineShell;
 use pcloud_fs::FilesystemShell;
+use pcloud_ipc::methods::CryptoBackendIpc;
 use pcloud_ipc::{Request, Response, ResponseStatus};
 use pcloud_model::ids::UserId;
 use pcloud_model::public_links::PublicLinkUploadPolicy;
@@ -570,6 +571,19 @@ impl RuntimeShell {
             Request::CryptoSetup { password, hint } => {
                 self.setup_crypto(SecretString::new(password.into_string()), hint)
             }
+            Request::CryptoSetupV2 {
+                backend,
+                acknowledge_not_interop,
+                password,
+                hint,
+            } => self.setup_crypto_v2(
+                backend,
+                acknowledge_not_interop,
+                SecretString::new(password.into_string()),
+                hint,
+            ),
+            Request::CryptoGetFolderKey { folder_id } => self.crypto_get_folder_key(folder_id),
+            Request::CryptoGetFileKey { file_id } => self.crypto_get_file_key(file_id),
             Request::CryptoChangePassword {
                 old_password,
                 new_password,
@@ -2881,7 +2895,8 @@ impl RuntimeShell {
                 "crypto.start",
                 Some(format!("state={:?}", self.crypto.unlock_state)),
                 format!(
-                    "crypto started (setup={}, folders={})",
+                    "crypto started (backend={}, setup={}, folders={})",
+                    self.crypto.effective_backend(),
                     self.crypto.is_setup(),
                     self.crypto.folders.len()
                 ),
@@ -2934,24 +2949,461 @@ impl RuntimeShell {
                 message: "encrypted folder name must not be empty".to_owned(),
             };
         }
-        match self.crypto.mkdir(parent_folder_id, &name, local_folder_id) {
-            Ok(entry) => self.audited_response(
-                "crypto.mkdir",
-                Some(format!("folder_id={}", entry.folder_id)),
-                format!(
-                    "crypto folder created: id={}, encrypted_name_len={}",
+        // Stage 4b.3: migrated to `mkdir_with_context` so the
+        // PclsyncCompat backend can surface the freshly-generated
+        // `SymKeyVer1`; we then cache it locally against the new folder
+        // id so subsequent filename / sector ops under this folder
+        // resolve without another `crypto_getfolderkey` round-trip.
+        // Enhanced shells receive `sym_key = None` and the legacy shape
+        // is preserved byte-for-byte.
+        let created = match self
+            .crypto
+            .mkdir_with_context(parent_folder_id, &name, local_folder_id)
+        {
+            Ok(c) => c,
+            Err(pcloud_crypto::CryptoError::Locked) => {
+                return Response {
+                    status: ResponseStatus::Unauthorized,
+                    message: "crypto is locked".to_owned(),
+                };
+            }
+            Err(err) => {
+                return Response {
+                    status: ResponseStatus::Conflict,
+                    message: err.to_string(),
+                };
+            }
+        };
+        let entry = created.entry.clone();
+        if let Some(sym) = created.sym_key {
+            // PclsyncCompat only. Insert the fresh folder sym-key into
+            // the runtime cache. Server-side wrap + upload happens under
+            // a separate `crypto_createfolder` call that is out of this
+            // bead's scope (TODO(bd-1du.10)); what we need here is local
+            // coherence so downstream filename encoding does not fault
+            // with `FolderKeyNotCached`.
+            if let Err(err) = self.crypto.cache_folder_key(entry.folder_id, sym) {
+                log::warn!(
+                    "crypto.mkdir: cache_folder_key failed (folder_id={}): {err}",
                     entry.folder_id,
-                    entry.encrypted_name.len()
-                ),
+                );
+            }
+        }
+        self.audited_response(
+            "crypto.mkdir",
+            Some(format!("folder_id={}", entry.folder_id)),
+            format!(
+                "crypto folder created: id={}, encrypted_name_len={}",
+                entry.folder_id,
+                entry.encrypted_name.len()
             ),
-            Err(pcloud_crypto::CryptoError::Locked) => Response {
-                status: ResponseStatus::Unauthorized,
-                message: "crypto is locked".to_owned(),
-            },
-            Err(err) => Response {
+        )
+    }
+
+    // ------------------------------------------------------------------
+    // Stage 4b.3 — CryptoSetupV2 / CryptoGetFolderKey / CryptoGetFileKey
+    // ------------------------------------------------------------------
+
+    /// Dispatch [`Request::CryptoSetupV2`]. Translates
+    /// [`CryptoBackendIpc`] manually (no From/Into by contract), enforces
+    /// the `acknowledge_not_interop` gate on the Enhanced backend, then
+    /// routes:
+    ///
+    /// - `PclsyncCompat`: runs `CryptoShell::setup_with_backend` locally
+    ///   to produce sealed `priv_key_ver1` / `pub_key_ver1` blobs, then
+    ///   uploads them via `crypto_setuserkeys`.
+    /// - `Enhanced`: runs `CryptoShell::setup_with_backend` locally; no
+    ///   server round-trip (the Enhanced profile is by design not
+    ///   interoperable with the pcloudcom server-side setup record).
+    ///
+    /// Audit log entry is emitted before the response is returned so the
+    /// operator can observe the backend choice even if the response is
+    /// dropped on the wire.
+    fn setup_crypto_v2(
+        &mut self,
+        backend: CryptoBackendIpc,
+        acknowledge_not_interop: bool,
+        password: SecretString,
+        hint: Option<String>,
+    ) -> Response {
+        if password.is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "crypto password must not be empty".to_owned(),
+            };
+        }
+        // Manual translation — contract forbids From/Into between
+        // pcloud-ipc and pcloud-crypto so the two surfaces can evolve
+        // independently.
+        let wire_backend = match backend {
+            CryptoBackendIpc::PclsyncCompat => pcloud_crypto::CryptoBackend::PclsyncCompat,
+            CryptoBackendIpc::Enhanced => pcloud_crypto::CryptoBackend::Enhanced,
+        };
+        if matches!(wire_backend, pcloud_crypto::CryptoBackend::Enhanced)
+            && !acknowledge_not_interop
+        {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message:
+                    "enhanced backend requires explicit acknowledgement via acknowledge_not_interop"
+                        .to_owned(),
+            };
+        }
+
+        log::info!("crypto setup: backend={}", wire_backend);
+
+        match wire_backend {
+            pcloud_crypto::CryptoBackend::PclsyncCompat => {
+                self.setup_crypto_v2_pclsync_compat(password, hint)
+            }
+            pcloud_crypto::CryptoBackend::Enhanced => {
+                let result = self
+                    .crypto
+                    .setup_with_backend(password, hint, pcloud_crypto::CryptoBackend::Enhanced);
+                self.metric_sync_crypto_state();
+                match result {
+                    Ok(()) => self.audited_response(
+                        "crypto.setup_v2",
+                        Some("backend=enhanced".to_owned()),
+                        format!(
+                            "crypto setup ok (backend={})",
+                            pcloud_crypto::CryptoBackend::Enhanced
+                        ),
+                    ),
+                    Err(err) => Response {
+                        status: ResponseStatus::Conflict,
+                        message: err.to_string(),
+                    },
+                }
+            }
+        }
+    }
+
+    /// PclsyncCompat half of [`Self::setup_crypto_v2`]: run local setup,
+    /// base64-encode the sealed `priv_key_ver1` / `pub_key_ver1` blobs,
+    /// then upload them via `crypto_setuserkeys`. On server error we
+    /// surface the server-reported result code in the response message;
+    /// the shell state is left as-is (local setup stays committed, same
+    /// as the C behavior: the retry resends the same sealed blobs and
+    /// the server-side overwrite semantics make it idempotent).
+    fn setup_crypto_v2_pclsync_compat(
+        &mut self,
+        password: SecretString,
+        hint: Option<String>,
+    ) -> Response {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD as B64;
+
+        let auth_token = match self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        {
+            Some(token) => token,
+            None => {
+                return Response {
+                    status: ResponseStatus::Conflict,
+                    message: "crypto setup (pclsync-compat) requires an authenticated session"
+                        .to_owned(),
+                };
+            }
+        };
+
+        if let Err(err) = self.crypto.setup_with_backend(
+            password,
+            hint.clone(),
+            pcloud_crypto::CryptoBackend::PclsyncCompat,
+        ) {
+            return Response {
                 status: ResponseStatus::Conflict,
                 message: err.to_string(),
-            },
+            };
+        }
+        self.metric_sync_crypto_state();
+
+        let (priv_b64, pub_b64) = {
+            let profile = match self.crypto.pclsync_compat.as_ref() {
+                Some(p) => p,
+                None => {
+                    return Response {
+                        status: ResponseStatus::InternalError,
+                        message: "crypto setup succeeded but PclsyncCompat profile is absent"
+                            .to_owned(),
+                    };
+                }
+            };
+            (
+                B64.encode(&profile.priv_key_ver1_blob),
+                B64.encode(&profile.pub_key_ver1_blob),
+            )
+        };
+
+        match self.crypto_runtime.set_user_keys(
+            auth_token.expose_secret(),
+            &priv_b64,
+            &pub_b64,
+            hint.as_deref(),
+        ) {
+            Ok(()) => self.audited_response(
+                "crypto.setup_v2",
+                Some("backend=pclsync-compat".to_owned()),
+                format!(
+                    "crypto setup ok (backend={})",
+                    pcloud_crypto::CryptoBackend::PclsyncCompat
+                ),
+            ),
+            Err(err) => {
+                log::error!("crypto_setuserkeys failed: {err}");
+                Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!("crypto_setuserkeys failed: {err}"),
+                }
+            }
+        }
+    }
+
+    /// Dispatch [`Request::CryptoGetFolderKey`]: require an unlocked
+    /// PclsyncCompat shell, fetch the RSA-OAEP-wrapped sym-key from the
+    /// server, RSA-OAEP-unwrap it locally, and cache it against
+    /// `folder_id`.
+    fn crypto_get_folder_key(&mut self, folder_id: u64) -> Response {
+            if !matches!(
+                self.crypto.effective_backend(),
+                pcloud_crypto::CryptoBackend::PclsyncCompat
+            ) {
+                return Response {
+                    status: ResponseStatus::InvalidRequest,
+                    message:
+                        "crypto_getfolderkey is only valid on a PclsyncCompat shell"
+                            .to_owned(),
+                };
+            }
+            if !self.crypto.is_started() {
+                return Response {
+                    status: ResponseStatus::Unauthorized,
+                    message: "crypto must be unlocked to fetch a folder key".to_owned(),
+                };
+            }
+            let auth_token = match self
+                .auth
+                .snapshot()
+                .auth_token
+                .as_ref()
+                .map(SecretString::clone_secret)
+            {
+                Some(token) => token,
+                None => {
+                    return Response {
+                        status: ResponseStatus::Conflict,
+                        message: "crypto_getfolderkey requires an authenticated session"
+                            .to_owned(),
+                    };
+                }
+            };
+            let wrapped = match self
+                .crypto_runtime
+                .get_folder_key(auth_token.expose_secret(), folder_id)
+            {
+                Ok(bytes) => bytes,
+                Err(err) => {
+                    return Response {
+                        status: ResponseStatus::InternalError,
+                        message: format!("crypto_getfolderkey failed: {err}"),
+                    };
+                }
+            };
+            match self.crypto.unwrap_and_cache_folder_key(folder_id, &wrapped) {
+                Ok(()) => self.audited_response(
+                    "crypto.folder_key.cached",
+                    Some(format!("folder_id={folder_id}")),
+                    format!("folder key cached: folder_id={folder_id}"),
+                ),
+                Err(err) => Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!(
+                        "failed to unwrap folder key (folder_id={folder_id}): {err}"
+                    ),
+                },
+            }
+    }
+
+    /// Dispatch [`Request::CryptoGetFileKey`]: same shape as
+    /// [`Self::crypto_get_folder_key`], but targeting a `file_id`. The
+    /// server-reported file-version `hash` is threaded into the cache so
+    /// a follow-up can gate on stale entries.
+    fn crypto_get_file_key(&mut self, file_id: u64) -> Response {
+            if !matches!(
+                self.crypto.effective_backend(),
+                pcloud_crypto::CryptoBackend::PclsyncCompat
+            ) {
+                return Response {
+                    status: ResponseStatus::InvalidRequest,
+                    message:
+                        "crypto_getfilekey is only valid on a PclsyncCompat shell"
+                            .to_owned(),
+                };
+            }
+            if !self.crypto.is_started() {
+                return Response {
+                    status: ResponseStatus::Unauthorized,
+                    message: "crypto must be unlocked to fetch a file key".to_owned(),
+                };
+            }
+            let auth_token = match self
+                .auth
+                .snapshot()
+                .auth_token
+                .as_ref()
+                .map(SecretString::clone_secret)
+            {
+                Some(token) => token,
+                None => {
+                    return Response {
+                        status: ResponseStatus::Conflict,
+                        message: "crypto_getfilekey requires an authenticated session"
+                            .to_owned(),
+                    };
+                }
+            };
+            let (hash, wrapped) = match self
+                .crypto_runtime
+                .get_file_key(auth_token.expose_secret(), file_id)
+            {
+                Ok(pair) => pair,
+                Err(err) => {
+                    return Response {
+                        status: ResponseStatus::InternalError,
+                        message: format!("crypto_getfilekey failed: {err}"),
+                    };
+                }
+            };
+            match self
+                .crypto
+                .unwrap_and_cache_file_key(file_id, hash, &wrapped)
+            {
+                Ok(()) => self.audited_response(
+                    "crypto.file_key.cached",
+                    Some(format!("file_id={file_id}")),
+                    format!("file key cached: file_id={file_id}"),
+                ),
+                Err(err) => Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!(
+                        "failed to unwrap file key (file_id={file_id}): {err}"
+                    ),
+                },
+            }
+    }
+
+    /// Auto-fetch retry wrapper around
+    /// Auto-fetch retry wrapper around
+    /// [`pcloud_crypto::CryptoShell::mkdir_with_context`] that recovers
+    /// from a `FolderKeyNotCached` error by issuing `crypto_getfolderkey`
+    /// for the parent folder, caching the unwrapped sym-key, and retrying
+    /// the mkdir **once**. PclsyncCompat only; Enhanced shells bypass.
+    ///
+    /// This is the filename-side analog of
+    /// [`Self::seal_sector_with_autofetch`]. Mirrors the C client's
+    /// lazy-load behavior in `pcryptofolder.c:826` where a mkdir under
+    /// an un-cached parent triggers a `download_fldr_enckey` round-trip
+    /// before the local encode proceeds.
+    pub fn mkdir_with_autofetch(
+        &mut self,
+        parent_folder_id: Option<u64>,
+        name: &str,
+        local_folder_id: Option<u64>,
+    ) -> Result<pcloud_crypto::CreatedCryptoFolder, pcloud_crypto::CryptoError> {
+        match self
+            .crypto
+            .mkdir_with_context(parent_folder_id, name, local_folder_id)
+        {
+            Ok(created) => Ok(created),
+            Err(pcloud_crypto::CryptoError::FolderKeyNotCached { folder_id }) => {
+                if !matches!(
+                    self.crypto.effective_backend(),
+                    pcloud_crypto::CryptoBackend::PclsyncCompat
+                ) || !self.crypto.is_started()
+                {
+                    return Err(pcloud_crypto::CryptoError::FolderKeyNotCached { folder_id });
+                }
+                let auth_token = self
+                    .auth
+                    .snapshot()
+                    .auth_token
+                    .as_ref()
+                    .map(SecretString::clone_secret)
+                    .ok_or(pcloud_crypto::CryptoError::Locked)?;
+                let wrapped = self
+                    .crypto_runtime
+                    .get_folder_key(auth_token.expose_secret(), folder_id)
+                    .map_err(|_| pcloud_crypto::CryptoError::PclsyncCompat)?;
+                self.crypto
+                    .unwrap_and_cache_folder_key(folder_id, &wrapped)?;
+                self.crypto
+                    .mkdir_with_context(parent_folder_id, name, local_folder_id)
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Auto-fetch retry wrapper around
+    /// [`pcloud_crypto::CryptoShell::seal_sector_with_context`].
+    ///
+    /// PclsyncCompat only. If the first seal attempt fails with
+    /// [`pcloud_crypto::CryptoError::FileKeyNotCached`] and the shell is
+    /// unlocked, issue `crypto_getfilekey`, cache the unwrapped key,
+    /// and retry **once**. A second failure is surfaced verbatim to the
+    /// caller — we do not loop. Enhanced shells bypass the auto-fetch
+    /// entirely (their sector keys are derived locally from a caller
+    /// seed, so a `FileKeyNotCached` error is unreachable there).
+    ///
+    /// TODO(bd-1du.10): extend with a chunked streaming path once the
+    /// multi-GiB writeback lands under `bd-1du.4`.
+    pub fn seal_sector_with_autofetch(
+        &mut self,
+        file_seed: &[u8],
+        sector_index: u64,
+        plaintext: &[u8],
+        context: pcloud_crypto::SectorContext,
+    ) -> Result<pcloud_crypto::SealedSectorFrame, pcloud_crypto::CryptoError> {
+        // First attempt.
+        match self
+            .crypto
+            .seal_sector_with_context(file_seed, sector_index, plaintext, context)
+        {
+            Ok(sealed) => Ok(sealed),
+            Err(pcloud_crypto::CryptoError::FileKeyNotCached { file_id }) => {
+                // Only attempt an auto-fetch on PclsyncCompat + unlocked
+                // shell + authenticated session. Otherwise propagate
+                // the original error so the caller sees a stable
+                // taxonomy.
+                if !matches!(
+                    self.crypto.effective_backend(),
+                    pcloud_crypto::CryptoBackend::PclsyncCompat
+                ) || !self.crypto.is_started()
+                {
+                    return Err(pcloud_crypto::CryptoError::FileKeyNotCached { file_id });
+                }
+                let auth_token = self
+                    .auth
+                    .snapshot()
+                    .auth_token
+                    .as_ref()
+                    .map(SecretString::clone_secret)
+                    .ok_or(pcloud_crypto::CryptoError::Locked)?;
+                let (hash, wrapped) = self
+                    .crypto_runtime
+                    .get_file_key(auth_token.expose_secret(), file_id)
+                    .map_err(|_| pcloud_crypto::CryptoError::PclsyncCompat)?;
+                self.crypto
+                    .unwrap_and_cache_file_key(file_id, hash, &wrapped)?;
+                // Retry once. Any failure here is the final answer.
+                self.crypto
+                    .seal_sector_with_context(file_seed, sector_index, plaintext, context)
+            }
+            Err(other) => Err(other),
         }
     }
 
@@ -2959,7 +3411,8 @@ impl RuntimeShell {
         Response {
             status: ResponseStatus::Ok,
             message: format!(
-                "crypto: setup={}, started={}, state={:?}, folders={}, hint={}, policy_safe={}",
+                "crypto: backend={}, setup={}, started={}, state={:?}, folders={}, hint={}, policy_safe={}",
+                self.crypto.effective_backend(),
                 self.crypto.is_setup(),
                 self.crypto.is_started(),
                 self.crypto.unlock_state,
@@ -6321,6 +6774,9 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::TwoFactorCodeSubmission { .. } => "TwoFactorCodeSubmission",
         Request::CryptoUnlock { .. } => "CryptoUnlock",
         Request::CryptoSetup { .. } => "CryptoSetup",
+        Request::CryptoSetupV2 { .. } => "crypto_setuserkeys",
+        Request::CryptoGetFolderKey { .. } => "crypto_getfolderkey",
+        Request::CryptoGetFileKey { .. } => "crypto_getfilekey",
         Request::CryptoMkdir { .. } => "CryptoMkdir",
         Request::CryptoChangePassword { .. } => "CryptoChangePassword",
         Request::CryptoChangePasswordUnlocked { .. } => "CryptoChangePasswordUnlocked",

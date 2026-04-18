@@ -250,6 +250,49 @@ impl CryptoRuntime {
         self.api
             .change_user_private(auth_token, private_key, signature, hint, code)
     }
+
+    /// Upload a PclsyncCompat crypto-setup keypair via
+    /// `crypto_setuserkeys`. Stage 4b.3 daemon wiring.
+    ///
+    /// # Errors
+    /// Transport failures and non-zero server result codes surface via
+    /// [`CryptoApiError`] in the usual way. Known codes: 1000 (not
+    /// logged in), 2000 (can't connect), 2110 (already set up).
+    pub fn set_user_keys(
+        &self,
+        auth_token: &str,
+        priv_key_ver1_b64: &str,
+        pub_key_ver1_b64: &str,
+        hint: Option<&str>,
+    ) -> Result<(), CryptoApiError<CryptoBackendError>> {
+        self.api
+            .set_user_keys(auth_token, priv_key_ver1_b64, pub_key_ver1_b64, hint)
+    }
+
+    /// Fetch an RSA-OAEP-wrapped folder sym-key via `crypto_getfolderkey`.
+    ///
+    /// Returns the wrapped-key bytes; the caller RSA-OAEP-unwraps the
+    /// blob against the unlocked private key and caches the plaintext
+    /// `SymKeyVer1` via [`pcloud_crypto::CryptoShell::unwrap_and_cache_folder_key`].
+    pub fn get_folder_key(
+        &self,
+        auth_token: &str,
+        folder_id: u64,
+    ) -> Result<Vec<u8>, CryptoApiError<CryptoBackendError>> {
+        self.api.get_folder_key(auth_token, folder_id)
+    }
+
+    /// Fetch an RSA-OAEP-wrapped file sym-key via `crypto_getfilekey`.
+    ///
+    /// Returns `(file_hash, wrapped_key)`. The file hash is the
+    /// server-reported file-version hash (`pcryptofolder.c:900`).
+    pub fn get_file_key(
+        &self,
+        auth_token: &str,
+        file_id: u64,
+    ) -> Result<(u64, Vec<u8>), CryptoApiError<CryptoBackendError>> {
+        self.api.get_file_key(auth_token, file_id)
+    }
 }
 
 fn map_response_parse_err(err: ResponseParseError) -> io::Error {

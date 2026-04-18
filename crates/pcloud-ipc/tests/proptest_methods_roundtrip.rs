@@ -9,8 +9,8 @@
 use pcloud_ipc::{
     decode_request, decode_response, encode_request_bare as encode_request, encode_response,
     methods::{
-        Method, Request, Response, ResponseStatus, SnapshotAction, UploadConflictMode, ValueKvKind,
-        ValueKvPayload,
+        CryptoBackendIpc, Method, Request, Response, ResponseStatus, SnapshotAction,
+        UploadConflictMode, ValueKvKind, ValueKvPayload,
     },
 };
 use proptest::prelude::*;
@@ -641,6 +641,28 @@ fn arb_request() -> impl Strategy<Value = Request> {
                     expires,
                 }
             ),
+        // CryptoSetupV2 (Stage 4b — dual-crypto-backend IPC surface).
+        (
+            prop_oneof![
+                Just(CryptoBackendIpc::PclsyncCompat),
+                Just(CryptoBackendIpc::Enhanced),
+            ],
+            any::<bool>(),
+            ".{0,64}",
+            proptest::option::of(".{0,64}"),
+        )
+            .prop_map(
+                |(backend, acknowledge_not_interop, password, hint)| Request::CryptoSetupV2 {
+                    backend,
+                    acknowledge_not_interop,
+                    password: password.into(),
+                    hint,
+                },
+            ),
+        // CryptoGetFolderKey (Stage 4b — hot-path wrapped sym-key fetch).
+        any::<u64>().prop_map(|folder_id| Request::CryptoGetFolderKey { folder_id }),
+        // CryptoGetFileKey (Stage 4b — hot-path wrapped sym-key fetch).
+        any::<u64>().prop_map(|file_id| Request::CryptoGetFileKey { file_id }),
     ]
 }
 

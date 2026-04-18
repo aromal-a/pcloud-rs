@@ -10,3 +10,7 @@ target/
 
 # beads-rs local state — issues.jsonl is a symlink to per-user data
 .beads/
+
+# upstream C reference drop — read-only reference, not ours to commit
+C_CODE/
+pcloudcc

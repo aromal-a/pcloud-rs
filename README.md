@@ -201,6 +201,14 @@ for the full env var matrix and transport-override rules.
   in production; no TLS-bypass flag anywhere.
 - Mount: `allow_other && !read_only` rejected; no `allow_root` / `setuid`.
 - Telemetry / auto-update: **none**. See root README.
+- **Crypto backend choice:** two backends are available — `pclsync-compat`
+  (default, byte-interoperable with official pCloud desktop/web/mobile apps)
+  and `enhanced` (opt-in, stricter AES-256-GCM AEAD + Argon2id KDF, but
+  **NOT interoperable** with any official pCloud application). Choosing
+  `enhanced` permanently locks out the pCloud Drive app and mobile clients
+  on that account's encrypted content. See
+  [`docs/enterprise/crypto-compat.md`](./docs/enterprise/crypto-compat.md)
+  for the decision table and full backend comparison.
 
 Full model: [`SECURITY-MODEL.md`](./SECURITY-MODEL.md). Latest audit:
 [`SECURITY-AUDIT-FINAL-14042026.md`](./SECURITY-AUDIT-FINAL-14042026.md).

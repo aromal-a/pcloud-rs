@@ -1080,6 +1080,96 @@ pub enum Request {
         /// Optional UNIX-seconds expiry.
         expires: Option<u64>,
     },
+    /// Set up a crypto profile (fresh or post-password-change).
+    /// Mirrors the C `crypto_setuserkeys` endpoint which is used both
+    /// for initial setup and for password rotation; the daemon decides
+    /// which path by inspecting `CryptoShell::is_setup()`.
+    ///
+    /// When `backend == Enhanced`, `acknowledge_not_interop` **must**
+    /// be `true`; otherwise the daemon rejects with
+    /// [`ResponseStatus::InvalidRequest`]. The flag is inert when
+    /// `backend == PclsyncCompat`.
+    ///
+    /// Note: there is intentionally no separate `CryptoChangeUserKeys`
+    /// variant — the C client reuses `crypto_setuserkeys` with
+    /// overwrite semantics for password rotation. See
+    /// `docs/CRYPTO-BACKEND-PLAN.md` §§3–4.
+    CryptoSetupV2 {
+        /// Which crypto backend to materialise. Defaults to
+        /// [`CryptoBackendIpc::PclsyncCompat`] when the field is
+        /// absent from a legacy caller.
+        backend: CryptoBackendIpc,
+        /// Required acknowledgement when `backend == Enhanced` that
+        /// the resulting crypto profile is **not** interoperable with
+        /// the upstream pcloudcom client. Inert for
+        /// [`CryptoBackendIpc::PclsyncCompat`].
+        acknowledge_not_interop: bool,
+        /// New crypto passphrase. Transit-only secret; Debug is
+        /// redacted via [`RedactedString`].
+        password: RedactedString,
+        /// Optional password hint stored with the crypto metadata.
+        hint: Option<String>,
+    },
+    /// Fetch a folder's RSA-OAEP-wrapped `sym_key_ver1` blob from the
+    /// server, have the daemon unwrap it using the unlocked priv key,
+    /// and cache the result for subsequent seal/open calls.
+    ///
+    /// Mirrors C `crypto_getfolderkey` — see
+    /// `C_CODE/pclsync/pcryptofolder.c:826`.
+    ///
+    /// Hot-path read; rate-limit bucket = `Medium`.
+    CryptoGetFolderKey {
+        /// Remote crypto folder id whose wrapped sym-key should be
+        /// fetched and unwrapped.
+        folder_id: u64,
+    },
+    /// Fetch a file's RSA-OAEP-wrapped `sym_key_ver1` blob from the
+    /// server, have the daemon unwrap it using the unlocked priv key,
+    /// and cache the result for subsequent seal/open calls.
+    ///
+    /// Mirrors C `crypto_getfilekey` — see
+    /// `C_CODE/pclsync/pcryptofolder.c:879`.
+    ///
+    /// Hot-path read; rate-limit bucket = `Medium`.
+    CryptoGetFileKey {
+        /// Remote crypto file id whose wrapped sym-key should be
+        /// fetched and unwrapped.
+        file_id: u64,
+    },
+}
+
+/// Wire-level mirror of `pcloud_crypto::CryptoBackend`, carried on
+/// IPC variants that select which crypto profile to materialise during
+/// setup. The IPC crate intentionally does **not** depend on
+/// `pcloud-crypto`; daemon-side code translates this enum with a manual
+/// `match` when dispatching so the two surfaces can evolve
+/// independently.
+///
+/// Default is [`CryptoBackendIpc::PclsyncCompat`] to preserve the
+/// pcloudcom-compatible wire format for existing clients that do not
+/// emit the field.
+///
+/// See `docs/CRYPTO-BACKEND-PLAN.md` §§3–4 for the rationale behind the
+/// dual-backend selector and the mandatory `acknowledge_not_interop`
+/// gate on the enhanced backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CryptoBackendIpc {
+    /// pcloudcom-compatible crypto profile. Wire format is
+    /// bit-identical to the upstream C client so a pCloud account set up
+    /// via this backend remains openable by any pcloudcom tool.
+    PclsyncCompat,
+    /// Enhanced (non-interop) crypto profile. Callers **must** set
+    /// `acknowledge_not_interop = true` on the enclosing request or the
+    /// daemon rejects with `InvalidRequest`. A profile set up with this
+    /// backend is **not** readable by the upstream pcloudcom client.
+    Enhanced,
+}
+
+impl Default for CryptoBackendIpc {
+    fn default() -> Self {
+        Self::PclsyncCompat
+    }
 }
 
 /// Wire-level mirror of

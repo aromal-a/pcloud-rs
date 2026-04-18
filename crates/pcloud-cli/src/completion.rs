@@ -86,7 +86,52 @@ pub fn build_cli() -> Command {
             Command::new("crypto")
                 .about("Crypto folder controls")
                 .subcommand(sub("start", "Unlock crypto folder"))
-                .subcommand(sub("stop", "Lock crypto folder")),
+                .subcommand(sub("stop", "Lock crypto folder"))
+                .subcommand(sub("status", "Show crypto backend and lifecycle"))
+                .subcommand(
+                    Command::new("setup")
+                        .about(
+                            "Set up the crypto profile. Choose a backend: pclsync-compat \
+                             (default, interoperable with official pCloud apps) or enhanced \
+                             (AES-256-GCM + Argon2id, NOT interoperable with any pCloud app).",
+                        )
+                        .arg(
+                            clap::Arg::new("backend")
+                                .long("backend")
+                                .value_parser(["pclsync-compat", "enhanced"])
+                                .help(
+                                    "Crypto backend. 'enhanced' requires \
+                                     --acknowledge-not-interop and locks you out of the official \
+                                     pCloud apps.",
+                                ),
+                        )
+                        .arg(
+                            clap::Arg::new("acknowledge-not-interop")
+                                .long("acknowledge-not-interop")
+                                .num_args(0)
+                                .help(
+                                    "Acknowledge that --backend enhanced produces files that will \
+                                     NOT open in the official pCloud apps.",
+                                ),
+                        )
+                        .arg(
+                            clap::Arg::new("hint")
+                                .long("hint")
+                                .help("Optional passphrase hint stored with the crypto metadata."),
+                        ),
+                )
+                .subcommand(
+                    sub(
+                        "get-folder-key",
+                        "Fetch + cache a folder's wrapped sym-key (debugging helper)",
+                    ),
+                )
+                .subcommand(
+                    sub(
+                        "get-file-key",
+                        "Fetch + cache a file's wrapped sym-key (debugging helper)",
+                    ),
+                ),
         )
         .subcommand(
             Command::new("notifications")

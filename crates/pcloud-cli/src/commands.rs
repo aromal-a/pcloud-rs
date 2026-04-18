@@ -21,6 +21,7 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
+use pcloud_ipc::methods::CryptoBackendIpc;
 use pcloud_ipc::{AuditVerifyRange, Method, Request, SnapshotAction};
 use pcloud_model::public_links::PublicLinkUploadPolicy;
 use pcloud_model::sync::SyncType;
@@ -566,6 +567,25 @@ pub enum Command {
     /// tree link by resolving paths to ids via the daemon path resolver.
     /// Daemon handler: `Request::CreateTreePublicLink` (after path resolution).
     CreateTreeLinkFromPaths,
+    // ── Crypto dual-backend (Wave 2 / Stage 4b.4) ──────────────────────
+    /// `pcloudc crypto setup [--backend {pclsync-compat|enhanced}]
+    /// [--acknowledge-not-interop] [--hint <TEXT>]` — set up the crypto
+    /// profile using the selected backend. If `--backend` is absent and
+    /// stdin is a tty the CLI drops into an interactive picker; if
+    /// stdin is not a tty the parser rejects the command with
+    /// [`crate::exit_code::ExitCode::Usage`]. When `backend == enhanced`
+    /// the `--acknowledge-not-interop` flag is mandatory.
+    ///
+    /// Daemon handler: [`pcloud_ipc::Request::CryptoSetupV2`].
+    CryptoSetupV2,
+    /// `pcloudc crypto get-folder-key <FOLDER_ID>` — thin pass-through
+    /// dispatching [`pcloud_ipc::Request::CryptoGetFolderKey`]. Primarily
+    /// used for testing / debugging the crypto cache-population path.
+    CryptoGetFolderKey,
+    /// `pcloudc crypto get-file-key <FILE_ID>` — thin pass-through
+    /// dispatching [`pcloud_ipc::Request::CryptoGetFileKey`]. Primarily
+    /// used for testing / debugging the crypto cache-population path.
+    CryptoGetFileKey,
 }
 
 /// CLI-side secret-bearing state held for the duration of the interactive
@@ -774,6 +794,22 @@ pub struct SecretInputs {
     // ── Tree link from paths ──────────────────────────────────────────────
     /// Paths to resolve for `Command::CreateTreeLinkFromPaths`.
     pub tree_link_paths: Vec<String>,
+    // ── Crypto setup-v2 (Stage 4b.4) ─────────────────────────────────────
+    /// Selected crypto backend for `Command::CryptoSetupV2`. Defaults to
+    /// [`CryptoBackendIpc::PclsyncCompat`]. The interactive picker writes
+    /// this field before dispatch so downstream rendering can match the
+    /// user's choice verbatim.
+    pub crypto_setup_backend: CryptoBackendIpc,
+    /// `--acknowledge-not-interop` flag for `Command::CryptoSetupV2`.
+    /// Mandatory when `crypto_setup_backend == Enhanced`; inert when
+    /// `PclsyncCompat`.
+    pub crypto_setup_acknowledge_not_interop: bool,
+    /// Optional passphrase hint for `Command::CryptoSetupV2`.
+    pub crypto_setup_hint: Option<String>,
+    /// Remote crypto folder id for `Command::CryptoGetFolderKey`.
+    pub crypto_folder_key_folder_id: u64,
+    /// Remote crypto file id for `Command::CryptoGetFileKey`.
+    pub crypto_file_key_file_id: u64,
 }
 
 impl Command {
@@ -1226,6 +1262,19 @@ impl Command {
             Self::CryptoHint => Request::Plain {
                 method: Method::GetCryptoHint,
             },
+            // ── Crypto dual-backend (Stage 4b.4) ─────────────────────────
+            Self::CryptoSetupV2 => Request::CryptoSetupV2 {
+                backend: inputs.crypto_setup_backend,
+                acknowledge_not_interop: inputs.crypto_setup_acknowledge_not_interop,
+                password: inputs.crypto_password.expose_secret().to_owned().into(),
+                hint: inputs.crypto_setup_hint.clone(),
+            },
+            Self::CryptoGetFolderKey => Request::CryptoGetFolderKey {
+                folder_id: inputs.crypto_folder_key_folder_id,
+            },
+            Self::CryptoGetFileKey => Request::CryptoGetFileKey {
+                file_id: inputs.crypto_file_key_file_id,
+            },
             // ── Sync (Group A) ───────────────────────────────────────────
             Self::SyncSuggest => Request::GetSyncSuggestions {
                 path: inputs.sync_suggest_path.clone().unwrap_or_default(),
@@ -1446,6 +1495,11 @@ mod tests {
             backup_create_parent_folder_name: None,
             backup_device_folder_id: 0,
             tree_link_paths: Vec::new(),
+            crypto_setup_backend: CryptoBackendIpc::PclsyncCompat,
+            crypto_setup_acknowledge_not_interop: false,
+            crypto_setup_hint: None,
+            crypto_folder_key_folder_id: 0,
+            crypto_file_key_file_id: 0,
         }
     }
 

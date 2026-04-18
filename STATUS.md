@@ -4,6 +4,18 @@ Single source of truth for Rust parity counts.
 
 _Last reviewed: 2026-04-18 (post-audit-04 correction)._
 
+## 2026-04-18 update — dual crypto backend landed
+
+Wave 1: six pclsync-compatible crypto primitives (124 unit tests pass).
+Wave 2: `CryptoBackend::{PclsyncCompat,Enhanced}` dual-path dispatch
+wired through setup/unlock/seal/open/filename; PclsyncCompat is the
+default. See `docs/CRYPTO-BACKEND-PLAN.md` and
+`docs/enterprise/crypto-compat.md`.
+
+Headline unchanged (155/3/0/28). Parity rows 124 and 142 remain
+Partial until Wave 3 live-KAT extraction from pcloudcc verifies
+byte-level interop; bead s1p.13 remains open.
+
 ## 2026-04-18 update — audit-04 parity honesty correction
 
 Three independent audit-04 findings (§1-opus CRITICAL-1, §7-opus

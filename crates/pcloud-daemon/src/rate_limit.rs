@@ -214,6 +214,18 @@ pub fn categorize(request: &Request) -> RateCategory {
         Request::CryptoChangePassword { .. } | Request::CryptoChangePasswordUnlocked { .. } => {
             RateCategory::Expensive
         }
+        // Dual-crypto-backend setup (fresh or post-password-change).
+        // Mutates the crypto profile; classify as Expensive so it
+        // shares a bucket with other mutating lifecycle operations and
+        // to dampen abusive retries against `crypto_setuserkeys`.
+        Request::CryptoSetupV2 { .. } => RateCategory::Expensive,
+        // Hot-path sym-key fetches used during normal sealed-file
+        // operation. Not `Cheap` (they drive a backend RTT + an RSA
+        // unwrap) and not `Expensive` (they are per-file/per-folder
+        // primitives on the read path). Classify as `Medium`.
+        Request::CryptoGetFolderKey { .. } | Request::CryptoGetFileKey { .. } => {
+            RateCategory::Medium
+        }
         // Cheap field selectors / session probes.
         Request::ValueGet { .. } | Request::ValueHas { .. } => RateCategory::Cheap,
         Request::SessionStatus => RateCategory::Cheap,

@@ -36,6 +36,9 @@ tracing-otlp = [
 
 [dependencies]
 anyhow = "1"
+# Stage 4b.3: base64-encode sealed priv/pub_key_ver1 blobs for the
+# `crypto_setuserkeys` (PclsyncCompat) IPC dispatch path.
+base64 = "0.22"
 pcloud-auth = { path = "../pcloud-auth" }
 pcloud-backends = { path = "../pcloud-backends" }
 pcloud-session = { path = "../pcloud-session" }
