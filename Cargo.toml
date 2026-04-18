@@ -144,7 +144,12 @@ argon2 = "0.5"
 # `battery` is the cross-platform notebook-battery-state crate used by
 # the integrity-sweeper `pause_on_battery` hook on macOS/Windows. Linux
 # reads `/sys/class/power_supply/` directly for a zero-dep baseline.
-battery = "0.7"
+#
+# Upstream `battery = "0.7.8"` is unmaintained (last release 2020) and
+# pulls `nix 0.19.1` which carries GHSA-wgrg-5h56-jg27 (OOB write in
+# getgrouplist, HIGH). We rename to the maintained `starship-battery`
+# fork — identical API, nix ^0.29.
+battery = { package = "starship-battery", version = "0.11" }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # `cron` parses cron expressions + iterates upcoming boundaries. Used by
 # `[features.integrity_sweeper].schedule_cron` to drive the background

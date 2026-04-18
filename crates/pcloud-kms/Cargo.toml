@@ -17,8 +17,16 @@ serde = { workspace = true, optional = true }
 pcloud-secret = { path = "../pcloud-secret" }
 
 # `aws` feature — AWS KMS provider. Off by default.
-aws-config = { version = "1", optional = true }
-aws-sdk-kms = { version = "1", optional = true }
+#
+# `default-features = false` + explicit feature list is intentional: the
+# default `rustls` feature on aws-config/aws-sdk-kms selects
+# `aws-smithy-runtime/tls-rustls` which pulls the LEGACY hyper-014 +
+# rustls 0.21 + rustls-webpki 0.101 chain (GHSA-xgp8-3hg3-c2mh +
+# GHSA-965h-392x-2mh5 name-constraint bypass). The modern
+# `default-https-client` feature uses `aws-smithy-http-client/rustls-aws-lc`
+# → rustls 0.23 + rustls-webpki 0.103 (patched).
+aws-config = { version = "1.5", default-features = false, features = ["default-https-client", "rt-tokio", "credentials-process", "sso"], optional = true }
+aws-sdk-kms = { version = "1.93", default-features = false, features = ["default-https-client", "rt-tokio", "behavior-version-latest"], optional = true }
 tokio = { version = "1", features = ["rt", "macros"], optional = true }
 
 # `vault` feature — HashiCorp Vault Transit provider. Off by default.
