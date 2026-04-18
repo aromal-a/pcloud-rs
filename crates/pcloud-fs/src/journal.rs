@@ -7,6 +7,36 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
+use std::fmt;
+
+/// Error returned by [`WritebackJournal::append`] when the journal is at
+/// capacity. Callers MUST apply back-pressure (block the writer, flush
+/// pending entries, or fail the mutation) — the journal never silently
+/// evicts in-flight work because that is a data-loss path.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JournalError {
+    /// Journal is full: `pending_count >= max_pending_operations`. The
+    /// caller must drain or fail before appending again.
+    Full {
+        /// Current number of pending operations.
+        pending: usize,
+        /// Configured capacity (inclusive upper bound).
+        capacity: usize,
+    },
+}
+
+impl fmt::Display for JournalError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            JournalError::Full { pending, capacity } => write!(
+                f,
+                "writeback journal is full ({pending}/{capacity}); flush before appending"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for JournalError {}
 
 /// A single ordered record of a pending filesystem mutation awaiting
 /// upload. Entries are persisted so they survive daemon restarts.
@@ -44,14 +74,27 @@ impl Default for WritebackJournal {
 }
 
 impl WritebackJournal {
-    /// Append `entry` to the back of the queue. If the journal is already
-    /// at capacity the oldest entry is dropped first — callers that need
-    /// durability must flush before appending near the bound.
-    pub fn append(&mut self, entry: JournalEntry) {
+    /// Append `entry` to the back of the queue.
+    ///
+    /// Returns [`JournalError::Full`] when the journal is already at
+    /// capacity. The journal **never** silently evicts in-flight work —
+    /// that would be a direct data-loss path for writeback operations
+    /// waiting on an upload. Callers must apply back-pressure (block the
+    /// writer, trigger a flush, or surface an error to the caller) when
+    /// this variant is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns `JournalError::Full` if `pending_count() >= max_pending_operations`.
+    pub fn append(&mut self, entry: JournalEntry) -> Result<(), JournalError> {
         if self.pending.len() >= self.max_pending_operations {
-            let _ = self.pending.pop_front();
+            return Err(JournalError::Full {
+                pending: self.pending.len(),
+                capacity: self.max_pending_operations,
+            });
         }
         self.pending.push_back(entry);
+        Ok(())
     }
 
     /// Number of entries currently queued for upload.
@@ -77,16 +120,18 @@ impl WritebackJournal {
 
 #[cfg(test)]
 mod tests {
-    use super::{JournalEntry, WritebackJournal};
+    use super::{JournalEntry, JournalError, WritebackJournal};
 
     #[test]
     fn appends_and_drains_journal_entries() {
         let mut journal = WritebackJournal::default();
-        journal.append(JournalEntry {
-            path: "docs/report.txt".to_owned(),
-            operation: "write".to_owned(),
-            bytes: 5,
-        });
+        journal
+            .append(JournalEntry {
+                path: "docs/report.txt".to_owned(),
+                operation: "write".to_owned(),
+                bytes: 5,
+            })
+            .expect("append within capacity");
 
         assert_eq!(journal.pending_count(), 1);
         let drained = journal.drain(1);
@@ -95,24 +140,48 @@ mod tests {
     }
 
     #[test]
-    fn bounded_journal_evicts_oldest_entries() {
+    fn enqueue_rejects_when_full_not_evict_oldest() {
+        // Regression: at capacity, `append` must return `JournalError::Full`
+        // instead of silently evicting the oldest entry (which would be a
+        // direct data-loss path for writeback work awaiting upload).
         let mut journal = WritebackJournal {
-            max_pending_operations: 1,
+            max_pending_operations: 2,
             ..WritebackJournal::default()
         };
-        journal.append(JournalEntry {
-            path: "a.txt".to_owned(),
-            operation: "write".to_owned(),
-            bytes: 1,
-        });
-        journal.append(JournalEntry {
-            path: "b.txt".to_owned(),
-            operation: "write".to_owned(),
-            bytes: 1,
-        });
+        journal
+            .append(JournalEntry {
+                path: "a.txt".to_owned(),
+                operation: "write".to_owned(),
+                bytes: 1,
+            })
+            .expect("first fits");
+        journal
+            .append(JournalEntry {
+                path: "b.txt".to_owned(),
+                operation: "write".to_owned(),
+                bytes: 1,
+            })
+            .expect("second fits");
 
+        let err = journal
+            .append(JournalEntry {
+                path: "c.txt".to_owned(),
+                operation: "write".to_owned(),
+                bytes: 1,
+            })
+            .expect_err("third must error, not evict");
+        assert!(matches!(
+            err,
+            JournalError::Full {
+                pending: 2,
+                capacity: 2
+            }
+        ));
+
+        // Oldest entry MUST still be present — no silent eviction.
         let drained = journal.drain(10);
-        assert_eq!(drained.len(), 1);
-        assert_eq!(drained[0].path, "b.txt");
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0].path, "a.txt");
+        assert_eq!(drained[1].path, "b.txt");
     }
 }

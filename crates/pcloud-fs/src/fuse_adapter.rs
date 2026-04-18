@@ -930,6 +930,12 @@ pub struct ProtoFuseAdapter<B: FolderBackend, F: FileBackend = NoFileBackend> {
     /// `ino → file_id` mirror populated during directory listings so that
     /// `open(ino)` can resolve a pCloud file id without a round trip.
     file_ids: Arc<Mutex<HashMap<Ino, u64>>>,
+    /// `ino → size_bytes` mirror populated during directory listings so
+    /// that `open(ino)` can seed the backend's `FileHandle.size` instead
+    /// of publishing `size=0` to the kernel (which would break
+    /// `stat(2)`/`mmap(2)`/`cp`/`rsync`). Missing entries fall back to
+    /// `FileBackend::open` without a size.
+    file_sizes: Arc<Mutex<HashMap<Ino, u64>>>,
     handles: Arc<Mutex<HandleTable>>,
     /// Optional write-path dispatcher (bd-1du.4.d/4.e). `None` means the
     /// adapter is read-only.
@@ -970,6 +976,7 @@ impl<B: FolderBackend, F: FileBackend> ProtoFuseAdapter<B, F> {
             cache: Arc::new(MetadataCache::new(options.cache)),
             page_cache: Arc::new(PageCache::new(options.page_cache)),
             file_ids: Arc::new(Mutex::new(HashMap::new())),
+            file_sizes: Arc::new(Mutex::new(HashMap::new())),
             handles: Arc::new(Mutex::new(HandleTable::default())),
             writer: None,
             options,
@@ -1086,6 +1093,11 @@ impl<B: FolderBackend, F: FileBackend> ProtoFuseAdapter<B, F> {
                 if let Some(file_id) = entry.file_id {
                     if let Ok(mut ids) = self.file_ids.lock() {
                         ids.insert(ino, file_id);
+                    }
+                }
+                if let Some(sz) = entry.size {
+                    if let Ok(mut sizes) = self.file_sizes.lock() {
+                        sizes.insert(ino, sz);
                     }
                 }
             }
@@ -1372,21 +1384,38 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
                 Arc::clone(existing)
             } else {
                 drop(tbl);
-                let handle = match self.file_backend.open(file_id) {
+                // Prefer `open_with_size` when the `listfolder` cache
+                // already has a size for this inode: serving a FileHandle
+                // with size=0 breaks `stat(2)`/`mmap(2)`/`cp`/`rsync`
+                // (they size-check before reading).
+                let known_size = self
+                    .file_sizes
+                    .lock()
+                    .ok()
+                    .and_then(|m| m.get(&ino).copied());
+                let open_res = match known_size {
+                    Some(sz) => self.file_backend.open_with_size(file_id, sz),
+                    None => self.file_backend.open(file_id),
+                };
+                let handle = match open_res {
                     Ok(h) => h,
                     Err(e) => {
-                        eprintln!(
-                            "[pcloud-adapter] open ino={ino} file_id={file_id} backend.open FAILED: {e:?}"
+                        log::debug!(
+                            "open ino={ino} file_id={file_id} backend.open FAILED: {e:?}"
                         );
                         return Err(e.to_errno());
                     }
                 };
                 let shared = Arc::new(handle);
                 let mut tbl = self.handles.lock().map_err(|_| crate::errors::EIO)?;
-                tbl.by_ino.entry(ino).or_insert_with(|| Arc::clone(&shared));
-                // INVARIANT: the entry was just inserted via `or_insert_with`
-                // on the line above; the key is guaranteed to be present.
-                Arc::clone(tbl.by_ino.get(&ino).expect("just-inserted"))
+                // Use the return value of `entry().or_insert_with()` so
+                // there is no window where a concurrent writer could
+                // evict the slot between insert and lookup. Returns a
+                // reference to the value present in the map (either the
+                // freshly inserted `shared` clone or a pre-existing
+                // entry raced-in by another thread).
+                let entry = tbl.by_ino.entry(ino).or_insert_with(|| Arc::clone(&shared));
+                Arc::clone(entry)
             }
         };
 

@@ -2,7 +2,7 @@
 
 Single source of truth for Rust parity counts.
 
-_Last reviewed: 2026-04-18 (post-audit-04 correction)._
+_Last reviewed: 2026-04-18 (post-audit-05 correction)._
 
 ## 2026-04-18 update — dual crypto backend landed + live KAT passed
 
@@ -20,6 +20,13 @@ Bead `pcloud-rs-s1p.13` closed. See
 `crates/pcloud-crypto/tests/pclsync_compat_kat_live.rs` and
 `scripts/extract-pclsync-kat.py`.
 
+**Wave 4 (audit-05): offline fixture-shape KAT** added at
+`crates/pcloud-crypto/tests/pclsync_compat_kat_offline.rs`. Runs in
+`cargo test` without a live password: verifies fixture file sizes and
+SHA-256 hashes, exercises `parse_priv_blob` / `parse_pub_blob` /
+`parse_pub_key_der` parsing surfaces. The live KAT remains `#[ignore]`
++ `PCLOUD_KAT_PASSWORD`-env-gated for manual / CI-secret runs.
+
 Headline: **153 / 5 / 0 / 28 (186 rows)**. The +2 Partial rows vs the
 earlier tally come from audit-04 H-6 (`share_temppass` currently uses
 symmetric HMAC, not the RSA-4096 signature the C client requires) —
@@ -27,7 +34,7 @@ rows 124 (`psync_crypto_share_folder`) and 142 (`psync_crypto_account_teamshare`
 remain Partial pending `bd-1du.5`. The KAT covered crypto primitives, not
 the share-invite handoff; that's a separate outstanding gap.
 
-## 2026-04-18 update — audit-04 parity honesty correction
+## 2026-04-18 update — audit-05 parity honesty correction (current)
 
 Three independent audit-04 findings (§1-opus CRITICAL-1, §7-opus
 CRITICAL-1/2, §8-sonnet M-1) proved that row 93 was mis-implemented: the
@@ -46,25 +53,42 @@ In parallel, an Opus-validated grep of the workspace confirmed audit-04
 exposes only the TFA-code-resend helpers, not `has_devices`/`tfa_type`
 queries. Both rows flip to `Partial`.
 
-Actions landed (this audit-04 wave):
+Audit-05 (2026-04-18) added two further Partial flips:
+
+- **Rows 124 and 142** (`psync_crypto_share_folder`,
+  `psync_crypto_account_teamshare`) are `Partial` because
+  `share_temppass` uses HMAC-SHA256, not the RSA-4096 asymmetric
+  signature the C client requires for the share-invite handoff
+  (`bd-1du.5`). The KAT covered crypto primitives; the share-invite
+  path is a separate outstanding gap.
+
+Actions landed (audit-04 / audit-05 waves):
 
 - **Row 93** reverted to `Partial`. `Request::UploadWriteFromFile` IPC
-  variant + proptest round-trip intentionally retained; daemon handler
-  now returns `"not yet wired: requires server-side copy via
-  UploadWriteFromFileRequest (bd-1du)"`. `pcloudc upload from-file`
-  CLI subcommand removed along with its `Command::UploadFromFile`
-  variant, inputs fields, and mapping.
+  variant rewired to the correct C primitive shape
+  (`upload_session_id`, `source_fileid`, `source_hash`, `offset`, `count`);
+  proptest round-trip updated. Daemon handler stub retained; `pcloudc
+  upload from-file` CLI subcommand removed.
 - **Rows 26 and 27** flipped to `Partial` with audit-04 rationale.
+- **Rows 124 and 142** flipped to `Partial` with audit-05 rationale.
 - **Rate-limit bucket** for `Request::CreateTreePublicLinkFromPaths`
   and `Request::UploadWriteFromFile` mapped to `Expensive` in
-  `crates/pcloud-daemon/src/rate_limit.rs` (siblings
-  `CreateTreePublicLink` / bulk uploads are `Expensive`).
-- **Audit-log path redaction** for the upload-write-from-file handler
-  is moot: the removed local-file shim is the only code that logged a
-  raw `local_path`. The stub handler emits no audit line.
+  `crates/pcloud-daemon/src/rate_limit.rs`.
+- **Offline KAT** (`pclsync_compat_kat_offline.rs`) added: fixture-shape
+  and parsing-surface checks that run in `cargo test` without a live
+  password. The full live KAT (`pclsync_compat_kat_live.rs`) remains
+  `#[ignore]` + env-gated.
 
-**Headline now: 155 / 3 / 0 / 28 (186 rows).** CSV parse confirms
-(Python `csv` module).
+**Headline: 153 / 5 / 0 / 28 (186 rows).** CSV parse confirms (Python
+`csv` module). See "Current Parity Matrix Tally" section and "At a
+glance" table — those are the single authoritative numbers.
+
+Why Partial grew from 2 to 5: rows 124, 142 flipped because
+`share_temppass` uses HMAC-SHA256 not RSA-4096 (`bd-1du.5`); rows 26,
+27 flipped because no implementing code exists.
+
+KAT wording update: offline fixture-shape KAT proves parsing; live KAT
+(manual, `--ignored` + env-gated) exercises full decrypt chain.
 
 Remaining `bd-1du.10` blockers are no longer AI-scoped:
 - Cross-platform mount hardware verification (macOS fuse-t, Windows
@@ -73,18 +97,24 @@ Remaining `bd-1du.10` blockers are no longer AI-scoped:
 
 See [`PARITY-PROOF-CHECKLIST.md`](./PARITY-PROOF-CHECKLIST.md).
 
-## 2026-04-18 — Audit 03 parity-matrix reconciliation (superseded)
+## Superseded audit history (do not cite)
+
+The entries below are frozen-in-time records. The authoritative count is
+in the "Current Parity Matrix Tally" table and the "At a glance" table
+above. Do not cite any number from this section in external documents.
+
+### 2026-04-18 — Audit 03 (superseded by audit-04 / audit-05)
 
 A line-level reconciliation of `C_FEATURE_PARITY_MATRIX.csv` against the
 source tree was performed as part of the `bd-1du.10` final-parity-proof
 closure work. Findings:
 
-- **The CSV is authoritative and now reads 156 / 2 / 0 / 28 (186 rows).**
-  The previously-reported 158 / 0 / 0 / 28 headline in this file was wrong:
+- **The CSV read 156 / 2 / 0 / 28 (186 rows) at Audit 03 time** (now
+  superseded — current count is 153 / 5 / 0 / 28; see top of file).
+  The previously-reported 158 / 0 / 0 / 28 headline was wrong:
   it double-counted two rows that were flipped to Implemented in earlier
   waves as if they had cleared the matrix, when in fact the CSV still
-  carried two rows at `Partial` status. The headline has been corrected
-  to reflect what `awk`/`csv`-parse actually returns.
+  carried two rows at `Partial` status.
 - **Two genuine Partial rows remain.** Both are narrow wiring gaps, not
   missing features:
     - **Row 93** (`transfers,upload wire methods`): the
@@ -118,8 +148,9 @@ closure work. Findings:
 
 No row flipped between `Implemented` / `Partial` / `Missing` / `Rejected`
 status in this audit. The audit is a truth-surface reconciliation, not a
-feature-completeness gate. The headline count **156 / 2 / 0 / 28 (186)**
-is the honest current reading of the CSV.
+feature-completeness gate. The headline count at Audit-03 was **156 / 2
+/ 0 / 28 (186)** — subsequently corrected by audit-04 / audit-05 to
+**153 / 5 / 0 / 28** (see top of file).
 
 The `bd-1du.10` gate remains open. Two Partial rows plus reviewer human
 sign-off are the remaining blockers. See
@@ -490,8 +521,8 @@ Every other document must link here and avoid hard-coded totals.
 |---|---|---|
 | Release posture | **Pre-alpha** | Not production-ready; `bd-1du.10` is still open. |
 | Parity rows total | **186** | Row source: [`C_FEATURE_PARITY_MATRIX.csv`](./C_FEATURE_PARITY_MATRIX.csv) |
-| Implemented | **155** | Retained-path feature coverage |
-| Partial | **3** | Rows 26 (`psync_tfa_has_devices` no impl), 27 (`psync_tfa_type` no impl), 93 (`upload_writefromfile` server-side-copy not wired) — audit-04 corrections |
+| Implemented | **153** | Retained-path feature coverage |
+| Partial | **5** | Rows 26 (`psync_tfa_has_devices` no impl), 27 (`psync_tfa_type` no impl), 93 (`upload_writefromfile` server-side-copy not wired), 124 (`psync_crypto_share_folder` HMAC vs RSA-4096), 142 (`psync_crypto_account_teamshare` HMAC vs RSA-4096) — audit-04/05 corrections |
 | Missing | **0** | No un-triaged C surface remains |
 | Rejected | **28** | Ghosts, stubs, insecure-legacy — see [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md) |
 | Test suite | **2029 passed / 0 failed / 46 ignored** | O-wave gate: all green; +1 ignored (live-gated). |
@@ -511,8 +542,8 @@ Source: [`C_FEATURE_PARITY_MATRIX.csv`](./C_FEATURE_PARITY_MATRIX.csv)
 | Metric       | Count |
 |--------------|-------|
 | Total rows   | 186   |
-| Implemented  | 155   |
-| Partial      | 3     |
+| Implemented  | 153   |
+| Partial      | 5     |
 | Missing      | 0     |
 | Rejected     | 28    |
 
@@ -554,7 +585,7 @@ remains open.
 
 ## Remaining Partial Rows
 
-Three rows remain Partial after the 2026-04-18 audit-04 correction:
+Five rows remain Partial after the 2026-04-18 audit-04/05 corrections:
 
 - **Row 26** — `auth,psync_tfa_has_devices`. Workspace grep finds
   zero implementing code. The orchestrator exposes TFA-resend helpers
@@ -570,18 +601,21 @@ Three rows remain Partial after the 2026-04-18 audit-04 correction:
 - **Row 93** — `transfers,upload wire methods`. The
   `upload_writefromfile` proto encoder is implemented
   (`pcloud_proto::methods::upload::UploadWriteFromFileRequest`). The
-  `Request::UploadWriteFromFile` IPC variant is defined and proptest-
-  round-tripped, but the daemon handler is a stub returning
-  `"not yet wired: requires server-side copy via
-  UploadWriteFromFileRequest (bd-1du)"`. A prior local-file shim was
-  intentionally removed after audit 04 found a semantic mismatch (C
-  does server-side copy from a remote `fileid`; the shim read local
-  disk). Needs `TransferRuntime::upload_write_from_file` method that
-  invokes `UploadWriteFromFileRequest` on the wire, a real handler
-  body, and CLI re-wiring. TODO at
-  `crates/pcloud-backends/src/transfer_backend.rs:445`.
+  `Request::UploadWriteFromFile` IPC variant is defined (fields
+  rewired to the C primitive shape: `upload_session_id`, `source_fileid`,
+  `source_hash`, `offset`, `count`) and proptest-round-tripped, but the
+  daemon handler is a stub. Needs `TransferRuntime::upload_write_from_file`
+  method that invokes `UploadWriteFromFileRequest` on the wire.
+  TODO at `crates/pcloud-backends/src/transfer_backend.rs:445`.
+- **Row 124** — `crypto,psync_crypto_share_folder`. The `share_temppass`
+  flow uses HMAC-SHA256 rather than the RSA-4096 asymmetric signature
+  the C client requires for the share-invite handoff. Tracked under
+  `bd-1du.5`.
+- **Row 142** — `crypto,psync_crypto_account_teamshare`. Same root cause
+  as row 124: `share_temppass` HMAC-SHA256 vs. RSA-4096. Tracked under
+  `bd-1du.5`.
 
-All three are tracked under `bd-1du.10` and block the parity gate.
+All five are tracked under `bd-1du.10` and block the parity gate.
 
 The 28 `Rejected` rows have per-item justification in
 [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md).

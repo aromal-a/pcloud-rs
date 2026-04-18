@@ -8,7 +8,7 @@ supply-chain checks you are expected to run locally, the commit style,
 and — critically — the project's honesty rules around security and
 parity claims. Please read all of it before opening a pull request.
 
-The authoritative project handoff is [`CLAUDE.md`](../CLAUDE.md). The
+The authoritative project handoff is [`CLAUDE.md`](./CLAUDE.md). The
 parity truth files are
 [`C_FEATURE_PARITY_REVIEW.md`](./C_FEATURE_PARITY_REVIEW.md) and
 [`C_FEATURE_PARITY_MATRIX.csv`](./C_FEATURE_PARITY_MATRIX.csv). Parity
@@ -156,7 +156,7 @@ A PR must:
 ## Honesty Rules (Non-Negotiable)
 
 This project inherits strict honesty discipline from
-[`CLAUDE.md`](../CLAUDE.md). All contributors — human and agent —
+[`CLAUDE.md`](./CLAUDE.md). All contributors — human and agent —
 must follow these rules.
 
 ### Do not claim parity you have not earned
@@ -225,7 +225,7 @@ Whenever code reality changes, update:
 2. [`C_FEATURE_PARITY_REVIEW.md`](./C_FEATURE_PARITY_REVIEW.md),
 3. [`C_FEATURE_PARITY_MATRIX.csv`](./C_FEATURE_PARITY_MATRIX.csv),
 4. [`CHANGELOG.md`](./CHANGELOG.md),
-5. [`CLAUDE.md`](../CLAUDE.md) if the global handoff state changed
+5. [`CLAUDE.md`](./CLAUDE.md) if the global handoff state changed
    materially.
 
 ## Reporting Security Issues

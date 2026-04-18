@@ -831,7 +831,7 @@ pub fn bootstrap_with_config(config: ConfigProfile) -> Result<RuntimeShell, Boot
         // `pcloud_daemon::rate_limit::SessionRateLimiter` for the
         // admission rules and `docs/book/src/reference/config.md` for
         // the operator-facing tuning guide.
-        rate_limiter: crate::rate_limit::SessionRateLimiter::new(&rate_limit_policy),
+        rate_limiter: crate::rate_limit::PerPeerRateLimiter::new(&rate_limit_policy),
         // Operator-visible upload-session registry. Empty at bootstrap;
         // populated by `Request::UploadCreate`. In-memory only.
         upload_sessions: pcloud_backends::upload_sessions::SessionRegistry::new(),

@@ -47,6 +47,16 @@ pub struct Scheduler {
     /// therefore appear first, followed by deletes, directory
     /// operations, then file transfers.
     pub queued_operations: Vec<PlannedOperation>,
+    /// P2-b (H2): operations that have been handed out via
+    /// [`Self::peek_batch`] (or the draining `next_batch`) and are
+    /// currently in flight with a transfer coordinator. They are kept
+    /// here until [`Self::ack_batch`] confirms durable remote
+    /// acknowledgement (upload save / download complete). Persisted
+    /// snapshots include this slot so that a crash between dispatch
+    /// and ack re-queues the in-flight work on restart rather than
+    /// silently losing it.
+    #[serde(default)]
+    pub dispatched_operations: Vec<PlannedOperation>,
 }
 
 impl Default for Scheduler {
@@ -55,6 +65,7 @@ impl Default for Scheduler {
             max_parallel_uploads: 4,
             max_parallel_downloads: 4,
             queued_operations: Vec::new(),
+            dispatched_operations: Vec::new(),
         }
     }
 }
@@ -152,6 +163,11 @@ impl Scheduler {
     pub fn evict_sync_id(&mut self, sync_id: SyncId) {
         self.queued_operations
             .retain(|operation| operation.sync_id() != sync_id);
+        // P2-b (H2): also drop any dispatched-but-not-acked operations
+        // for this sync root so a paused/removed root does not leave
+        // phantom entries in the durable snapshot.
+        self.dispatched_operations
+            .retain(|operation| operation.sync_id() != sync_id);
     }
 
     /// Drain and return the next fair batch of operations, removing the
@@ -186,6 +202,80 @@ impl Scheduler {
     /// assert_eq!(s.total_queued(), 0, "items drained after next_batch");
     /// ```
     pub fn next_batch(&mut self) -> Vec<PlannedOperation> {
+        let batch = self.take_fair_batch();
+        // P2-b (H2): record dispatched work until ack_batch confirms it.
+        for op in &batch {
+            self.dispatched_operations.push(op.clone());
+        }
+        batch
+    }
+
+    /// P2-b (H2) peek-variant: return the next fair batch **without**
+    /// removing items from the queue. The caller is expected to
+    /// call [`Self::ack_batch`] on each operation once the upload /
+    /// download has been durably acknowledged by the server. If the
+    /// daemon crashes between peek and ack the peeked items stay in
+    /// `queued_operations` and are re-dispatched on restart.
+    ///
+    /// Note: because this peek does **not** mutate the queue, a naive
+    /// tight loop calling `peek_batch` will return the same items over
+    /// and over. Integrations that want at-most-in-flight semantics
+    /// must either (a) drain with [`Self::next_batch`] and re-enqueue
+    /// on failure, or (b) track in-flight paths externally. The
+    /// current sync-loop path uses [`Self::next_batch`] + the
+    /// coordinator `active_*` lists to achieve the same effect while
+    /// also benefitting from the audit-05 H2 durability semantics via
+    /// `dispatched_operations`.
+    #[must_use]
+    pub fn peek_batch(&self) -> Vec<PlannedOperation> {
+        self.peek_fair_batch_cloned()
+    }
+
+    fn peek_fair_batch_cloned(&self) -> Vec<PlannedOperation> {
+        let global_limit = (self.max_parallel_uploads + self.max_parallel_downloads).max(1);
+        if self.queued_operations.is_empty() {
+            return Vec::new();
+        }
+        let distinct_roots: std::collections::HashSet<SyncId> = self
+            .queued_operations
+            .iter()
+            .map(|op| op.sync_id())
+            .collect();
+        let num_roots = distinct_roots.len().max(1);
+        let per_root_cap = ((global_limit + num_roots - 1) / num_roots).max(1);
+        let mut per_root: std::collections::HashMap<SyncId, usize> =
+            std::collections::HashMap::new();
+        let mut out = Vec::with_capacity(global_limit);
+        for op in &self.queued_operations {
+            if out.len() >= global_limit {
+                break;
+            }
+            let count = per_root.entry(op.sync_id()).or_insert(0);
+            if *count < per_root_cap {
+                *count += 1;
+                out.push(op.clone());
+            }
+        }
+        out
+    }
+
+    /// P2-b (H2): remove the named paths from the `dispatched_operations`
+    /// slot. Called by the embedding runtime after each successful
+    /// upload/download completion. Operations still in
+    /// `dispatched_operations` after a daemon shutdown will be restored
+    /// into `queued_operations` on the next boot so retry is guaranteed.
+    ///
+    /// Path match is used rather than by index so the caller can ack in
+    /// any order relative to how operations were peeked / dispatched.
+    pub fn ack_batch(&mut self, paths: &[&str]) {
+        if paths.is_empty() || self.dispatched_operations.is_empty() {
+            return;
+        }
+        self.dispatched_operations
+            .retain(|op| !paths.iter().any(|p| op.path() == *p));
+    }
+
+    fn take_fair_batch(&mut self) -> Vec<PlannedOperation> {
         let global_limit = (self.max_parallel_uploads + self.max_parallel_downloads).max(1);
         if self.queued_operations.is_empty() {
             return Vec::new();
@@ -342,7 +432,7 @@ impl Scheduler {
     /// use pcloud_model::ids::SyncId;
     /// use pcloud_model::sync::PlannedOperation;
     ///
-    /// let mut s = Scheduler { max_parallel_uploads: 4, max_parallel_downloads: 4, queued_operations: Vec::new() };
+    /// let mut s = Scheduler::default();
     /// s.replace_queue(vec![
     ///     PlannedOperation::DeleteLocal { sync_id: SyncId::new(1), path: "a".into() },
     ///     PlannedOperation::DeleteLocal { sync_id: SyncId::new(1), path: "b".into() },
@@ -419,6 +509,7 @@ mod tests {
             max_parallel_uploads: 1,
             max_parallel_downloads: 1,
             queued_operations: Vec::new(),
+            dispatched_operations: Vec::new(),
         };
         scheduler.replace_queue(vec![
             PlannedOperation::UploadFile {
@@ -439,6 +530,68 @@ mod tests {
         ]);
 
         assert_eq!(scheduler.next_batch().len(), 2);
+    }
+
+    #[test]
+    fn crash_between_dispatch_and_ack_recovers_work_on_restart() {
+        // P2-b (H2) regression test. Simulates the crash window:
+        //   1. `next_batch` dispatches work (drains queued, records
+        //      `dispatched_operations`).
+        //   2. Daemon crashes BEFORE `ack_batch` is called.
+        //   3. On restart, the durable snapshot (queue ∪ dispatched)
+        //      is used to rebuild the queue.
+        //   4. The previously-dispatched-but-not-acked item must
+        //      re-appear in `queued_operations` and not be silently
+        //      lost.
+        let mut scheduler = Scheduler::default();
+        scheduler.replace_queue(vec![
+            PlannedOperation::UploadFile {
+                sync_id: SyncId::new(1),
+                path: "a.txt".to_owned(),
+                remote_parent_folder_id: None,
+                remote_name: "a.txt".to_owned(),
+            },
+            PlannedOperation::UploadFile {
+                sync_id: SyncId::new(1),
+                path: "b.txt".to_owned(),
+                remote_parent_folder_id: None,
+                remote_name: "b.txt".to_owned(),
+            },
+        ]);
+
+        // Step 1: dispatch.
+        let batch = scheduler.next_batch();
+        assert_eq!(batch.len(), 2);
+        assert_eq!(scheduler.queued_operations.len(), 0);
+        assert_eq!(
+            scheduler.dispatched_operations.len(),
+            2,
+            "dispatched_operations must record in-flight work for H2 durability"
+        );
+
+        // Step 2: ack ONE but crash before the second (simulated by not
+        // calling ack on b.txt).
+        scheduler.ack_batch(&["a.txt"]);
+        assert_eq!(scheduler.dispatched_operations.len(), 1);
+        assert_eq!(scheduler.dispatched_operations[0].path(), "b.txt");
+
+        // Step 3: build the combined "durable snapshot" — what the
+        // embedding runtime would persist to `sync.scheduler.queue`.
+        // This mirrors EngineShell::snapshot_scheduler_durable.
+        let mut durable: Vec<PlannedOperation> =
+            scheduler.queued_operations.iter().cloned().collect();
+        durable.extend(scheduler.dispatched_operations.iter().cloned());
+
+        // Step 4: simulate restart: fresh Scheduler, replace queue from
+        // persisted snapshot. The unacked "b.txt" must be present.
+        let mut restarted = Scheduler::default();
+        restarted.replace_queue(durable);
+        assert_eq!(restarted.queued_operations.len(), 1);
+        assert_eq!(restarted.queued_operations[0].path(), "b.txt");
+        assert!(
+            restarted.dispatched_operations.is_empty(),
+            "restart must start with clean dispatched slot; retry will re-populate"
+        );
     }
 
     #[test]

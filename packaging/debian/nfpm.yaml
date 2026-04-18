@@ -36,7 +36,7 @@ priority: optional
 maintainer: "pcloud-rs maintainers <ezechiel203@gmail.com>"
 description: |
   pCloud command-line client and user-space daemon (Rust rewrite).
-  Provides the `pcloud-rs` CLI and the `pcloudd` background daemon
+  Provides the `pcloudc` CLI and the `pcloudd` background daemon
   for syncing, mounting, and managing pCloud accounts.
 vendor: "pcloud-rs"
 homepage: "https://github.com/ezechiel203/pcloud-rs"
@@ -52,8 +52,8 @@ recommends:
   - ca-certificates
 
 contents:
-  - src: ../../target/release/pcloud-rs
-    dst: /usr/bin/pcloud-rs
+  - src: ../../target/release/pcloudc
+    dst: /usr/bin/pcloudc
     file_info:
       mode: 0755
   - src: ../../target/release/pcloudd

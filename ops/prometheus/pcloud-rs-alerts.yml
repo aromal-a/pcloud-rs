@@ -1,0 +1,96 @@
+---
+# Prometheus alerting rules for pcloud-rs daemon.
+#
+# Load into Prometheus via a rule_files entry, e.g.:
+#   rule_files:
+#     - /etc/prometheus/rules/pcloud-rs-alerts.yml
+#
+# All alerts assume metrics are scraped from the pcloudd /metrics endpoint
+# (default: http://localhost:9180/metrics, configurable via PCLOUD_METRICS_ADDR).
+#
+# Label conventions:
+#   severity: page | ticket | warning
+#   subsystem: auth | transfer | crypto | mount | sync | transport
+
+groups:
+  - name: pcloud-rs
+    interval: 60s
+    rules:
+
+      # 1. High error rate — more than 5% of IPC requests fail over 5 minutes.
+      - alert: PcloudHighIpcErrorRate
+        expr: |
+          rate(pcloud_ipc_requests_total{status="error"}[5m])
+          /
+          rate(pcloud_ipc_requests_total[5m]) > 0.05
+        for: 5m
+        labels:
+          severity: page
+          subsystem: ipc
+        annotations:
+          summary: "High IPC error rate on {{ $labels.instance }}"
+          description: >
+            More than 5% of IPC requests are failing over the last 5 minutes
+            (current: {{ $value | humanizePercentage }}).
+            Check daemon logs and pcloud_ipc_requests_total{status="error"}.
+
+      # 2. Drain stuck — sync queue depth not decreasing after 15 minutes.
+      - alert: PcloudSyncDrainStuck
+        expr: |
+          increase(pcloud_sync_queue_depth[15m]) >= 0
+          and pcloud_sync_queue_depth > 100
+        for: 15m
+        labels:
+          severity: ticket
+          subsystem: sync
+        annotations:
+          summary: "Sync drain appears stuck on {{ $labels.instance }}"
+          description: >
+            pcloud_sync_queue_depth has not decreased in 15 minutes and
+            is above 100 items (current: {{ $value }}).
+            The sync engine may be blocked or throttled.
+
+      # 3. Crypto failure rate — encrypted-folder operations failing.
+      - alert: PcloudCryptoFailureRate
+        expr: |
+          rate(pcloud_crypto_operations_total{status="error"}[10m]) > 0.1
+        for: 5m
+        labels:
+          severity: page
+          subsystem: crypto
+        annotations:
+          summary: "Elevated crypto operation failures on {{ $labels.instance }}"
+          description: >
+            Crypto operation error rate exceeds 0.1/s over the last 10 minutes
+            (current: {{ $value | humanize }}/s).
+            Check key availability and CryptoShell state.
+
+      # 4. Transport budget exhausted — rate-limiter rejections spiking.
+      - alert: PcloudTransportBudgetExhausted
+        expr: |
+          rate(pcloud_transport_ratelimit_rejected_total[5m]) > 1
+        for: 2m
+        labels:
+          severity: ticket
+          subsystem: transport
+        annotations:
+          summary: "Transport rate-limit rejections on {{ $labels.instance }}"
+          description: >
+            The outbound HTTP rate-limiter is rejecting more than 1 request/s
+            (current: {{ $value | humanize }}/s).
+            Uploads/downloads may be stalling. Check pcloud_transport_* metrics.
+
+      # 5. Mount flap — FUSE mount toggling up/down frequently.
+      - alert: PcloudMountFlap
+        expr: |
+          changes(pcloud_mount_active[10m]) > 4
+        for: 0m
+        labels:
+          severity: page
+          subsystem: mount
+        annotations:
+          summary: "FUSE mount flapping on {{ $labels.instance }}"
+          description: >
+            pcloud_mount_active has toggled more than 4 times in 10 minutes.
+            The FUSE filesystem may be crashing and restarting.
+            Check kernel logs (dmesg) and pcloudd stderr for FUSE errors.

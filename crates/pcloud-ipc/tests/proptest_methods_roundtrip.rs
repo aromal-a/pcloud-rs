@@ -620,12 +620,18 @@ fn arb_request() -> impl Strategy<Value = Request> {
             .prop_map(|(from, to)| Request::AuditVerifyChain {
                 range: pcloud_ipc::methods::AuditVerifyRange { from, to },
             }),
-        // UploadWriteFromFile (bd-1du row 93)
-        (any::<u64>(), "[a-zA-Z0-9/._-]{1,64}", any::<u64>()).prop_map(
-            |(session_id, path, offset)| Request::UploadWriteFromFile {
-                upload_session_id: session_id,
-                local_path: path,
-                offset,
+        // UploadWriteFromFile (bd-1du row 93) — C primitive shape:
+        // upload_session_id / source_fileid / source_hash / offset / count
+        // (matches pclsync/pupload.c:843-859 field set).
+        (any::<u64>(), any::<u64>(), any::<u64>(), any::<u64>(), any::<u64>()).prop_map(
+            |(session_id, source_fileid, source_hash, offset, count)| {
+                Request::UploadWriteFromFile {
+                    upload_session_id: session_id,
+                    source_fileid,
+                    source_hash,
+                    offset,
+                    count,
+                }
             },
         ),
         // CreateTreePublicLinkFromPaths (bd-1du row 149)

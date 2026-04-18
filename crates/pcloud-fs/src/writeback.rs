@@ -7,7 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::journal::{JournalEntry, WritebackJournal};
+use crate::journal::{JournalEntry, JournalError, WritebackJournal};
 use pcloud_cache::staging::StagingCache;
 
 /// Writeback service: stages writes, tracks successful flushes, and caches
@@ -38,20 +38,37 @@ impl WritebackService {
     /// Stage a write into the staging area and append a matching entry to
     /// `journal`. The write is considered durable only after the journal
     /// has been persisted by the runtime.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`JournalError::Full`] when the journal is at capacity.
+    /// The staging entry is rolled back before the error is returned so
+    /// staging and journal state stay consistent.
     pub fn stage_write(
         &mut self,
         journal: &mut WritebackJournal,
         path: impl Into<String>,
         bytes: Vec<u8>,
-    ) {
+    ) -> Result<(), JournalError> {
         let path = path.into();
         let byte_len = bytes.len();
         self.staging.stage(path.clone(), bytes);
-        journal.append(JournalEntry {
-            path,
+        match journal.append(JournalEntry {
+            path: path.clone(),
             operation: "write".to_owned(),
             bytes: byte_len,
-        });
+        }) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Roll back the staging entry so staging and journal
+                // state remain consistent under back-pressure.
+                self.staging.files.remove(&path);
+                self.staging
+                    .open_order
+                    .retain(|candidate| candidate != &path);
+                Err(e)
+            }
+        }
     }
 
     /// Drain up to `max_entries` journal entries, evicting their staged
@@ -91,7 +108,9 @@ mod tests {
         let mut service = WritebackService::default();
         let mut journal = WritebackJournal::default();
 
-        service.stage_write(&mut journal, "docs/report.txt", b"hello".to_vec());
+        service
+            .stage_write(&mut journal, "docs/report.txt", b"hello".to_vec())
+            .expect("stage within capacity");
 
         assert_eq!(service.staged_file_count(), 1);
         assert_eq!(journal.pending_count(), 1);
@@ -101,7 +120,9 @@ mod tests {
     fn flush_drains_journal_and_clears_staged_buffers() {
         let mut service = WritebackService::default();
         let mut journal = WritebackJournal::default();
-        service.stage_write(&mut journal, "docs/report.txt", b"hello".to_vec());
+        service
+            .stage_write(&mut journal, "docs/report.txt", b"hello".to_vec())
+            .expect("stage within capacity");
 
         let drained = service.flush(&mut journal, 10);
 

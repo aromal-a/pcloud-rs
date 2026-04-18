@@ -25,10 +25,9 @@
       PCLOUD_API_PORT / PCLOUD_API_SERVER_NAME / PCLOUD_LOG_LEVEL /
       PCLOUD_DURABLE_AUTH_TOKENS are **read** by the daemon.
     - PCLOUD_HOME, PCLOUD_CONFIG, PCLOUD_AUTH_VAULT, PCLOUD_IPC_SOCKET,
-      PCLOUD_API_SERVER are present below for operator readability but
-      are **NOT read** by the Rust daemon (the path is derived from
-      PCLOUD_ROOT; the CLI honours PCLOUD_CONFIG). Leaving them set is
-      harmless — they are silently ignored.
+      PCLOUD_API_SERVER are NOT exported by this plist (removed in audit-05
+      cleanup). The Rust daemon derives all paths from PCLOUD_ROOT; the CLI
+      honours PCLOUD_CONFIG via its own config resolution.
 
   Per-directive notes (load-bearing launchd keys):
     - Label              — launchd identifier; must match the plist filename stem.
@@ -93,17 +92,10 @@
         <string>api.pcloud.com</string>
         <key>PCLOUD_API_SERVER_NAME</key>
         <string>api.pcloud.com</string>
-        <!-- Compat aliases (NOT read by the Rust daemon; kept for readability): -->
-        <key>PCLOUD_HOME</key>
-        <string>/var/lib/pcloudd</string>
-        <key>PCLOUD_CONFIG</key>
-        <string>/etc/pcloud/pcloudd.toml</string>
-        <key>PCLOUD_AUTH_VAULT</key>
-        <string>/var/lib/pcloudd/auth.vault</string>
-        <key>PCLOUD_API_SERVER</key>
-        <string>api.pcloud.com</string>
-        <key>PCLOUD_IPC_SOCKET</key>
-        <string>/var/run/pcloudd/pcloudd.sock</string>
+        <!-- PCLOUD_HOME, PCLOUD_CONFIG, PCLOUD_AUTH_VAULT, PCLOUD_API_SERVER,
+             PCLOUD_IPC_SOCKET removed: the Rust daemon derives all paths from
+             PCLOUD_ROOT and does not read these variables. Removed to avoid
+             misleading operator expectations. -->
     </dict>
 </dict>
 </plist>

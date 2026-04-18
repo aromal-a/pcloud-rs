@@ -166,7 +166,7 @@ impl RsaKeyPair {
 ///
 /// `Debug` is manually implemented to redact key material. Both key buffers
 /// are zeroized on drop via the derive-wired `ZeroizeOnDrop` impl.
-#[derive(Clone, ZeroizeOnDrop)]
+#[derive(ZeroizeOnDrop)]
 pub struct SymKeyVer1 {
     /// Matches `sym_key_ver1::type`. Legacy clients always set this to
     /// `PSYNC_CRYPTO_SYM_AES256_1024BIT_HMAC` (= 0). Exposed so higher
@@ -205,6 +205,20 @@ impl SymKeyVer1 {
             flags,
             aes_key: [0u8; PCLSYNC_AES_KEY_LEN],
             hmac_key: [0u8; PCLSYNC_HMAC_KEY_LEN],
+        }
+    }
+
+    /// Test-only deep copy of the key material. Deliberately not a
+    /// `Clone` impl — `pcloud-secret/src/lib.rs:26` forbids `Clone` on
+    /// secret-bearing types so every duplication is audit-visible.
+    /// Production code must share via `Arc<SymKeyVer1>` instead.
+    #[cfg(test)]
+    pub fn duplicate(&self) -> Self {
+        Self {
+            sym_type: self.sym_type,
+            flags: self.flags,
+            aes_key: self.aes_key,
+            hmac_key: self.hmac_key,
         }
     }
 

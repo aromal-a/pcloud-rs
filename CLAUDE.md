@@ -57,17 +57,15 @@ Open parity epics/tasks (3 beads):
 
 - `bd-1du` - Close verified C-to-Rust feature parity gaps (epic)
 - `bd-1du.4` - Replace filesystem shell with real mounted-drive parity (substantially landed; cross-platform hardware verification remaining)
-- `bd-1du.10` - Prove and gate final C parity claims (matrix reconciled; 2 Partial rows + human sign-off remaining)
+- `bd-1du.10` - Prove and gate final C parity claims (5 Partial rows + human sign-off remaining: rows 26, 27, 93, 124, 142)
 
 Single source of truth for counts: [`STATUS.md`](STATUS.md). Per-row
 rejected rationale lives in `REJECTED-RATIONALES-14042026.md`. Do not
 hard-code count numbers in this file; link to `STATUS.md` instead.
 
-Audit 03 (2026-04-18) reconciled the matrix: **156 Implemented / 2 Partial
-/ 0 Missing / 28 Rejected (186 rows)**. Two genuine Partial rows remain
-(row 93 `upload_writefromfile` IPC wiring, row 149 `ptree_public_link`
-path-based IPC variant). All 28 Rejected rows have 1:1 rationales. Three
-stale path citations (rows 69, 70, 75) were repaired.
+Audit 05 (2026-04-18) corrected the count to **see `STATUS.md` for the
+authoritative count (currently 5 Partial rows)**. Audit 03 had reported
+156 Implemented / 2 Partial — that figure is superseded.
 
 Important corrections:
 
@@ -360,24 +358,27 @@ Primary target files:
 
 #### `bd-1du.10` Final parity proof
 
-Current state (Audit 03, 2026-04-18):
+Current state (Audit 05, 2026-04-18):
 
 - The parity matrix has been reconciled against the source tree. The
-  honest count is **156 Implemented / 2 Partial / 0 Missing / 28
-  Rejected** across 186 rows.
+  honest count is **see `STATUS.md` for the authoritative count
+  (currently 5 Partial rows)**. Do not hard-code this number here.
 - All 28 `Rejected` rows have a 1:1 rationale in
   `REJECTED-RATIONALES-14042026.md`. No Rejected row is unjustified.
 - All retained matrix rows that are marked `Implemented` have real,
   reachable code. A 20-row spot-check was clean; three stale path
   citations (rows 69, 70, 75 — post-refactor daemon → backends moves)
   were repaired in the CSV.
-- Two `Partial` rows remain and are genuinely partial:
+- Five `Partial` rows remain (rows 26, 27, 93, 124, 142):
+    - Row 26 (`auth,psync_tfa_has_devices`) — no implementing code.
+    - Row 27 (`auth,psync_tfa_type`) — no implementing code.
     - Row 93 (`transfers,upload_writefromfile` server-side-copy IPC
-      wiring) — proto encoder exists, no `Request::UploadWriteFromFile`
-      IPC variant, no CLI caller.
-    - Row 149 (`links,ptree_public_link` path-based CLI variant) —
-      id-based IPC wired end-to-end, path-based CLI resolves paths
-      client-side instead of via a dedicated daemon-side IPC variant.
+      wiring) — IPC variant rewired to C primitive shape; daemon
+      handler is a stub.
+    - Row 124 (`crypto,psync_crypto_share_folder`) — `share_temppass`
+      uses HMAC-SHA256, not RSA-4096 (`bd-1du.5`).
+    - Row 142 (`crypto,psync_crypto_account_teamshare`) — same root
+      cause as row 124.
 
 Remaining work to close the gate:
 

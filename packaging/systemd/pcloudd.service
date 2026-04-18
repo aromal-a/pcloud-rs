@@ -17,6 +17,15 @@ Wants=network-online.target
 # the daemon's SIGTERM/SIGINT handlers, which flip an internal shutdown flag
 # that lets the IPC serve loop drain in-flight work and exit cleanly within
 # TimeoutStopSec.
+#
+# ---
+# FUSE DEPLOYMENTS: this shipped unit intentionally BLOCKS /dev/fuse and the
+# @mount syscall group (see `PrivateDevices=yes` and the `@mount` entry in
+# `SystemCallFilter=` below). Deployments that mount a pCloud filesystem
+# through this daemon MUST install the `override-fuse.conf.example` drop-in
+# that lifts both restrictions. See `packaging/systemd/README.md` for the
+# installation walkthrough and the security trade-offs involved.
+# ---
 
 [Service]
 Type=notify

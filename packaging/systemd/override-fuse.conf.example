@@ -1,0 +1,52 @@
+# pcloudd.service drop-in override — enable FUSE-mounted pCloud drive
+#
+# The shipped unit sets `PrivateDevices=yes` (which hides `/dev/fuse` from the
+# sandbox) and filters out the `@mount` syscall group. Both are required to be
+# relaxed for FUSE-mode operation; the mainline unit keeps them strict by
+# default so deployments that only use the CLI/daemon surface get the
+# tightest possible sandbox.
+#
+# Install ONLY if you intend to mount a pCloud filesystem via this daemon.
+#
+# Installation:
+#   # System unit (DynamicUser path):
+#   sudo mkdir -p /etc/systemd/system/pcloudd.service.d/
+#   sudo install -m 644 override-fuse.conf.example \
+#       /etc/systemd/system/pcloudd.service.d/fuse.conf
+#   sudo systemctl daemon-reload && sudo systemctl restart pcloudd.service
+#
+#   # User unit:
+#   mkdir -p ~/.config/systemd/user/pcloudd.service.d/
+#   install -m 644 override-fuse.conf.example \
+#       ~/.config/systemd/user/pcloudd.service.d/fuse.conf
+#   systemctl --user daemon-reload && systemctl --user restart pcloudd.service
+#
+# Security note: relaxing `PrivateDevices` exposes the full `/dev` tree to
+# the unit. If that is unacceptable in your environment, consider using
+# `DeviceAllow=/dev/fuse rw` + `DevicePolicy=closed` instead (requires
+# system-mode with CAP_SYS_ADMIN or a cgroup-capable init).
+
+[Service]
+# Expose /dev/fuse to the sandbox. The shipped unit sets
+# `PrivateDevices=yes`, which creates an empty /dev without /dev/fuse.
+PrivateDevices=no
+
+# Re-allow the `@mount` syscall group. The shipped unit's filter line is:
+#     SystemCallFilter=~@privileged @resources @obsolete @mount @debug \
+#                        @cpu-emulation @raw-io @reboot @swap
+# We reset the filter (empty assignment) and re-apply it without @mount.
+SystemCallFilter=
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @debug @cpu-emulation @raw-io @reboot @swap
+
+# Permit the daemon to read/write the mount target. Adjust the path list to
+# match your actual mountpoints. `%h` is the per-user HOME (user units) or
+# the DynamicUser HOME (system units). Multiple paths may be listed.
+ReadWritePaths=/dev/fuse %h/pcloud /run/user/%U
+
+# Some kernels expose FUSE via /dev/fuse only after the `fuse` module is
+# loaded. If the daemon is the first consumer, you may need:
+#   ExecStartPre=/sbin/modprobe fuse
+# (requires a system unit with sufficient privileges; not needed on most
+# modern distributions where `fuse` is built into the kernel or autoloaded
+# via udev).

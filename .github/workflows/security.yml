@@ -4,7 +4,7 @@ on:
   schedule:
     - cron: '0 6 * * 1'   # weekly Monday
   push:
-    paths: ['**/Cargo.lock', '**/Cargo.toml']
+    paths: ['**/Cargo.lock', '**/Cargo.toml', 'deny.toml']
 
 jobs:
   audit:
@@ -15,3 +15,33 @@ jobs:
       - uses: rustsec/audit-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+          arguments: --all-features
+
+  container-scan:
+    name: Trivy container scan
+    runs-on: ubuntu-latest
+    # Run on schedule only — building the image on every Cargo.toml push
+    # would be expensive and is not useful without a real release image.
+    if: github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image for scanning
+        run: docker build -f packaging/docker/Dockerfile -t pcloud-rs:scan .
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'pcloud-rs:scan'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'

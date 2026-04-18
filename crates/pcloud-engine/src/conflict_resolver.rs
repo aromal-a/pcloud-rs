@@ -1,6 +1,8 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
 
 use pcloud_model::{
@@ -122,6 +124,41 @@ impl ConflictResolver {
         };
         Some(resolution)
     }
+
+    /// P2-a (H1): resolve a conflict operation while reading the local
+    /// mtime from an **absolute** path rooted at `sync_root`. The previous
+    /// `resolve_newest_wins` best-effort fallback called
+    /// `std::fs::metadata(path)` with a sync-root-relative string, which
+    /// fails in the daemon's cwd and silently fell through to prefer-remote.
+    ///
+    /// This variant builds `sync_root.join(operation.path())` and passes
+    /// the mtime it reads into [`Self::resolve`]. When the read fails the
+    /// supplied `local_mtime_secs_override` (if any) is used; otherwise
+    /// the resolver falls back to prefer-remote as documented.
+    #[must_use]
+    pub fn resolve_with_sync_root(
+        &self,
+        operation: &PlannedOperation,
+        sync_root: &Path,
+        remote_mtime_secs: Option<u64>,
+        local_mtime_secs_override: Option<u64>,
+    ) -> Option<ConflictResolution> {
+        let PlannedOperation::Conflict { path, .. } = operation else {
+            return None;
+        };
+        let absolute = sync_root.join(path);
+        let local_mtime = local_mtime_secs_override.or_else(|| {
+            std::fs::metadata(&absolute)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|sys| {
+                    sys.duration_since(std::time::SystemTime::UNIX_EPOCH)
+                        .ok()
+                        .map(|d| d.as_secs())
+                })
+        });
+        self.resolve(operation, local_mtime, remote_mtime_secs)
+    }
 }
 
 fn resolve_prefer_local(sync_id: SyncId, path: &str, kind: &ConflictKind) -> ConflictResolution {
@@ -201,37 +238,19 @@ fn resolve_newest_wins(
         }
     }
 
-    // When the caller did not supply timestamps, attempt to read the local
-    // mtime from the filesystem as a best-effort heuristic.
-    // If the read fails (test environment, file deleted between plan and
-    // resolve) fall back to prefer-remote.
+    // P2-a (H1): The previous implementation called
+    // `std::fs::metadata(path)` with a sync-root-relative string. In the
+    // daemon that path resolves against the daemon's cwd (not the sync
+    // root), so the call almost always failed and silently fell through
+    // to prefer-remote. Callers that want a real local-mtime read must
+    // use [`ConflictResolver::resolve_with_sync_root`], which builds an
+    // absolute path from the sync-root base first.
     //
-    // NOTE: A "remote mtime" is not yet carried through the ConflictKind
-    // payload.  Once `ConflictKind` carries a `remote_modified_secs` field
-    // (planned for bd-1du.5), callers should populate `remote_mtime_secs`
-    // from it so the explicit branch above is taken instead.
-    let local_is_newer = std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|local_mtime| {
-            std::time::SystemTime::UNIX_EPOCH
-                .elapsed()
-                .ok()
-                .map(|total| {
-                    local_mtime
-                        .duration_since(std::time::SystemTime::UNIX_EPOCH)
-                        .map(|l| l.as_secs())
-                        .unwrap_or(0)
-                        > total.as_secs().saturating_sub(30)
-                })
-        })
-        .unwrap_or(false);
-
-    if local_is_newer {
-        resolve_prefer_local(sync_id, path, kind)
-    } else {
-        resolve_prefer_remote(sync_id, path, kind)
-    }
+    // With no timestamp information available we fall back to
+    // prefer-remote (server-wins tie-break), matching the documented
+    // contract at the top of [`ConflictResolver::resolve`].
+    let _ = (path, kind); // suppress unused-variable lint in the fallback branch
+    resolve_prefer_remote(sync_id, path, kind)
 }
 
 /// Build a conflict-safe rename path for a local or remote copy.
@@ -475,6 +494,70 @@ mod tests {
     fn default_policy_is_rename_both() {
         let resolver = ConflictResolver::default();
         assert_eq!(resolver.default_policy, ConflictPolicy::RenameBoth);
+    }
+
+    #[test]
+    fn newest_wins_with_absolute_path_compares_mtimes_correctly() {
+        // P2-a (H1) regression test: the resolver must be able to read
+        // local mtime via `resolve_with_sync_root` when given the
+        // absolute sync-root base, NOT the daemon cwd.
+        use std::io::Write as _;
+
+        let tmp = std::env::temp_dir().join(format!(
+            "pcloud-rs-conflict-h1-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(tmp.join("subdir")).unwrap();
+        let file_path = tmp.join("subdir").join("file.txt");
+        {
+            let mut f = std::fs::File::create(&file_path).unwrap();
+            f.write_all(b"hello").unwrap();
+        }
+
+        let resolver = ConflictResolver {
+            default_policy: ConflictPolicy::NewestWins,
+        };
+
+        // Sync-root-relative path that would fail under the old
+        // `fs::metadata("subdir/file.txt")` (cwd-relative) call.
+        let op = PlannedOperation::Conflict {
+            sync_id: SyncId::new(1),
+            path: "subdir/file.txt".to_owned(),
+            kind: ConflictKind::LocalModifyVsRemoteModify,
+        };
+
+        // Local file's mtime is "now"; remote mtime is in the distant past.
+        // Expect prefer-local → UploadFile.
+        let remote_mtime = Some(1_000u64);
+        let resolution = resolver
+            .resolve_with_sync_root(&op, &tmp, remote_mtime, None)
+            .expect("conflict should resolve");
+        assert!(
+            matches!(
+                resolution,
+                ConflictResolution::Apply(PlannedOperation::UploadFile { .. })
+            ),
+            "local file is newer than remote; must prefer local: {resolution:?}"
+        );
+
+        // Now flip the comparison: remote mtime in the far future.
+        let remote_mtime = Some(u64::MAX / 2);
+        let resolution = resolver
+            .resolve_with_sync_root(&op, &tmp, remote_mtime, None)
+            .expect("conflict should resolve");
+        assert!(
+            matches!(
+                resolution,
+                ConflictResolution::Apply(PlannedOperation::DownloadFile { .. })
+            ),
+            "remote is newer; must prefer remote: {resolution:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[test]

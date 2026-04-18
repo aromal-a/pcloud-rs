@@ -130,9 +130,18 @@ impl FilesystemShell {
 
     /// Stage an all-zero write of `bytes` size through the journal. This is
     /// a convenience used by tests to exercise flush-threshold behaviour.
-    pub fn journal_write(&mut self, path: impl Into<String>, bytes: usize) {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::journal::JournalError::Full`] when the journal is
+    /// at capacity. Callers must apply back-pressure.
+    pub fn journal_write(
+        &mut self,
+        path: impl Into<String>,
+        bytes: usize,
+    ) -> Result<(), crate::journal::JournalError> {
         self.writeback
-            .stage_write(&mut self.journal, path, vec![0u8; bytes]);
+            .stage_write(&mut self.journal, path, vec![0u8; bytes])
     }
 
     /// Read `requested_bytes` starting at `offset` from the staged `path`.
@@ -224,7 +233,7 @@ mod tests {
     #[test]
     fn summary_reflects_pending_journal_entries() {
         let mut fs = FilesystemShell::default();
-        fs.journal_write("docs/report.txt", 5);
+        fs.journal_write("docs/report.txt", 5).expect("stage");
 
         assert!(fs.summary().contains("journal_pending=1"));
         assert!(fs.summary().contains("staged_writes=1"));
@@ -233,7 +242,7 @@ mod tests {
     #[test]
     fn flush_writeback_drains_journal_and_updates_summary() {
         let mut fs = FilesystemShell::default();
-        fs.journal_write("docs/report.txt", 5);
+        fs.journal_write("docs/report.txt", 5).expect("stage");
 
         let drained = fs.flush_writeback(10);
 

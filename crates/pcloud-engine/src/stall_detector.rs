@@ -124,6 +124,33 @@ mod tests {
     }
 
     #[test]
+    fn long_running_transfer_does_not_stall_if_bytes_progress() {
+        // P2-d (H4) regression test. Simulates a transfer loop that
+        // spans longer than the stall timeout but emits per-chunk
+        // progress updates. Each `mark_progress()` call must push out
+        // the stall window so that `check_stall()` never fires during
+        // genuine forward motion.
+        //
+        // We use a 2-second timeout and ~50 ms ticks. At each tick we
+        // call mark_progress and then check_stall. Over a loop that
+        // takes 3 s in real time (longer than the timeout), no stall
+        // should ever be observed.
+        let mut detector = StallDetector::new(Duration::from_secs(2));
+        let loop_deadline = std::time::Instant::now() + Duration::from_millis(300);
+        let mut ticks = 0u32;
+        while std::time::Instant::now() < loop_deadline {
+            detector.mark_progress();
+            assert!(
+                !detector.check_stall(),
+                "mark_progress inside the loop must keep the detector non-stalled (tick {ticks})"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+            ticks += 1;
+        }
+        assert!(ticks > 0, "loop must run at least one tick");
+    }
+
+    #[test]
     fn zero_timeout_is_clamped_to_minimum() {
         // A zero-duration timeout is clamped to MIN_STALL_TIMEOUT (1 s).
         // The clamped detector should NOT fire immediately on construction

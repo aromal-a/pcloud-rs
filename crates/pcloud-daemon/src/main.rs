@@ -298,7 +298,7 @@ fn attempt_auto_mount(
     let req = Request::Mount {
         path: mountpoint.to_path_buf(),
     };
-    let resp = pcloud_daemon::dispatch::handle_request(runtime, req);
+    let resp = pcloud_daemon::dispatch::handle_request(runtime, current_effective_uid(), req);
     if resp.status == ResponseStatus::Ok {
         Ok(())
     } else {

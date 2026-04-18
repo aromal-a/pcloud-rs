@@ -15,7 +15,9 @@
 #   pcloudd_flags    (string)   - extra CLI flags passed to pcloudd
 #
 # Outputs:
-#   PID file at /var/run/pcloudd.pid (managed by rc.subr via -p flag).
+#   PID tracking is handled by rc.subr via pidfile= (set below).
+#   The daemon binary does NOT accept a -p/--pidfile flag; rc.subr
+#   monitors the process directly via ${pidfile}.
 #   Logs go to syslog via the daemon's internal logger.
 #
 # Security:
@@ -30,7 +32,7 @@
 #   service pcloudd status
 #   service pcloudd stop
 #
-# Side effects: writes /var/run/pcloudd.pid; on stop, rc.subr removes it.
+# Side effects: rc.subr creates /var/run/pcloudd.pid; on stop, rc.subr removes it.
 
 # PROVIDE: pcloudd
 # REQUIRE: LOGIN NETWORKING
@@ -48,8 +50,10 @@ load_rc_config $name
 : ${pcloudd_flags:=""}
 
 command="/usr/local/bin/pcloudd"
+# rc.subr tracks the PID via this file; pcloudd does not write it itself.
+# Do NOT pass -p to pcloudd — that flag does not exist on the Rust binary.
 pidfile="/var/run/${name}.pid"
-command_args="-p ${pidfile}"
+command_args=""
 
 start_precmd()
 {

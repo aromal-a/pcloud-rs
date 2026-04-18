@@ -306,22 +306,42 @@ pub fn dispatch(
     runtime: &mut RuntimeShell,
     envelope: impl Into<pcloud_ipc::RequestEnvelope>,
 ) -> pcloud_ipc::Response {
+    // Default peer uid for callers that do not thread one through
+    // (embedders, tests). Uses the daemon's own euid — safe because
+    // the owner-only IPC gate normally pins peer_uid == daemon_uid.
+    let peer_uid = pcloud_ipc::current_effective_uid();
+    dispatch_with_peer_envelope(runtime, peer_uid, envelope)
+}
+
+/// Peer-aware dispatch entry point. The peer uid is resolved by
+/// pcloud-ipc at connection-accept time and threaded here by
+/// `serve::dispatch_with_drain_gate`. The uid is consumed by the
+/// per-peer rate limiter so distinct authorized peers cannot starve
+/// one another, and by any future audit wiring that needs peer
+/// provenance without re-resolving from the socket.
+pub fn dispatch_with_peer(
+    runtime: &mut RuntimeShell,
+    peer_uid: u32,
+    request: Request,
+) -> pcloud_ipc::Response {
+    handle_request(runtime, peer_uid, request)
+}
+
+fn dispatch_with_peer_envelope(
+    runtime: &mut RuntimeShell,
+    peer_uid: u32,
+    envelope: impl Into<pcloud_ipc::RequestEnvelope>,
+) -> pcloud_ipc::Response {
     let envelope: pcloud_ipc::RequestEnvelope = envelope.into();
     #[cfg(feature = "tracing-otlp")]
     {
-        // Extract `traceparent` at the dispatch boundary so the
-        // inbound W3C context becomes the parent of `pcloudd.dispatch`.
-        // `RequestEnvelope::traceparent()` borrows the optional header
-        // verbatim — no validation here; the dispatch span open path
-        // calls `parse_traceparent` and silently ignores malformed
-        // values to avoid leaking parser errors into request handling.
         if let Some(tp) = envelope.traceparent() {
             set_thread_traceparent(Some(tp.to_owned()));
         } else {
             set_thread_traceparent(None);
         }
     }
-    handle_request(runtime, envelope.request)
+    handle_request(runtime, peer_uid, envelope.request)
 }
 
 /// Dispatch entry point that wraps `RuntimeShell::handle_request` with
@@ -338,12 +358,17 @@ pub fn dispatch(
 /// response with a `"rate limit exceeded: <category>, retry after Ns"`
 /// message and the backend is **not** called. The check is zero-cost for
 /// the `Cheap` category (status / userinfo / field selectors).
-pub fn handle_request(runtime: &mut RuntimeShell, request: Request) -> pcloud_ipc::Response {
-    // Admission check (per-session, per-category token bucket). Runs
+pub fn handle_request(
+    runtime: &mut RuntimeShell,
+    peer_uid: u32,
+    request: Request,
+) -> pcloud_ipc::Response {
+    // Admission check (per-peer, per-category token bucket). Runs
     // before any backend dispatch so an over-budget caller cannot
     // observe partial state mutation. Cheap-category requests always
-    // pass; disabled buckets are silently bypassed.
-    let decision = runtime.rate_limiter.check(&request);
+    // pass; disabled buckets are silently bypassed. Keying by
+    // `peer_uid` ensures one chatty peer cannot starve another.
+    let decision = runtime.rate_limiter.check(peer_uid, &request);
     if let Some(resp) = crate::rate_limit::reject_response(&decision) {
         return resp;
     }
@@ -654,7 +679,7 @@ mod tests {
             method: Method::GetCryptoPrivKeyFlags,
         };
         let mut shell = bootstrap_test_shell();
-        let _ = handle_request(&mut shell, request);
+        let _ = handle_request(&mut shell, pcloud_ipc::current_effective_uid(), request);
 
         let recorded = attrs.lock().unwrap().clone();
         let has_status = recorded.iter().any(|(k, _)| k == "status_code");

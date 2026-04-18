@@ -14,14 +14,18 @@
 //! create) had no IPC-layer limiter, so a chatty or hostile client
 //! could DoS the daemon by fan-out. This module closes that gap.
 //!
-//! Per-session granularity means one client hammering the daemon cannot
-//! starve another session — each caller gets its own bucket. Callers
-//! keyed by IPC socket peer-UID share a [`SessionRateLimiter`] instance
-//! for the lifetime of their connection.
+//! Per-peer granularity is provided by [`PerPeerRateLimiter`] which
+//! maintains a `HashMap<peer_uid, SessionRateLimiter>`. Each distinct
+//! peer uid gets its own independent token-bucket state so one client
+//! hammering the daemon cannot starve another. The underlying
+//! [`SessionRateLimiter`] is a plain token-bucket container and knows
+//! nothing about peer identity on its own.
 
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::Duration;
 
 use pcloud_config::rate_limit::{RateBucket, RateCategory, RateLimitPolicy};
@@ -128,6 +132,76 @@ impl SessionRateLimiter {
             RateCategory::Expensive => self.expensive.is_some(),
             RateCategory::AuthAttempt => self.auth_attempt.is_some(),
         }
+    }
+}
+
+/// Per-peer rate-limit registry. Each distinct peer uid gets its own
+/// [`SessionRateLimiter`] with an independent token-bucket state, so one
+/// client cannot starve another by saturating the daemon's shared
+/// category buckets.
+///
+/// The registry is guarded by a `std::sync::Mutex` (serve loop is
+/// single-threaded under owner-only IPC, so contention is nil; the
+/// lock exists purely to make the map Send+Sync in case the dispatch
+/// path is ever moved off the serve thread). The `RateLimitPolicy` is
+/// cloned once at construction and reused for every new peer.
+///
+/// Note: eviction tied to connection-count drop is intentionally *not*
+/// wired. `pcloud-ipc::transport::ConnectionGuard` already evicts peer
+/// entries when their live-connection count returns to 0; this limiter
+/// holds at most one entry per *uid*, not per-connection, and retains
+/// token state across short reconnects to prevent a burst-reconnect
+/// workaround for bucket exhaustion. Memory footprint is bounded by the
+/// number of distinct authorized uids (owner-only: 1 in production).
+pub struct PerPeerRateLimiter {
+    policy: RateLimitPolicy,
+    peers: Mutex<HashMap<u32, SessionRateLimiter>>,
+}
+
+impl PerPeerRateLimiter {
+    /// Build a new per-peer registry from a validated policy.
+    #[must_use]
+    pub fn new(policy: &RateLimitPolicy) -> Self {
+        Self {
+            policy: policy.clone(),
+            peers: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Admission check for a request arriving from `peer_uid`. Creates
+    /// a fresh `SessionRateLimiter` for the peer on first sight.
+    #[must_use]
+    pub fn check(&self, peer_uid: u32, request: &Request) -> RateDecision {
+        let mut guard = match self.peers.lock() {
+            Ok(g) => g,
+            Err(poisoned) => {
+                log::error!("pcloud-daemon: PerPeerRateLimiter mutex poisoned; recovering");
+                poisoned.into_inner()
+            }
+        };
+        let limiter = guard
+            .entry(peer_uid)
+            .or_insert_with(|| SessionRateLimiter::new(&self.policy));
+        limiter.check(request)
+    }
+
+    /// Rebuild every per-peer limiter from a freshly loaded policy.
+    /// Called from SIGHUP hot-reload.
+    pub fn apply_policy(&mut self, policy: &RateLimitPolicy) {
+        self.policy = policy.clone();
+        let mut guard = match self.peers.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.clear();
+    }
+}
+
+impl core::fmt::Debug for PerPeerRateLimiter {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PerPeerRateLimiter")
+            .field("enabled", &self.policy.enabled)
+            .finish_non_exhaustive()
     }
 }
 

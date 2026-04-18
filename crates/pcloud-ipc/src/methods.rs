@@ -1044,23 +1044,33 @@ pub enum Request {
         /// IETF language tag (e.g. `"en"`, `"de"`, `"fr"`).
         language: String,
     },
-    /// Upload a local file by path into an existing upload session.
-    /// Mirrors C `upload_writefromfile` (the local-file convenience
-    /// form: read local bytes, call `upload_write`, then `upload_save`).
-    /// Distinct from the server-side-copy wire command of the same name;
-    /// this variant reads `local_path` on the daemon host and streams
-    /// the bytes via the standard `upload_write` + `upload_save` proto
-    /// path. Requires an authenticated session and an active upload
-    /// session previously created by [`Request::UploadCreate`].
-    /// Tracker: bd-1du row 93.
+    /// Server-side copy: copy bytes from a remote pCloud file (`fileid`)
+    /// into an in-progress upload session. Mirrors the C
+    /// `upload_writefromfile` wire primitive at `pclsync/pupload.c:843-859`
+    /// (`pupload.c:1125-1131` for the caller-side chunk loop).
+    ///
+    /// The C params are `uploadid` / `fileid` / `hash` / `uploadoffset` /
+    /// `offset` / `count` (plus `auth` + `id`). This IPC variant carries
+    /// the same information without the auth token (added by the daemon).
+    ///
+    /// Tracker: bd-1du row 93. Daemon handler is still a stub pending
+    /// `TransferRuntime::upload_write_from_file` wiring.
     UploadWriteFromFile {
-        /// Upload session id returned by a prior [`Request::UploadCreate`].
+        /// Upload session id (`uploadid`) returned by a prior
+        /// [`Request::UploadCreate`].
         upload_session_id: u64,
-        /// Absolute local path of the source file to read and upload.
-        local_path: String,
-        /// Byte offset into the upload session at which writing begins.
-        /// `0` for the start of a fresh session.
+        /// Source remote file id (`fileid`) whose bytes will be copied.
+        source_fileid: u64,
+        /// Content hash of the source file (`hash`), as returned by the
+        /// pCloud API (used for server-side integrity check).
+        source_hash: u64,
+        /// Byte offset into the upload session at which writing begins
+        /// (`uploadoffset`). `0` for the start of a fresh session.
         offset: u64,
+        /// Number of bytes to copy from the source file (`count`). Must
+        /// be ≤ `PSYNC_MAX_COPY_FROM_REQ`; splitting is the caller's
+        /// responsibility (`pupload.c:1125-1131`).
+        count: u64,
     },
     /// Create a tree public link by resolving a list of absolute
     /// pCloud-drive paths to their remote folder ids on the daemon side.

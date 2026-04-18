@@ -105,7 +105,7 @@ pub enum PclsyncCompatError {
 /// the PKCS#1 DER-serialised RSA private key, keyed by PBKDF2(password,
 /// salt, 20000)). The salt is held as a field of the blob itself; storing
 /// it separately would be redundant.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PclsyncCompatProfile {
     /// Exact bytes of the `priv_key_ver1` struct as the C client would
     /// upload them via `crypto_setuserkeys`. Contains ciphertext priv key.
@@ -123,6 +123,20 @@ pub struct PclsyncCompatProfile {
     /// `flags` field copied from the priv_key_ver1 struct. Exposed so
     /// `CryptoShell::priv_key_flags()` can report it.
     pub flags: u32,
+}
+
+impl core::fmt::Debug for PclsyncCompatProfile {
+    /// Redacted `Debug` — emits only field lengths and non-secret flags,
+    /// never the priv-key ciphertext blob or the HMAC fingerprint bytes.
+    /// Keeps `debug!(?profile)` safe on any log backend.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("PclsyncCompatProfile")
+            .field("priv_key_ver1_blob_len", &self.priv_key_ver1_blob.len())
+            .field("pub_key_ver1_blob_len", &self.pub_key_ver1_blob.len())
+            .field("pub_fingerprint", &"<redacted 32 bytes>")
+            .field("flags", &self.flags)
+            .finish_non_exhaustive()
+    }
 }
 
 impl PclsyncCompatProfile {

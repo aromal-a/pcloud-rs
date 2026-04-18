@@ -83,6 +83,8 @@ fn is_privileged_request(req: &Request) -> bool {
         } | Request::AccountChangePassword { .. }
             | Request::CryptoSetup { .. }
             | Request::CryptoSetupV2 { .. }
+            | Request::CryptoGetFolderKey { .. }
+            | Request::CryptoGetFileKey { .. }
             | Request::CryptoChangePassword { .. }
             | Request::CryptoChangePasswordUnlocked { .. }
             | Request::AuthPersistence { .. }
@@ -194,7 +196,12 @@ fn should_reject_during_drain(request: &Request) -> bool {
 /// enabled. The peer uid is reported as the daemon owner uid because
 /// `serve_once` already enforces that only owner-uid peers reach this
 /// handler — unauthorized peers never produce a dispatch call.
-fn dispatch_with_drain_gate(runtime: &mut RuntimeShell, request: Request) -> Response {
+fn dispatch_with_drain_gate(
+    runtime: &mut RuntimeShell,
+    peer_uid: u32,
+    peer_pid: u32,
+    request: Request,
+) -> Response {
     if signals::drain_state() == DrainState::Draining && should_reject_during_drain(&request) {
         return Response {
             status: ResponseStatus::Unavailable,
@@ -202,16 +209,23 @@ fn dispatch_with_drain_gate(runtime: &mut RuntimeShell, request: Request) -> Res
         };
     }
     if is_privileged_request(&request) {
-        // peer uid == daemon owner uid: serve_once enforces the owner-only
-        // check before invoking the handler, so only the owning uid arrives here.
+        // `peer_uid` / `peer_pid` come from SO_PEERCRED (Linux) /
+        // getpeereid(3) (BSD/macOS) / GetNamedPipeClientProcessId
+        // (Windows), resolved by pcloud-ipc at connection-accept time
+        // and threaded through `serve_once_with_peer`. Using the peer
+        // fields rather than `current_effective_uid()` (the daemon's
+        // own uid) preserves audit-04 M-2 correctness under future
+        // deployments where multiple authorized uids can share a
+        // socket (e.g. when root is allow-listed).
         log::info!(
-            "privileged IPC request: {} from uid={}",
+            "privileged IPC request: {} from uid={} pid={}",
             request_kind_name(&request),
-            current_effective_uid(),
+            peer_uid,
+            peer_pid,
         );
     }
     let _guard = signals::InFlightGuard::new();
-    crate::dispatch(runtime, request)
+    crate::dispatch_with_peer(runtime, peer_uid, request)
 }
 
 /// Same as [`serve_until_shutdown`], but additionally honors an external
@@ -329,7 +343,9 @@ pub fn serve_until_shutdown_with_flag(
             #[cfg(target_os = "linux")]
             sd_notify("READY=1\n");
         }
-        match bound.serve_once(|request| dispatch_with_drain_gate(runtime, request)) {
+        match bound.serve_once_with_peer(|peer, request| {
+            dispatch_with_drain_gate(runtime, peer.uid, peer.pid, request)
+        }) {
             Ok(()) => {}
             Err(IpcTransportError::Io(err)) if err.kind() == io::ErrorKind::Interrupted => {
                 // Signal-driven wakeup. Loop back and re-check the shutdown

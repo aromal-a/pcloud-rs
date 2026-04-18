@@ -311,6 +311,19 @@ impl BoundIpcServer {
     where
         F: FnOnce(Request) -> Response,
     {
+        self.serve_once_with_peer(|_peer, request| handler(request))
+    }
+
+    /// Peer-aware variant of [`Self::serve_once`]. The handler receives
+    /// both the resolved [`PeerIdentity`] (after owner-uid authorization)
+    /// and the decoded [`Request`]. Used by the daemon to thread peer
+    /// uid through the privileged-audit log and the per-peer rate
+    /// limiter. Cross-platform; peer identity fields may be
+    /// platform-specific placeholders (see [`PeerIdentity`]).
+    pub fn serve_once_with_peer<F>(&self, handler: F) -> Result<(), IpcTransportError>
+    where
+        F: FnOnce(PeerIdentity, Request) -> Response,
+    {
         let (mut stream, _) = self.listener.accept()?;
 
         // Recover peer identity before enforcing connection caps so the
@@ -348,7 +361,13 @@ impl BoundIpcServer {
                 return Ok(());
             }
         };
-        self.serve_stream_once_with_peer(stream, peer, handler, IPC_REQUEST_READ_TIMEOUT)
+        let peer_for_handler = peer;
+        self.serve_stream_once_with_peer(
+            stream,
+            peer,
+            move |req| handler(peer_for_handler, req),
+            IPC_REQUEST_READ_TIMEOUT,
+        )
     }
 
     /// Accept a single connection and dispatch it on a **dedicated OS

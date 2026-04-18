@@ -23,7 +23,7 @@ use serde::{Deserialize, Serialize};
 /// let peer = PeerIdentity { uid: 1000, pid: 4242 };
 /// assert!(peer.matches_owner(1000));
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PeerIdentity {
     /// UNIX user id of the peer process as observed by
     /// `SO_PEERCRED` / `getpeereid(3)` at connection-accept time. Used

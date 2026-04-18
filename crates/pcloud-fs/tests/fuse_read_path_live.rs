@@ -270,3 +270,85 @@ fn readdir_and_cat_through_real_mount_via_fuse_adapter_shim() {
     // --- 5. unmount cleanly ---------------------------------------------
     guard.unmount().expect("clean unmount");
 }
+
+/// Audit-05 P2-1a regression: `stat(2)` on a mounted file must report the
+/// real byte length from the first call, not `size=0` (which would break
+/// `cp`, `rsync`, and `mmap`, all of which size-check before the first
+/// read). The adapter populates `FileHandle.size` from the `listfolder`
+/// listing via `FileBackend::open_with_size`; this test asserts the
+/// kernel observes the true size on the very first `stat(2)`.
+#[test]
+#[ignore = "requires PCLOUD_FUSE_TEST=1 (or PCLOUD_LIVE_E2E=1) and a working libfuse kernel module"]
+fn stat_returns_real_size_on_open() {
+    if !fuse_gate_enabled() {
+        eprintln!("[fuse_read_path_live] skip: PCLOUD_FUSE_TEST / PCLOUD_LIVE_E2E not set");
+        return;
+    }
+    if !dev_fuse_available() {
+        eprintln!("[fuse_read_path_live] skip: /dev/fuse not available");
+        return;
+    }
+
+    // A deliberately non-trivial payload so size=0 would be an obvious bug.
+    let payload: Vec<u8> = (0..4096u16).map(|i| (i % 251) as u8).collect();
+    let folder = Arc::new(MockFolderBackend::new());
+    folder.insert_dir_with_sizes(
+        "/",
+        1,
+        vec![(
+            "bigfile.bin",
+            false,
+            None,
+            Some(77),
+            Some(payload.len() as u64),
+        )],
+    );
+    let files = Arc::new(MockFileBackend::new());
+    files.insert_file(77, payload.clone());
+
+    let adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    );
+
+    let mnt = tempfile::tempdir().expect("mount tempdir");
+    let svc = MountService::new();
+    let handle = match svc.mount(
+        mnt.path(),
+        adapter,
+        MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        },
+    ) {
+        Ok(h) => h,
+        Err(err) if should_skip_mount_error(&err.to_string()) => {
+            eprintln!("[fuse_read_path_live] skip: host refused FUSE mount: {err}");
+            return;
+        }
+        Err(err) => panic!("MountService::mount: {err}"),
+    };
+    let guard = MountGuard::new(handle, mnt.path().to_path_buf());
+
+    std::thread::sleep(Duration::from_millis(200));
+    if !mount_appears_active(mnt.path()) {
+        eprintln!("[fuse_read_path_live] skip: mount did not appear in /proc/self/mountinfo");
+        return;
+    }
+
+    // `stat(2)` before any `read(2)` — this is the pre-audit failure mode
+    // (size=0 because the adapter had not populated FileHandle.size yet).
+    let meta = match std::fs::metadata(mnt.path().join("bigfile.bin")) {
+        Ok(m) => m,
+        Err(err) if should_skip_io_error(&err) => return,
+        Err(err) => panic!("stat bigfile.bin: {err}"),
+    };
+    assert_eq!(
+        meta.len(),
+        payload.len() as u64,
+        "stat must report the true file size (not 0) on first call"
+    );
+
+    guard.unmount().expect("clean unmount");
+}

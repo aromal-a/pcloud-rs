@@ -782,8 +782,46 @@ impl EngineShell {
     /// bootstrap only.
     ///
     /// pcloud-rs-774.
+    ///
+    /// P2-b (H2): if a previous daemon shutdown left items in the
+    /// scheduler's `dispatched_operations` slot (i.e. peeked but not
+    /// yet acked because a crash intervened), the caller can supply
+    /// the combined `queued ∪ dispatched` list here so retry is
+    /// guaranteed. The persistence key `sync.scheduler.queue`
+    /// serializes this combined set for exactly this reason.
     pub fn restore_scheduler_queue(&mut self, operations: Vec<PlannedOperation>) {
         self.scheduler.replace_queue(operations);
+        self.scheduler.dispatched_operations.clear();
+    }
+
+    /// P2-b (H2): combined snapshot of queued + in-flight operations
+    /// for durable persistence. On restart the embedding runtime passes
+    /// this list to [`Self::restore_scheduler_queue`] so any work that
+    /// was peeked or dispatched but not yet acknowledged (e.g. an
+    /// upload that finished a chunk but crashed before `upload_save`)
+    /// is retried.
+    #[must_use]
+    pub fn snapshot_scheduler_durable(&self) -> Vec<PlannedOperation> {
+        let mut combined: Vec<PlannedOperation> =
+            self.scheduler.queued_operations.iter().cloned().collect();
+        combined.extend(self.scheduler.dispatched_operations.iter().cloned());
+        combined.sort_by(|a, b| {
+            a.sync_id()
+                .get()
+                .cmp(&b.sync_id().get())
+                .then(a.priority().cmp(&b.priority()))
+                .then(a.path().cmp(b.path()))
+        });
+        combined.dedup_by(|a, b| a.sync_id() == b.sync_id() && a.path() == b.path());
+        combined
+    }
+
+    /// P2-b (H2): acknowledge successful completion of `path`. Removes
+    /// the entry from the scheduler's `dispatched_operations` slot so
+    /// it is no longer re-queued on restart. Idempotent; unknown paths
+    /// are a no-op.
+    pub fn ack_dispatched_path(&mut self, path: &str) {
+        self.scheduler.ack_batch(&[path]);
     }
 
     /// Mark a sync root as paused and drop any scheduled work for it so it

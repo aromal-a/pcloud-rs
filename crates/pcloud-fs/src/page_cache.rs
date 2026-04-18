@@ -58,6 +58,7 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use lru::LruCache;
@@ -162,6 +163,13 @@ struct Inner {
     /// LRU-ordered map. The internal intrusive list keeps `get`/`put`/
     /// eviction all at true O(1), never O(n).
     entries: LruCache<PageKey, Slot>,
+    /// Secondary index `file_id -> { page_index }` maintained in lockstep
+    /// with `entries`. Lets [`PageCache::invalidate_file`] run in O(k)
+    /// where `k` is the resident page count for the target file, instead
+    /// of O(n) over the entire LRU. The index stores `page_index` only —
+    /// the full [`PageKey`] is reconstructed via `PageKey { file_id,
+    /// page_index }` at invalidation time.
+    by_file: HashMap<u64, HashSet<u64>>,
     bytes_resident: usize,
     hits: u64,
     misses: u64,
@@ -176,6 +184,7 @@ impl Inner {
         Self {
             config,
             entries: LruCache::unbounded(),
+            by_file: HashMap::new(),
             bytes_resident: 0,
             hits: 0,
             misses: 0,
@@ -194,10 +203,17 @@ impl Inner {
             .saturating_sub(self.config.max_bytes)
             > 0
         {
-            let Some((_, slot)) = self.entries.pop_lru() else {
+            let Some((evicted_key, slot)) = self.entries.pop_lru() else {
                 break;
             };
             self.bytes_resident = self.bytes_resident.saturating_sub(slot.bytes.len());
+            // Keep the secondary index in sync with the LRU.
+            if let Some(set) = self.by_file.get_mut(&evicted_key.file_id) {
+                set.remove(&evicted_key.page_index);
+                if set.is_empty() {
+                    self.by_file.remove(&evicted_key.file_id);
+                }
+            }
         }
     }
 }
@@ -277,6 +293,10 @@ impl PageCache {
         }
         if let Some(old) = inner.entries.pop(&key) {
             inner.bytes_resident = inner.bytes_resident.saturating_sub(old.bytes.len());
+            // The secondary-index entry for this page is preserved: the
+            // replacement below will re-insert the same (file_id,
+            // page_index) tuple. Removing then re-inserting it would be a
+            // no-op; leave it in place for simplicity.
         }
         inner.evict_until_fits(new_len);
         inner.entries.put(
@@ -286,19 +306,31 @@ impl PageCache {
             },
         );
         inner.bytes_resident = inner.bytes_resident.saturating_add(new_len);
+        inner
+            .by_file
+            .entry(key.file_id)
+            .or_default()
+            .insert(key.page_index);
     }
 
     /// Drop every page belonging to `file_id`.
+    ///
+    /// Uses the `by_file` secondary index to avoid scanning the entire
+    /// LRU: runs in O(k) where `k` is the number of pages resident for
+    /// `file_id`, not O(n) over the whole cache. The LRU list ordering
+    /// remains intact for all other files.
     pub fn invalidate_file(&self, file_id: u64) {
         let Ok(mut inner) = self.inner.lock() else {
             return;
         };
-        let to_remove: Vec<PageKey> = inner
-            .entries
-            .iter()
-            .filter_map(|(k, _)| (k.file_id == file_id).then_some(*k))
-            .collect();
-        for key in to_remove {
+        let Some(page_indices) = inner.by_file.remove(&file_id) else {
+            return;
+        };
+        for page_index in page_indices {
+            let key = PageKey {
+                file_id,
+                page_index,
+            };
             if let Some(slot) = inner.entries.pop(&key) {
                 inner.bytes_resident = inner.bytes_resident.saturating_sub(slot.bytes.len());
             }
@@ -311,6 +343,7 @@ impl PageCache {
             return;
         };
         inner.entries.clear();
+        inner.by_file.clear();
         inner.bytes_resident = 0;
     }
 

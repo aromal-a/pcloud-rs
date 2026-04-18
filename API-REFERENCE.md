@@ -37,6 +37,8 @@ intentionally Rejected. See the CSV for full notes per row.
 | `logout` | `EmbeddedDaemon::logout` | `psync_unlink` | I |
 | `register` | `AccountApi::register` via `EmbeddedDaemon::register` | `psync_register` | I |
 | notification cb | — | `psync_set_notification_callback` | R (event stream) |
+| `tfa_has_devices` | — | `psync_tfa_has_devices` | P (row 23) — resend helpers exist; no surface to query enrolled TFA device list |
+| `tfa_type` | — | `psync_tfa_type` | P (row 24) — boolean TwoFactorRequired state tracked; no TfaMethod enum distinguishing sms/totp/notification/recovery |
 
 ## Sync root management (`pcloud-daemon::sync_backend`)
 
@@ -116,9 +118,9 @@ rather than a server-side copy from a remote `fileid`. See
 | list share requests | `SharesApi::list_share_requests` | `psync_list_share_requests` | I |
 | list shares | `SharesApi::list_shares` | `psync_list_shares` | I |
 | share folder | `SharesApi::share_folder` | `psync_account_sharefolder` | I |
-| crypto share folder | `SharesApi::crypto_share_folder` | `psync_crypto_sharefolder` | I |
+| crypto share folder | `SharesApi::crypto_share_folder` + `pcloud-crypto::share_temppass` | `psync_crypto_sharefolder` | P (row 124) — symmetric-signature-only; RSA-4096 path pending (`bd-1du.5`); share invitations non-functional for C-client recipients |
 | account team share | `SharesRuntime::account_team_share` | `psync_account_teamshare` | I |
-| crypto account team share | `SharesApi::crypto_account_team_share` | `psync_crypto_account_teamshare` | I |
+| crypto account team share | `SharesApi::crypto_account_team_share` + `pcloud-crypto::share_temppass` | `psync_crypto_account_teamshare` | P (row 142) — symmetric-signature-only; RSA-4096 path pending (`bd-1du.5`); team-share invitations non-functional for C-client recipients |
 | contacts | `SharesRuntime::list_contacts` | `psync_contactlist` | I |
 | my teams | `SharesRuntime::list_my_teams` | `psync_list_myteams` | I |
 | stop share (multi-id) | `SharesApi::account_stop_share` | `psync_account_stopshare` | I |

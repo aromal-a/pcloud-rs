@@ -1,7 +1,7 @@
 # Crypto Backend Plan (Wave 2)
 
-Status: Planning. No code changes yet. Wave 1 primitives (A–F) are being
-built in parallel; Wave 2 executes this plan once they land.
+Status: Delivered. Wave 1 primitives (A–F) and Wave 2 shipped; see commit
+history for implementation. This document is retained for historical reference.
 
 ## 1. `CryptoBackend` enum
 

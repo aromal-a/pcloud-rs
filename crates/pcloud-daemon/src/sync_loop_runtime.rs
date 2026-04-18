@@ -313,7 +313,11 @@ impl RealSyncLoopRuntime {
     /// daemon restart. Called from the same ingest hot path as
     /// [`Self::persist_planner_overflow`]. pcloud-rs-774.
     fn persist_scheduler_queue(&self) {
-        let snapshot = self.engine.snapshot_scheduler_queue();
+        // P2-b (H2): durable snapshot must include both queued and
+        // in-flight (dispatched-but-not-acked) operations so a crash
+        // between dispatch and server-side ack re-enqueues the work on
+        // restart rather than silently dropping it.
+        let snapshot = self.engine.snapshot_scheduler_durable();
         if snapshot.is_empty() {
             let _ = ValuesRepository::delete(&self.store_conn, SCHEDULER_QUEUE_KEY);
             return;
@@ -538,6 +542,13 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
         let mut completed = 0usize;
 
         for task in tasks {
+            // P2-d (H4): mark progress on each per-task entry, not just
+            // the single dispatch boundary. A large batch of mid-sized
+            // downloads would previously appear "stalled" to the
+            // StallDetector even though each task individually was
+            // making forward progress, because `mark_progress` was
+            // only called when the scheduler dispatched a new batch.
+            self.stall_detector.mark_progress();
             if let pcloud_model::sync::PlannedOperation::DownloadFile {
                 path,
                 remote_file_id: Some(file_id),
@@ -587,6 +598,16 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                                 }
                                 if self.engine.mark_transfer_completed(path) {
                                     completed += 1;
+                                    // P2-b (H2): durable ack — remove
+                                    // the dispatched entry so the
+                                    // persisted scheduler snapshot no
+                                    // longer carries this op on the
+                                    // next persist.
+                                    self.engine.ack_dispatched_path(path);
+                                    // P2-d (H4): bytes transferred
+                                    // count as progress; reset the
+                                    // stall timer.
+                                    self.stall_detector.mark_progress();
                                 }
                             }
                             Err(err) => {
@@ -630,6 +651,9 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
         let mut completed = 0usize;
 
         for task in tasks {
+            // P2-d (H4): per-task progress mark — see
+            // `execute_downloads` for rationale.
+            self.stall_detector.mark_progress();
             if let pcloud_model::sync::PlannedOperation::UploadFile {
                 path,
                 remote_parent_folder_id,
@@ -739,6 +763,11 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                             Ok(_frame) => {
                                 if self.engine.mark_transfer_completed(path) {
                                     completed += 1;
+                                    // P2-b (H2): durable ack.
+                                    self.engine.ack_dispatched_path(path);
+                                    // P2-d (H4): bytes transferred →
+                                    // stall timer reset on completion.
+                                    self.stall_detector.mark_progress();
                                 }
                             }
                             Err(err) => {
@@ -1088,7 +1117,12 @@ fn commit_diff_batch(
     // returning, providing the same durability guarantees as `fsync`.
     // The per-transaction scope means only cursor writes pay the extra
     // latency; all other reads in the same connection stay at NORMAL.
-    conn.pragma_update(None, "synchronous", "FULL")?;
+    // P2-c (H3): RAII guard ensures `synchronous=NORMAL` is restored on
+    // every exit path, including early `?`-propagated errors inside the
+    // transaction. Previously a panic/error between the FULL/NORMAL
+    // pragma pair left the connection at FULL for the rest of the
+    // daemon's life, which would silently slow every subsequent write.
+    let _guard = SynchronousGuard::set_full(conn)?;
     let tx = conn.unchecked_transaction()?;
     for entry in &batch.entries {
         if entry.change_kind != pcloud_model::sync::ChangeKind::Delete {
@@ -1111,11 +1145,39 @@ fn commit_diff_batch(
             .unwrap_or(0);
         DiffStateRepository::save(&tx, sync_id, batch.cursor, now_unix)?;
     }
-    let result = tx.commit();
-    // Restore NORMAL synchronous mode for subsequent reads so we don't
-    // impose FULL-sync cost on all future operations in this connection.
-    let _ = conn.pragma_update(None, "synchronous", "NORMAL");
-    result
+    tx.commit()
+    // _guard drops here and restores `synchronous=NORMAL` even on early
+    // return paths above.
+}
+
+/// P2-c (H3): RAII guard that temporarily sets SQLite's `synchronous`
+/// pragma to `FULL` and restores the previous value (`NORMAL` by
+/// convention in this crate) on drop. The restore runs even on panic or
+/// early `?` propagation, preventing the "connection stuck at FULL
+/// forever" bug flagged by audit-05 P2-c.
+struct SynchronousGuard<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> SynchronousGuard<'a> {
+    fn set_full(conn: &'a Connection) -> Result<Self, rusqlite::Error> {
+        conn.pragma_update(None, "synchronous", "FULL")?;
+        Ok(Self { conn })
+    }
+}
+
+impl Drop for SynchronousGuard<'_> {
+    fn drop(&mut self) {
+        // Best-effort: if restoring NORMAL fails we log but cannot
+        // propagate — Drop has no error channel. A failure here leaves
+        // the connection at FULL, which is safer than leaving it at
+        // NORMAL with no durability guarantee.
+        if let Err(err) = self.conn.pragma_update(None, "synchronous", "NORMAL") {
+            log::warn!(
+                "sync loop: failed to restore synchronous=NORMAL on commit_diff_batch drop: {err}"
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1133,9 +1195,30 @@ fn resolve_upload_parent(
     if parent.is_empty() {
         return Ok(0);
     }
+    // P2-e (H5): audit-04 C2 threaded `remote_parent_folder_id` through
+    // the walk via the local metadata cache. On first scan after a fresh
+    // daemon start, the cache is cold and nested files hit this branch
+    // with `None`. Returning `InvalidPath` here is classified as
+    // **Terminal** by the recovery manager (see
+    // `pcloud-engine/src/recovery.rs`), which drops the upload forever —
+    // exactly the terminal-fail symptom called out in audit-05 P2-e.
+    //
+    // The correct disposition is retry-with-backoff so the next cycle
+    // can repopulate the cache (e.g. via a `listfolder` on the parent,
+    // or after the remote-diff poller learns about the newly created
+    // folder) and then resolve the id. `RetryableNetworkError` maps to
+    // retry with exponential backoff without hard-failing the task.
+    //
+    // A synchronous cache-warm-here path (calling into the backend
+    // `RemotePathResolver` from `pcloud-backends::path_resolver`) is a
+    // sturdier fix but crosses a new dependency boundary from this
+    // crate into `pcloud-backends` at the hot upload path. We defer
+    // that optimisation until the cold-cache rate is visible in
+    // metrics (tracked on the same bead); the retry path is correct,
+    // bounded, and produces no data loss.
     remote_parent_folder_id
         .map(|id| id.get())
-        .ok_or(pcloud_engine::recovery::RecoveryFailure::InvalidPath)
+        .ok_or(pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError)
 }
 
 // ---------------------------------------------------------------------------
@@ -1344,6 +1427,47 @@ mod tests {
         // 10 MiB / 4 MiB = 2 full + 1 remainder of 2 MiB.
         assert_eq!(chunks.len(), 3);
         assert!(chunks.iter().all(|c| c.len() <= CHUNK));
+    }
+
+    /// P2-c (H3): the RAII `SynchronousGuard` must restore
+    /// `synchronous=NORMAL` even when the protected scope exits via
+    /// panic or early error. Otherwise the connection gets stuck at
+    /// FULL for the rest of the daemon's life and every subsequent
+    /// write pays an extra fsync.
+    #[test]
+    fn synchronous_guard_restores_normal_on_panic() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db = tmp.path().join("sync_guard.sqlite");
+        let conn = Connection::open(&db).expect("open");
+        conn.pragma_update(None, "synchronous", "NORMAL")
+            .expect("init normal");
+
+        // Drive the guard through a panicking scope via catch_unwind.
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _g = SynchronousGuard::set_full(&conn).expect("set full");
+            // Verify FULL is live inside the scope.
+            let mode: String = conn
+                .query_row("PRAGMA synchronous;", [], |row| row.get::<_, i64>(0))
+                .map(|n| match n {
+                    0 => "OFF".into(),
+                    1 => "NORMAL".into(),
+                    2 => "FULL".into(),
+                    3 => "EXTRA".into(),
+                    other => format!("{other}"),
+                })
+                .unwrap();
+            assert_eq!(mode, "FULL", "expected FULL inside scope, got {mode}");
+            panic!("simulated commit failure");
+        }));
+
+        // After unwind, the guard's Drop must have restored NORMAL.
+        let mode: i64 = conn
+            .query_row("PRAGMA synchronous;", [], |row| row.get::<_, i64>(0))
+            .unwrap();
+        assert_eq!(
+            mode, 1,
+            "SynchronousGuard::drop must restore synchronous=NORMAL after panic (got mode={mode})"
+        );
     }
 
     /// Sanity: missing payload produces `None` (mapped by the caller

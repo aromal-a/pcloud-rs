@@ -201,13 +201,15 @@ pub struct RuntimeShell {
     /// callers / tests keep the single-instance behaviour with no
     /// changes.
     pub ha: crate::ha_lease::HaRuntime,
-    /// Per-session IPC rate limiter. Built from
+    /// Per-peer IPC rate limiter. Built from
     /// `config.rate_limit` at bootstrap; consulted by
     /// `dispatch::handle_request` before every backend call.
     /// Over-budget callers receive `ResponseStatus::Conflict`
-    /// without the backend being invoked. See
-    /// [`crate::rate_limit::SessionRateLimiter`].
-    pub rate_limiter: crate::rate_limit::SessionRateLimiter,
+    /// without the backend being invoked. Distinct peer uids maintain
+    /// independent token-bucket state so a single chatty client cannot
+    /// starve other authorized peers. See
+    /// [`crate::rate_limit::PerPeerRateLimiter`].
+    pub rate_limiter: crate::rate_limit::PerPeerRateLimiter,
     /// Operator-visible upload session registry (pause / resume /
     /// cancel / list). Populated by `Request::UploadCreate`; mutated
     /// by the four companion IPC variants. In-memory only — the
@@ -260,7 +262,7 @@ impl RuntimeShell {
         // Rate-limit budgets — rebuild the per-session limiter from the
         // new policy so the next IPC request picks up the change.
         self.config.rate_limit = new.rate_limit.clone();
-        self.rate_limiter = crate::rate_limit::SessionRateLimiter::new(&new.rate_limit);
+        self.rate_limiter.apply_policy(&new.rate_limit);
 
         // Integrity sweeper schedule
         self.config.features.integrity_sweeper = new.features.integrity_sweeper;
@@ -832,9 +834,17 @@ impl RuntimeShell {
             Request::SetLanguage { language } => self.set_language_ipc(language),
             Request::UploadWriteFromFile {
                 upload_session_id,
-                local_path,
+                source_fileid,
+                source_hash,
                 offset,
-            } => self.upload_write_from_file_ipc(upload_session_id, local_path, offset),
+                count,
+            } => self.upload_write_from_file_ipc(
+                upload_session_id,
+                source_fileid,
+                source_hash,
+                offset,
+                count,
+            ),
             Request::CreateTreePublicLinkFromPaths {
                 name,
                 paths,
@@ -2684,25 +2694,21 @@ impl RuntimeShell {
     ///
     /// The C `upload_writefromfile` primitive is a **server-side copy**
     /// from a remote pCloud `fileid` into an in-progress upload session
-    /// (see `pcloud_proto::methods::upload::UploadWriteFromFileRequest`
-    /// with params `fileid`, `hash`, `offset`, `count`). Audit 04 found
-    /// that the previous implementation of this handler instead read a
-    /// **local file** from disk and drove a fresh `upload_create` +
-    /// `upload_bytes` sequence — a semantically different operation,
-    /// with an OOM vector (`std::fs::read` without size cap or symlink
-    /// rejection) and a silently-discarded `offset` parameter.
+    /// (`pcloud_proto::methods::upload::UploadWriteFromFileRequest`,
+    /// params: `uploadid` / `fileid` / `hash` / `uploadoffset` /
+    /// `offset` / `count` — cited: `pclsync/pupload.c:843-859`).
     ///
-    /// The local-file shim was intentionally removed after audit 04
-    /// flagged the semantic mismatch. The IPC variant schema and
-    /// proptest round-trip are intentionally retained so the wire
-    /// contract stays stable while the real server-side-copy wiring is
-    /// landed under `bd-1du`.
+    /// The IPC variant schema has been rewired to match the C primitive
+    /// shape (audit-05). The daemon handler remains a stub pending
+    /// `TransferRuntime::upload_write_from_file` wiring (`bd-1du`).
     #[allow(clippy::unused_self)]
     fn upload_write_from_file_ipc(
         &mut self,
         _upload_session_id: u64,
-        _local_path: String,
+        _source_fileid: u64,
+        _source_hash: u64,
         _offset: u64,
+        _count: u64,
     ) -> Response {
         Response {
             status: ResponseStatus::InternalError,
