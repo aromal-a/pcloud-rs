@@ -1,0 +1,13 @@
+/var/log/pcloud-rs/*.log {
+    daily
+    missingok
+    rotate 14
+    compress
+    delaycompress
+    notifempty
+    create 0640 pcloud-rs pcloud-rs
+    sharedscripts
+    postrotate
+        systemctl kill -s HUP pcloudd.service 2>/dev/null || true
+    endscript
+}

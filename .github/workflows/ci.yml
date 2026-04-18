@@ -1,0 +1,162 @@
+name: CI
+
+on:
+  push:
+    branches: [development, main]
+  pull_request:
+    branches: [development, main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  test-linux:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Install system deps (FUSE)
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace
+      - name: cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v1
+        with:
+          command: check
+
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: cargo test (workspace minus mount-requiring pcloud-fs tests)
+        run: cargo test --workspace --exclude pcloud-fs
+      - name: cargo test pcloud-fs (unit + mock-backend integration tests, no real FUSE mount)
+        # Runs #[test] functions that do not require fuse-t or a real mount.
+        # fuse-t is not available in GitHub-hosted macOS runners.
+        # --lib covers in-src unit tests; the three integration test files
+        # (fuse_adapter_unit, write_path_unit, inode_unit) use mock backends
+        # and do not touch the kernel, so they are safe on macOS runners.
+        run: |
+          cargo test -p pcloud-fs --lib
+          cargo test -p pcloud-fs --test fuse_adapter_unit
+          cargo test -p pcloud-fs --test inode_unit
+          cargo test -p pcloud-fs --test write_path_unit
+
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: cargo test (no-FUSE)
+        run: cargo test --workspace --exclude pcloud-fs
+
+  # FreeBSD CI — exercises pcloud-fs/src/platform/bsd.rs.
+  # FreeBSD is Tier-3 best-effort (community hardware, vmactions flakiness).
+  # continue-on-error is intentionally set; README documents FreeBSD as
+  # "Tier-3 community best-effort" — not Tier-1. Do NOT remove
+  # continue-on-error without simultaneously promoting FreeBSD to Tier-1 in
+  # all docs AND removing the Tier-3 disclaimer.
+  freebsd:
+    name: Test (FreeBSD / Tier-3 best-effort)
+    runs-on: ubuntu-latest
+    continue-on-error: true  # Tier-3: vmactions/freebsd-vm is flaky on GH runners
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: pkg install -y rust fusefs-libs pkgconf
+          run: |
+            cargo check --workspace
+            cargo test --workspace --exclude pcloud-fs
+
+  build-release:
+    name: Release build (Linux)
+    runs-on: ubuntu-latest
+    needs: test-linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system deps
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: cargo build --release
+        run: cargo build --release --workspace
+
+  # Reproducible-build gate (pcloud-rs-s1p.54 / FIX-PLAN P2-7 H-3)
+  # Builds the release binary on two independent ubuntu-latest runners and
+  # compares SHA-256 digests. Fails if the digests differ.
+  reproducible-build:
+    name: Reproducible build check
+    runs-on: ubuntu-latest
+    needs: test-linux
+    strategy:
+      matrix:
+        runner-slot: [a, b]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install system deps
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: Build release binary
+        run: |
+          # SOURCE_DATE_EPOCH pins embedded timestamps for reproducibility.
+          export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          cargo build --release -p pcloud-daemon
+      - name: Upload binary digest
+        run: |
+          sha256sum target/release/pcloudd > digest-${{ matrix.runner-slot }}.txt
+          cat digest-${{ matrix.runner-slot }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repro-digest-${{ matrix.runner-slot }}
+          path: digest-${{ matrix.runner-slot }}.txt
+
+  reproducible-build-compare:
+    name: Compare reproducible-build digests
+    runs-on: ubuntu-latest
+    needs: reproducible-build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: repro-digest-*
+          merge-multiple: true
+      - name: Compare digests (fail on mismatch)
+        run: |
+          DIGEST_A=$(awk '{print $1}' digest-a.txt)
+          DIGEST_B=$(awk '{print $1}' digest-b.txt)
+          echo "Runner A: $DIGEST_A"
+          echo "Runner B: $DIGEST_B"
+          if [ "$DIGEST_A" != "$DIGEST_B" ]; then
+            echo "FAIL: reproducible-build mismatch — binaries differ between runners"
+            exit 1
+          fi
+          echo "OK: reproducible build verified"
+
+  # mdbook build gate (pcloud-rs-s1p.75 / FIX-PLAN P2-7 MED / §12-opus L-4)
+  # Ensures every chapter in docs/book compiles successfully.
+  mdbook:
+    name: mdbook build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mdbook
+        run: |
+          cargo install mdbook --no-default-features --locked 2>/dev/null || \
+          (curl -sSL https://github.com/rust-lang/mdBook/releases/download/v0.4.40/mdbook-v0.4.40-x86_64-unknown-linux-gnu.tar.gz \
+            | tar -xz -C /usr/local/bin)
+      - name: Build docs/book
+        run: mdbook build docs/book

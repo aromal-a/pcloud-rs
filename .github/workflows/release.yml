@@ -1,0 +1,174 @@
+name: Release
+
+# Triggered on version tags (v*) or manually.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v0.1.0)'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ── Build release artifacts ──────────────────────────────────────────────
+  build-artifacts:
+    name: Build release artifacts (Linux x86_64)
+    runs-on: ubuntu-latest
+    outputs:
+      binary-path: target/release/pcloudd
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system deps
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+
+      - name: Build with cargo-auditable
+        # cargo-auditable embeds a dependency manifest inside the binary
+        # (pcloud-rs-s1p.55 / FIX-PLAN P2-7 H-4).
+        run: |
+          cargo install cargo-auditable --locked
+          export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          cargo auditable build --release -p pcloud-daemon
+
+      - name: Compute SHA-256 digests
+        run: |
+          sha256sum target/release/pcloudd > target/release/pcloudd.sha256
+          cat target/release/pcloudd.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-binary
+          path: |
+            target/release/pcloudd
+            target/release/pcloudd.sha256
+
+  # ── SBOM generation ─────────────────────────────────────────────────────
+  sbom:
+    name: Generate SBOM (syft)
+    runs-on: ubuntu-latest
+    needs: build-artifacts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-binary
+          path: dist/
+
+      - name: Install syft
+        # syft produces a CycloneDX / SPDX SBOM from the binary + Cargo.lock.
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh \
+            | sh -s -- -b /usr/local/bin
+
+      - name: Generate SBOM (CycloneDX JSON)
+        run: |
+          syft dist/pcloudd \
+            --source-name pcloud-rs \
+            --source-version "${GITHUB_REF_NAME:-dev}" \
+            -o cyclonedx-json=dist/pcloud-rs.sbom.cdx.json \
+            -o spdx-json=dist/pcloud-rs.sbom.spdx.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            dist/pcloud-rs.sbom.cdx.json
+            dist/pcloud-rs.sbom.spdx.json
+
+  # ── cosign signing ───────────────────────────────────────────────────────
+  sign:
+    name: Sign release artifacts (cosign)
+    runs-on: ubuntu-latest
+    needs: [build-artifacts, sbom]
+    # Requires the following repository secrets (or OIDC keyless signing):
+    #   COSIGN_KEY      — PEM-encoded cosign private key (optional if using keyless)
+    #   COSIGN_PASSWORD — passphrase for the key      (optional if using keyless)
+    # To use keyless (Sigstore), remove the key/password references below and
+    # set `cosign sign-blob --yes` with `id-token: write` permission.
+    permissions:
+      contents: read
+      # id-token: write  # uncomment for keyless Sigstore signing
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-binary
+          merge-multiple: true
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: dist/
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign binary and SBOM with cosign (key-based placeholder)
+        # NOTE: Replace ${{ secrets.COSIGN_KEY }} and ${{ secrets.COSIGN_PASSWORD }}
+        # with your actual signing key secret names, or switch to keyless:
+        #   cosign sign-blob --yes --rekor-url https://rekor.sigstore.dev dist/pcloudd
+        # Key-based signing (offline, no Sigstore transparency log):
+        env:
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          for artifact in dist/pcloudd dist/pcloud-rs.sbom.cdx.json dist/pcloud-rs.sbom.spdx.json; do
+            if [ -f "$artifact" ]; then
+              if [ -n "${COSIGN_KEY}" ]; then
+                echo "${COSIGN_KEY}" > /tmp/cosign.key
+                cosign sign-blob \
+                  --key /tmp/cosign.key \
+                  --output-signature "${artifact}.sig" \
+                  "${artifact}"
+                rm -f /tmp/cosign.key
+              else
+                echo "COSIGN_KEY secret not set — skipping signing for $artifact"
+                echo "Configure COSIGN_KEY + COSIGN_PASSWORD secrets or enable keyless signing"
+              fi
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signatures
+          path: dist/*.sig
+        if: always()
+
+  # ── GitHub Release attachment ────────────────────────────────────────────
+  publish:
+    name: Attach artifacts to GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-artifacts, sbom, sign]
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          merge-multiple: true
+          path: dist/
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/pcloudd
+            dist/pcloudd.sha256
+            dist/pcloud-rs.sbom.cdx.json
+            dist/pcloud-rs.sbom.spdx.json
+            dist/*.sig

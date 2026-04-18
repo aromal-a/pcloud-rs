@@ -1,19 +1,39 @@
 # nfpm configuration for pcloud-rs Debian/RPM packaging.
 #
 # Build (from repo root after `cargo build --release --workspace`):
+#
+#   # amd64 (default):
+#   VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0-dev") \
 #   nfpm pkg --config packaging/debian/nfpm.yaml --packager deb --target dist/
+#
+#   # arm64 — cross-compile first, then override arch:
+#   cargo build --release --target aarch64-unknown-linux-gnu --workspace
+#   VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0-dev") \
+#   NFPM_ARCH=arm64 \
+#   nfpm pkg --config packaging/debian/nfpm.yaml --packager deb --target dist/
+#
+#   # RPM:
+#   VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo "0.0.0-dev") \
 #   nfpm pkg --config packaging/debian/nfpm.yaml --packager rpm --target dist/
 #
 # Validate without building:
 #   nfpm --config packaging/debian/nfpm.yaml check
+#
+# CI note: the .deb build is not yet wired into ci.yml (tracked pcloud-rs-s1p.69).
+# To add it, run the amd64 build command above in a post-release workflow step
+# and upload dist/*.deb as a release asset.
 
 name: pcloud-rs
-arch: amd64
+# arch is overridden at build time via NFPM_ARCH env var for cross-compiled targets.
+# Supported values: amd64, arm64. Default: amd64.
+arch: ${NFPM_ARCH:-amd64}
 platform: linux
-version: "0.1.0"
+# version is sourced from the current git tag at build time.
+# Set VERSION env var before invoking nfpm; see build commands above.
+version: ${VERSION:-0.0.0-dev}
 section: net
 priority: optional
-maintainer: "pcloud-rs maintainers <maintainers@example.invalid>"
+maintainer: "pcloud-rs maintainers <ezechiel203@gmail.com>"
 description: |
   pCloud command-line client and user-space daemon (Rust rewrite).
   Provides the `pcloud-rs` CLI and the `pcloudd` background daemon

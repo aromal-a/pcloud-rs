@@ -1,6 +1,6 @@
 [Unit]
 Description=pCloud Console Client daemon IPC socket
-Documentation=https://github.com/pcloudcom/console-client
+Documentation=https://github.com/ezechiel203/pcloud-rs
 
 [Socket]
 # Owner-only local IPC. Matches pcloud-daemon auth_vault / IPC policy:

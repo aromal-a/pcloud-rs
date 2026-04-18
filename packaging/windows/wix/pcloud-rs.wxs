@@ -2,8 +2,21 @@
 <!--
   PLATFORM: Windows 10/11
   pcloud-rs WiX installer source.
-  TODO: set SigningCertificatePath via build script / CI secret store.
-  TODO: replace UpgradeCode GUID before first signed release (must stay stable forever after).
+
+  Signing: the MSI MUST be Authenticode-signed before public distribution.
+  Signing is performed in the release CI workflow (.github/workflows/release.yml)
+  using a secret-store certificate; it is intentionally NOT part of the
+  build-from-source path.
+
+  CI GUARD: unsigned MSIs must not be published. The release workflow must
+  verify the signature with:
+    signtool verify /pa /v dist\pcloud-rs-*.msi
+  and fail the job if the exit code is non-zero.
+
+  UpgradeCode: frozen at {A3F7E21C-8B4D-4F6A-9C2E-1D5B3A8F07E9}.
+  DO NOT change this GUID — Windows Installer uses it to identify the product
+  family across all past and future versions. Changing it breaks upgrade and
+  uninstall paths for every existing installation.
 -->
 <Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
   <Product Id="*"
@@ -11,7 +24,7 @@
            Language="1033"
            Version="!(bind.FileVersion.PcloudDaemonExe)"
            Manufacturer="pcloud-rs contributors"
-           UpgradeCode="PUT-A-STABLE-GUID-HERE-0000-000000000000">
+           UpgradeCode="{A3F7E21C-8B4D-4F6A-9C2E-1D5B3A8F07E9}">
 
     <Package InstallerVersion="500"
              Compressed="yes"
@@ -58,13 +71,21 @@
                   Name="pcloudd-svc.exe"
                   Source="$(var.StageDir)\pcloudd-svc.exe"
                   KeyPath="yes" />
+            <!--
+              Security: run as the virtual service account "NT SERVICE\pcloudd"
+              instead of LocalSystem. Virtual service accounts have minimal
+              privileges (no network logon, no admin rights) and do not require
+              a password. LocalSystem is intentionally NOT used because it has
+              unrestricted local access and is a common privilege-escalation
+              target.
+            -->
             <ServiceInstall Id="PcloudSvcInstall"
                             Name="pcloudd"
                             DisplayName="pcloud-rs daemon"
                             Description="pCloud sync daemon (Rust)"
                             Type="ownProcess"
                             Start="auto"
-                            Account="LocalSystem"
+                            Account="NT SERVICE\pcloudd"
                             ErrorControl="normal"
                             Vital="yes" />
             <ServiceControl Id="PcloudSvcControl"

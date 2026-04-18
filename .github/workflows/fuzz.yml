@@ -1,0 +1,82 @@
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # nightly at 02:00 UTC
+  workflow_dispatch:
+
+jobs:
+  fuzz-ipc:
+    name: Fuzz (pcloud-ipc)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_ipc_frame
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@v4
+        with:
+          path: crates/pcloud-ipc/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-pcloud-ipc-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-pcloud-ipc-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: crates/pcloud-ipc
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=300
+        continue-on-error: true
+
+  fuzz-crypto:
+    name: Fuzz (pcloud-crypto)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_open_sector
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@v4
+        with:
+          path: crates/pcloud-crypto/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-pcloud-crypto-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-pcloud-crypto-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: crates/pcloud-crypto
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=300
+        continue-on-error: true
+
+  fuzz-proto:
+    name: Fuzz (pcloud-proto)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_auth_flow_state
+          - fuzz_binary_request_roundtrip
+          - fuzz_ipc_method_decode
+          - fuzz_json_response
+          - fuzz_path_canonicalize
+          - fuzz_response_parser
+          - fuzz_listfolder_response
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@v4
+        with:
+          path: crates/pcloud-proto/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-pcloud-proto-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-pcloud-proto-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: crates/pcloud-proto
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=300
+        continue-on-error: true

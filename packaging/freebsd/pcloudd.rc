@@ -11,7 +11,7 @@
 #
 # Inputs (from /etc/rc.conf or rc.conf.local):
 #   pcloudd_enable   (YES/NO)   - master enable flag; default "NO"
-#   pcloudd_user     (string)   - run-as user; default "pcloud"
+#   pcloudd_user     (string)   - run-as user; default "pcloudd"
 #   pcloudd_flags    (string)   - extra CLI flags passed to pcloudd
 #
 # Outputs:
@@ -19,11 +19,11 @@
 #   Logs go to syslog via the daemon's internal logger.
 #
 # Security:
-#   - The script assumes a dedicated `pcloud` user exists. Create with:
-#       pw useradd pcloud -c 'pcloudd service' -d /nonexistent \
-#                         -s /usr/sbin/nologin -h -
+#   - The script assumes a dedicated `pcloudd` user exists. Create with:
+#       pw useradd pcloudd -c 'pcloudd service' -d /nonexistent \
+#                          -s /usr/sbin/nologin -h -
 #   - The daemon's state root should be chowned to that user: 0700 perms.
-#   - rc.subr drops privileges before exec via the `daemon_user` facility.
+#   - rc.subr drops privileges before exec via the pcloudd_user variable.
 #
 # Test:
 #   service pcloudd onestart     # ignore rc.conf enable flag
@@ -44,11 +44,18 @@ rcvar="pcloudd_enable"
 load_rc_config $name
 
 : ${pcloudd_enable:="NO"}
-: ${pcloudd_user:="pcloud"}
+: ${pcloudd_user:="pcloudd"}
 : ${pcloudd_flags:=""}
 
 command="/usr/local/bin/pcloudd"
 pidfile="/var/run/${name}.pid"
 command_args="-p ${pidfile}"
+
+start_precmd()
+{
+    kldload -n fusefs 2>/dev/null || true
+}
+
+pcloudd_precmd="start_precmd"
 
 run_rc_command "$1"

@@ -15,6 +15,41 @@
   The {{USER_HOME}} placeholder must be replaced with an absolute path
   before installation (launchd does not expand $HOME in plist values).
 
+  Signing & notarization (hardened runtime required for Gatekeeper):
+
+    TEAM_ID="<your-10-char-Apple-Team-ID>"
+    IDENTITY="Developer ID Application: Your Name ($TEAM_ID)"
+    BINARY="/usr/local/bin/pcloudd"     # or pcloudc
+
+    # 1. Sign each binary with the hardened runtime and the entitlements
+    #    plist that lives alongside this file.
+    codesign --force --options runtime \
+        --entitlements packaging/macos/entitlements.plist \
+        --sign "$IDENTITY" \
+        "$BINARY"
+
+    # 2. Notarize the disk image / pkg that wraps the signed binary.
+    #    See: https://developer.apple.com/documentation/security/notarizing_macos_software_before_distribution
+    xcrun notarytool submit pcloud-rs.dmg \
+        --apple-id "$APPLE_ID" \
+        --team-id  "$TEAM_ID" \
+        --password "$APP_SPECIFIC_PASSWORD" \
+        --wait
+
+    # 3. Staple the notarization ticket so offline Gatekeeper passes.
+    xcrun stapler staple pcloud-rs.dmg
+
+  Entitlements summary (see packaging/macos/entitlements.plist):
+    com.apple.security.network.client          — outbound HTTPS to pCloud API
+    com.apple.security.cs.disable-library-validation — false until fuse-t lands
+    com.apple.security.cs.allow-jit            — false (pinned off)
+    com.apple.security.cs.allow-unsigned-executable-memory — false (pinned off)
+    com.apple.security.cs.allow-dyld-environment-variables — false (pinned off)
+
+  Hardened-runtime note: do NOT add com.apple.security.cs.allow-jit or
+  com.apple.security.cs.allow-unsigned-executable-memory unless a future
+  dependency genuinely requires them; both are high-value sandbox escapes.
+
   Environment-variable accuracy (cross-checked against
   crates/pcloud-config/src/env.rs):
     - PCLOUD_ROOT / PCLOUD_ENV / PCLOUD_API_MODE / PCLOUD_API_HOST /
@@ -47,6 +82,12 @@
 
     <key>RunAtLoad</key>
     <true/>
+
+    <key>ExitTimeOut</key>
+    <integer>30</integer>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
 
     <key>KeepAlive</key>
     <dict>

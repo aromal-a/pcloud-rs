@@ -1,0 +1,40 @@
+# pcloudd.service drop-in override — broaden IPAddressAllow for pCloud API
+#
+# The shipped unit restricts outbound to localhost only, which blocks access to
+# the pCloud API endpoints (binapi.pcloud.com, eapi.pcloud.com, and their CDN
+# ranges).  Operators MUST install a drop-in to allow the necessary traffic.
+#
+# Installation:
+#   # System unit (DynamicUser path):
+#   sudo mkdir -p /etc/systemd/system/pcloudd.service.d/
+#   sudo install -m 644 override.conf.example \
+#       /etc/systemd/system/pcloudd.service.d/api-access.conf
+#   sudo systemctl daemon-reload && sudo systemctl restart pcloudd.service
+#
+#   # User unit:
+#   mkdir -p ~/.config/systemd/user/pcloudd.service.d/
+#   install -m 644 override.conf.example \
+#       ~/.config/systemd/user/pcloudd.service.d/api-access.conf
+#   systemctl --user daemon-reload && systemctl --user restart pcloudd.service
+#
+# To discover the current pCloud API IP ranges:
+#   host binapi.pcloud.com
+#   host eapi.pcloud.com
+# Alternatively allow all egress and rely on TLS pinning / hostname validation:
+#   IPAddressAllow=any
+#
+# The default shipped unit also has IPAddressDeny=any before the Allow list;
+# this drop-in resets and replaces both stanzas.
+
+[Service]
+# Reset the deny-all default before adding the allow list.
+IPAddressDeny=
+IPAddressAllow=localhost
+
+# pCloud EU API cluster (eapi.pcloud.com) — update if IPs rotate.
+#IPAddressAllow=93.115.93.0/24
+# pCloud US API cluster (api.pcloud.com / binapi.pcloud.com) — update if IPs rotate.
+#IPAddressAllow=50.18.0.0/16
+
+# Broad allow-all option (simplest; TLS + certificate validation still apply).
+IPAddressAllow=any

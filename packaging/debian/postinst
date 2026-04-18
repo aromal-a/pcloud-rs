@@ -13,6 +13,9 @@ case "$1" in
         # auto-enable or auto-start the daemon — the user must opt in.
         if ! getent group fuse >/dev/null 2>&1; then
             addgroup --system fuse >/dev/null 2>&1 || true
+            echo "pcloud-rs: created system group 'fuse' for /dev/fuse access."
+            echo "  To allow your user to mount pCloud via FUSE without sudo:"
+            echo "    usermod -aG fuse \$USER  # then log out and back in"
         fi
 
         echo "pcloud-rs installed. To start the daemon manually:"
