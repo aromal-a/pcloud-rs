@@ -2,3 +2,11 @@ target/
 *.d
 *.o
 
+# local credentials — never commit
+.env
+.env.*
+!.env.example
+.direnv/
+
+# beads-rs local state — issues.jsonl is a symlink to per-user data
+.beads/
