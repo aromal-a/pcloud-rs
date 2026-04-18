@@ -205,7 +205,10 @@ pub fn backend_label(request: &Request) -> &'static str {
         Request::GetFileLink { .. }
         | Request::DownloadFile { .. }
         | Request::UploadWriteFromFile { .. } => "transfer",
-        Request::DeleteBackup { .. } => "backup",
+        Request::DeleteBackup { .. }
+        | Request::CreateBackup { .. }
+        | Request::StopDevice { .. }
+        | Request::DeleteBackupDevice => "backup",
         Request::CreateTreePublicLinkFromPaths { .. } => "public_link",
         other => {
             // A Request variant that is not yet listed in backend_label was

@@ -196,6 +196,15 @@ pub fn categorize(request: &Request) -> RateCategory {
         // resolutions before the tree-link create, so it is at least as
         // expensive as the id-based form.
         Request::CreateTreePublicLinkFromPaths { .. } => RateCategory::Expensive,
+        // Backup mutations: backend-touching lifecycle calls
+        // (CreateBackup/StopDevice) and local-only device registration
+        // cleanup (DeleteBackupDevice). All three are classified
+        // `Expensive` to share a bucket with other mutating lifecycle
+        // operations and to dampen abusive retries against the real
+        // backup endpoints.
+        Request::CreateBackup { .. }
+        | Request::StopDevice { .. }
+        | Request::DeleteBackupDevice => RateCategory::Expensive,
         // Server-side copy from a remote fileid drives an upload_create
         // + multi-chunk upload_write sequence and is bulk/heavy once
         // the real wiring lands (bd-1du). Classify now so the stub and

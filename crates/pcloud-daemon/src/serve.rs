@@ -89,6 +89,9 @@ fn is_privileged_request(req: &Request) -> bool {
             | Request::DeleteBackup { .. }
             | Request::UploadWriteFromFile { .. }
             | Request::CreateTreePublicLinkFromPaths { .. }
+            | Request::CreateBackup { .. }
+            | Request::StopDevice { .. }
+            | Request::DeleteBackupDevice
             | Request::LostPassword { .. }
             | Request::VerifyEmailRestricted { .. }
     )
@@ -115,6 +118,9 @@ fn request_kind_name(req: &Request) -> &'static str {
         Request::DeleteBackup { .. } => "DeleteBackup",
         Request::UploadWriteFromFile { .. } => "UploadWriteFromFile",
         Request::CreateTreePublicLinkFromPaths { .. } => "CreateTreePublicLinkFromPaths",
+        Request::CreateBackup { .. } => "CreateBackup",
+        Request::StopDevice { .. } => "StopDevice",
+        Request::DeleteBackupDevice => "DeleteBackupDevice",
         Request::LostPassword { .. } => "LostPassword",
         Request::VerifyEmailRestricted { .. } => "VerifyEmailRestricted",
         _ => "other",

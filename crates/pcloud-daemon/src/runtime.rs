@@ -826,6 +826,14 @@ impl RuntimeShell {
                 paths,
                 expires,
             } => self.create_tree_public_link_from_paths_ipc(name, paths, expires),
+            Request::CreateBackup {
+                name,
+                root_folder_id,
+                local_path,
+                parent_folder_name,
+            } => self.create_backup_ipc(name, root_folder_id, local_path, parent_folder_name),
+            Request::StopDevice { device_folder_id } => self.stop_device_ipc(device_folder_id),
+            Request::DeleteBackupDevice => self.delete_backup_device_ipc(),
             // `Request` is `#[non_exhaustive]`: unknown variants from a
             // newer client build are reported rather than silently matched.
             _ => Response {
@@ -2423,6 +2431,180 @@ impl RuntimeShell {
                 status: ResponseStatus::InternalError,
                 message: format!("delete_backup failed: {err}"),
             },
+        }
+    }
+
+    /// `CreateBackup` IPC handler — create a backup on the backend and
+    /// persist the resulting device-root folder id so later `StopDevice` /
+    /// `DeleteBackupDevice` calls can locate it. Mirrors C
+    /// `psync_create_backup`. Requires an authenticated session.
+    ///
+    /// Side effects on success:
+    /// * `preferences.backup_device_folder_id` is set to the parent folder
+    ///   id reported by the backend (falling back to the backup folder id
+    ///   itself when the backend omits `parentfolderid`), mirroring the
+    ///   SDK's `set_backup_device_folder_id` contract.
+    /// * The response `message` includes `device_folder_id=<N> folder_id=<M>`
+    ///   as an unambiguous key=value line so callers (and the live-e2e
+    ///   test harness) can extract the device folder id deterministically.
+    ///
+    /// The `local_path` is validated for non-emptiness but this handler
+    /// intentionally does NOT auto-register a sync root — that cascade
+    /// remains an explicit `Request::SyncRootAdd` call so the IPC surface
+    /// stays orthogonal and the daemon never silently mutates sync-root
+    /// state behind the operator's back.
+    fn create_backup_ipc(
+        &mut self,
+        name: String,
+        root_folder_id: u64,
+        local_path: String,
+        parent_folder_name: Option<String>,
+    ) -> Response {
+        if name.trim().is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "create_backup: name must not be empty".to_owned(),
+            };
+        }
+        if local_path.trim().is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "create_backup: local_path must not be empty".to_owned(),
+            };
+        }
+        let auth_token = match self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        {
+            Some(token) => token,
+            None => {
+                return Response {
+                    status: ResponseStatus::Unauthorized,
+                    message: "create_backup requires an authenticated session".to_owned(),
+                };
+            }
+        };
+        match self.backup_runtime.create_backup(
+            auth_token,
+            name.clone(),
+            root_folder_id,
+            parent_folder_name,
+        ) {
+            Ok(created) => {
+                let device_folder_id = created.parent_folder_id.unwrap_or(created.folder_id);
+                self.store
+                    .repositories
+                    .preferences
+                    .backup_device_folder_id = Some(device_folder_id);
+                if let Err(err) = persist_profile(&self.store) {
+                    // Persistence failed: surface clearly, but the backend
+                    // already created the backup. Report both facts.
+                    return Response {
+                        status: ResponseStatus::InternalError,
+                        message: format!(
+                            "create_backup succeeded (folder_id={} device_folder_id={}) but persisting device folder id failed: {err}",
+                            created.folder_id, device_folder_id,
+                        ),
+                    };
+                }
+                self.audited_response(
+                    "backup.create",
+                    Some(format!(
+                        "name={name} folder_id={} device_folder_id={} root_folder_id={root_folder_id}",
+                        created.folder_id, device_folder_id,
+                    )),
+                    format!(
+                        "backup created: device_folder_id={} folder_id={} name={:?}",
+                        device_folder_id, created.folder_id, name,
+                    ),
+                )
+            }
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!("create_backup failed: {err}"),
+            },
+        }
+    }
+
+    /// `StopDevice` IPC handler — stop a device backup by its device
+    /// folder id. Mirrors C `psync_stop_device`. Requires an authenticated
+    /// session.
+    fn stop_device_ipc(&mut self, device_folder_id: u64) -> Response {
+        let auth_token = match self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        {
+            Some(token) => token,
+            None => {
+                return Response {
+                    status: ResponseStatus::Unauthorized,
+                    message: "stop_device requires an authenticated session".to_owned(),
+                };
+            }
+        };
+        match self
+            .backup_runtime
+            .stop_device(auth_token, device_folder_id)
+        {
+            Ok(()) => self.audited_response(
+                "backup.stop_device",
+                Some(format!("device_folder_id={device_folder_id}")),
+                format!("device stopped: device_folder_id={device_folder_id}"),
+            ),
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!("stop_device failed: {err}"),
+            },
+        }
+    }
+
+    /// `DeleteBackupDevice` IPC handler — clear the locally persisted
+    /// device backup-root folder id. Mirrors C
+    /// `psync_delete_backup_device`. Local-only: does not talk to the
+    /// backend.
+    fn delete_backup_device_ipc(&mut self) -> Response {
+        let previous = self
+            .store
+            .repositories
+            .preferences
+            .backup_device_folder_id;
+        self.store
+            .repositories
+            .preferences
+            .backup_device_folder_id = None;
+        match persist_profile(&self.store) {
+            Ok(()) => self.audited_response(
+                "backup.delete_device",
+                Some(format!(
+                    "previous_device_folder_id={}",
+                    previous
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                )),
+                format!(
+                    "local backup device cleared (previous_device_folder_id={})",
+                    previous
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "none".to_owned()),
+                ),
+            ),
+            Err(err) => {
+                // Roll back so in-memory state matches on-disk state.
+                self.store
+                    .repositories
+                    .preferences
+                    .backup_device_folder_id = previous;
+                Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!("delete_backup_device: persist failed: {err}"),
+                }
+            }
         }
     }
 
@@ -6207,6 +6389,9 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::SetLanguage { .. } => "SetLanguage",
         Request::UploadWriteFromFile { .. } => "UploadWriteFromFile",
         Request::CreateTreePublicLinkFromPaths { .. } => "CreateTreePublicLinkFromPaths",
+        Request::CreateBackup { .. } => "CreateBackup",
+        Request::StopDevice { .. } => "StopDevice",
+        Request::DeleteBackupDevice => "DeleteBackupDevice",
         _ => "Other",
     }
 }
