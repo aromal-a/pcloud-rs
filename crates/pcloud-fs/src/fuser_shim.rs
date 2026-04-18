@@ -22,7 +22,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-// TODO(bd-xplat): Linux-only — needs cfg gate or platform trait abstraction. See PLAN_CROSSPLATFORM.md §2.
+// This module is gated by `#[cfg(target_os = "linux")]` at the top of the file.
+// The `fuser` crate is a Linux-only dep; on other platforms the platform trait
+// (`FuseAdapter`) provides the abstraction boundary. See PLAN_CROSSPLATFORM.md §2.
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
     ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow,

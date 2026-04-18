@@ -1,7 +1,7 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
@@ -251,6 +251,121 @@ impl IncrementalScanTracker {
     pub fn has_scanned(&self, sync_id: SyncId) -> bool {
         self.last_full_scan.contains_key(&sync_id)
     }
+}
+
+/// Walk a local directory tree up to `max_depth` levels deep, applying
+/// `visitor` to each entry. Symbolic-link cycles and hard-link loops are
+/// detected using a `(device_id, inode_number)` pair so that a symlink
+/// to a parent directory does not cause infinite recursion.
+///
+/// # M-4.5 — `st_dev` inclusion
+///
+/// Earlier implementations tracked only `inode` numbers. On Linux (and
+/// POSIX generally) inode numbers are unique only **within** a device: two
+/// files on different mounted filesystems may share the same inode number
+/// without being the same file. Using only `ino` therefore produces false
+/// cycle detections when the tree contains bind-mounts or cross-device
+/// hard links. This implementation compares `(ino, dev)` pairs, which are
+/// guaranteed unique per file across all mounted devices on the same host.
+///
+/// # Platform note
+///
+/// Inode and device metadata is only available on Unix. On Windows the
+/// function falls back to depth-limiting alone (no inode cycle detection).
+///
+/// # Errors
+///
+/// Returns the first I/O error encountered while reading directory entries.
+/// Entries that cannot be `stat(2)`'d individually are skipped with a
+/// `log::warn!` rather than aborting the walk.
+#[allow(dead_code)] // called from the sync loop; unused in unit tests
+pub fn walk_local_tree<F>(root: &std::path::Path, max_depth: usize, visitor: &mut F) -> std::io::Result<()>
+where
+    F: FnMut(&std::path::Path, bool /* is_dir */),
+{
+    // (device_id, inode_number) set to detect filesystem cycles.
+    let mut seen: HashSet<(u64, u64)> = HashSet::new();
+    walk_recursive(root, 0, max_depth, &mut seen, visitor)
+}
+
+fn walk_recursive<F>(
+    path: &std::path::Path,
+    depth: usize,
+    max_depth: usize,
+    seen: &mut HashSet<(u64, u64)>,
+    visitor: &mut F,
+) -> std::io::Result<()>
+where
+    F: FnMut(&std::path::Path, bool),
+{
+    if depth > max_depth {
+        return Ok(());
+    }
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        let meta = match std::fs::symlink_metadata(path) {
+            Ok(m) => m,
+            Err(e) => {
+                log::warn!("walk_local_tree: skipping {}: {}", path.display(), e);
+                return Ok(());
+            }
+        };
+        // M-4.5: use (ino, dev) pair, not ino alone.
+        let key = (meta.dev(), meta.ino());
+        if !seen.insert(key) {
+            log::warn!(
+                "walk_local_tree: cycle detected at {} (dev={}, ino={}); skipping",
+                path.display(),
+                meta.dev(),
+                meta.ino(),
+            );
+            return Ok(());
+        }
+        let is_dir = meta.is_dir();
+        visitor(path, is_dir);
+        if is_dir {
+            for entry in std::fs::read_dir(path)? {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(e) => {
+                        log::warn!("walk_local_tree: readdir entry error in {}: {}", path.display(), e);
+                        continue;
+                    }
+                };
+                walk_recursive(&entry.path(), depth + 1, max_depth, seen, visitor)?;
+            }
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        // Windows: no inode API; fall back to depth-limiting only.
+        let meta = match std::fs::metadata(path) {
+            Ok(m) => m,
+            Err(e) => {
+                log::warn!("walk_local_tree: skipping {}: {}", path.display(), e);
+                return Ok(());
+            }
+        };
+        let is_dir = meta.is_dir();
+        visitor(path, is_dir);
+        if is_dir {
+            for entry in std::fs::read_dir(path)? {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(e) => {
+                        log::warn!("walk_local_tree: readdir entry error in {}: {}", path.display(), e);
+                        continue;
+                    }
+                };
+                walk_recursive(&entry.path(), depth + 1, max_depth, seen, visitor)?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 fn normalize_entry(entry: &LocalScanEntry) -> Result<SyncCandidate, LocalScanError> {

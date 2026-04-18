@@ -143,6 +143,12 @@ pub enum SectorError {
     /// OS randomness source failed while generating the sector nonce.
     #[error("failed to generate sector nonce: {0}")]
     Rng(String),
+    /// Plaintext is empty. The sector encoder requires at least one byte of
+    /// plaintext — an empty sector is a caller bug (file-system layer should
+    /// never issue a zero-byte sector seal). Rejecting explicitly rather than
+    /// silently producing an all-rnd ciphertext makes the contract auditable.
+    #[error("sector plaintext must not be empty")]
+    EmptySector,
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +325,9 @@ pub fn seal_sector(
     sector_id: u64,
     plaintext: &[u8],
 ) -> Result<SealedSector, SectorError> {
+    if plaintext.is_empty() {
+        return Err(SectorError::EmptySector);
+    }
     if plaintext.len() > PCLSYNC_SECTOR_SIZE {
         return Err(SectorError::PlaintextTooLong(plaintext.len()));
     }
@@ -344,6 +353,9 @@ pub fn seal_sector_with_rnd(
     plaintext: &[u8],
     rnd: &[u8; PCLSYNC_RND_SIZE],
 ) -> Result<SealedSector, SectorError> {
+    if plaintext.is_empty() {
+        return Err(SectorError::EmptySector);
+    }
     if plaintext.len() > PCLSYNC_SECTOR_SIZE {
         return Err(SectorError::PlaintextTooLong(plaintext.len()));
     }
@@ -480,6 +492,9 @@ pub fn open_sector(
 
     // Success: move plaintext out of Zeroizing. Clone into a plain Vec so
     // the Zeroizing wrapper still zeroes its original buffer on drop.
+    // TODO(pcloud-rs-8mb.28/L-4): upgrade return type to Zeroizing<Vec<u8>> so
+    // the caller's copy is also zeroed; requires a public API change and
+    // updating all call sites in lib.rs.
     Ok(plaintext.to_vec())
 }
 
@@ -530,7 +545,25 @@ mod tests {
 
     #[test]
     fn seal_open_roundtrip_empty() {
-        roundtrip(&[], 0);
+        // Empty plaintext is now explicitly rejected (M-3.6 / audit-05).
+        // The C code accepted it silently (producing an all-rnd ciphertext
+        // that was technically undecryptable to the original plaintext for
+        // 0-byte files), but the Rust path rejects it explicitly to make
+        // the caller contract auditable.
+        let (aes, hmac) = keys_fixture();
+        let err = seal_sector(
+            SectorKeys {
+                aes_key: &aes,
+                hmac_key: &hmac,
+            },
+            0,
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, SectorError::EmptySector),
+            "expected EmptySector, got {err:?}"
+        );
     }
 
     #[test]
@@ -707,13 +740,30 @@ mod tests {
         assert_eq!(a.auth_tag, b.auth_tag);
     }
 
-    // TODO(bd-1du.10): extract KAT vectors from a standalone C reference
-    // harness (link `pcrypto.c` with fixed aes_key/hmac_key/rnd/sid) and
-    // commit expected (ciphertext, auth_tag) hex blobs to prove
-    // byte-for-byte interop with the legacy wire format.
-    #[ignore = "needs C-generated fixture (bd-1du.10)"]
+    // NOTE(M-3.1 / bd-1du.10): a byte-exact KAT for pcrypto_encode_sec /
+    // pcrypto_decode_sec requires a fixture extracted from a standalone C
+    // reference harness (link `pcrypto.c` with fixed aes_key / hmac_key /
+    // rnd / sid, capture expected ciphertext + auth_tag hex). No such fixture
+    // has been committed yet. The placeholder has been removed — an empty
+    // #[ignore] test provides no coverage value and misleads readers about
+    // what has been verified. When a fixture is available, add a named test
+    // with hard-coded hex vectors, citing the C run that produced them.
+
     #[test]
-    fn kat_from_c_source() {
-        // placeholder
+    fn seal_rejects_empty_plaintext() {
+        let (aes, hmac) = keys_fixture();
+        let err = seal_sector(
+            SectorKeys {
+                aes_key: &aes,
+                hmac_key: &hmac,
+            },
+            0,
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, SectorError::EmptySector),
+            "expected EmptySector, got {err:?}"
+        );
     }
 }

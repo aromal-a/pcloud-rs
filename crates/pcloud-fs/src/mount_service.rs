@@ -548,15 +548,53 @@ impl MountHandle {
             );
         }
 
+        // M-5.6: deregister the session from the signal reaper BEFORE
+        // joining the loop thread. Without this, a SIGTERM arriving during
+        // teardown could cause the reaper to call `fuse_session_exit` on a
+        // session pointer that `fuse_session_destroy` (below) has already
+        // freed — a classic UAF across the reaper/teardown race window.
+        crate::platform::macos::deregister_active_session(inner.session);
+
+        // M-5.6: join the loop thread with a blocking join (no detach).
+        // The `fuse_session_exit` + `fuse_unmount` calls above unblock
+        // `fuse_session_loop` on the loop thread; in normal operation it
+        // exits within milliseconds. We join — not detach — so that
+        // `fuse_session_destroy` below is guaranteed to run AFTER the loop
+        // thread has finished using the session pointer, eliminating the
+        // previous use-after-free window.
+        //
+        // If the loop thread does not exit within 5 s we log an error and
+        // continue: `fuse_session_destroy` is still the lesser evil because
+        // the session is already "exited" from libfuse's perspective (the
+        // kernel mount is released). We rely on the `fuse_session_exit`
+        // call above to interrupt the FFI loop so the 5 s window should
+        // not be reached in practice.
         if let Some(handle) = inner.loop_thread.take() {
             let (tx, rx) = mpsc::channel::<()>();
             let joiner = std::thread::spawn(move || {
                 let _ = handle.join();
                 let _ = tx.send(());
             });
-            let _ = rx.recv_timeout(Duration::from_secs(5));
-            // If the loop wedged, detach the joiner rather than block.
-            drop(joiner);
+            match rx.recv_timeout(Duration::from_secs(5)) {
+                Ok(()) => {
+                    // Loop thread exited cleanly; discard joiner.
+                    drop(joiner);
+                }
+                Err(_timeout) => {
+                    log::error!(
+                        "pcloud-fs[macos]: fuse-t loop thread did not exit within 5 s after \
+                         fuse_session_exit + fuse_unmount. Proceeding with fuse_session_destroy \
+                         anyway — the loop thread may still reference freed session memory. \
+                         This is a known limitation tracked under bd-xplat-macos. \
+                         The joiner thread is joined here to avoid detach."
+                    );
+                    // Join the joiner itself (blocking) so we do not leave an
+                    // orphan thread behind. The joiner holds the real loop thread
+                    // JoinHandle — when the loop eventually returns the joiner
+                    // will exit and the JoinHandle will be reclaimed.
+                    let _ = joiner.join();
+                }
+            }
         }
 
         // SAFETY: no further FFI references `session` after this;

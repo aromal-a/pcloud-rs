@@ -493,15 +493,13 @@ mod tests {
         // Nothing to assert beyond "did not panic".
     }
 
-    /// Byte-for-byte known-answer test extracted from a real pcloudcc
-    /// priv-key-wrap fixture. TODO(bd-1du.10): wire this up once a live
-    /// fixture has been extracted from a reference C client run.
-    #[test]
-    #[ignore]
-    fn kat_from_c() {
-        // TODO(bd-1du.10): populate with a (key, iv, block_offset,
-        // plaintext, expected_ciphertext) tuple captured from pcloudcc.
-    }
+    // NOTE(M-3.1 / bd-1du.10): a C-vector KAT for AES-256-CTR pclsync mode
+    // requires capturing a (key, iv, block_offset, plaintext, expected_ciphertext)
+    // fixture from a reference `pcloudcc` run. No such fixture has been committed
+    // to this repository yet. The placeholder test has been removed rather than
+    // left as an empty #[ignore] — an empty test gives false "coverage" and
+    // obscures the actual gap. When a fixture is available, add a named test here
+    // with hard-coded hex vectors and cite the pcloudcc run that produced them.
 
     // --------------------------------------------------------------
     // CBC-CTS (CS3) tests

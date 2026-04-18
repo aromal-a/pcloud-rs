@@ -56,14 +56,19 @@ pub struct KeyManager {
     /// Time-to-live (seconds) for the in-memory key cache after the last
     /// successful authenticated operation. Non-secret.
     ///
-    /// **Current status: dead policy state (audit-04 LOW §3-opus L-2).**
+    /// **Current status: dead policy state (M-3.3 / audit-05).**
     /// The field is serialised for forward-compatibility (operators may set it
     /// in a profile) but the daemon does not yet start an auto-stop timer keyed
-    /// on this value. To wire it: on a successful `start()` the daemon should
-    /// spawn a `tokio::time::sleep(Duration::from_secs(cache_ttl_secs))`
-    /// task that calls `CryptoShell::stop()` on wake. Until that lands, the
-    /// only way to evict the in-memory key is an explicit `stop()` or
-    /// daemon shutdown.
+    /// on this value.
+    ///
+    /// To wire it: after a successful `start()` the daemon should spawn a task
+    /// `tokio::time::sleep(Duration::from_secs(cache_ttl_secs))` that calls
+    /// `CryptoShell::stop()` on wake, reset the timer on every successful
+    /// authenticated operation, and cancel it on an explicit `stop()`. Until
+    /// that wiring lands the only way to evict the in-memory key is an explicit
+    /// `stop()` or daemon shutdown. The field is intentionally kept (not
+    /// deleted) so operators can pre-populate it in profiles without a schema
+    /// migration once the timer is wired.
     pub cache_ttl_secs: u64,
     /// Per-profile Argon2id salt (16 bytes, OS-random). Non-secret, but must
     /// remain stable once `setup()` has recorded a fingerprint or the fingerprint

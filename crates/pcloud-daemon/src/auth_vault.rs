@@ -45,4 +45,8 @@ pub enum AuthVaultError {
 // Re-export the real file-vault free functions under their historical
 // paths so existing `use crate::auth_vault::{load_token, store_token,
 // clear_token};` imports keep resolving.
+//
+// Audit 05 §2 LOW-2.6 confirmation: `vault/file.rs` enforces 0600 file mode,
+// 0700 parent dir mode, and UNIX owner-equality in `validate_vault_file` (lines
+// 215-245 of that file). The shim here does not weaken any of those checks.
 pub use crate::vault::file::{clear_token, load_token, store_token};

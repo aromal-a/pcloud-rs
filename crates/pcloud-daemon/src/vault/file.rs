@@ -233,6 +233,26 @@ fn validate_vault_file(path: &Path) -> std::result::Result<(), AuthVaultError> {
         ));
     }
 
+    // Harden the parent directory to 0700 on load, not just on creation.
+    // A directory left at a relaxed mode by a previous install, package
+    // upgrade, or manual operation would allow other local users to list the
+    // vault file name even if the file itself is 0600. Re-applying 0700 here
+    // is cheap and idempotent.
+    if let Some(parent) = path.parent() {
+        // Best-effort: if the chmod fails (e.g. parent is root-owned) we warn
+        // but do not abort the load — the file-level check above is the hard
+        // security gate.
+        match fs::set_permissions(parent, fs::Permissions::from_mode(0o700)) {
+            Ok(()) => {}
+            Err(err) => {
+                log::warn!(
+                    "vault: could not tighten parent dir permissions on {}: {err}",
+                    parent.display()
+                );
+            }
+        }
+    }
+
     Ok(())
 }
 

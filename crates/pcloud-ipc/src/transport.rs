@@ -551,6 +551,25 @@ impl BoundIpcServer {
 }
 
 impl Drop for BoundIpcServer {
+    /// Unlink the Unix-domain socket on drop (RAII cleanup).
+    ///
+    /// # SIGKILL race
+    ///
+    /// SIGKILL cannot be caught or blocked — if the process receives SIGKILL
+    /// while `BoundIpcServer` is live, the socket file is left behind. This
+    /// is unavoidable in Rust (and in any language): the kernel does not
+    /// invoke destructors on SIGKILL. To mitigate this:
+    ///
+    /// 1. The serve loop observes SIGTERM (caught) and exits cleanly, which
+    ///    triggers this `Drop` before the process dies. Callers should ensure
+    ///    SIGTERM is sent before SIGKILL (systemd's `KillMode=control-group`
+    ///    with a `TimeoutStopSec` does this automatically).
+    /// 2. `IpcServer::bind` removes any stale socket file that already exists
+    ///    at the path before binding (so leftover sockets from a prior
+    ///    SIGKILL do not prevent restart).
+    ///
+    /// These two policies together mean SIGKILL leaves at most one stale
+    /// socket that is cleaned up on the next daemon start.
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.socket_path);
     }
@@ -641,8 +660,24 @@ impl IpcServer {
         if let Some(parent) = socket_path.parent() {
             let parent_missing = !parent.exists();
             fs::create_dir_all(parent)?;
+            // Re-apply 0700 on every bind, not just when the directory was
+            // newly created. An existing directory could have been left with
+            // relaxed permissions by a previous install, upgrade, or manual
+            // operation. We only do this when we own the directory — if the
+            // parent is a system directory (e.g. /tmp) we skip the chmod to
+            // avoid a PermissionDenied error. When the directory was newly
+            // created we always own it, so the `parent_missing` fast path
+            // always applies.
             if parent_missing {
                 fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+            } else {
+                // Re-chmod existing dirs only if we own them.
+                use std::os::unix::fs::MetadataExt;
+                if let Ok(meta) = fs::metadata(parent) {
+                    if meta.uid() == self.owner_uid() {
+                        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+                    }
+                }
             }
         }
 

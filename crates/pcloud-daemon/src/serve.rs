@@ -54,6 +54,40 @@ fn sd_notify(msg: &str) {
     }
 }
 
+/// No-op supervisor signalling stub for macOS.
+///
+/// macOS uses launchd for daemon supervision; it does not use the systemd
+/// sd_notify(3) protocol. This stub ensures that call sites gated with
+/// `#[cfg(target_os = "linux")]` compile cleanly on macOS without requiring
+/// conditional compilation at every call site. A launchd-native notification
+/// path (e.g. launch_activate_socket(3)) should be added here if pcloud-daemon
+/// is ever packaged as a launchd service.
+///
+/// See: `man 8 launchd`, `man 3 launch_activate_socket`.
+///
+/// TODO(pcloud-rs-8mb.32/L-2): Add launchd KeepAlive / XPC signalling if
+/// macOS launchd packaging is in scope (P2-7 wave).
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+fn sd_notify(_msg: &str) {
+    // launchd does not use the sd_notify protocol. No-op intentionally.
+}
+
+/// No-op supervisor signalling stub for BSD and Windows.
+///
+/// Neither FreeBSD rc.d nor Windows SCM use the sd_notify protocol. On BSD,
+/// the rc.d script supervises via `daemon(8)`; on Windows, the SCM uses
+/// `SetServiceStatus`. If launchd/rc.d/SCM lifecycle signals become important,
+/// wire platform-specific calls in the branches below.
+///
+/// TODO(pcloud-rs-8mb.32/L-2): BSD rc.d `daemon(8)` does not need sd_notify;
+/// document the supervision story in packaging/freebsd/pcloudd.rc instead.
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+#[allow(dead_code)]
+fn sd_notify(_msg: &str) {
+    // No supervisor protocol on BSD / Windows. No-op intentionally.
+}
+
 use pcloud_ipc::{
     BoundIpcServer, IpcServer, IpcTransportError, Method, Request, Response, ResponseStatus,
     current_effective_uid,

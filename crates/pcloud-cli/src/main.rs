@@ -2067,8 +2067,25 @@ fn run_interactive_login(
             Ok(v) => {
                 // Scrub the env var immediately so /proc/self/environ
                 // stops exposing the password as soon as possible.
-                // SAFETY: single-threaded at this point; no tokio pool
-                // or rayon threads have been spun up yet.
+                //
+                // SAFETY (M-8.3): `std::env::remove_var` is inherently
+                // not thread-safe (mutating the process environment under
+                // concurrent `getenv`/`setenv` is UB per POSIX). The call
+                // is safe here because:
+                //   1. This code path executes before the Tokio runtime is
+                //      started — no async task pool has been created.
+                //   2. No rayon or `std::thread::spawn` threads have been
+                //      spawned by the CLI before this point.
+                //   3. The `prompt.rs` password-read path is also
+                //      single-threaded (reads from a tty, no concurrency).
+                //
+                // If this crate ever adopts an async-first entry point that
+                // spawns worker threads before credential resolution, this
+                // call must be moved earlier (before any thread is spawned)
+                // or replaced with a `OnceLock`-guarded pre-read approach
+                // that avoids the mutation entirely.
+                #[allow(unsafe_code)]
+                // SAFETY: see comment above — single-threaded pre-runtime.
                 unsafe { std::env::remove_var(var) };
                 SecretString::new(v)
             }

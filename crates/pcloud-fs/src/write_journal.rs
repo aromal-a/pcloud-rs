@@ -226,7 +226,9 @@ impl WriteJournal {
             // Sync parent directory so the rename is durable (C-1 audit fix).
             let parent = self.path.parent().unwrap_or(std::path::Path::new("."));
             if let Ok(dir) = std::fs::File::open(parent) {
-                let _ = dir.sync_all();
+                if let Err(e) = dir.sync_all() {
+                    log::warn!("journal: parent-dir fsync failed (durability gap): {e}");
+                }
             }
         }
         Ok(())

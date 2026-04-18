@@ -159,6 +159,15 @@ pub fn help_text() -> &'static str {
         "                           <VAR>, then immediately `unsetenv(VAR)` so\n",
         // TODO(bd-xplat): Linux-only — needs cfg gate or platform trait abstraction. See PLAN_CROSSPLATFORM.md §2.
         "                           /proc/<pid>/environ stops exposing it.\n",
+        // M-8.4: surface /proc/self/cmdline leak warning in help text for --allow-argv-password.
+        "      --allow-argv-password Acknowledge the security risk of passing a\n",
+        "                           password as a command-line argument. The\n",
+        "                           password is visible to all processes on the\n",
+        "                           host via /proc/self/cmdline (Linux) and\n",
+        "                           shell history. Accepted ONLY for backward-\n",
+        "                           compatibility with scripts that cannot use\n",
+        "                           --password-stdin or --password-env. Prefer\n",
+        "                           those flags in all production deployments.\n",
         "      --log-path <PATH>    Config-only: persist the daemon log path.\n",
         "                           Takes effect on next `start`.\n",
         "      --fs-event-log <PATH>\n",

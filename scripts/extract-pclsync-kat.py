@@ -103,34 +103,35 @@ def compute_password_digest(username: str, password: str, server_digest: str) ->
 
 def fetch_token(username: str, password: str) -> str:
     print(f"[*] authenticating as {username}")
-    # Step 1: get a server digest challenge.
+    # Use digest challenge-response directly (never send plaintext password).
+    #
+    # The pCloud API does accept plaintext passwords over HTTPS on the `login`
+    # endpoint, but digest-first is strictly preferable:
+    #   1. The cleartext password is sent over the wire even when the server
+    #      would have accepted the digest — pointless exposure.
+    #   2. pCloud's own C client uses digest exclusively.
+    #   3. Sending plaintext first and falling back to digest on failure means
+    #      the cleartext credential is transmitted unconditionally before the
+    #      fallback is triggered, providing no security benefit.
     dg = require_ok("getdigest", api("getdigest"))
     server_digest = dg["digest"]
-    # Try plaintext password first (HTTPS-only, documented on pCloud's
-    # public API); if rejected, fall back to digest challenge-response
-    # which matches the C client's login flow.
-    data = api("login", username=username, password=password, getauth=1)
-    if data.get("result") != 0:
-        # Digest fallback.
-        dg = require_ok("getdigest", api("getdigest"))
-        server_digest = dg["digest"]
-        pw_digest = compute_password_digest(username, password, server_digest)
-        data = require_ok(
+    pw_digest = compute_password_digest(username, password, server_digest)
+    data = require_ok(
+        "login",
+        api(
             "login",
-            api(
-                "login",
-                username=username,
-                digest=server_digest,
-                passworddigest=pw_digest,
-                timeformat="timestamp",
-                osversion="linux",
-                appversion="pcloud-rs",
-                deviceid="pcloud-rs-kat",
-                device="Desktop",
-                os=5,
-                getauth=1,
-            ),
-        )
+            username=username,
+            digest=server_digest,
+            passworddigest=pw_digest,
+            timeformat="timestamp",
+            osversion="linux",
+            appversion="pcloud-rs",
+            deviceid="pcloud-rs-kat",
+            device="Desktop",
+            os=5,
+            getauth=1,
+        ),
+    )
     token = data.get("auth")
     if not isinstance(token, str) or not token:
         die("userinfo did not return an 'auth' token (2FA enabled? locked account?)")

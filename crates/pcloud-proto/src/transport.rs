@@ -429,20 +429,14 @@ impl ApiServerHintConsumer for BinaryApiTransport {
 
 /// Returns `true` when the host is a known-safe pCloud API endpoint.
 ///
-/// Production API-server hints returned by the server must resolve to
-/// a `*.pcloud.com` or `*.pcloud.link` domain. Accepting arbitrary
-/// hosts would let a compromised hint redirect traffic to an
-/// attacker-controlled endpoint.
-///
-/// Literal IP addresses are rejected — the pCloud API only issues
-/// hostname hints. Test overrides (plaintext, loopback) bypass this
+/// Delegates to the canonical implementation in
+/// [`pcloud_config::api::is_known_safe_host`] which only accepts proper
+/// subdomains (`*.pcloud.com`, `*.pcloud.link`). Bare apex domains and
+/// literal IP addresses are rejected — the pCloud API only issues
+/// subdomain hints. Test overrides (plaintext, loopback) bypass this
 /// check because they never call `apply_api_server_hint`.
 fn is_known_safe_host(host: &str) -> bool {
-    let h = host.to_ascii_lowercase();
-    h.ends_with(".pcloud.com")
-        || h == "pcloud.com"
-        || h.ends_with(".pcloud.link")
-        || h == "pcloud.link"
+    pcloud_config::api::is_known_safe_host(host)
 }
 
 /// Attempt a TCP connect to each resolved address in turn, returning
@@ -772,9 +766,13 @@ mod tests {
     #[test]
     fn is_known_safe_host_matches_pcloud_domains() {
         use super::is_known_safe_host;
+        // Subdomains of known pCloud apex domains are accepted.
         assert!(is_known_safe_host("bineapi.pcloud.com"));
-        assert!(is_known_safe_host("pcloud.com"));
         assert!(is_known_safe_host("api.pcloud.link"));
+        // Bare apex domains are NOT accepted — the pCloud API only issues
+        // subdomain hints (consistent with pcloud_config::api::is_known_safe_host).
+        assert!(!is_known_safe_host("pcloud.com"));
+        assert!(!is_known_safe_host("pcloud.link"));
         assert!(!is_known_safe_host("evil.example.com"));
         assert!(!is_known_safe_host("notpcloud.com"));
         assert!(!is_known_safe_host("pcloud.com.evil.io"));

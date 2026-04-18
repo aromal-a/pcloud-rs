@@ -4,6 +4,14 @@ Date: 2026-04-14
 Source matrix: `C_FEATURE_PARITY_MATRIX.csv`
 Total rows with status `Rejected`: **28** (matrix rows 2, 5, 6, 10, 12, 13, 43, 44, 45, 46, 99, 100, 101, 102, 103, 104, 105, 106, 113, 114, 115, 126, 151, 152, 157, 160, 167, 169).
 
+## Cross-reference with the matrix
+
+Each section below is titled with the CSV row number and feature name
+(e.g. `## Row 2 — psync_set_alloc`). To navigate: open
+`C_FEATURE_PARITY_MATRIX.csv`, find the `Rejected` row by `feature`
+name, then look up `Row N` in this file. GitHub renders the section
+anchors as `#row-N` (e.g. `REJECTED-RATIONALES-14042026.md#row-2`).
+
 ## How to read this document
 
 If you are new to the parity effort:

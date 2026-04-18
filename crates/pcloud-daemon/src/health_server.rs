@@ -37,11 +37,22 @@
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use crate::signals::{DrainState, drain_state};
+
+/// Maximum concurrent in-flight health connections. Each connection runs on
+/// its own OS thread; if more than this many connections arrive simultaneously
+/// the excess is dropped (connection closed immediately without a response).
+/// This prevents unbounded thread spawning from a misbehaving probe loop or a
+/// slow-loris style connection flood against the loopback interface.
+///
+/// For a health-check endpoint that answers in < 2 ms, 32 simultaneous
+/// connections is already generous headroom for any real orchestration system.
+const MAX_CONCURRENT_HEALTH_CONNECTIONS: usize = 32;
 
 /// Configuration for the health HTTP server.
 ///
@@ -127,17 +138,36 @@ pub fn spawn(config: HealthServerConfig) -> Result<Option<HealthServerHandle>, S
 fn run_listener(listener: TcpListener, read_timeout: Duration) {
     // Wrap the Arc so we can share `read_timeout` cheaply.
     let read_timeout = Arc::new(read_timeout);
+    // Shared counter of in-flight connection handler threads. Capped at
+    // MAX_CONCURRENT_HEALTH_CONNECTIONS to prevent unbounded thread spawning.
+    let in_flight: Arc<AtomicUsize> = Arc::new(AtomicUsize::new(0));
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
+                let current = in_flight.load(Ordering::Relaxed);
+                if current >= MAX_CONCURRENT_HEALTH_CONNECTIONS {
+                    log::warn!(
+                        "health server: connection limit ({MAX_CONCURRENT_HEALTH_CONNECTIONS}) \
+                         reached; dropping connection"
+                    );
+                    // `stream` is dropped here — connection closed immediately.
+                    continue;
+                }
                 let rt = Arc::clone(&read_timeout);
+                let counter = Arc::clone(&in_flight);
+                counter.fetch_add(1, Ordering::Relaxed);
                 thread::Builder::new()
                     .name("pcloud-health-conn".into())
-                    .spawn(move || handle_connection(stream, *rt))
+                    .spawn(move || {
+                        handle_connection(stream, *rt);
+                        counter.fetch_sub(1, Ordering::Relaxed);
+                    })
                     .unwrap_or_else(|err| {
                         log::warn!("health server: failed to spawn connection thread: {err}");
-                        // Return a dummy JoinHandle to satisfy the type system;
-                        // the connection is simply dropped.
+                        // Account for the counter increment we made before the
+                        // spawn failed so the slot is not leaked.
+                        in_flight.fetch_sub(1, Ordering::Relaxed);
+                        // Return a dummy JoinHandle to satisfy the type system.
                         thread::spawn(|| {})
                     });
             }

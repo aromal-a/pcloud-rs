@@ -631,7 +631,16 @@ fn register_mount(path: &Path) {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if let Ok(mut guard) = registry().lock() {
         let inserted = guard.insert(canonical);
-        debug_assert!(inserted, "ACTIVE_MOUNTS double-register: {path:?}");
+        // M-5.2: Use log::error! instead of debug_assert! — debug_assert!
+        // is a no-op in release builds and the race is possible in both
+        // debug and release. A double-register is not fatal but indicates
+        // a lifecycle bug that must surface in production logs.
+        if !inserted {
+            log::error!(
+                "ACTIVE_MOUNTS double-register: {path:?}; \
+                 this indicates a mount lifecycle bug — please file a bug report"
+            );
+        }
     }
 }
 
@@ -642,7 +651,13 @@ fn unregister_mount(path: &Path) {
     let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     if let Ok(mut guard) = registry().lock() {
         let removed = guard.remove(&canonical) || guard.remove(path);
-        debug_assert!(removed, "ACTIVE_MOUNTS unregister miss: {path:?}");
+        // M-5.2: Use log::error! instead of debug_assert! (inactive in release).
+        if !removed {
+            log::error!(
+                "ACTIVE_MOUNTS unregister miss: {path:?}; \
+                 this indicates an unbalanced mount/unmount lifecycle bug"
+            );
+        }
     }
 }
 
@@ -689,10 +704,19 @@ extern "C" fn signal_trampoline(_sig: libc::c_int) {
 
 fn install_reaper_once() {
     REAPER_INSTALLED.get_or_init(|| {
-        std::thread::Builder::new()
+        // M-5.3: surface spawn failure via log::error! instead of silently
+        // discarding with .ok(). A spawn failure means signals received
+        // while mounts are live will not trigger cleanup, risking stale
+        // kernel FUSE sessions. The failure is logged so operators can act.
+        if let Err(e) = std::thread::Builder::new()
             .name("pcloudfs-reaper".to_string())
-            .spawn(|| reaper_main())
-            .ok();
+            .spawn(reaper_main)
+        {
+            log::error!(
+                "pcloud-fs: failed to spawn reaper thread; \
+                 active mounts will NOT be cleaned up on SIGTERM/SIGINT: {e}"
+            );
+        }
     });
 }
 

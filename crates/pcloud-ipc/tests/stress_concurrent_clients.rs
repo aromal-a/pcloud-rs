@@ -30,14 +30,31 @@ use pcloud_ipc::{
 const CLIENTS: usize = 50;
 const REQUESTS_PER_CLIENT: usize = 500;
 
+/// Count open file descriptors for the current process.
+///
+/// On Linux this reads `/proc/self/fd`, which is the only reliable
+/// per-process fd directory available without elevated privilege.
+/// On other platforms the function returns `Ok(0)` — fd-leak detection is
+/// a Linux-only capability in this test. The fd-drift assertion below is
+/// therefore only meaningful on Linux.
+///
+/// TODO(bd-xplat): add macOS `sysctl KERN_PROC_FD` and BSD `procstat -f`
+/// paths if cross-platform fd-leak detection becomes a requirement.
 fn open_fd_count() -> io::Result<usize> {
-    let mut count = 0;
-    // TODO(bd-xplat): Linux-only — needs cfg gate or platform trait abstraction. See PLAN_CROSSPLATFORM.md §2.
-    for entry in std::fs::read_dir("/proc/self/fd")? {
-        let _ = entry?;
-        count += 1;
+    #[cfg(target_os = "linux")]
+    {
+        let mut count = 0;
+        for entry in std::fs::read_dir("/proc/self/fd")? {
+            let _ = entry?;
+            count += 1;
+        }
+        Ok(count)
     }
-    Ok(count)
+    #[cfg(not(target_os = "linux"))]
+    {
+        // Fd-leak detection is not implemented on this platform.
+        Ok(0)
+    }
 }
 
 #[test]

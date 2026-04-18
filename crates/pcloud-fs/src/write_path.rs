@@ -65,6 +65,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -267,6 +268,31 @@ pub const DEFAULT_CHUNK_SIZE_BYTES: usize = UPLOAD_CHUNK_BYTES;
 /// must not ENOSPC the host filesystem.
 pub const DEFAULT_MAX_STAGING_BYTES: usize = 512 * 1024 * 1024;
 
+/// Default aggregate staging ceiling across **all** inodes (M-5.4).
+///
+/// The per-inode bound ([`DEFAULT_MAX_STAGING_BYTES`]) limits one inode but
+/// does not cap the total cost of many concurrent open handles. On a
+/// host with N simultaneous writers the total staging footprint could reach
+/// N × 512 MiB before any per-inode guard fires, unexpectedly consuming all
+/// available disk space.
+///
+/// This process-wide ceiling (2 GiB) bounds the aggregate. A `write` that
+/// would push the global counter past this value is rejected with `ENOSPC`
+/// even if the per-inode limit has not been reached.
+///
+/// Operators with large numbers of concurrent writers can raise this limit
+/// via [`WritePathOptions::max_global_staging_bytes`].
+pub const DEFAULT_MAX_GLOBAL_STAGING_BYTES: usize = 2 * 1024 * 1024 * 1024;
+
+/// Process-wide count of staging bytes currently held across all open
+/// write handles (M-5.4). Updated atomically on every `write` accept and
+/// every flush/release that frees staging bytes.
+///
+/// The counter is intentionally process-global (not per-[`WritePathService`])
+/// so that multiple daemon mount points share the ceiling and cannot each
+/// independently consume `DEFAULT_MAX_GLOBAL_STAGING_BYTES`.
+static GLOBAL_STAGING_BYTES: AtomicUsize = AtomicUsize::new(0);
+
 /// Default number of retries attempted per-chunk on
 /// [`WritePathError::UploadTransient`] before surfacing the error.
 pub const DEFAULT_CHUNK_RETRY_ATTEMPTS: u32 = 5;
@@ -276,12 +302,22 @@ pub const DEFAULT_CHUNK_RETRY_ATTEMPTS: u32 = 5;
 /// loop in [`WritePathService::chunked_flush`].
 pub const DEFAULT_CHUNK_RETRY_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 
+/// Default wall-clock interval for time-based forced flushes of idle dirty
+/// handles (M-5.5). The previous default of 24 h effectively disabled
+/// time-based flushing — an operator crash or SIGKILL during a long-lived
+/// write handle would lose up to a day of writes. 30 s is conservative
+/// enough to avoid excessive upload churn while bounding data loss to a
+/// typical upload round-trip window.
+pub const DEFAULT_FLUSH_INTERVAL: Duration = Duration::from_secs(30);
+
 /// Options for [`WritePathService`].
 #[derive(Debug, Clone, Copy)]
 pub struct WritePathOptions {
     /// Dirty-byte accumulation at which a mid-write flush is forced.
     pub flush_threshold_bytes: u64,
     /// Wall-clock interval between forced flushes for idle dirty handles.
+    /// Default is [`DEFAULT_FLUSH_INTERVAL`] (30 s). Set to a very large
+    /// value to effectively disable time-based flushes.
     pub flush_interval: Duration,
     /// Per-chunk byte count for the chunked upload pipeline. Default is
     /// [`DEFAULT_CHUNK_SIZE_BYTES`] (4 MiB). Lower values reduce replay cost
@@ -302,17 +338,24 @@ pub struct WritePathOptions {
     /// Initial backoff between chunk retries (doubled on each retry).
     /// Default [`DEFAULT_CHUNK_RETRY_INITIAL_BACKOFF`] (1 second).
     pub chunk_retry_initial_backoff: Duration,
+    /// Process-wide aggregate staging ceiling (M-5.4). A `write` that would
+    /// push [`GLOBAL_STAGING_BYTES`] past this value is rejected with
+    /// `ENOSPC`. Default is [`DEFAULT_MAX_GLOBAL_STAGING_BYTES`] (2 GiB).
+    /// Set to `usize::MAX` to disable (not recommended).
+    pub max_global_staging_bytes: usize,
 }
 
 impl Default for WritePathOptions {
     fn default() -> Self {
         Self {
             flush_threshold_bytes: DEFAULT_FLUSH_THRESHOLD_BYTES,
-            flush_interval: Duration::from_secs(24 * 3600),
+            // M-5.5: was 24 h (86400 s), now 30 s. See DEFAULT_FLUSH_INTERVAL.
+            flush_interval: DEFAULT_FLUSH_INTERVAL,
             chunk_size_bytes: DEFAULT_CHUNK_SIZE_BYTES,
             max_staging_bytes: DEFAULT_MAX_STAGING_BYTES,
             chunk_retry_attempts: DEFAULT_CHUNK_RETRY_ATTEMPTS,
             chunk_retry_initial_backoff: DEFAULT_CHUNK_RETRY_INITIAL_BACKOFF,
+            max_global_staging_bytes: DEFAULT_MAX_GLOBAL_STAGING_BYTES,
         }
     }
 }
@@ -363,6 +406,14 @@ impl WritePathOptions {
     #[must_use]
     pub fn with_chunk_retry_initial_backoff(mut self, backoff: Duration) -> Self {
         self.chunk_retry_initial_backoff = backoff;
+        self
+    }
+
+    /// Override the process-wide aggregate staging ceiling (M-5.4).
+    /// Use `usize::MAX` to disable the guard (not recommended).
+    #[must_use]
+    pub fn with_max_global_staging_bytes(mut self, bytes: usize) -> Self {
+        self.max_global_staging_bytes = bytes;
         self
     }
 }
@@ -515,6 +566,33 @@ impl<B: FileUploadBackend> WritePathService<B> {
             }
         }
 
+        // Enforce process-wide aggregate staging ceiling (M-5.4). This
+        // prevents N concurrent open handles from each consuming
+        // max_staging_bytes, which could exhaust local disk with N large
+        // writers. We add `data.len()` speculatively here and subtract on
+        // any error path or on flush/release. Spurious ENOSPC under heavy
+        // concurrent load is acceptable — callers can retry after another
+        // handle is flushed.
+        let global_max = self.options.max_global_staging_bytes;
+        if global_max < usize::MAX {
+            let prev = GLOBAL_STAGING_BYTES.fetch_add(data.len(), AtomicOrdering::AcqRel);
+            if prev.saturating_add(data.len()) > global_max {
+                // Roll back the speculative add before returning.
+                GLOBAL_STAGING_BYTES.fetch_sub(data.len(), AtomicOrdering::AcqRel);
+                log::warn!(
+                    "pcloud-fs: write rejected — global staging ceiling {} B exceeded \
+                     (current: {} B, write: {} B). Consider raising \
+                     WritePathOptions::max_global_staging_bytes.",
+                    global_max,
+                    prev,
+                    data.len()
+                );
+                return Err(WritePathError::Invalid(
+                    "write would exceed process-wide max_global_staging_bytes ceiling",
+                ));
+            }
+        }
+
         self.stage
             .write_blob_at(&blob_name, effective_offset, data)?;
         self.journal_append(JournalOp::Write {
@@ -637,6 +715,15 @@ impl<B: FileUploadBackend> WritePathService<B> {
             let mut h = handle
                 .lock()
                 .map_err(|_| WritePathError::Internal("chunked_flush handle mutex poisoned"))?;
+            // M-5.4: release the flushed bytes from the global staging counter
+            // so subsequent writes from other handles have access to the headroom.
+            if self.options.max_global_staging_bytes < usize::MAX && h.dirty_bytes > 0 {
+                let flushed = h.dirty_bytes.min(usize::MAX as u64) as usize;
+                GLOBAL_STAGING_BYTES.fetch_sub(
+                    flushed.min(GLOBAL_STAGING_BYTES.load(AtomicOrdering::Acquire)),
+                    AtomicOrdering::AcqRel,
+                );
+            }
             h.dirty_bytes = 0;
             h.last_flush = now;
         }
@@ -803,6 +890,14 @@ impl<B: FileUploadBackend> WritePathService<B> {
             let mut h = handle
                 .lock()
                 .map_err(|_| WritePathError::Internal("flush handle mutex poisoned"))?;
+            // M-5.4: release the flushed bytes from the global staging counter.
+            if self.options.max_global_staging_bytes < usize::MAX && h.dirty_bytes > 0 {
+                let flushed = h.dirty_bytes.min(usize::MAX as u64) as usize;
+                GLOBAL_STAGING_BYTES.fetch_sub(
+                    flushed.min(GLOBAL_STAGING_BYTES.load(AtomicOrdering::Acquire)),
+                    AtomicOrdering::AcqRel,
+                );
+            }
             h.dirty_bytes = 0;
             h.last_flush = now;
         }
@@ -989,6 +1084,22 @@ impl<B: FileUploadBackend> WritePathService<B> {
     /// (matching kernel `flush` before `release` semantics).
     pub fn release(&self, ino: u64) {
         if let Ok(mut handles) = self.handles.lock() {
+            // M-5.4: when a handle is removed without a prior flush (e.g.
+            // unlink/error path), reclaim its dirty bytes from the global
+            // staging counter so the headroom is available to other writers.
+            if self.options.max_global_staging_bytes < usize::MAX {
+                if let Some(handle) = handles.get(&ino) {
+                    if let Ok(h) = handle.lock() {
+                        if h.dirty_bytes > 0 {
+                            let remaining = h.dirty_bytes.min(usize::MAX as u64) as usize;
+                            GLOBAL_STAGING_BYTES.fetch_sub(
+                                remaining.min(GLOBAL_STAGING_BYTES.load(AtomicOrdering::Acquire)),
+                                AtomicOrdering::AcqRel,
+                            );
+                        }
+                    }
+                }
+            }
             handles.remove(&ino);
         }
     }

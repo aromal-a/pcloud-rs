@@ -223,6 +223,13 @@ wildcard_imports = "allow"
 # `manual_string_new`: `String::new()` vs `"".to_owned()` is style.
 manual_string_new = "allow"
 
+# ── unwrap discipline (staged rollout) ───────────────────────────────
+# TODO(pcloud-rs-8mb.34/L-14): promote these to "deny" once per-crate
+# counts (pcloud-fs: 531, pcloud-daemon: 382, …) are driven below 50 in
+# non-test src/. Tracked by P3-batch-G M6 sweep beads.
+# unwrap_used = "warn"
+# expect_used = "warn"
+
 [workspace.metadata]
 workspace-name = "pcloud-rs-rust-dev"
 purpose = "Security-first Rust rewrite foundation for pcloud-rs."

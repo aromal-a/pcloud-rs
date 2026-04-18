@@ -47,10 +47,29 @@ impl RedactedString {
     }
 
     /// Unwrap to the inner `String`. Use on the daemon side when
-    /// handing off to `SecretString::from(...)`.
+    /// handing off to `SecretString::new(...)`.
     ///
-    /// Takes the inner buffer without zeroizing it, transferring ownership
-    /// to the caller (who is responsible for wrapping it in `SecretString`).
+    /// # Security contract
+    ///
+    /// `into_string` transfers ownership of the backing buffer to the caller.
+    /// The `Drop` impl on `RedactedString` will zeroize the (now-empty) placeholder,
+    /// **not** the transferred buffer. The caller **must** immediately wrap the
+    /// returned `String` in `SecretString` (or another zeroize-on-drop type) to
+    /// maintain the zeroize guarantee:
+    ///
+    /// ```
+    /// use pcloud_ipc::RedactedString;
+    /// use pcloud_secret::secret_string::SecretString;
+    ///
+    /// let r = RedactedString::new("hunter2");
+    /// // CORRECT: wrap immediately.
+    /// let secret = SecretString::new(r.into_string());
+    /// // WRONG: let raw = r.into_string(); /* use raw */ — raw will not be zeroized.
+    /// ```
+    ///
+    /// This is intentional: `RedactedString` is a transit-only IPC wrapper.
+    /// Daemon-side code must always pass the result of `into_string` directly
+    /// to a secret container rather than binding it to an intermediate variable.
     #[must_use]
     pub fn into_string(mut self) -> String {
         std::mem::take(&mut self.0)

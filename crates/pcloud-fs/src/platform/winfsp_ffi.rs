@@ -358,9 +358,13 @@ pub struct FSP_FILE_SYSTEM_INTERFACE {
     pub reserved_tail: [*mut c_void; 16],
 }
 
-// SAFETY: The vtable holds only function pointers and an opaque
-// reserved-tail of null pointers. It is effectively immutable after
-// construction and is shared across dispatcher threads.
+// SAFETY: `FSP_FILE_SYSTEM_INTERFACE` is a vtable of `unsafe extern "system" fn`
+// pointers plus a reserved null-padded tail. All function pointers:
+//   (1) are `'static` (they are thunk addresses baked into the binary),
+//   (2) are reentrant and do not capture or mutate any field of this struct,
+//   (3) are never replaced after `load_winfsp` returns.
+// There is no interior mutability. Concurrent reads across dispatcher
+// threads are therefore safe.
 unsafe impl Sync for FSP_FILE_SYSTEM_INTERFACE {}
 unsafe impl Send for FSP_FILE_SYSTEM_INTERFACE {}
 

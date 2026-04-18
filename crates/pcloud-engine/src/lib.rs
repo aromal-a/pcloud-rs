@@ -58,6 +58,20 @@ use pcloud_model::{conflict::ConflictResolution, transfer::RecoveryDecision};
 /// ```
 pub const CRATE_NAME: &str = "pcloud-engine";
 
+/// Hard upper bound on the number of [`SyncCandidate`]s held in the
+/// planner's dead-letter overflow buffer between ticks. If
+/// [`EngineShell::ingest_candidates`] produces an overflow that would
+/// push the buffer past this limit, the excess is dropped with a `warn!`
+/// log. A subsequent full scan/diff cycle will re-discover the dropped
+/// candidates.
+///
+/// 100 000 entries is large enough to absorb a multi-thousand-file initial
+/// sync burst while remaining bounded in memory (~tens of MiB at typical
+/// `SyncCandidate` sizes).
+///
+/// M-4.2.
+pub const PLANNER_OVERFLOW_MAX: usize = 100_000;
+
 /// Shared path-validity predicate used by `diff_poller`, `fs_events`, and
 /// `local_scan` to reject unsafe relative paths before they reach the planner.
 ///
@@ -139,24 +153,37 @@ pub fn probe_case_insensitive_fs(dir: &std::path::Path) -> std::io::Result<bool>
 /// Check whether a sync root's local path sits on a case-insensitive
 /// filesystem and emit a [`log::warn`] if so.
 ///
-/// This helper should be called when a new sync root is added so that the
-/// operator is informed before sync begins. The warning is advisory only —
-/// sync is not blocked.
+/// Returns `true` when the filesystem is detected as case-insensitive.
+/// When `true` the caller should record a warning note alongside the sync-root
+/// record (e.g. in the UI or as a daemon diagnostic) so the operator is
+/// informed before any conflicting-case filenames are synced. Sync is **not**
+/// blocked — the return value is advisory only.
+///
+/// # Caller responsibility
+///
+/// M-4.1: callers that store sync-root metadata (e.g. `SyncBackend::add`)
+/// should propagate this return value as a `DeletePolicy`-compatible note so
+/// the planner can surface it in diagnostic output rather than silently
+/// mis-syncing case-conflicting paths.
 ///
 /// // TODO(bd-1du): case-insensitive filesystem sync semantics are not yet
 /// // implemented; case-conflicting remote files may produce unexpected
 /// // behavior.
-pub fn warn_if_case_insensitive(path: &std::path::Path) {
+pub fn warn_if_case_insensitive(path: &std::path::Path) -> bool {
     match probe_case_insensitive_fs(path) {
         Ok(true) => {
             log::warn!(
                 "sync root {} appears to be on a case-insensitive filesystem; \
-                 filename case conflicts may cause sync issues on case-sensitive remotes",
+                 filename case conflicts may cause sync issues on case-sensitive remotes. \
+                 Note: case-conflicting remote files will not be handled correctly until \
+                 bd-1du case-insensitive sync semantics are implemented.",
                 path.display()
             );
+            true
         }
         Ok(false) => {
             // Case-sensitive; no action required.
+            false
         }
         Err(err) => {
             log::debug!(
@@ -165,8 +192,28 @@ pub fn warn_if_case_insensitive(path: &std::path::Path) {
                 path.display(),
                 err
             );
+            false
         }
     }
+}
+
+/// Walk a local directory tree with `(ino, dev)` cycle detection (M-4.5).
+///
+/// Thin public re-export of [`local_scan::walk_local_tree`] for callers
+/// outside the `local_scan` module. See that function for full documentation.
+///
+/// # Errors
+///
+/// Returns the first I/O error encountered reading directory entries.
+pub fn walk_local_tree<F>(
+    root: &std::path::Path,
+    max_depth: usize,
+    visitor: &mut F,
+) -> std::io::Result<()>
+where
+    F: FnMut(&std::path::Path, bool),
+{
+    local_scan::walk_local_tree(root, max_depth, visitor)
 }
 
 /// Return `Some(sync_id)` if every candidate in `candidates` belongs to
@@ -247,6 +294,11 @@ pub struct EngineShell {
     /// list to the `value_kv` store between cycles and prepends it to
     /// the next ingestion so over-cap work is never silently dropped.
     /// Audit-04 P2-6 (bd-pcloud-rs-s1p.44).
+    ///
+    /// M-4.2: capped at [`PLANNER_OVERFLOW_MAX`] to prevent unbounded
+    /// growth on sustained-burst workloads. Candidates beyond the cap
+    /// are logged as `warn!` and dropped; a fresh diff/scan cycle will
+    /// re-discover them.
     pub planner_overflow: Vec<SyncCandidate>,
     /// Notification queue of [`SyncId`]s whose filesystem watchers must be
     /// torn down by the embedding runtime. Populated by
@@ -407,7 +459,8 @@ impl EngineShell {
         // new overflow that falls off this tick's per-tick cap.
         let combined = self.merge_with_overflow(candidates);
         let (operations, overflow) = self.planner.plan_with_overflow(&combined);
-        self.planner_overflow = overflow;
+        // M-4.2: cap the overflow buffer to prevent unbounded growth.
+        self.planner_overflow = Self::cap_overflow(overflow);
         match single_sync_id(&combined) {
             Some(sync_id) => self
                 .scheduler
@@ -441,7 +494,8 @@ impl EngineShell {
         let (operations, overflow) = self
             .planner
             .plan_filtered_with_overflow(&combined, delete_policy);
-        self.planner_overflow = overflow;
+        // M-4.2: cap the overflow buffer.
+        self.planner_overflow = Self::cap_overflow(overflow);
         match single_sync_id(&combined) {
             Some(sync_id) => self
                 .scheduler
@@ -449,6 +503,27 @@ impl EngineShell {
             None => self.scheduler.replace_queue(operations),
         }
         &self.scheduler.queued_operations
+    }
+
+    /// Enforce the [`PLANNER_OVERFLOW_MAX`] cap on an overflow buffer.
+    ///
+    /// If `overflow` would exceed the cap the excess is dropped with a
+    /// `warn!` log. Dropped candidates will be re-discovered on the next
+    /// full scan/diff cycle.
+    ///
+    /// M-4.2.
+    fn cap_overflow(mut overflow: Vec<SyncCandidate>) -> Vec<SyncCandidate> {
+        if overflow.len() > PLANNER_OVERFLOW_MAX {
+            let dropped = overflow.len() - PLANNER_OVERFLOW_MAX;
+            overflow.truncate(PLANNER_OVERFLOW_MAX);
+            log::warn!(
+                "planner_overflow cap ({}) exceeded: dropped {} deferred candidates; \
+                 they will be re-discovered on the next full scan cycle",
+                PLANNER_OVERFLOW_MAX,
+                dropped,
+            );
+        }
+        overflow
     }
 
     /// Merge the persisted planner overflow buffer with a fresh batch of

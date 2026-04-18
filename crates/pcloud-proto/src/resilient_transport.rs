@@ -404,10 +404,15 @@ where
 /// Returns `true` when the request command is an upload mutation that must
 /// **not** be retried at the transport layer.
 ///
-/// `upload_write` and `upload_save` are non-idempotent: the server may have
-/// committed the write before the client received the error response. The
-/// `UploadStateMachine` is the authoritative retry owner for these methods;
-/// it tracks the write offset and retries with the correct position.
+/// `upload_write`, `upload_writefromfile`, and `upload_save` are non-idempotent:
+/// the server may have committed the write before the client received the error
+/// response. The `UploadStateMachine` is the authoritative retry owner for these
+/// methods; it tracks the write offset and retries with the correct position.
+///
+/// `upload_writefromfile` (server-side copy IPC, row 93 in the parity matrix) is
+/// included now that its IPC variant is wired: retrying it independently at the
+/// transport layer could double-apply the server-side copy if the server committed
+/// before the client saw the error.
 ///
 /// The check is a simple ASCII string comparison against the command name
 /// encoded in [`EncodedRequest::frame`].  Command names are short, static,
@@ -416,7 +421,7 @@ where
 fn is_upload_mutation(request: &EncodedRequest) -> bool {
     matches!(
         request.frame.command.as_str(),
-        "upload_write" | "upload_save"
+        "upload_write" | "upload_writefromfile" | "upload_save"
     )
 }
 

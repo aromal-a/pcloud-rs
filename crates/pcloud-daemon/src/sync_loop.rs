@@ -554,8 +554,9 @@ pub fn spawn_sync_loop<R: SyncLoopRuntime>(
         // Propagating through Result here would require callers to handle a
         // failure mode they cannot meaningfully recover from; a panic with a
         // clear message is the intended behaviour.
-        // TODO(bd-follow-up): consider surfacing as a daemon startup Err
-        // so callers can log and report a structured error code.
+        // TODO(pcloud-rs-8mb.29/L-6): surface as daemon startup Err so
+        // callers can log and report a structured error code instead of
+        // panicking on OS-level EAGAIN.
         .expect("failed to spawn sync loop thread");
 
     SyncLoopHandle {

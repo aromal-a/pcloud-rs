@@ -292,6 +292,94 @@ fn escape_mountinfo(input: &str) -> String {
     out
 }
 
+// ---------------------------------------------------------------------------
+// M-5.1: Signal-driven reaper stub for BSD.
+//
+// On Linux, `platform/linux.rs` registers a `sigaction(SIGTERM/SIGINT)`
+// handler and spawns a "pcloudfs-reaper" thread that drains ACTIVE_MOUNTS
+// on shutdown. BSD has no equivalent yet (tracked under `bd-xplat-bsd`).
+//
+// This stub mirrors the public entry points so that code calling
+// `install_bsd_signal_reaper()` compiles on BSD without landing dead code
+// silently. The implementation is intentionally minimal: it installs a
+// `sigaction`-based handler that sets an `AtomicBool` (async-signal-safe)
+// and logs a warning so operators know the full reaper is not yet active.
+// The kernel (un)mount path itself is still unimplemented on BSD
+// (see `bd-xplat-bsd`), so the reaper is advisory only.
+// ---------------------------------------------------------------------------
+
+#[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
+mod reaper {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+    static SIGNAL_HANDLER_INSTALLED: OnceLock<()> = OnceLock::new();
+    static REAPER_INSTALLED: OnceLock<()> = OnceLock::new();
+
+    /// Returns `true` when SIGTERM or SIGINT has been received.
+    #[allow(dead_code)]
+    pub fn shutdown_requested() -> bool {
+        SHUTDOWN_REQUESTED.load(Ordering::Relaxed)
+    }
+
+    extern "C" fn signal_trampoline(_sig: libc::c_int) {
+        SHUTDOWN_REQUESTED.store(true, Ordering::Relaxed);
+    }
+
+    /// Install BSD signal handler and reaper thread stubs.
+    ///
+    /// Unlike Linux, BSD has no kernel (un)mount wired yet; the reaper
+    /// here only logs a warning on signal arrival so operators see the
+    /// event. Full unmount cleanup is tracked under `bd-xplat-bsd`.
+    ///
+    /// M-5.1.
+    pub fn install_bsd_signal_reaper() {
+        SIGNAL_HANDLER_INSTALLED.get_or_init(|| {
+            // SAFETY: sigaction is called once per signal during process
+            // lifetime with a static handler. The handler stores only to
+            // an AtomicBool, which is async-signal-safe.
+            unsafe {
+                let mut sa: libc::sigaction = std::mem::zeroed();
+                sa.sa_sigaction = signal_trampoline as usize;
+                sa.sa_flags = libc::SA_RESTART;
+                libc::sigemptyset(&mut sa.sa_mask);
+                let _ = libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
+                let _ = libc::sigaction(libc::SIGINT, &sa, std::ptr::null_mut());
+            }
+        });
+
+        REAPER_INSTALLED.get_or_init(|| {
+            // M-5.1 / M-5.3: surface spawn failure via log::error!.
+            if let Err(e) = std::thread::Builder::new()
+                .name("pcloudfs-bsd-reaper".to_string())
+                .spawn(bsd_reaper_main)
+            {
+                log::error!(
+                    "pcloud-fs (BSD): failed to spawn reaper thread: {e}; \
+                     SIGTERM/SIGINT will not trigger mount cleanup"
+                );
+            }
+        });
+    }
+
+    fn bsd_reaper_main() {
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            if SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
+                // TODO(bd-xplat-bsd): drain ACTIVE_MOUNTS and issue
+                // platform-specific unmount (fusermount / umount) when
+                // the BSD kernel mount path is implemented.
+                log::warn!(
+                    "pcloud-fs (BSD): shutdown signal received; \
+                     BSD kernel mount cleanup not yet implemented (bd-xplat-bsd)"
+                );
+                return;
+            }
+        }
+    }
+}
+
 #[cfg(all(
     test,
     any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd")

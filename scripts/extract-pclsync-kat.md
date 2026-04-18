@@ -121,6 +121,12 @@ byte-level interop KAT** referenced by bead `pcloud-rs-s1p.13`.
   root). 4128 or similar sizes are normal — the Rust test handles them.
 - **Re-running**: safe. The script overwrites all the extracted artefacts
   in place; the web-UI setup does NOT need to be redone.
+- **Non-ASCII filenames (NFC/NFD)**: this KAT fixture uses an ASCII-only
+  folder and filename (`pclsync-kat-v1` / `kat-plaintext-v1.bin`), so the
+  open NFC/NFD normalization gap on macOS does NOT affect it. Cross-client
+  compatibility for non-ASCII filenames is a separate open issue; see
+  `docs/enterprise/crypto-compat.md` for the current caveat and the
+  tracking bead under `bd-1du`.
 
 ## Cleanup (optional, after you're satisfied the KAT works)
 

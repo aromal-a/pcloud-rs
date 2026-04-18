@@ -46,7 +46,7 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -122,7 +122,7 @@ impl BandwidthPacer {
     /// assert_eq!(pacer.limit(), None);
     /// ```
     pub fn set_limit(&self, new: Option<u64>) {
-        let mut st = self.state.lock().expect("pacer mutex poisoned");
+        let mut st = self.state.lock();
         st.limit = new;
         st.tokens = new.unwrap_or(0);
         st.last_refill = Instant::now();
@@ -130,7 +130,7 @@ impl BandwidthPacer {
 
     /// Return the currently configured limit.
     pub fn limit(&self) -> Option<u64> {
-        self.state.lock().expect("pacer mutex poisoned").limit
+        self.state.lock().limit
     }
 
     /// Pace a transfer of `bytes_to_send` bytes.
@@ -147,7 +147,7 @@ impl BandwidthPacer {
         // Compute a sleep duration while holding the lock briefly, release,
         // then sleep outside the critical section.
         let sleep_for = {
-            let mut st = self.state.lock().expect("pacer mutex poisoned");
+            let mut st = self.state.lock();
             let Some(limit) = st.limit else {
                 return;
             };
@@ -184,7 +184,7 @@ impl BandwidthPacer {
             thread::sleep(sleep_for);
             // After sleeping, account for the remainder: last_refill advances
             // and tokens stay at zero (we consumed the deficit exactly).
-            let mut st = self.state.lock().expect("pacer mutex poisoned");
+            let mut st = self.state.lock();
             st.last_refill = Instant::now();
         }
     }
@@ -206,7 +206,7 @@ impl BandwidthPacer {
         if bytes == 0 {
             return Duration::ZERO;
         }
-        let mut st = self.state.lock().expect("pacer mutex poisoned");
+        let mut st = self.state.lock();
         let Some(limit) = st.limit else {
             return Duration::ZERO;
         };

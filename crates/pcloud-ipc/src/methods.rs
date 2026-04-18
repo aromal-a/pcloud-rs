@@ -1113,6 +1113,22 @@ pub enum Request {
         /// the resulting crypto profile is **not** interoperable with
         /// the upstream pcloudcom client. Inert for
         /// [`CryptoBackendIpc::PclsyncCompat`].
+        ///
+        /// # Threat model note
+        ///
+        /// This flag is a safeguard against **accidental** misuse (e.g. a
+        /// caller that does not know it is requesting an Enhanced profile).
+        /// It is **not** a replay-attack prevention mechanism. The IPC
+        /// socket is owner-only (mode `0600` in a `0700` parent directory),
+        /// so any process that can reach it is already running as the same
+        /// uid. A same-uid attacker who can write to the socket can send
+        /// `acknowledge_not_interop: true` regardless of this field.
+        ///
+        /// The correct mitigation for same-uid privilege escalation is the
+        /// OS-level file-permission model on the socket (see `IpcServer::bind`),
+        /// not a nonce or HMAC over IPC. Adding a per-request nonce tracked by
+        /// the daemon would only defend against cross-uid TOCTOU on the socket
+        /// path, which the `0700` parent directory already prevents.
         acknowledge_not_interop: bool,
         /// New crypto passphrase. Transit-only secret; Debug is
         /// redacted via [`RedactedString`].

@@ -361,6 +361,12 @@ pub enum CryptoError {
     /// collision becomes non-negligible.
     #[error("nonce budget exhausted: key rotation required before further sector seals")]
     NonceBudgetExhausted,
+    /// Caller passed an empty plaintext to a sector-seal operation. Empty
+    /// sectors are rejected explicitly rather than silently producing an
+    /// all-random ciphertext, which would be undetectable by the file-system
+    /// layer and produce an undecryptable blob (M-3.6 / audit-05).
+    #[error("sector plaintext must not be empty")]
+    EmptySector,
 }
 
 impl From<pcloud_kms::KmsError> for CryptoError {
@@ -673,9 +679,11 @@ pub struct CryptoShell {
     /// exceeds `u32::MAX` the daemon must rotate to a new per-file key or
     /// master key before sealing further sectors.
     ///
-    /// Not serialised — resets to zero on each daemon restart (the count
-    /// only needs to guard the in-process session).
-    #[serde(skip)]
+    /// Persisted across daemon restarts via `atomic_u64_serde` so the
+    /// nonce-exhaustion guard is not silently reset by a process restart.
+    /// On key rotation (password change / setup) the daemon is responsible
+    /// for zeroing this counter so the new key gets a fresh budget.
+    #[serde(with = "atomic_u64_serde", default = "default_atomic_u64")]
     pub sectors_sealed: std::sync::atomic::AtomicU64,
     /// Consecutive failed unlock attempts. Incremented on each wrong-password
     /// call to [`Self::start`]; reset to zero on a successful unlock.
@@ -1390,13 +1398,13 @@ impl CryptoShell {
         // the process (H-5 in the crypto audit plan).
         let failures = self
             .consecutive_failures
-            .load(std::sync::atomic::Ordering::Relaxed);
+            .load(std::sync::atomic::Ordering::SeqCst);
         if failures >= MAX_CONSECUTIVE_FAILURES {
             return Err(CryptoError::BruteForceLockedOut);
         }
         let backoff = lockout_backoff_secs(failures);
         if backoff > 0 {
-            let last = self.last_fail_at.load(std::sync::atomic::Ordering::Relaxed);
+            let last = self.last_fail_at.load(std::sync::atomic::Ordering::SeqCst);
             let now = unix_now_secs();
             if last > 0 && now.saturating_sub(last) < backoff {
                 return Err(CryptoError::BruteForceLockedOut);
@@ -1414,18 +1422,29 @@ impl CryptoShell {
             // Wipe the derived material before returning.
             drop(derived);
             self.unlock_state = state::UnlockState::Locked;
+            // Use SeqCst ordering so the pair of stores is totally ordered
+            // with respect to any concurrent reader of these fields. A race
+            // between fetch_add and store(last_fail_at) cannot cause the
+            // lockout to become LESS strict (the worst case is that a read
+            // races and sees incremented failures but a stale timestamp,
+            // which triggers the backoff earlier — the correct direction for
+            // security). SeqCst removes any store-reorder ambiguity within
+            // this calling thread.
             self.consecutive_failures
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.last_fail_at
-                .store(unix_now_secs(), std::sync::atomic::Ordering::Relaxed);
+                .store(unix_now_secs(), std::sync::atomic::Ordering::SeqCst);
             return Err(CryptoError::WrongPassword);
         }
         self.keys.active_key_material = Some(derived);
         self.unlock_state = state::UnlockState::Unlocked;
+        // SeqCst: paired with the SeqCst writes in the failure branch so that
+        // a successful unlock completely-before clears both counters for any
+        // concurrent observer.
         self.consecutive_failures
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+            .store(0, std::sync::atomic::Ordering::SeqCst);
         self.last_fail_at
-            .store(0, std::sync::atomic::Ordering::Relaxed);
+            .store(0, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 
@@ -1453,13 +1472,13 @@ impl CryptoShell {
         // Honor the same brute-force lockout as the Enhanced path.
         let failures = self
             .consecutive_failures
-            .load(std::sync::atomic::Ordering::Relaxed);
+            .load(std::sync::atomic::Ordering::SeqCst);
         if failures >= MAX_CONSECUTIVE_FAILURES {
             return Err(CryptoError::BruteForceLockedOut);
         }
         let backoff = lockout_backoff_secs(failures);
         if backoff > 0 {
-            let last = self.last_fail_at.load(std::sync::atomic::Ordering::Relaxed);
+            let last = self.last_fail_at.load(std::sync::atomic::Ordering::SeqCst);
             let now = unix_now_secs();
             if last > 0 && now.saturating_sub(last) < backoff {
                 return Err(CryptoError::BruteForceLockedOut);
@@ -1472,18 +1491,21 @@ impl CryptoShell {
             Ok(state) => {
                 self.pclsync_compat_state = Some(state);
                 self.unlock_state = state::UnlockState::Unlocked;
+                // SeqCst: consistent with the Enhanced path; clears lockout
+                // counters in a totally-ordered fashion.
                 self.consecutive_failures
-                    .store(0, std::sync::atomic::Ordering::Relaxed);
+                    .store(0, std::sync::atomic::Ordering::SeqCst);
                 self.last_fail_at
-                    .store(0, std::sync::atomic::Ordering::Relaxed);
+                    .store(0, std::sync::atomic::Ordering::SeqCst);
                 Ok(())
             }
             Err(_) => {
                 self.unlock_state = state::UnlockState::Locked;
+                // SeqCst: see the Enhanced path for the ordering rationale.
                 self.consecutive_failures
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 self.last_fail_at
-                    .store(unix_now_secs(), std::sync::atomic::Ordering::Relaxed);
+                    .store(unix_now_secs(), std::sync::atomic::Ordering::SeqCst);
                 Err(CryptoError::WrongPassword)
             }
         }
@@ -2627,7 +2649,10 @@ impl CryptoShell {
                     hmac_key: &sym.hmac_key,
                 };
                 let sealed = pclsync_sector::seal_sector(keys, sector_index, plaintext)
-                    .map_err(|_| CryptoError::PclsyncCompat)?;
+                    .map_err(|e| match e {
+                        pclsync_sector::SectorError::EmptySector => CryptoError::EmptySector,
+                        _ => CryptoError::PclsyncCompat,
+                    })?;
                 return Ok(SealedSectorFrame {
                     ciphertext: sealed.ciphertext,
                     auth_tag: Some(sealed.auth_tag),

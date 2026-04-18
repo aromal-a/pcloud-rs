@@ -1924,6 +1924,117 @@ fn errno_to_status(errno: i32) -> NTSTATUS {
 }
 
 // ---------------------------------------------------------------------------
+//  Signal / Ctrl-C reaper stub (M-5.1)
+// ---------------------------------------------------------------------------
+
+/// Windows Ctrl-C / service-stop signal reaper stub.
+///
+/// Mirrors the Linux `install_reaper_once` + `reaper_main` pattern but
+/// uses Windows `SetConsoleCtrlHandler` instead of `sigaction`. When the
+/// process receives a Ctrl-C, Ctrl-Break, or logoff/shutdown event the
+/// handler sets [`SHUTDOWN_REQUESTED`] to `true`; the reaper thread
+/// polls and logs a warning so operators know the process is unwinding.
+///
+/// **Stub status**: This is Phase-3 scaffolding. Actual WinFSP dispatcher
+/// shutdown (`FspFileSystemStopDispatcher`) and mount-point cleanup are
+/// tracked under `bd-xplat-windows`. The reaper here ensures we do not
+/// silently swallow termination events on Windows the way we do on Linux.
+pub mod reaper {
+    use std::sync::OnceLock;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Set to `true` by the Ctrl-C handler; polled by [`windows_reaper_main`].
+    static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+    /// Ensures the Ctrl-C handler is installed at most once per process.
+    static SIGNAL_HANDLER_INSTALLED: OnceLock<()> = OnceLock::new();
+
+    /// Ensures the reaper thread is spawned at most once per process.
+    static REAPER_INSTALLED: OnceLock<()> = OnceLock::new();
+
+    /// Install the Windows Ctrl-C signal reaper.
+    ///
+    /// Idempotent: safe to call multiple times; handler and reaper thread
+    /// are installed at most once per process lifetime.
+    ///
+    /// On non-Windows targets this is a no-op so callers can remain
+    /// platform-agnostic.
+    pub fn install_windows_signal_reaper() {
+        #[cfg(target_os = "windows")]
+        {
+            // Install the console control handler once.
+            SIGNAL_HANDLER_INSTALLED.get_or_init(|| {
+                // SAFETY: `SetConsoleCtrlHandler` is safe to call with a
+                // static function pointer and `TRUE`. The handler may be
+                // invoked on a separate OS thread but only touches an
+                // `AtomicBool`.
+                unsafe extern "system" fn ctrl_handler(ctrl_type: u32) -> i32 {
+                    // CTRL_C_EVENT=0, CTRL_BREAK_EVENT=1, CTRL_CLOSE_EVENT=2,
+                    // CTRL_LOGOFF_EVENT=5, CTRL_SHUTDOWN_EVENT=6
+                    log::warn!(
+                        "pcloud-fs[windows]: received Windows control event {} — \
+                         requesting graceful shutdown",
+                        ctrl_type
+                    );
+                    SHUTDOWN_REQUESTED.store(true, Ordering::Release);
+                    // Return TRUE to suppress the default handler (process kill).
+                    1_i32
+                }
+                // SAFETY: static fn pointer; TRUE (1) means add the handler.
+                unsafe {
+                    let _ = SetConsoleCtrlHandler(Some(ctrl_handler), 1);
+                }
+            });
+
+            // Spawn the reaper thread once.
+            REAPER_INSTALLED.get_or_init(|| {
+                if let Err(e) = std::thread::Builder::new()
+                    .name("pcloudfs-win-reaper".to_string())
+                    .spawn(windows_reaper_main)
+                {
+                    log::error!(
+                        "pcloud-fs[windows]: failed to spawn Windows reaper thread; \
+                         active mounts will NOT be cleaned up on Ctrl-C/shutdown: {e}"
+                    );
+                }
+            });
+        }
+    }
+
+    /// Reaper thread body. Polls [`SHUTDOWN_REQUESTED`] and emits a warning
+    /// when shutdown is requested. Actual WinFSP unmount is a TODO tracked
+    /// under `bd-xplat-windows`.
+    fn windows_reaper_main() {
+        use std::time::Duration;
+        loop {
+            std::thread::sleep(Duration::from_millis(250));
+            if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
+                log::warn!(
+                    "pcloud-fs[windows]: shutdown requested — \
+                     active pCloud mounts should be unmounted before process exits. \
+                     Automatic WinFSP teardown tracked under bd-xplat-windows."
+                );
+                // Exit reaper; the process is unwinding.
+                break;
+            }
+        }
+    }
+
+    /// `SetConsoleCtrlHandler` Windows API shim.
+    ///
+    /// Declared here so the reaper module compiles without importing the
+    /// full `windows` crate (which has a different feature-flag surface
+    /// than the parent module).
+    #[cfg(target_os = "windows")]
+    extern "system" {
+        fn SetConsoleCtrlHandler(
+            handler: Option<unsafe extern "system" fn(u32) -> i32>,
+            add: i32,
+        ) -> i32;
+    }
+}
+
+// ---------------------------------------------------------------------------
 //  Tests
 // ---------------------------------------------------------------------------
 

@@ -80,7 +80,48 @@ pub fn build_cli() -> Command {
                 .about("Sync folder management")
                 .subcommand(sub("list", "List sync folders"))
                 .subcommand(sub("add", "Add a sync folder"))
-                .subcommand(sub("remove", "Remove a sync folder")),
+                .subcommand(sub("remove", "Remove a sync folder"))
+                // M-8.1: sync subcommands previously missing from completion tree.
+                .subcommand(
+                    sub("change-type", "Change sync type for a registered sync folder")
+                        .arg(
+                            Arg::new("local-path")
+                                .required(true)
+                                .help("Local path of the existing sync root"),
+                        )
+                        .arg(
+                            Arg::new("sync-type")
+                                .required(true)
+                                .value_parser(["two-way", "upload-only", "download-only"])
+                                .help("New sync type"),
+                        ),
+                )
+                .subcommand(
+                    sub("localscan", "Force an immediate local-filesystem scan")
+                        .arg(
+                            Arg::new("local-path")
+                                .required(false)
+                                .help("Restrict scan to this local path (default: all roots)"),
+                        ),
+                )
+                .subcommand(
+                    sub("suggest", "Suggest folders suitable for syncing")
+                        .arg(
+                            Arg::new("limit")
+                                .long("limit")
+                                .value_parser(clap::value_parser!(u32))
+                                .help("Maximum number of suggestions to return"),
+                        ),
+                )
+                .subcommand(
+                    sub("is-syncable", "Check whether a local path can be added as a sync root")
+                        .arg(
+                            Arg::new("local-path")
+                                .required(true)
+                                .help("Local path to classify"),
+                        ),
+                )
+                .subcommand(sub("status", "Show current sync engine status and queue depth")),
         )
         .subcommand(
             Command::new("crypto")
@@ -121,15 +162,85 @@ pub fn build_cli() -> Command {
                         ),
                 )
                 .subcommand(
+                    // M-8.2: add positional folder-id and password-source flags.
                     sub(
                         "get-folder-key",
                         "Fetch + cache a folder's wrapped sym-key (debugging helper)",
+                    )
+                    .arg(
+                        Arg::new("folder-id")
+                            .required(true)
+                            .value_parser(clap::value_parser!(u64))
+                            .help("Numeric pCloud folder ID"),
+                    )
+                    .arg(
+                        Arg::new("root")
+                            .long("root")
+                            .action(ArgAction::SetTrue)
+                            .help("Treat the target as a crypto root folder"),
+                    )
+                    .arg(
+                        Arg::new("password-stdin")
+                            .long("password-stdin")
+                            .action(ArgAction::SetTrue)
+                            .help("Read crypto password from stdin"),
+                    )
+                    .arg(
+                        Arg::new("password-env")
+                            .long("password-env")
+                            .value_name("VAR")
+                            .help("Read crypto password from environment variable VAR"),
+                    )
+                    .arg(
+                        Arg::new("allow-argv-password")
+                            .long("allow-argv-password")
+                            .value_name("PASSWORD")
+                            .help(
+                                "Supply password as a CLI argument. \
+                                 WARNING: password is visible in /proc/self/cmdline and \
+                                 shell history on Linux. Use --password-stdin for production.",
+                            ),
                     ),
                 )
                 .subcommand(
+                    // M-8.2: add positional file-id and password-source flags.
                     sub(
                         "get-file-key",
                         "Fetch + cache a file's wrapped sym-key (debugging helper)",
+                    )
+                    .arg(
+                        Arg::new("file-id")
+                            .required(true)
+                            .value_parser(clap::value_parser!(u64))
+                            .help("Numeric pCloud file ID"),
+                    )
+                    .arg(
+                        Arg::new("root")
+                            .long("root")
+                            .action(ArgAction::SetTrue)
+                            .help("Treat the target as a crypto root entry"),
+                    )
+                    .arg(
+                        Arg::new("password-stdin")
+                            .long("password-stdin")
+                            .action(ArgAction::SetTrue)
+                            .help("Read crypto password from stdin"),
+                    )
+                    .arg(
+                        Arg::new("password-env")
+                            .long("password-env")
+                            .value_name("VAR")
+                            .help("Read crypto password from environment variable VAR"),
+                    )
+                    .arg(
+                        Arg::new("allow-argv-password")
+                            .long("allow-argv-password")
+                            .value_name("PASSWORD")
+                            .help(
+                                "Supply password as a CLI argument. \
+                                 WARNING: password is visible in /proc/self/cmdline and \
+                                 shell history on Linux. Use --password-stdin for production.",
+                            ),
                     ),
                 ),
         )

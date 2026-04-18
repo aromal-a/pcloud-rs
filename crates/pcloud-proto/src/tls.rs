@@ -9,10 +9,17 @@
 //!
 //! ## Hardening applied here (audit 04 H-2)
 //!
-//! - **Protocol version pin.** Only TLS 1.3 and TLS 1.2 are enabled.
-//!   Older versions (TLS 1.0 / 1.1 / SSL 3) are categorically rejected.
-//! - **Root trust.** Mozilla's `webpki-roots` bundle is used; no system
-//!   trust store, no ad-hoc CA injection.
+//! - **Protocol version pin.** Only TLS 1.3 is enabled (the comment
+//!   "1.3 and 1.2" in the previous iteration was stale — code pins only
+//!   `&[&rustls::version::TLS13]`). Older versions are categorically
+//!   rejected.
+//! - **Root trust.** Mozilla's `webpki-roots` bundle is statically
+//!   linked; no system trust store, no ad-hoc CA injection. CRL / OCSP
+//!   stapling is NOT performed — the bundle is periodically updated via
+//!   Cargo dep updates. For FedRAMP-style environments requiring dynamic
+//!   revocation checking, add a rustls `CertificateRevocationListDer`
+//!   resolver or swap to a system-trust backend; tracked as a future
+//!   hardening item (TODO: pcloud-rs-8mb.31/L-4).
 //! - **No client auth.** The pCloud binary protocol and signed-URL
 //!   HTTPS downloads do not use mTLS; refuse to carry client
 //!   certificates.

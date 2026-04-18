@@ -100,9 +100,77 @@ impl Default for StallDetector {
     }
 }
 
+impl StallDetector {
+    /// Create a [`StallDetector`] whose clock is pre-offset by `already_elapsed`.
+    ///
+    /// Use this when the caller knows that some time has already passed since
+    /// the last recorded progress event — for example when restoring a daemon
+    /// from persistent state that recorded a wall-clock progress timestamp.
+    /// By subtracting `already_elapsed` from `Instant::now()` the detector
+    /// immediately reflects the real staleness rather than resetting to zero.
+    ///
+    /// `already_elapsed` is capped at `stall_timeout` so the detector does
+    /// not immediately fire on construction (callers should check stall after
+    /// construction if they want to surface a cross-restart stall event).
+    ///
+    /// M-4.7.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use pcloud_engine::stall_detector::StallDetector;
+    ///
+    /// // Simulate a detector restored 90 s into a 300 s window.
+    /// let d = StallDetector::new_with_elapsed(Duration::from_secs(300), Duration::from_secs(90));
+    /// // 90 s of the 300 s budget is already consumed; not yet stalled.
+    /// assert!(!d.check_stall());
+    /// ```
+    #[must_use]
+    pub fn new_with_elapsed(stall_timeout: Duration, already_elapsed: Duration) -> Self {
+        let stall_timeout = stall_timeout.max(MIN_STALL_TIMEOUT);
+        // Cap the pre-consumed budget so `last_progress` stays in the past
+        // but not so far that the check would immediately fire.
+        let budget_consumed = already_elapsed.min(stall_timeout.saturating_sub(Duration::from_millis(1)));
+        let last_progress = Instant::now().checked_sub(budget_consumed).unwrap_or_else(Instant::now);
+        Self {
+            stall_timeout,
+            last_progress,
+        }
+    }
+
+    /// Export the last-progress time as a duration elapsed since `Instant::now()`.
+    ///
+    /// The returned value is suitable for persisting as a wall-clock
+    /// offset (e.g. write `SystemTime::now() - elapsed_since_progress` to the
+    /// store). On next boot compute `SystemTime::now() - persisted_wall_clock`
+    /// and pass the result to [`Self::new_with_elapsed`].
+    ///
+    /// M-4.7.
+    #[must_use]
+    pub fn elapsed_since_progress(&self) -> Duration {
+        self.last_progress.elapsed()
+    }
+}
+
 // StallDetector cannot derive PartialEq/Eq/Serialize/Deserialize because
 // Instant is not serializable. The engine treats it as transient state
 // that is re-initialized on each daemon startup.
+//
+// M-4.7 note: because `Instant` is not serializable, a `StallDetector`
+// constructed via [`StallDetector::new`] always resets its
+// `last_progress` clock to the current instant. This means a stall that
+// accumulated across a daemon restart is not detected until the new
+// instance's timeout elapses again after the restart. For the vast
+// majority of cases this is acceptable behavior — a daemon restart is
+// itself a form of forward progress and the stall window after a restart
+// is bounded by the configured `stall_timeout`.
+//
+// Callers that need true cross-restart stall tracking should persist the
+// last-progress wall-clock time (unix seconds) to the `value_kv` store
+// and use [`StallDetector::new_with_elapsed`] on the next boot to
+// initialize the detector as if the timeout window started before the
+// restart. See `sync_loop_runtime.rs` for the persistence hook.
 
 #[cfg(test)]
 mod tests {

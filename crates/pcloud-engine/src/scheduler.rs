@@ -315,32 +315,6 @@ impl Scheduler {
         batch
     }
 
-    /// Drain and return the next batch without per-root fairness, removing
-    /// the dispatched items from the queue.
-    ///
-    /// This is the **unfair consuming** variant. It takes the first
-    /// `max_parallel_uploads + max_parallel_downloads` items in priority
-    /// order, which may all belong to a single [`SyncId`]. Prefer
-    /// [`Self::next_batch`] (which enforces per-root fairness) in
-    /// production code.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// use pcloud_engine::scheduler::Scheduler;
-    /// use pcloud_model::ids::SyncId;
-    /// use pcloud_model::sync::PlannedOperation;
-    ///
-    /// let mut s = Scheduler::default();
-    /// s.replace_queue(vec![PlannedOperation::DeleteLocal {
-    ///     sync_id: SyncId::new(1),
-    ///     path: "a.txt".into(),
-    /// }]);
-    /// let batch = s.drain_batch();
-    /// assert_eq!(batch.len(), 1);
-    /// assert_eq!(s.total_queued(), 0);
-    /// ```
-
     /// Total number of operations currently in the queue (across all roots).
     ///
     /// # Example
@@ -364,12 +338,17 @@ impl Scheduler {
     }
 
     /// Drain and return the next batch, removing the dispatched items from
-    /// the queue.
+    /// the queue. Equivalent to [`Self::next_batch`] but without per-root
+    /// fairness: takes the first `max_parallel_uploads +
+    /// max_parallel_downloads` items in priority order, which may all
+    /// belong to a single [`SyncId`].
     ///
-    /// This is the **consuming** variant of [`next_batch`]. Call it when
-    /// the caller takes ownership of the dispatched operations (e.g.
-    /// feeding them directly to upload/download workers). Items removed
-    /// by `drain_batch` will not appear in subsequent calls.
+    /// # Deprecation — M-4.6
+    ///
+    /// Prefer [`Self::next_batch`] which enforces per-root fairness. This
+    /// method is retained for backward compatibility but is no longer
+    /// recommended in production sync-loop code; a high-throughput root
+    /// can starve sibling roots when this variant is used.
     ///
     /// # Example
     ///
@@ -387,6 +366,11 @@ impl Scheduler {
     /// assert_eq!(batch.len(), 1);
     /// assert_eq!(s.total_queued(), 0);
     /// ```
+    #[deprecated(
+        since = "0.1.0",
+        note = "Unfair: a single high-throughput sync root can starve siblings. \
+                Use `next_batch` instead (M-4.6)."
+    )]
     pub fn drain_batch(&mut self) -> Vec<PlannedOperation> {
         let limit = self.max_parallel_uploads + self.max_parallel_downloads;
         let limit = limit.max(1).min(self.queued_operations.len());
