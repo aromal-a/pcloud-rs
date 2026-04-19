@@ -172,6 +172,9 @@ pub(crate) fn increment_in_flight() {
 /// boundary which still drops the [`InFlightGuard`], but if anything
 /// else short-circuited we must never wrap past zero.
 pub(crate) fn decrement_in_flight() {
+    // silent drop OK: `fetch_update` only returns Err when the closure
+    // returns None — which ours never does (it unconditionally returns
+    // Some). The Result is therefore structurally infallible.
     IN_FLIGHT
         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |v| {
             Some(v.saturating_sub(1))

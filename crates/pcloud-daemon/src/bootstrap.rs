@@ -420,6 +420,17 @@ pub fn bootstrap_with_config(config: ConfigProfile) -> Result<RuntimeShell, Boot
     // cargo-feature gate (`sandbox`) so the daemon remains functional on
     // kernels that pre-date landlock (< 5.13).
     config.validate()?;
+
+    // ncx.59 (P3-E6): install the runtime-configurable IPC connection
+    // caps from the validated profile before any accept loop starts.
+    // `pcloud-ipc` defaults to the legacy 128/32 compile-time constants
+    // when this is not called (e.g. tests that build a bare
+    // `BoundIpcServer`), so this is purely additive.
+    pcloud_ipc::set_ipc_connection_caps(
+        config.limits.max_ipc_connections,
+        config.limits.max_ipc_connections_per_peer,
+    );
+
     for (path, mode) in [
         (&config.paths.config_dir, config.runtime.config_dir_mode),
         (&config.paths.state_dir, config.runtime.state_dir_mode),
@@ -848,5 +859,8 @@ pub fn bootstrap_with_config(config: ConfigProfile) -> Result<RuntimeShell, Boot
         // sets the shared handle on the shell.
         sync_loop_shared: None,
         config_path: None,
+        // ncx.54: populated by `dispatch::dispatch_with_peer` for the
+        // lifetime of a single IPC request; `None` at bootstrap.
+        current_peer_pid: None,
     })
 }

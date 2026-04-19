@@ -59,7 +59,7 @@ use thiserror::Error;
 
 use crate::crypto_util::{base64_decode as b64_crate_decode, base64_encode as b64_crate_encode};
 use crate::keys::KeyManager;
-use crate::{CryptoError, CryptoShell};
+use crate::{CryptoBackend, CryptoError, CryptoShell};
 
 /// Versioned on-wire blob layout. Bumping this invalidates old blobs.
 const TEMPPASS_BLOB_VERSION: u8 = 1;
@@ -95,6 +95,19 @@ pub enum TemppassError {
     /// Base64 decoding of a wire field failed.
     #[error("base64 decode failed")]
     Base64,
+    /// The active crypto backend is [`CryptoBackend::PclsyncCompat`] but
+    /// the share-invite handoff requires the RSA-4096-OAEP wrap flow
+    /// that the retained Rust path has not yet implemented. Issuing a
+    /// symmetric HMAC-SHA256 blob here would produce an envelope that
+    /// pCloud C clients cannot decrypt (silent data loss for invitees).
+    ///
+    /// The Enhanced backend is unaffected; see the module docs.
+    /// Tracked under `pcloud-rs-ncx.89` (RSA-4096-OAEP wrap for crypto
+    /// share invitation — C-interop parity), filed from audit-06 ncx.5.
+    #[error(
+        "crypto share invitation requires RSA-4096; not yet supported on the PclsyncCompat backend"
+    )]
+    RsaBackendRequired,
 }
 
 impl From<TemppassError> for CryptoError {
@@ -102,6 +115,12 @@ impl From<TemppassError> for CryptoError {
         match err {
             TemppassError::Locked => CryptoError::Locked,
             TemppassError::EmptyPassword => CryptoError::EmptyPassword,
+            // Surface the backend-gate as `NotYetWired` so the daemon
+            // dispatch layer returns a distinct, non-opaque error to the
+            // operator (instead of the generic "wrong password" oracle).
+            // Silent garbage-blob issuance is precisely the audit-06
+            // ncx.5 failure mode this guard exists to prevent.
+            TemppassError::RsaBackendRequired => CryptoError::NotYetWired,
             // Everything else maps to WrongPassword-ish; the caller sees a
             // single opaque "temppass derivation failed" signal and never
             // learns whether salt was wrong, tag mismatched, etc.
@@ -295,11 +314,35 @@ pub fn derive_temppass_wire(
     if temppass.is_empty() {
         return Err(TemppassError::EmptyPassword);
     }
+
+    // Preserve the existing "locked crypto is rejected without ever
+    // touching key material" contract. The Locked check comes before
+    // the backend guard so a caller on a locked shell always sees the
+    // same Locked error regardless of which backend is configured —
+    // this avoids leaking backend state to a caller who hasn't even
+    // unlocked yet.
     let master = shell
         .keys
         .active_key_material
         .as_ref()
         .ok_or(TemppassError::Locked)?;
+
+    // Audit-06 ncx.5 guard: refuse to issue an HMAC-SHA256 wrap blob
+    // when the caller is running on the C-compatible backend. The C
+    // invitee decrypts using RSA-4096-OAEP against their own public key
+    // and would silently fail to unwrap the symmetric substitute, with
+    // no user-visible error. Fail loudly and early instead. See
+    // STATUS.md rows 124/142 and follow-up bead `pcloud-rs-ncx.89`
+    // which tracks the real RSA-4096-OAEP wrap implementation.
+    //
+    // The Enhanced backend continues to work: it is wire-incompatible
+    // with the C clients by design (see `CryptoBackend::Enhanced`
+    // docstring), so the symmetric HMAC substitute is the intended
+    // authentication primitive for that backend until the full RSA
+    // flow lands.
+    if matches!(shell.effective_backend(), CryptoBackend::PclsyncCompat) {
+        return Err(TemppassError::RsaBackendRequired);
+    }
 
     // 1. Fresh random salt and nonce.
     let mut salt = [0u8; TEMPPASS_SALT_LEN];
@@ -547,6 +590,39 @@ mod tests {
         assert!(rendered.contains("<redacted>"));
         assert!(!rendered.contains("DEADBEEF"));
         assert!(!rendered.contains("deadbeef"));
+    }
+
+    #[test]
+    fn pclsync_compat_backend_refuses_to_issue_temppass_wire() {
+        // Audit-06 ncx.5 guard: the HMAC-SHA256 detached signature we
+        // emit for Enhanced is wire-incompatible with the C client's
+        // RSA-4096-OAEP wrap. The guard must fire *before* any key
+        // material is touched so a compromised temppass (or a malicious
+        // share request) cannot be used as a derivation oracle either.
+        let mut shell = started_shell("master");
+        // Force the backend selector to the C-compat path (the shell
+        // was set up under Enhanced by default; the profile loader
+        // in production would have recorded PclsyncCompat directly).
+        shell.backend = Some(CryptoBackend::PclsyncCompat);
+
+        let err = derive_temppass_wire(&shell, &SecretString::new("invitee-temp")).unwrap_err();
+        assert_eq!(err, TemppassError::RsaBackendRequired);
+        assert_eq!(CryptoError::from(err), CryptoError::NotYetWired);
+    }
+
+    #[test]
+    fn enhanced_backend_still_issues_temppass_wire() {
+        // Regression fence: the guard must not accidentally reject the
+        // Enhanced backend, which is intentionally wire-incompatible
+        // with C clients and uses the symmetric HMAC substitute by
+        // design. This is the round-trip path the Enhanced backend
+        // relies on until RSA-4096-OAEP wrap lands for both backends.
+        let shell = started_shell("master"); // setup() defaults to Enhanced
+        assert_eq!(shell.effective_backend(), CryptoBackend::Enhanced);
+        let wire = derive_temppass_wire(&shell, &SecretString::new("invitee-temp"))
+            .expect("enhanced backend must still produce a wire blob");
+        assert!(!wire.private_key_b64.is_empty());
+        assert!(!wire.signature_b64.is_empty());
     }
 
     #[test]

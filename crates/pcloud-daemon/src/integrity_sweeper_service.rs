@@ -808,8 +808,10 @@ impl IntegritySweeperShell {
                 worker_loop(rx, &shared, &stop_flag, &audit_drops, &mut audit_sink);
             })
             // INVARIANT: thread spawn failure is an OS-level resource exhaustion
-            // that is unrecoverable at daemon startup; panic with a clear message
-            // is the intended behaviour. TODO(bd-follow-up): surface as Err.
+            // (EAGAIN / thread-limit) that is unrecoverable at daemon startup;
+            // panic with a clear message is the intended behaviour. A future
+            // refactor to surface as `Err` is tracked under pcloud-rs-lyy
+            // (mass unwrap/expect sweep epic).
             .expect("spawn integrity sweeper thread");
         self.worker = Some(handle);
     }
@@ -1073,8 +1075,10 @@ impl IntegritySweeperShell {
                 );
             })
             // INVARIANT: thread spawn failure is an OS-level resource exhaustion
-            // that is unrecoverable at daemon startup; panic with a clear message
-            // is the intended behaviour. TODO(bd-follow-up): surface as Err.
+            // (EAGAIN / thread-limit) that is unrecoverable at daemon startup;
+            // panic with a clear message is the intended behaviour. A future
+            // refactor to surface as `Err` is tracked under pcloud-rs-lyy
+            // (mass unwrap/expect sweep epic).
             .expect("spawn integrity sweeper scheduler thread");
         self.scheduler_handle = Some(handle);
         Ok(())

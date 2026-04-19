@@ -2,7 +2,33 @@
 
 Single source of truth for Rust parity counts.
 
-_Last reviewed: 2026-04-18 (post-audit-05 correction)._
+_Last reviewed: 2026-04-19 (post-audit-06 wave 2)._
+
+## 2026-04-19 update — audit-06 wave 2 (ncx.4, ncx.5)
+
+Two P0 audit-06 remediation beads landed in this wave:
+
+- **ncx.4** — Rows 23 / 24 (CSV `psync_tfa_has_devices` / `psync_tfa_type`,
+  previously `Partial`) flipped to `Rejected`. Both are C desktop-UI
+  helpers with no functional analog in the Rust daemon-over-IPC surface:
+  `send_two_factor_notification` already returns the device list in-band,
+  and method dispatch is caller-driven (`send_two_factor_sms` /
+  `send_two_factor_notification` / `submit_two_factor_code`) so a
+  server-side probe is unnecessary. Rationales added as rows 23 and 24
+  in `REJECTED-RATIONALES-14042026.md`.
+- **ncx.5** — `share_temppass::derive_temppass_wire` now refuses to issue
+  a share invitation when the active crypto backend is
+  `CryptoBackend::PclsyncCompat`, returning a new
+  `TemppassError::RsaBackendRequired` (propagated to
+  `CryptoShareError::RsaBackendRequired`). This stops the silent
+  production of an invalid blob that C clients could not decrypt. The
+  Enhanced backend continues to work (symmetric HMAC substitute is
+  documented). Full RSA-4096-OAEP wrap is tracked under a new P1
+  follow-up bead; rows 124 / 142 remain `Partial` until that bead lands.
+
+Headline: **153 / 3 / 0 / 30 (186 rows).** The delta from the prior
+`153 / 5 / 0 / 28` is +2 Rejected / -2 Partial — no Implemented row
+changed.
 
 ## 2026-04-18 update — dual crypto backend landed + live KAT passed
 
@@ -522,9 +548,9 @@ Every other document must link here and avoid hard-coded totals.
 | Release posture | **Pre-alpha** | Not production-ready; `bd-1du.10` is still open. |
 | Parity rows total | **186** | Row source: [`C_FEATURE_PARITY_MATRIX.csv`](./C_FEATURE_PARITY_MATRIX.csv) |
 | Implemented | **153** | Retained-path feature coverage |
-| Partial | **5** | Rows 26 (`psync_tfa_has_devices` no impl), 27 (`psync_tfa_type` no impl), 93 (`upload_writefromfile` server-side-copy not wired), 124 (`psync_crypto_share_folder` HMAC vs RSA-4096), 142 (`psync_crypto_account_teamshare` HMAC vs RSA-4096) — audit-04/05 corrections |
+| Partial | **3** | Rows 93 (`upload_writefromfile` server-side-copy not wired), 124 (`psync_crypto_share_folder` HMAC vs RSA-4096), 142 (`psync_crypto_account_teamshare` HMAC vs RSA-4096) — audit-04/05 corrections |
 | Missing | **0** | No un-triaged C surface remains |
-| Rejected | **28** | Ghosts, stubs, insecure-legacy — see [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md) |
+| Rejected | **30** | Ghosts, stubs, UI-bridge helpers, insecure-legacy — see [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md) |
 | Test suite | **2029 passed / 0 failed / 46 ignored** | O-wave gate: all green; +1 ignored (live-gated). |
 | Workspace crates | **23+** including enterprise crates (`pcloud-idp`, `pcloud-policy`, `pcloud-fleet`, `pcloud-kms`, `pcloud-session`) and first-party plugins. |
 | ADRs landed | **18** | `docs/adr/0001`–`0018` |
@@ -545,9 +571,9 @@ Source: [`C_FEATURE_PARITY_MATRIX.csv`](./C_FEATURE_PARITY_MATRIX.csv)
 |--------------|-------|
 | Total rows   | 186   |
 | Implemented  | 153   |
-| Partial      | 5     |
+| Partial      | 3     |
 | Missing      | 0     |
-| Rejected     | 28    |
+| Rejected     | 30    |
 
 Rejected-row per-item justification lives in
 [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md).
@@ -587,19 +613,11 @@ remains open.
 
 ## Remaining Partial Rows
 
-Five rows remain Partial after the 2026-04-18 audit-04/05 corrections:
+Three rows remain Partial after the 2026-04-19 audit-06 wave 2 corrections
+(rows 26 and 27 flipped `Partial` → `Rejected` under ncx.4; see
+[`REJECTED-RATIONALES-14042026.md#row-23`](./REJECTED-RATIONALES-14042026.md#row-23)
+and `#row-24`):
 
-- **Row 26** — `auth,psync_tfa_has_devices`. Workspace grep finds
-  zero implementing code. The orchestrator exposes TFA-resend helpers
-  (`send_two_factor_sms`, `send_two_factor_notification`) but no
-  surface to query whether the authenticated account has TFA devices
-  enrolled. Needs a `SessionManager` accessor + IPC + CLI, or an
-  explicit `Rejected` rationale if adaptive TFA UI is out of scope.
-- **Row 27** — `auth,psync_tfa_type`. Workspace grep finds zero
-  implementing code. The challenge token flow tracks only a single
-  `TwoFactorRequired` boolean, not which TFA method (sms/totp/
-  notification/recovery) is active. Needs a `TfaMethod` enum sourced
-  from the server challenge response + IPC/CLI, or `Rejected`.
 - **Row 93** — `transfers,upload wire methods`. The
   `upload_writefromfile` proto encoder is implemented
   (`pcloud_proto::methods::upload::UploadWriteFromFileRequest`). The
@@ -617,9 +635,9 @@ Five rows remain Partial after the 2026-04-18 audit-04/05 corrections:
   as row 124: `share_temppass` HMAC-SHA256 vs. RSA-4096. Tracked under
   `bd-1du.5`.
 
-All five are tracked under `bd-1du.10` and block the parity gate.
+All three are tracked under `bd-1du.10` and block the parity gate.
 
-The 28 `Rejected` rows have per-item justification in
+The 30 `Rejected` rows have per-item justification in
 [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md).
 
 Previously Partial rows and their closure dates:

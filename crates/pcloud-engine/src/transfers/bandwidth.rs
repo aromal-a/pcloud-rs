@@ -132,6 +132,19 @@ impl BandwidthLimiter {
     /// unlimited). Intended for async callers that hand the returned
     /// duration to an async sleep.
     ///
+    /// # Chunk-size contract
+    ///
+    /// audit-06 LOW sync L-4 / pcloud-rs-ncx.81-d: `bytes` is a chunk
+    /// size, not a cumulative total. Callers MUST pass realistic chunk
+    /// sizes (typically 4 KiB – 4 MiB, in any case `<= i64::MAX`). The
+    /// `bytes as u64` cast is lossless on every target Rust supports
+    /// (`usize` is 16/32/64-bit and always fits in `u64`); the cast
+    /// exists only because the underlying [`BandwidthPacer`] is typed
+    /// in `u64` for portability of the refill arithmetic. A caller
+    /// passing `usize::MAX` on a 64-bit host would simply stall the
+    /// pacer for a very long time — not overflow — but no real byte
+    /// loop produces a chunk that large.
+    ///
     /// Bead: pcloud-rs-6mx.
     pub fn acquire(&self, bytes: usize) -> Duration {
         self.pacer.acquire(bytes as u64)
@@ -141,7 +154,8 @@ impl BandwidthLimiter {
     /// the current thread until the budget is available.
     ///
     /// Synchronous counterpart of [`Self::acquire`]. Use this inside
-    /// synchronous byte loops (HTTP `read()` / `write()`).
+    /// synchronous byte loops (HTTP `read()` / `write()`). The
+    /// chunk-size contract from [`Self::acquire`] applies here too.
     ///
     /// Bead: pcloud-rs-6mx.
     pub fn acquire_blocking(&self, bytes: usize) {

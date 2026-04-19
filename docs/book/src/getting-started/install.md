@@ -220,7 +220,7 @@ environment.systemPackages = [ pkgs.pcloud-rs ];
 services.pcloud-rs.enable    = true;           # enables the user unit
 
 # straight from this repo (flakes)
-nix profile install github:pcloudcom/pcloud-rs#pcloudc
+nix profile install github:ezechiel203/pcloud-rs#pcloudc
 ```
 
 The flake exposes `packages.<system>.{pcloudc,pcloud-daemon}` and a
@@ -231,18 +231,18 @@ reproducible builds out of the box.
 ### Docker / OCI
 
 ```bash
-docker pull ghcr.io/pcloudcom/pcloud-rs:stable
+docker pull ghcr.io/ezechiel203/pcloud-rs:stable
 docker run --rm -it \
   -v "$HOME/.config/pcloud-rs:/config" \
   -v "$HOME/pCloud:/sync" \
-  ghcr.io/pcloudcom/pcloud-rs:stable pcloudc --version
+  ghcr.io/ezechiel203/pcloud-rs:stable pcloudc --version
 ```
 
 The image is **cosign-signed via keyless OIDC**. Verify before running
 in production:
 
 ```bash
-cosign verify ghcr.io/pcloudcom/pcloud-rs:stable \
+cosign verify ghcr.io/ezechiel203/pcloud-rs:stable \
   --certificate-identity-regexp 'github.com/ezechiel203/pcloud-rs' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
@@ -287,7 +287,7 @@ outside the snap confinement. Tracks: `stable` / `candidate`.
 ### macOS — Homebrew (recommended)
 
 ```bash
-brew tap pcloudcom/pcloud-rs
+brew tap ezechiel203/pcloud-rs
 brew install pcloud-rs fuse-t                # fuse-t optional unless you plan to mount
 brew services start pcloud-rs
 ```
@@ -330,7 +330,7 @@ choco install pcloud-rs
 ### Windows — Scoop
 
 ```powershell
-scoop bucket add pcloud-rs https://github.com/pcloudcom/scoop-bucket
+scoop bucket add pcloud-rs https://github.com/ezechiel203/scoop-bucket
 scoop install pcloud-rs
 ```
 

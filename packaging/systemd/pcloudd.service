@@ -76,6 +76,35 @@ StateDirectory=pcloud-rs
 StateDirectoryMode=0700
 LogsDirectory=pcloud-rs
 LogsDirectoryMode=0700
+#
+# --- ReadWritePaths vs StateDirectory/LogsDirectory (audit-06 H-2 / bd-pcloud-rs-ncx.77) ---
+#
+# Under `ProtectSystem=strict`, the filesystem is read-only by default.
+# The three `*Directory=` directives above already grant the service
+# write access to the matching paths under `DynamicUser=yes`:
+#
+#   StateDirectory=pcloud-rs   -> /var/lib/pcloud-rs    (rw)
+#   LogsDirectory=pcloud-rs    -> /var/log/pcloud-rs    (rw)
+#   RuntimeDirectory=pcloud-rs -> /run/pcloud-rs        (rw, tmpfs)
+#
+# The `ReadWritePaths=` line below is therefore REDUNDANT in the default
+# `DynamicUser=yes` configuration: systemd already opens those exact
+# paths read-write when DynamicUser is active.
+#
+# It is kept ONLY as a safety net for operators who flip `User=`/`Group=`
+# (see the Identity block above) AND remove `DynamicUser=yes`. Under a
+# fixed-user deployment, `StateDirectory=` still creates the directory
+# but its write-access grant only applies when the service's effective
+# UID owns the directory. Operators replacing `DynamicUser=yes` with
+# `User=pcloud-rs` must:
+#
+#   1. `chown pcloud-rs:pcloud-rs /var/lib/pcloud-rs /var/log/pcloud-rs`
+#      so the fixed user can write to those paths, AND
+#   2. keep `ReadWritePaths=` as below so ProtectSystem=strict does not
+#      veto the write even after the chown.
+#
+# See `packaging/systemd/override.conf.example` for a drop-in that flips
+# to a fixed user and reconciles ownership.
 ReadWritePaths=/var/lib/pcloud-rs /var/log/pcloud-rs
 # No other writable paths. FUSE mount (if enabled) should be declared per-deployment.
 

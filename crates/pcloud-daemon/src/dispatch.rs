@@ -327,6 +327,35 @@ pub fn dispatch_with_peer(
     handle_request(runtime, peer_uid, request)
 }
 
+/// Peer-aware dispatch entry point that additionally stashes the peer
+/// PID on `RuntimeShell::current_peer_pid` for the duration of the
+/// request.
+///
+/// Added for ncx.54 (P3-E1) so downstream audit sites can include peer
+/// PID in their audit trail without re-threading the value through
+/// every handler signature. Clears `current_peer_pid` on exit
+/// regardless of success or panic — `handle_request` installs its own
+/// `catch_unwind` boundary, and we restore the previous value in an
+/// RAII guard so nested dispatch calls (tests) do not corrupt state.
+pub fn dispatch_with_peer_creds(
+    runtime: &mut RuntimeShell,
+    peer_uid: u32,
+    peer_pid: u32,
+    request: Request,
+) -> pcloud_ipc::Response {
+    // Stash the peer PID for the lifetime of this request so downstream
+    // audit emission can read `runtime.current_peer_pid` without a new
+    // handler argument. `handle_request` installs a `catch_unwind`
+    // boundary internally, so a panic cannot leak out and skip the
+    // restoration below — we still explicitly restore the previous
+    // value to support any future reentrant or test dispatch patterns.
+    let prev = runtime.current_peer_pid;
+    runtime.current_peer_pid = Some(peer_pid);
+    let response = handle_request(runtime, peer_uid, request);
+    runtime.current_peer_pid = prev;
+    response
+}
+
 fn dispatch_with_peer_envelope(
     runtime: &mut RuntimeShell,
     peer_uid: u32,

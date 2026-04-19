@@ -287,6 +287,15 @@ impl IncrementalScanTracker {
 /// Inode and device metadata is only available on Unix. On Windows the
 /// function falls back to depth-limiting alone (no inode cycle detection).
 ///
+/// On Windows the equivalent unique-file identity is
+/// `FILE_ID_INFO.FileId` (128-bit ReFS/NTFS file id) plus
+/// `FILE_ID_INFO.VolumeSerialNumber`; bridging that through
+/// `std::os::windows::fs::MetadataExt` is tracked as audit-06 LOW sync
+/// L-4.2 / pcloud-rs-ncx.81-b. Until that lands, Windows sync callers
+/// must rely on `max_depth` alone to bound traversal and accept the
+/// risk that a symlink/junction loop below that depth would simply
+/// never be revisited (not catastrophic — the scan still terminates).
+///
 /// # Errors
 ///
 /// Returns the first I/O error encountered while reading directory entries.

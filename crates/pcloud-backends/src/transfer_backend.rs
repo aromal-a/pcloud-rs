@@ -1661,6 +1661,10 @@ mod tests {
                     }
                     match listener.accept() {
                         Ok((s, _)) => {
+                            // silent drop OK: set_nonblocking failure here is
+                            // non-fatal — the subsequent read/write will see
+                            // the same mode and return the same error if the
+                            // socket is truly broken.
                             s.set_nonblocking(false).ok();
                             break s;
                         }

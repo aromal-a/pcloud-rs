@@ -444,9 +444,37 @@ pub struct WinFspLibrary {
     pub fsp_add_dir_info: Option<FnFspFileSystemAddDirInfo>,
 }
 
-// SAFETY: All fields are function pointers plus a HANDLE we never mutate.
-// Dispatcher threads read them concurrently; they are never re-bound after
-// [`load_winfsp`] returns.
+// SAFETY (audit-06 LOW fuse / pcloud-rs-ncx.82-d):
+//   Why `unsafe impl Sync + Send for WinFspLibrary` is sound:
+//
+//   1. Field inventory.
+//      - `handle: HMODULE` — the Win32 module handle returned by
+//        `LoadLibraryW`. We never mutate it after [`load_winfsp`]
+//        stores it, and the OS loader guarantees the module stays
+//        mapped at a fixed address for the lifetime of the process
+//        (we never call `FreeLibrary`).
+//      - `fsp_*: fn(...)` — resolved once via `GetProcAddress` and
+//        then treated as immutable `'static` thunks. Function
+//        pointers are trivially `Sync + Send`.
+//      - `fsp_add_dir_info: Option<fn(...)>` — same shape as above;
+//        `Option<fn>` is also `Sync + Send`.
+//
+//   2. Access pattern.
+//      - `WinFspLibrary` is only ever held behind a `&'static` / `Arc`
+//        that is cloned across WinFSP dispatcher worker threads.
+//      - All access is read-only; there is no interior mutability
+//        anywhere in the struct.
+//      - The resolved thunks enforce their own reentrancy contract
+//        (see [`FSP_FILE_SYSTEM_INTERFACE`] SAFETY block above for
+//        the thunk-level argument).
+//
+//   3. Teardown.
+//      - There is no teardown: the library is process-global. A
+//        mount-level teardown races unmount state on the WinFSP
+//        dispatcher, not this library handle.
+//
+//   Therefore sharing the struct across dispatcher threads cannot
+//   introduce a data race at the Rust-memory-model level.
 unsafe impl Sync for WinFspLibrary {}
 unsafe impl Send for WinFspLibrary {}
 

@@ -368,10 +368,20 @@ pub enum Command {
     /// `pcloudc diff <PATH> <REV_A> <REV_B>` — placeholder stub for the
     /// revision-diff follow-up. Handled entirely CLI-side; never reaches
     /// the daemon. Always exits `Unavailable` for now.
+    ///
+    /// ncx.65: hidden from rustdoc and from `completion.rs` so operators
+    /// do not discover a command whose only behaviour is `Unavailable`.
+    /// Follow-up tracked as `pcloud-rs-07o`.
+    #[doc(hidden)]
     FileDiff,
     /// `pcloudc restore <PATH> <REV>` — placeholder stub for the
     /// revision-restore follow-up. Handled entirely CLI-side; never
     /// reaches the daemon. Always exits `Unavailable` for now.
+    ///
+    /// ncx.65: hidden from rustdoc and from `completion.rs`. See
+    /// [`Command::FileDiff`] for rationale. Follow-up tracked as
+    /// `pcloud-rs-07o`.
+    #[doc(hidden)]
     FileRestore,
     /// `pcloudc verify <PATH> [--recursive] [--fix] [--yes]` — walk a
     /// synced tree and cross-check the local SHA256 of each file against

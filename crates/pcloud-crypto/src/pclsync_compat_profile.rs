@@ -439,4 +439,91 @@ mod tests {
             PclsyncCompatError::UnsupportedPrivType(42)
         ));
     }
+
+    /// audit-06 P3 / pcloud-rs-ncx.38: the manual `Debug` impl on
+    /// [`PclsyncCompatProfile`] MUST NOT leak the priv-key ciphertext blob
+    /// or the HMAC fingerprint bytes to any logger or panic message.
+    ///
+    /// This test constructs a profile with easy-to-spot magic byte patterns
+    /// in both secret-adjacent fields and asserts:
+    ///   1. the redaction marker `<redacted` appears in the Debug output
+    ///      (documenting the policy);
+    ///   2. the magic bytes themselves do NOT appear as hex/byte-pattern
+    ///      substrings, even rendered as a decimal list;
+    ///   3. only the lengths of the two blobs and the non-secret `flags`
+    ///      field are exposed.
+    #[test]
+    fn debug_redacts_priv_blob_and_fingerprint() {
+        // Use magic patterns unlikely to appear incidentally.
+        let magic_priv: Vec<u8> = (0..128u8).map(|i| i ^ 0xA7).collect();
+        let magic_pub: Vec<u8> = vec![0xDE; 64];
+        let mut magic_fp = [0u8; 32];
+        for (i, b) in magic_fp.iter_mut().enumerate() {
+            *b = 0xCA_u8.wrapping_add(i as u8);
+        }
+
+        let profile = PclsyncCompatProfile {
+            priv_key_ver1_blob: magic_priv.clone(),
+            pub_key_ver1_blob: magic_pub.clone(),
+            pub_fingerprint: magic_fp,
+            flags: 0xABCD,
+        };
+
+        let debug_output = format!("{:?}", profile);
+
+        // (1) The redaction marker must be present. (The pub-key-ver1 blob
+        // itself is non-secret and IS allowed to appear, so we don't check
+        // for a second <redacted>.)
+        assert!(
+            debug_output.contains("<redacted"),
+            "Debug output must contain a redaction marker; got: {debug_output}"
+        );
+
+        // (2) Raw priv-key ciphertext bytes must not appear as a Vec literal
+        // (e.g. "[167, 166, 165, ...]") or similar.
+        for window in magic_priv.windows(4) {
+            // 4-byte consecutive decimal pattern is vanishingly unlikely to
+            // appear by coincidence in a length/flags-only output.
+            let decimal_pat = format!(
+                "{}, {}, {}, {}",
+                window[0], window[1], window[2], window[3]
+            );
+            assert!(
+                !debug_output.contains(&decimal_pat),
+                "Debug output leaked priv_key_ver1_blob decimal bytes: {decimal_pat}\nfull debug: {debug_output}",
+            );
+        }
+
+        // (3) Fingerprint bytes must not appear as a decimal sequence either.
+        for window in magic_fp.windows(4) {
+            let decimal_pat = format!(
+                "{}, {}, {}, {}",
+                window[0], window[1], window[2], window[3]
+            );
+            assert!(
+                !debug_output.contains(&decimal_pat),
+                "Debug output leaked pub_fingerprint decimal bytes: {decimal_pat}\nfull debug: {debug_output}",
+            );
+        }
+
+        // Non-secret surface: length and flags must appear. 128 is the
+        // priv-blob len, 64 is the pub-blob len, 43981 = 0xABCD in decimal.
+        assert!(
+            debug_output.contains("priv_key_ver1_blob_len"),
+            "expected priv_key_ver1_blob_len field in Debug: {debug_output}"
+        );
+        assert!(
+            debug_output.contains("pub_key_ver1_blob_len"),
+            "expected pub_key_ver1_blob_len field in Debug: {debug_output}"
+        );
+        assert!(
+            debug_output.contains("128"),
+            "expected priv blob length (128) in Debug: {debug_output}"
+        );
+        // 0xABCD == 43981 decimal.
+        assert!(
+            debug_output.contains("43981") || debug_output.contains("ABCD") || debug_output.contains("abcd"),
+            "expected flags value in Debug: {debug_output}"
+        );
+    }
 }

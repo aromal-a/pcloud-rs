@@ -24,36 +24,57 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    # audit-06 wave-2 (bd-pcloud-rs-ncx.76): pin a cargo-deny version that
+    # supports `--format sarif` natively. Previous wave fell back to an
+    # empty SARIF stub when the installed cargo-deny didn't understand the
+    # flag — that silently hid real violations from the Security tab. We
+    # now fail the job if SARIF generation doesn't produce a non-empty file.
+    # cargo-deny 0.14+ added the `--format json` / `--format sarif` flag;
+    # 0.18.x is the stable series confirmed to emit SARIF 2.1.0 verbatim.
+    env:
+      CARGO_DENY_VERSION: "0.18.4"
     steps:
       - uses: actions/checkout@v4
-      - name: cargo deny (SARIF output)
-        # Run deny in a way that captures output; we convert to SARIF manually
-        # because cargo-deny-action@v2 does not yet support --format sarif.
-        # Fallback: if cargo-deny isn't installed the action installs it.
-        uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          command: check
-          arguments: --all-features
-        # cargo-deny exits non-zero on findings; we still want to upload SARIF.
-        continue-on-error: true
-        id: cargo-deny-check
-      - name: Install cargo-deny (for SARIF generation)
-        run: cargo install cargo-deny --locked 2>/dev/null || true
-      - name: Generate cargo-deny SARIF
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-deny (pinned for SARIF support)
         run: |
-          cargo deny --format sarif check --all-features 2>/dev/null \
+          cargo install cargo-deny \
+            --version "${CARGO_DENY_VERSION}" \
+            --locked
+      - name: Run cargo deny (human-readable)
+        id: cargo-deny-check
+        continue-on-error: true
+        run: cargo deny check --all-features
+      - name: Generate cargo-deny SARIF
+        id: cargo-deny-sarif
+        run: |
+          set -euo pipefail
+          # `cargo deny` exits non-zero on findings, but we still want the
+          # SARIF output so GitHub can render the annotations. `|| true`
+          # would swallow a binary / flag regression, so we instead check
+          # the output file size explicitly below.
+          cargo deny --format sarif check --all-features \
             > deny-results.sarif || true
-          # If no SARIF was produced (older cargo-deny), create a minimal empty one.
+          # Fail hard if cargo-deny did not produce a non-empty SARIF.
+          # This catches:
+          #   - the installed binary rejecting `--format sarif`,
+          #   - a regression that swallows all findings into an empty file.
+          # Do NOT write an empty stub: that hides real violations.
           if [ ! -s deny-results.sarif ]; then
-            echo '{"version":"2.1.0","$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","runs":[]}' \
-              > deny-results.sarif
+            echo "ERROR: cargo-deny did not produce any SARIF output." >&2
+            echo "       Check that cargo-deny ${CARGO_DENY_VERSION} supports --format sarif." >&2
+            exit 1
           fi
+          # Parse the JSON to confirm it has a 'runs' array. An empty array
+          # is acceptable (truly no findings); a missing 'runs' field is a
+          # malformed SARIF and must fail the step.
+          python3 -c 'import json, sys; d = json.load(open("deny-results.sarif")); assert "runs" in d, "missing runs"; print(f"SARIF runs: {len(d[\"runs\"])}")'
       - name: Upload cargo-deny SARIF to Security tab
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: deny-results.sarif
           category: cargo-deny
-        if: always()
+        if: always() && steps.cargo-deny-sarif.outcome == 'success'
       - name: Re-fail if cargo deny found violations
         if: steps.cargo-deny-check.outcome == 'failure'
         run: exit 1

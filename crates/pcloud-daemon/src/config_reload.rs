@@ -110,6 +110,8 @@ pub fn format_reloaded_event(changed_keys: &[String]) -> String {
         if i > 0 {
             msg.push_str(", ");
         }
+        // silent drop OK: write! to a String is infallible in practice; the
+        // Result is only there because of the generic `fmt::Write` trait.
         write!(msg, "\"{key}\"").ok();
     }
     msg.push_str("] }");

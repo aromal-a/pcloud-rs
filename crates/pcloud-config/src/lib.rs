@@ -296,6 +296,12 @@ pub enum ConfigError {
     /// `[sync]` section has out-of-range values.
     #[error("sync loop config is invalid: {0}")]
     InvalidSyncLoopConfig(&'static str),
+    /// `[limits]` IPC-cap bounds are invalid (ncx.59).
+    /// See [`limits::ResourceLimits::validate_ipc_limits`] for the
+    /// rules. Examples: `max_ipc_connections = 0`, or
+    /// `max_ipc_connections_per_peer > max_ipc_connections`.
+    #[error("ipc limits are invalid: {0}")]
+    InvalidIpcLimits(&'static str),
     /// An enum-style env variable held an unrecognised value.
     #[error("invalid environment value '{value}' for {name}")]
     InvalidEnvironmentValue {
@@ -375,6 +381,12 @@ impl ConfigProfile {
                 max_concurrent_uploads: 4,
                 max_concurrent_downloads: 4,
                 max_parser_frame_bytes: 8 * 1024 * 1024,
+                // ncx.59: default IPC caps match the previously
+                // compile-time `pcloud_ipc::MAX_IPC_CONNECTIONS` /
+                // `MAX_IPC_CONNECTIONS_PER_PEER` constants so existing
+                // behaviour is preserved when no override is configured.
+                max_ipc_connections: 128,
+                max_ipc_connections_per_peer: 32,
             },
             mount: MountPolicy {
                 allow_other: false,
@@ -423,6 +435,13 @@ impl ConfigProfile {
         self.sync_loop
             .validate()
             .map_err(ConfigError::InvalidSyncLoopConfig)?;
+
+        // ncx.59: reject IPC caps that are zero, clamped above the
+        // validated upper bound, or that invert the global vs per-peer
+        // relationship. `validate` runs at bootstrap and SIGHUP reload,
+        // so operator typos (e.g. swapping the two keys) are caught
+        // before the serve loop runs.
+        self.limits.validate_ipc_limits()?;
 
         Ok(())
     }

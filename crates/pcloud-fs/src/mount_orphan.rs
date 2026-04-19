@@ -61,7 +61,7 @@
 //! Keeping the parser string-based means all OSes share one
 //! well-tested code path.
 //!
-//! # Windows: TODO
+//! # Windows: not yet implemented (tracked under `bd-xplat-windows`)
 //!
 //! Windows does not expose mounts through a filesystem interface.
 //! Enumeration requires WinFSP's `FspFileSystemMountPoint` API (for

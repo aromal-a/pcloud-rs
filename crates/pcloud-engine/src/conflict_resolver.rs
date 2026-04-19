@@ -58,6 +58,32 @@ pub struct ConflictResolver {
 }
 
 impl Default for ConflictResolver {
+    /// Default policy is [`ConflictPolicy::RenameBoth`] (audit-06
+    /// §4-sonnet M-04-S03 / ncx.44).
+    ///
+    /// # Why `RenameBoth` is the safe default
+    ///
+    /// A conflicting modify-vs-modify requires picking one side's
+    /// bytes to keep as authoritative. `PreferLocal` loses remote
+    /// collaborator edits; `PreferRemote` loses local work in
+    /// progress; `NewestWins` silently resolves via wall-clock time,
+    /// which is notoriously unreliable across machines with skewed
+    /// clocks or offline edits. All three have scenarios where they
+    /// destroy user data with no audit trail.
+    ///
+    /// `RenameBoth` preserves *both* copies on disk with stable,
+    /// human-readable suffixes (`.conflict-local.<ext>` /
+    /// `.conflict-remote.<ext>`) and lets the operator — or a
+    /// downstream automation — inspect both versions before deciding
+    /// which to keep. No bytes are lost; the user is forced to
+    /// acknowledge the conflict; automated jobs can trigger
+    /// `pcloudc conflict resolve` on the presence of the suffix.
+    ///
+    /// This matches the spirit of the pCloud C client's default
+    /// conflict-handling policy which preserves an explicit conflict
+    /// copy rather than silently overwriting. An operator who
+    /// explicitly prefers a destructive policy can opt in via the
+    /// `[sync].conflict_policy` config key or `--on-conflict=...`.
     fn default() -> Self {
         Self {
             default_policy: ConflictPolicy::RenameBoth,
@@ -222,6 +248,25 @@ fn resolve_prefer_remote(sync_id: SyncId, path: &str, kind: &ConflictKind) -> Co
     }
 }
 
+/// Resolve a modify/delete conflict by picking the newer side's
+/// bytes.
+///
+/// # Tie-break rule
+///
+/// When the local and remote Unix-timestamp modification times are
+/// **equal** (or only one side is readable) the resolver falls back
+/// to **prefer-remote** ("server wins"). This matches the C client's
+/// server-wins default and is documented explicitly because a silent
+/// tie-break can surprise operators whose local edits appear to
+/// evaporate.
+///
+/// Every tie-break fires an `info!` log line carrying the sync id
+/// and the path so operators can correlate lost-work reports with
+/// concrete conflict events (audit-06 §4-opus M-4.3 / ncx.41). The
+/// log message contains neither file contents nor any secret.
+///
+/// If deterministic local-wins-on-tie is required, select
+/// [`ConflictPolicy::PreferLocal`] explicitly instead.
 fn resolve_newest_wins(
     sync_id: SyncId,
     path: &str,
@@ -237,8 +282,35 @@ fn resolve_newest_wins(
         if local > remote {
             return resolve_prefer_local(sync_id, path, kind);
         } else {
+            if local == remote {
+                // Tie-break: equal mtimes route to prefer-remote. Emit
+                // a structured log line so operators can audit
+                // silently-resolved conflicts. ncx.41.
+                log::info!(
+                    "conflict_resolver: newest_wins tie-break sync_id={} path={} \
+                     mtime={} — prefer-remote (server-wins default)",
+                    sync_id.get(),
+                    path,
+                    local,
+                );
+            }
             return resolve_prefer_remote(sync_id, path, kind);
         }
+    }
+
+    // Exactly one side's timestamp is unknown. Log the fall-through so
+    // operators can distinguish "tie on equal mtimes" from "no mtime
+    // available" — both route to prefer-remote but the operational
+    // cause is different.
+    if local_mtime_secs.is_some() ^ remote_mtime_secs.is_some() {
+        log::info!(
+            "conflict_resolver: newest_wins missing one mtime sync_id={} path={} \
+             local={:?} remote={:?} — prefer-remote (server-wins default)",
+            sync_id.get(),
+            path,
+            local_mtime_secs,
+            remote_mtime_secs,
+        );
     }
 
     // P2-a (H1): The previous implementation called

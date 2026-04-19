@@ -228,6 +228,19 @@ pub struct RuntimeShell {
     /// file without the daemon needing to know the path at every call
     /// site.
     pub config_path: Option<std::path::PathBuf>,
+    /// Per-request peer PID stash (audit context).
+    ///
+    /// Populated by `dispatch::dispatch_with_peer` at the top of every
+    /// IPC dispatch (from `SO_PEERCRED` / `getpeereid` / named-pipe
+    /// client id resolved by pcloud-ipc) and cleared at the end. `None`
+    /// for non-IPC callers (embedders, tests). Downstream audit sites
+    /// that emit privileged-action events can read this alongside
+    /// `ipc_owner_uid` to include PID in the audit trail without
+    /// re-threading the value through every handler signature.
+    ///
+    /// Fixes ncx.54 (P3-E1 dispatch_with_drain_gate was dropping
+    /// peer_pid before dispatch, losing audit context downstream).
+    pub current_peer_pid: Option<u32>,
 }
 
 impl RuntimeShell {
@@ -640,7 +653,14 @@ impl RuntimeShell {
                 self.change_public_link_expire(link_id, expire)
             }
             Request::ChangePublicLinkPassword { link_id, password } => {
-                self.change_public_link_password(link_id, password.map(|p| p.into_string()))
+                // ncx.66: wire transit is `RedactedString`; destructure
+                // immediately into `SecretString` so every daemon-side
+                // handler, backend call and proto boundary below zeroizes
+                // on drop and redacts in Debug.
+                self.change_public_link_password(
+                    link_id,
+                    password.map(|p| SecretString::new(p.into_string())),
+                )
             }
             Request::ChangePublicLinkUpload { link_id, policy } => {
                 self.change_public_link_upload(link_id, policy)
@@ -4184,7 +4204,11 @@ impl RuntimeShell {
         }
     }
 
-    fn change_public_link_password(&mut self, link_id: u64, password: Option<String>) -> Response {
+    fn change_public_link_password(
+        &mut self,
+        link_id: u64,
+        password: Option<SecretString>,
+    ) -> Response {
         let auth_token = match self
             .auth
             .snapshot()
@@ -4201,21 +4225,26 @@ impl RuntimeShell {
             }
         };
 
-        match self.public_link_runtime.change_public_link_password(
-            auth_token,
-            link_id,
-            password.clone(),
-        ) {
+        // ncx.66: capture `action` + `has_password` before moving the
+        // `SecretString` into the backend so the audit/response strings
+        // never see the cleartext password or force a `.clone()` on
+        // secret material.
+        let has_password = password.is_some();
+        match self
+            .public_link_runtime
+            .change_public_link_password(auth_token, link_id, password)
+        {
             Ok(()) => self.audited_response(
                 "publinks.change_password",
                 Some(format!(
                     "link_id={} action={}",
                     link_id,
-                    if password.is_some() { "set" } else { "clear" }
+                    if has_password { "set" } else { "clear" }
                 )),
-                match password {
-                    Some(_) => format!("public link password updated: id={}", link_id),
-                    None => format!("public link password cleared: id={}", link_id),
+                if has_password {
+                    format!("public link password updated: id={}", link_id)
+                } else {
+                    format!("public link password cleared: id={}", link_id)
                 },
             ),
             Err(err) => map_public_link_error(err),

@@ -47,6 +47,11 @@ write a new one and supersede the old.
   Proposed. Records the shape of the remaining mounted-drive write
   wiring (`bd-1du.4.6`) and the two open sub-decisions (back-pressure
   policy and `fsync` durability guarantee).
+- [0019 — IPC Serve Loop Is Single-Threaded](./0019.md) — Accepted.
+  Documents why the production accept loop handles one request at a
+  time (`RuntimeShell` is intentionally `!Send`), what timeouts bound
+  worst-case latency, and when the decision should be reopened.
+  Audit finding: `audit-06 §7-sonnet M2` / `pcloud-rs-ncx.56`.
 
 ## How to Add a New ADR
 

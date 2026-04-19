@@ -92,7 +92,7 @@ pub use pcloud_backends::upload_journal;
 pub use pcloud_backends::upload_state;
 
 pub use bootstrap::{BootstrapError, bootstrap_shell, bootstrap_with_config};
-pub use dispatch::{dispatch, dispatch_with_peer};
+pub use dispatch::{dispatch, dispatch_with_peer, dispatch_with_peer_creds};
 pub use runtime::RuntimeShell;
 #[cfg(feature = "metrics")]
 pub use runtime::install_panic_metrics_hook;

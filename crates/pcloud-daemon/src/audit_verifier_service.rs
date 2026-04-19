@@ -452,8 +452,10 @@ impl AuditVerifierShell {
                 );
             })
             // INVARIANT: thread spawn failure is an OS-level resource exhaustion
-            // that is unrecoverable at daemon startup; panic with a clear message
-            // is the intended behaviour. TODO(bd-follow-up): surface as Err.
+            // (EAGAIN / thread-limit) that is unrecoverable at daemon startup;
+            // panic with a clear message is the intended behaviour. A future
+            // refactor to surface as `Err` is tracked under pcloud-rs-lyy
+            // (mass unwrap/expect sweep epic).
             .expect("spawn audit verifier scheduler thread");
         self.scheduler_handle = Some(handle);
         Ok(())
@@ -570,6 +572,11 @@ fn scheduler_loop(
 }
 
 fn wait_until(wake: &Arc<SchedulerWake>, wait: Duration) -> bool {
+    // INVARIANT: a poisoned SchedulerWake mutex indicates a panic inside the
+    // verifier thread while it was mutating wake state. At that point the
+    // wake protocol is ambiguous (the stopped flag may be half-observed) so
+    // propagating the panic here surfaces the real bug instead of silently
+    // returning a stale state. Tracked under pcloud-rs-f0r.
     let stopped = wake.stopped.lock().expect("audit verifier wake poisoned");
     if *stopped {
         return true;

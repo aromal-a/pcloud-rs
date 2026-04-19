@@ -7,6 +7,28 @@ counts for convenience and cross-references the closure checklist and
 reviewer footnotes. If the numbers here ever drift from `STATUS.md`,
 **`STATUS.md` wins** — update it first and reconcile back here.
 
+## Sync Mechanism (audit-06 LOW deployment / pcloud-rs-ncx.87-d)
+
+This page does NOT hard-code counts — every concrete tally link
+points back to `STATUS.md`. The sync protocol is manual but
+deliberate:
+
+1. Reviewers update `STATUS.md` only, as part of closing any parity
+   bead or flipping a matrix row.
+2. This page (`docs/book/src/parity/status.md`) contains only
+   qualitative narrative plus hyperlinks to `STATUS.md`; there is
+   nothing numeric to re-sync.
+3. If a future reviewer adds a count here, the CI
+   `parity-docs-consistency` check (planned follow-up) must flag the
+   divergence. Until that check lands, the rule is enforced by
+   review.
+
+The matrix CSV (`C_FEATURE_PARITY_MATRIX.csv`) is a separate
+authoritative artefact; `STATUS.md` derives its Implemented/Partial/
+Rejected counts directly from the CSV. Do not edit counts in the CSV
+without re-running the derivation and updating `STATUS.md` in the
+same commit.
+
 ## Current Matrix Tally
 
 Row source:

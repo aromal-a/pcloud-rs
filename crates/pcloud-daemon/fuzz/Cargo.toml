@@ -1,0 +1,34 @@
+[package]
+name = "pcloud-daemon-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+# Exclude from parent workspace; cargo-fuzz is nightly-only.
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+# Audit-06 wave-2 (bd-pcloud-rs-ncx.70): fuzz the auth-vault token
+# parser. The historical `auth_vault::load_token` shim re-exports
+# `vault::file::load_token` which reads vault bytes, validates
+# whitespace trimming, and asserts the result is valid UTF-8. A stray
+# panic inside that pipeline would be a token-theft DoS, so we feed
+# it arbitrary bytes via a tempfile.
+[[bin]]
+name = "fuzz_auth_vault_decode"
+path = "fuzz_targets/fuzz_auth_vault_decode.rs"
+test = false
+doc = false
+bench = false
+
+[dependencies]
+libfuzzer-sys = "0.4"
+tempfile = "3"
+
+[dependencies.pcloud-daemon]
+path = ".."
+
+[profile.release]
+debug = 1

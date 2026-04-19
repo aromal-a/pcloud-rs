@@ -1935,10 +1935,26 @@ fn errno_to_status(errno: i32) -> NTSTATUS {
 /// handler sets [`SHUTDOWN_REQUESTED`] to `true`; the reaper thread
 /// polls and logs a warning so operators know the process is unwinding.
 ///
-/// **Stub status**: This is Phase-3 scaffolding. Actual WinFSP dispatcher
-/// shutdown (`FspFileSystemStopDispatcher`) and mount-point cleanup are
-/// tracked under `bd-xplat-windows`. The reaper here ensures we do not
-/// silently swallow termination events on Windows the way we do on Linux.
+/// **TIER-3 status (pcloud-rs-ncx.29, audit-06):** Windows signal-driven
+/// mount cleanup is **scaffolded-only and not live-verified**, consistent
+/// with the Windows IPC Tier-3 disposition documented in `CLAUDE.md`
+/// under "IPC and local security". The `SetConsoleCtrlHandler` hook is
+/// installed and the reaper logs on shutdown, but:
+///   - it does **not** call `FspFileSystemStopDispatcher`,
+///   - it does **not** call `FspFileSystemRemoveMountPoint`,
+///   - it does **not** drain an ACTIVE_MOUNTS registry (none exists on
+///     Windows — the WinFSP mount wiring is scaffolded, not live).
+///
+/// Closing the gap requires `bd-xplat-windows`: wire WinFSP through the
+/// accept loop, maintain an ACTIVE_MOUNTS equivalent keyed by
+/// `FSP_FILE_SYSTEM*`, and in [`windows_reaper_main`] call
+/// `FspFileSystemStopDispatcher` then `FspFileSystemRemoveMountPoint`
+/// per entry. Until then, a process crash or abnormal exit may leave a
+/// stale mount point that the operator must clean up manually
+/// (`fsutil reparsepoint delete` or WinFSP admin tooling).
+///
+/// The reaper here ensures we do not silently swallow termination events
+/// on Windows the way we do on Linux.
 pub mod reaper {
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -2004,6 +2020,12 @@ pub mod reaper {
     /// Reaper thread body. Polls [`SHUTDOWN_REQUESTED`] and emits a warning
     /// when shutdown is requested. Actual WinFSP unmount is a TODO tracked
     /// under `bd-xplat-windows`.
+    ///
+    /// TIER-3 (pcloud-rs-ncx.29): this body must be upgraded to call
+    /// `FspFileSystemStopDispatcher` + `FspFileSystemRemoveMountPoint`
+    /// per active mount when `bd-xplat-windows` wires WinFSP through the
+    /// accept loop. Currently there is no ACTIVE_MOUNTS registry to drain
+    /// (none exists on Windows yet), so the reaper only logs.
     fn windows_reaper_main() {
         use std::time::Duration;
         loop {
@@ -2012,7 +2034,8 @@ pub mod reaper {
                 log::warn!(
                     "pcloud-fs[windows]: shutdown requested — \
                      active pCloud mounts should be unmounted before process exits. \
-                     Automatic WinFSP teardown tracked under bd-xplat-windows."
+                     Automatic WinFSP teardown tracked under bd-xplat-windows \
+                     (Tier-3 per CLAUDE.md)."
                 );
                 // Exit reaper; the process is unwinding.
                 break;

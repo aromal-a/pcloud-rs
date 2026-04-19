@@ -101,6 +101,16 @@ impl<'de> Deserialize<'de> for Audience {
 /// JWKS cache with a TTL and a bounded forced-refresh policy. The cache stores
 /// the discovery document alongside the JWKS so a single `refresh` path can
 /// recover from rotations in either side.
+///
+/// # Poisoned-mutex policy
+///
+/// All `state.lock().expect(...)` sites in this module intentionally panic on
+/// poison. Poison implies a panic occurred while the cache was mid-mutation —
+/// at that point the cached JWKS/discovery may be half-written and cannot be
+/// trusted for signature verification. Propagating the panic fails the
+/// security-sensitive path closed (deny-by-default) rather than silently
+/// operating on corrupt cache state. Tracked under pcloud-rs-f0r (LockExt
+/// helper sweep) for a uniform `.lock_or_poisoned()` migration.
 pub(crate) struct JwksCache {
     http: reqwest::blocking::Client,
     issuer: String,

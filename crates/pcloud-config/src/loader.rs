@@ -161,11 +161,20 @@ impl ConfigProfile {
             .cloned()
             .ok_or_else(|| ConfigError::Migration("missing profile after migration".into()))?;
 
-        let profile: ConfigProfile = serde_json::from_value(profile_value).map_err(|e| {
+        let mut profile: ConfigProfile = serde_json::from_value(profile_value).map_err(|e| {
             ConfigError::InvalidJson(format!("{}: deserialize: {}", path.display(), e))
         })?;
 
         profile.validate()?;
+
+        // audit-06 LOW transport L-3 / pcloud-rs-ncx.83-e: spread retry
+        // jitter across daemon instances by re-seeding at parse time.
+        // The on-disk config keeps whatever seed the user wrote (for
+        // determinism/reproducibility), but the in-memory copy that
+        // ResilientTransport consumes gets a fresh seed per daemon
+        // start. This prevents thundering-herd alignment across
+        // multiple machines that share the same config file.
+        profile.resilience.randomize_jitter_seed();
 
         Ok(LoadedProfile {
             profile,

@@ -28,6 +28,9 @@ use std::path::PathBuf;
 
 use pcloud_crypto::pclsync_compat_profile::PclsyncCompatProfile;
 use pcloud_crypto::pclsync_rsa;
+use pcloud_crypto::pclsync_sector::{
+    SectorKeys, open_sector, seal_sector_with_rnd, PCLSYNC_AUTH_TAG_SIZE, PCLSYNC_RND_SIZE,
+};
 use sha2::{Digest, Sha256};
 
 // ---------------------------------------------------------------------------
@@ -183,5 +186,127 @@ fn pclsync_compat_kat_offline_parse_pub_blob_and_der() {
     assert_eq!(
         round_tripped_der, pub_der,
         "round-trip DER must be byte-identical to the original pub DER"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Test 5: offline sector seal+open round-trip (audit-06 P3 / pcloud-rs-ncx.33)
+// ---------------------------------------------------------------------------
+//
+// This test does NOT require PCLOUD_KAT_PASSWORD because it synthesises its
+// own deterministic key material. Its purpose is to exercise the
+// `pclsync_sector::open_sector` decrypt code path in the offline gate so
+// that a regression that breaks open_sector is caught in every CI run,
+// not only when the live KAT is armed.
+//
+// Strategy: seal plaintext of various shapes with a fixed (aes_key, hmac_key,
+// sector_id, rnd) fixture, then open the sealed output and assert byte-exact
+// recovery. This is intentionally weaker than a C-vector KAT (it does not
+// pin the ciphertext bytes to the C client's output — see ncx.35 for the
+// C-vector case), but it does prove that seal_sector and open_sector agree
+// end-to-end across every code path inside the sector encoder.
+
+fn sector_fixture() -> (SectorKeys<'static>, u64, [u8; PCLSYNC_RND_SIZE]) {
+    // Static fixture bytes; ConstBoxing via `Box::leak` keeps the references
+    // 'static without forcing the test to plumb lifetimes through.
+    static AES_KEY: [u8; 32] = [
+        0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+        0x0f, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d,
+        0x1e, 0x1f,
+    ];
+    static HMAC_KEY: [u8; 64] = [
+        0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e,
+        0x8f, 0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d,
+        0x9e, 0x9f, 0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac,
+        0xad, 0xae, 0xaf, 0xb0, 0xb1, 0xb2, 0xb3, 0xb4, 0xb5, 0xb6, 0xb7, 0xb8, 0xb9, 0xba, 0xbb,
+        0xbc, 0xbd, 0xbe, 0xbf,
+    ];
+    let rnd: [u8; PCLSYNC_RND_SIZE] = [
+        0xa0, 0xa1, 0xa2, 0xa3, 0xa4, 0xa5, 0xa6, 0xa7, 0xa8, 0xa9, 0xaa, 0xab, 0xac, 0xad, 0xae,
+        0xaf,
+    ];
+    let keys = SectorKeys {
+        aes_key: &AES_KEY,
+        hmac_key: &HMAC_KEY,
+    };
+    (keys, 0x0123_4567_89ab_cdef_u64, rnd)
+}
+
+#[test]
+fn pclsync_compat_kat_offline_sector_decrypt_roundtrip() {
+    let (keys, sector_id, rnd) = sector_fixture();
+
+    // Exercise every sector-encoder code path:
+    //   - 1-byte payload (short path; ciphertext == rnd[..1])
+    //   - 15-byte payload (short path boundary)
+    //   - 16-byte payload (first long-path / plain-CBC case)
+    //   - 33-byte payload (long path with CBC-CS tail)
+    //   - 4096-byte payload (maximum sector)
+    for &len in &[1usize, 15, 16, 33, 4096] {
+        let pt: Vec<u8> = (0..len).map(|i| ((i as u32).wrapping_mul(31) ^ 0xA5) as u8).collect();
+        // `seal_sector_with_rnd` is deterministic given fixed keys + rnd + sid,
+        // so the sealed ciphertext+tag this test produces are anchor-values:
+        // any code change that alters them (or breaks open_sector's inverse
+        // behaviour) will trip one of the assertions below without needing
+        // live KAT credentials.
+        let keys_borrow = SectorKeys {
+            aes_key: keys.aes_key,
+            hmac_key: keys.hmac_key,
+        };
+        let sealed = seal_sector_with_rnd(keys_borrow, sector_id, &pt, &rnd)
+            .expect("seal_sector_with_rnd must succeed on offline fixture");
+        assert_eq!(
+            sealed.ciphertext.len(),
+            len,
+            "ciphertext length must equal plaintext length"
+        );
+        assert_eq!(
+            sealed.auth_tag.len(),
+            PCLSYNC_AUTH_TAG_SIZE,
+            "auth tag size fixed at 32 bytes"
+        );
+
+        // Exercise the decrypt code path.
+        let keys_borrow2 = SectorKeys {
+            aes_key: keys.aes_key,
+            hmac_key: keys.hmac_key,
+        };
+        let opened = open_sector(keys_borrow2, sector_id, &sealed.ciphertext, &sealed.auth_tag)
+            .expect("open_sector must round-trip the fixture plaintext");
+        assert_eq!(
+            opened.as_slice(),
+            pt.as_slice(),
+            "sector decrypt must recover the original plaintext byte-for-byte"
+        );
+    }
+}
+
+/// Negative path: tampering with the auth tag MUST fail authentication.
+/// Proves the decrypt error path is reachable in the offline gate.
+#[test]
+fn pclsync_compat_kat_offline_sector_decrypt_rejects_tampered_tag() {
+    let (keys, sector_id, rnd) = sector_fixture();
+    let pt: Vec<u8> = (0..64).map(|i| i as u8).collect();
+
+    let keys_borrow = SectorKeys {
+        aes_key: keys.aes_key,
+        hmac_key: keys.hmac_key,
+    };
+    let mut sealed =
+        seal_sector_with_rnd(keys_borrow, sector_id, &pt, &rnd).expect("seal offline fixture");
+    // Flip one bit in the detached auth tag.
+    sealed.auth_tag[0] ^= 0x01;
+
+    let keys_borrow2 = SectorKeys {
+        aes_key: keys.aes_key,
+        hmac_key: keys.hmac_key,
+    };
+    let err = open_sector(keys_borrow2, sector_id, &sealed.ciphertext, &sealed.auth_tag)
+        .expect_err("tampered auth tag must fail authentication");
+    // Exact variant: AuthFailed (not EmptySector / too-long).
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("sector authentication failed"),
+        "expected AuthFailed, got: {msg}"
     );
 }

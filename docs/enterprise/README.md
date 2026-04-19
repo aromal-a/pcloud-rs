@@ -80,6 +80,42 @@ These rules apply to every enterprise crate and are enforced in review:
 - **Default-deny on error.** Policy engine denies on parse/eval error.
   KMS refuses to auto-fallback from a failed provider to a weaker one.
 
+## FIPS posture (audit-06 LOW deployment / pcloud-rs-ncx.87-b)
+
+pcloud-rs is **not** FIPS 140-2 / 140-3 validated today. Honest
+statement for operators in FIPS-regulated environments:
+
+- **Crypto primitives.** The Enhanced backend uses AES-256-GCM and
+  Argon2id via `aes-gcm` and `argon2` from RustCrypto; the
+  PclsyncCompat backend uses RSA-4096-OAEP and PBKDF2-HMAC-SHA512
+  via the same suite. None of these crates ship a FIPS-validated
+  module. There is no equivalent of OpenSSL's FIPS provider wired
+  into the default build.
+- **TLS.** `rustls` 0.23+ is the TLS stack. Mozilla's `rustls-fips`
+  variant (built against BoringCrypto) is **not** currently wired
+  into pcloud-rs. A reviewer wanting FIPS-aligned TLS must rebuild
+  against `rustls-fips` and re-pin `webpki-roots` against the
+  agency-approved CA bundle; no Cargo feature flag exists for this
+  today.
+- **Random.** We use `getrandom` which resolves to `/dev/urandom`
+  on Linux, `BCryptGenRandom` on Windows, `arc4random_buf` on
+  macOS. These are OS-provided CSPRNGs; they inherit whatever FIPS
+  posture the underlying OS provides (RHEL FIPS-mode kernels
+  satisfy SP 800-90A; stock Arch/Ubuntu do not claim FIPS mode).
+- **Key storage.** Keys are held in `SecretBytes` (zeroize-on-drop)
+  in-process memory. There is no PKCS#11 / HSM integration in the
+  default build. The KMS provider crates (`AwsKms`,
+  `HashicorpVault`) can delegate DEK wrapping to a HSM-backed KMS,
+  but the pcloud-rs process still sees plaintext DEKs when it
+  encrypts; that is not a FIPS boundary.
+
+Operators who require a FIPS boundary should run pcloud-rs inside a
+FIPS-mode kernel, delegate all sensitive key operations to a
+HSM-backed KMS provider, and treat pcloud-rs itself as "operates in
+a FIPS-enabled environment" rather than "is a FIPS module". A true
+FIPS-module rebuild is out of scope for this repository and is not
+on the roadmap.
+
 ## Honest posture (re-stated)
 
 Honest caveats on the landed surface:

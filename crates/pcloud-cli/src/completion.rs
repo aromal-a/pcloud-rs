@@ -579,8 +579,20 @@ pub fn build_cli() -> Command {
                         .help("Maximum number of revisions to return"),
                 ),
         )
+        // ncx.65: `diff` and `restore` are CLI-side stubs that always
+        // exit `Unavailable` (pCloud's public API does not expose the
+        // revision-diff / restore endpoints to third-party clients).
+        // Hide them from tab-completion so operators do not discover a
+        // command that cannot do what its name suggests. The handlers
+        // remain wired in `app.rs` so existing scripts that call them
+        // still receive the structured `Unavailable` response and the
+        // tracker pointer, rather than a silent "unknown command"
+        // surprise. Remove `.hide(true)` (and update docs) when the
+        // upstream API exposes a revision API — follow-up tracked as
+        // `pcloud-rs-07o`.
         .subcommand(
-            sub("diff", "Show diff between two file revisions")
+            sub("diff", "Show diff between two file revisions (stub — Unavailable)")
+                .hide(true)
                 .arg(
                     Arg::new("path")
                         .required(true)
@@ -590,7 +602,8 @@ pub fn build_cli() -> Command {
                 .arg(Arg::new("rev-b").required(true).help("Second revision ID")),
         )
         .subcommand(
-            sub("restore", "Restore a file to a specific revision")
+            sub("restore", "Restore a file to a specific revision (stub — Unavailable)")
+                .hide(true)
                 .arg(
                     Arg::new("path")
                         .required(true)

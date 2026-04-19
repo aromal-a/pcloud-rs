@@ -243,15 +243,34 @@ fn validate_vault_file(path: &Path) -> std::result::Result<(), AuthVaultError> {
     // upgrade, or manual operation would allow other local users to list the
     // vault file name even if the file itself is 0600. Re-applying 0700 here
     // is cheap and idempotent.
+    //
+    // audit-06 LOW security / pcloud-rs-ncx.80-b: if the parent is owned
+    // by us, a chmod failure is a real security problem (we should be
+    // able to tighten our own directory) and we escalate to
+    // `InsecureMetadata`. If the parent is owned by someone else
+    // (e.g. system-managed /etc), we can't tighten it and a warning is
+    // the correct outcome.
     if let Some(parent) = path.parent() {
-        // Best-effort: if the chmod fails (e.g. parent is root-owned) we warn
-        // but do not abort the load — the file-level check above is the hard
-        // security gate.
         match fs::set_permissions(parent, fs::Permissions::from_mode(0o700)) {
             Ok(()) => {}
             Err(err) => {
+                let parent_meta = fs::symlink_metadata(parent).ok();
+                let parent_owned_by_us = parent_meta
+                    .as_ref()
+                    .map(|m| m.uid() == current_uid)
+                    .unwrap_or(false);
+                if parent_owned_by_us {
+                    log::error!(
+                        "vault: failed to tighten parent dir perms on owner-matched {}: {err}",
+                        parent.display()
+                    );
+                    return Err(AuthVaultError::InsecureMetadata(
+                        "vault parent directory chmod to 0700 failed on owner-matched path",
+                    ));
+                }
                 log::warn!(
-                    "vault: could not tighten parent dir permissions on {}: {err}",
+                    "vault: could not tighten parent dir permissions on {}: {err} \
+                     (parent not owned by current uid; leaving as-is)",
                     parent.display()
                 );
             }

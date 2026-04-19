@@ -683,16 +683,53 @@ pub struct CryptoShell {
     pub mode: CryptoMode,
     /// Monotonic count of sectors successfully sealed in this session.
     ///
-    /// Used to detect nonce-space exhaustion: AES-256-GCM with a 96-bit
-    /// random nonce is safe up to roughly 2^32 encryptions per key before
-    /// collision probability becomes non-negligible. When this counter
-    /// exceeds `u32::MAX` the daemon must rotate to a new per-file key or
-    /// master key before sealing further sectors.
+    /// # What the budget is
+    ///
+    /// AES-256-GCM with a 96-bit random nonce is safe up to roughly `2^32`
+    /// encryptions per key before birthday-bound nonce collision probability
+    /// becomes non-negligible (NIST SP 800-38D §8.3). We enforce a hard cap
+    /// at `u32::MAX - NONCE_BUDGET_SAFETY_MARGIN` via
+    /// [`CryptoShell::seal_sector`]; once the counter crosses that threshold
+    /// the shell returns [`CryptoError::NonceBudgetExhausted`] and refuses
+    /// to issue further sector nonces until the key is rotated.
+    ///
+    /// # When the budget resets
+    ///
+    /// The counter is zeroed on exactly two events:
+    ///
+    /// 1. **Successful password change / key rotation** — the master key
+    ///    that parameterises the derived per-file AES keys has changed, so
+    ///    the old nonce space is cryptographically a different random
+    ///    domain. See [`CryptoShell::change_password_unlocked`] (near line
+    ///    1888 in this file) where `self.sectors_sealed.store(0, SeqCst)`
+    ///    runs after the successful rewrap.
+    /// 2. **`reset()` / fresh `setup()`** — a `reset()` drops the shell
+    ///    state back to `NotSetup` and a subsequent `setup()` installs a
+    ///    brand-new master key; the counter is reinitialised to zero by
+    ///    the `Default` impl (line 880) so the new key gets a fresh budget.
+    ///
+    /// # Why reset is safe
+    ///
+    /// Reset is safe because the "budget" is a property of the *active key
+    /// schedule*, not the persisted state. The birthday bound on AES-GCM
+    /// nonce reuse applies within the same key — once the key is rotated,
+    /// the counter from the previous key carries no cryptographic meaning
+    /// against the new key. Resetting does **not** relax the bound; it
+    /// simply starts a fresh counter for the new key. An attacker who
+    /// forces frequent rotations only ever gets one budget window per key,
+    /// and each budget window is independently capped.
+    ///
+    /// # Persistence / restart behaviour
     ///
     /// Persisted across daemon restarts via `atomic_u64_serde` so the
-    /// nonce-exhaustion guard is not silently reset by a process restart.
-    /// On key rotation (password change / setup) the daemon is responsible
-    /// for zeroing this counter so the new key gets a fresh budget.
+    /// nonce-exhaustion guard is **not** silently reset by a process
+    /// restart (an attacker could otherwise force the counter back to
+    /// zero by crashing/restarting the daemon under the same master key).
+    /// A restart under the same key resumes from the persisted count.
+    ///
+    /// A restart *after* a key rotation deserialises the already-zeroed
+    /// counter — the reset happened in-memory at rotation time and was
+    /// then flushed to disk as part of the shell's persisted state.
     #[serde(with = "atomic_u64_serde", default = "default_atomic_u64")]
     pub sectors_sealed: std::sync::atomic::AtomicU64,
     /// Consecutive failed unlock attempts. Incremented on each wrong-password
@@ -825,6 +862,43 @@ mod atomic_u32_serde {
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<AtomicU32, D::Error> {
         Ok(AtomicU32::new(u32::deserialize(d)?))
     }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Serialize, Deserialize)]
+        struct Wrapper {
+            #[serde(with = "super", default = "default_zero")]
+            val: AtomicU32,
+        }
+        fn default_zero() -> AtomicU32 {
+            AtomicU32::new(0)
+        }
+
+        fn round_trip(v: u32) {
+            let w = Wrapper {
+                val: AtomicU32::new(v),
+            };
+            let ser = serde_json::to_string(&w).expect("serialize");
+            let back: Wrapper = serde_json::from_str(&ser).expect("deserialize");
+            assert_eq!(
+                back.val.load(Ordering::Relaxed),
+                v,
+                "AtomicU32 round-trip value mismatch for {v}"
+            );
+        }
+
+        /// audit-06 P3 / pcloud-rs-ncx.37: serde shim for AtomicU32 must
+        /// round-trip every value in the u32 domain exactly.
+        #[test]
+        fn atomic_u32_serde_round_trip_all_corners() {
+            for v in [0u32, 1, 2, 42, 12345, u32::MAX / 2, u32::MAX - 1, u32::MAX] {
+                round_trip(v);
+            }
+        }
+    }
 }
 
 /// Serde shim for [`std::sync::atomic::AtomicU64`] used by
@@ -841,6 +915,61 @@ mod atomic_u64_serde {
 
     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<AtomicU64, D::Error> {
         Ok(AtomicU64::new(u64::deserialize(d)?))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Serialize, Deserialize)]
+        struct Wrapper {
+            #[serde(with = "super", default = "default_zero")]
+            val: AtomicU64,
+        }
+        fn default_zero() -> AtomicU64 {
+            AtomicU64::new(0)
+        }
+
+        fn round_trip(v: u64) {
+            let w = Wrapper {
+                val: AtomicU64::new(v),
+            };
+            let ser = serde_json::to_string(&w).expect("serialize");
+            let back: Wrapper = serde_json::from_str(&ser).expect("deserialize");
+            assert_eq!(
+                back.val.load(Ordering::Relaxed),
+                v,
+                "AtomicU64 round-trip value mismatch for {v}"
+            );
+        }
+
+        /// audit-06 P3 / pcloud-rs-ncx.37: serde shim for AtomicU64 must
+        /// round-trip every value in the u64 domain exactly, including the
+        /// values the shell writes (`sectors_sealed` and `last_fail_at`).
+        #[test]
+        fn atomic_u64_serde_round_trip_all_corners() {
+            for v in [
+                0u64,
+                1,
+                12345,
+                u64::from(u32::MAX),
+                u64::from(u32::MAX) + 1,
+                u64::MAX / 2,
+                u64::MAX - 1,
+                u64::MAX,
+            ] {
+                round_trip(v);
+            }
+        }
+
+        /// audit-06 P3 / pcloud-rs-ncx.37 explicit example from the bead:
+        /// sectors_sealed=12345 must survive a full serialize→deserialize
+        /// round-trip through the atomic serde shim.
+        #[test]
+        fn atomic_u64_serde_sectors_sealed_example() {
+            round_trip(12345u64);
+        }
     }
 }
 
@@ -1296,6 +1425,19 @@ impl CryptoShell {
         hint: Option<String>,
         backend: CryptoBackend,
     ) -> Result<(), CryptoError> {
+        // audit-06 LOW crypto L-4 / pcloud-rs-ncx.79-g: if the shell already
+        // holds a backend hint that disagrees with the caller's explicit
+        // choice, warn at setup time. This is not an error (setup on a
+        // not-yet-setup shell can still succeed), but it does flag
+        // operator confusion before we bake the choice into the profile.
+        if let Some(existing) = self.backend
+            && existing != backend
+        {
+            log::warn!(
+                target: "pcloud_crypto::setup",
+                "crypto setup backend mismatch: existing={existing} requested={backend} (audit-06 LOW crypto L-4 / pcloud-rs-ncx.79-g)"
+            );
+        }
         match backend {
             CryptoBackend::Enhanced => self.setup_enhanced(password, hint),
             CryptoBackend::PclsyncCompat => {

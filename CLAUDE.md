@@ -491,6 +491,28 @@ FreeBSD do not fail the PR gate. See the FreeBSD job comment in
 `.github/workflows/ci.yml` for the documented conditions under which
 `continue-on-error` may be removed.
 
+**Signal-driven mount cleanup posture (pcloud-rs-ncx.29, audit-06):**
+Signal-driven reaping of stale kernel mount handles on SIGTERM/SIGINT
+(or Ctrl-C / service-stop on Windows) is live-verified on **Linux only**
+(`crates/pcloud-fs/src/platform/linux.rs::reap_all_mounts` walks
+ACTIVE_MOUNTS and issues `umount2(MNT_DETACH)` per-entry). macOS has
+the same pattern wired against `fuse-t`
+(`platform/macos.rs::install_signal_handler_once`), live-verified on
+real Darwin hardware is still pending hardware sign-off.
+**BSD and Windows mount cleanup is Tier-3**: the signal handler is
+installed and an AtomicBool flag is flipped, but the reaper does **not**
+drain an ACTIVE_MOUNTS registry and does **not** call
+`unmount(MNT_FORCE)` / `FspFileSystemStopDispatcher`. No such registry
+or dispatcher wiring exists on those platforms in this fork (they are
+tracked under `bd-xplat-bsd` and `bd-xplat-windows`). Operationally
+this means: on BSD and Windows, a process crash may leave a stale
+mountpoint that the operator must clean up manually (`umount -f` on
+BSD, WinFSP admin tooling on Windows). Do not claim graceful shutdown
+on BSD/Windows until `bd-xplat-bsd` / `bd-xplat-windows` close and the
+reaper bodies at `platform/bsd.rs::bsd_reaper_main` and
+`platform/windows.rs::windows_reaper_main` are upgraded to drain their
+respective mount registries.
+
 Rules:
 
 - do not weaken socket or runtime dir permissions,

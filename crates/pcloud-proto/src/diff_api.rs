@@ -243,6 +243,111 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// Resume-safe poller helper (audit-06 §6-opus M2 / ncx.50)
+// ---------------------------------------------------------------------------
+
+/// Resume-safe wrapper around [`DiffApi::poll_diff`] that owns the
+/// `diffid` cursor across calls and preserves it across mid-stream
+/// reconnects.
+///
+/// # Why this exists (ncx.50)
+///
+/// Callers that drive `poll_diff` by hand tend to forget the subtle
+/// invariant that a transport error on one poll must **not** roll the
+/// cursor back to 0. A reconnect must resume at the **last
+/// acknowledged** `diffid` the server sent — otherwise the client
+/// silently replays the whole diff stream from the epoch (expensive
+/// and can cause spurious conflict events on reprocessed entries).
+///
+/// This helper encapsulates the safe pattern:
+///
+/// - `new(initial_cursor)` — seed from persisted state at startup.
+/// - `poll_once(api, auth_token, limit)` — fetch next batch. On
+///   success the cursor advances; on any error the cursor is
+///   untouched so the next poll re-sends the same `diffid`.
+/// - `cursor()` — the *current* resume point; callers should persist
+///   this whenever [`Self::poll_once`] returns `Ok`.
+///
+/// The helper is intentionally `Clone` so callers that restart a
+/// stream (e.g. after an auth-token refresh) can snapshot the cursor
+/// cheaply.
+///
+/// # Example
+///
+/// ```ignore
+/// // Pseudocode — omits transport construction for brevity.
+/// let mut state = DiffPollerState::new(persisted_cursor);
+/// loop {
+///     match state.poll_once(&api, auth_token, 512) {
+///         Ok(batch) => {
+///             persist_cursor(state.cursor());
+///             dispatch(batch);
+///         }
+///         Err(_) => {
+///             // Cursor is untouched — retry at the same diffid
+///             // after backoff.
+///             backoff();
+///         }
+///     }
+/// }
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffPollerState {
+    cursor: u64,
+}
+
+impl DiffPollerState {
+    /// Seed a new poller from a persisted cursor. Pass `0` for the
+    /// initial sync.
+    #[must_use]
+    pub const fn new(initial_cursor: u64) -> Self {
+        Self {
+            cursor: initial_cursor,
+        }
+    }
+
+    /// Current resume point. Callers should persist this value
+    /// whenever [`Self::poll_once`] returns `Ok`.
+    #[must_use]
+    pub const fn cursor(&self) -> u64 {
+        self.cursor
+    }
+
+    /// Explicit reset — use only when the server signals a full
+    /// resync (`DiffResponse::reset == true`). Clears the cursor to
+    /// `0`.
+    pub const fn reset(&mut self) {
+        self.cursor = 0;
+    }
+
+    /// Poll one batch. On success advances the cursor to
+    /// `batch.new_diff_id`; on failure the cursor is **not** touched,
+    /// so a retry after reconnect uses the same `diffid` as the
+    /// failed attempt.
+    ///
+    /// When the response carries `reset=true` the cursor is advanced
+    /// to `batch.new_diff_id` (typically 0) so a subsequent poll
+    /// starts from the point the server indicated.
+    pub fn poll_once<T>(
+        &mut self,
+        api: &DiffApi<T>,
+        auth_token: impl Into<String>,
+        limit: u64,
+    ) -> Result<DiffResponse, DiffApiError<T::Error>>
+    where
+        T: ProtocolTransport + ApiServerHintConsumer,
+    {
+        let resume_cursor = self.cursor;
+        let response = api.poll_diff(auth_token, resume_cursor, limit)?;
+        // Only mutate on success. If poll_diff returned Err we never
+        // reach this line, so self.cursor stays at `resume_cursor`
+        // and a subsequent retry sends the same diffid.
+        self.cursor = response.new_diff_id;
+        Ok(response)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Conversion: DiffResponse -> RemoteDiffBatch (engine types)
 // ---------------------------------------------------------------------------
 
@@ -727,5 +832,125 @@ mod tests {
             .expect("poll 2");
         assert_eq!(resp2.new_diff_id, 88);
         assert!(!resp2.has_more);
+    }
+
+    // -----------------------------------------------------------------
+    // ncx.50: DiffPollerState resume-with-cursor tests.
+    // -----------------------------------------------------------------
+
+    /// Transport that fails the next N `execute` calls with an IO
+    /// error, then returns the queued responses in order. Used to
+    /// simulate a reconnect mid-stream: poll N fails, then poll N+1
+    /// must resume at the same cursor.
+    #[derive(Debug)]
+    struct FlakyTransport {
+        responses: Mutex<Vec<Value>>,
+        fail_next: Mutex<usize>,
+    }
+
+    impl FlakyTransport {
+        fn with(responses: Vec<Value>, fail_next: usize) -> Self {
+            Self {
+                responses: Mutex::new(responses.into_iter().rev().collect()),
+                fail_next: Mutex::new(fail_next),
+            }
+        }
+    }
+
+    impl ProtocolTransport for FlakyTransport {
+        type Error = io::Error;
+
+        fn execute(&self, _request: &EncodedRequest) -> Result<Value, Self::Error> {
+            let mut remaining = self.fail_next.lock().expect("lock");
+            if *remaining > 0 {
+                *remaining -= 1;
+                return Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "simulated reconnect",
+                ));
+            }
+            self.responses
+                .lock()
+                .expect("lock")
+                .pop()
+                .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "no response"))
+        }
+    }
+
+    impl ApiServerHintConsumer for FlakyTransport {
+        fn apply_api_server_hint(&self, _api_server: &str) {}
+    }
+
+    #[test]
+    fn poller_state_preserves_cursor_across_transport_failure() {
+        // Start at cursor 42. First poll fails; second poll must
+        // resume at 42 (not 0).
+        let transport = FlakyTransport::with(vec![one_file_response(99, false)], 1);
+        let api = DiffApi::new(transport);
+        let mut state = DiffPollerState::new(42);
+
+        // First poll: cursor=42, fails.
+        let err = state.poll_once(&api, "token", 128).expect_err("must fail");
+        assert!(matches!(err, DiffApiError::Transport(_)));
+        assert_eq!(
+            state.cursor(),
+            42,
+            "cursor MUST NOT regress on transport failure (ncx.50)"
+        );
+
+        // Second poll: cursor still 42, succeeds, advances to 99.
+        let resp = state.poll_once(&api, "token", 128).expect("succeeds");
+        assert_eq!(resp.new_diff_id, 99);
+        assert_eq!(state.cursor(), 99, "cursor advanced after ok");
+    }
+
+    #[test]
+    fn poller_state_initial_cursor_is_exposed() {
+        let state = DiffPollerState::new(123);
+        assert_eq!(state.cursor(), 123);
+    }
+
+    #[test]
+    fn poller_state_advances_on_each_successful_poll() {
+        let transport = MockTransport::with_responses(vec![
+            one_file_response(10, true),
+            one_file_response(20, true),
+            one_file_response(30, false),
+        ]);
+        let api = DiffApi::new(transport);
+        let mut state = DiffPollerState::new(0);
+
+        state.poll_once(&api, "token", 128).expect("p1");
+        assert_eq!(state.cursor(), 10);
+        state.poll_once(&api, "token", 128).expect("p2");
+        assert_eq!(state.cursor(), 20);
+        state.poll_once(&api, "token", 128).expect("p3");
+        assert_eq!(state.cursor(), 30);
+    }
+
+    #[test]
+    fn poller_state_reset_clears_cursor() {
+        let mut state = DiffPollerState::new(500);
+        state.reset();
+        assert_eq!(state.cursor(), 0);
+    }
+
+    #[test]
+    fn poller_state_multi_failure_reconnect_preserves_cursor() {
+        // Three failures in a row, then success. The poll driver
+        // (simulating a retry loop) must keep calling poll_once with
+        // the same state object; the cursor must stay pinned at the
+        // initial value until the final success.
+        let transport = FlakyTransport::with(vec![one_file_response(77, false)], 3);
+        let api = DiffApi::new(transport);
+        let mut state = DiffPollerState::new(55);
+
+        for _ in 0..3 {
+            let _ = state.poll_once(&api, "token", 128).expect_err("fails");
+            assert_eq!(state.cursor(), 55, "cursor must stay at 55 across failures");
+        }
+        let resp = state.poll_once(&api, "token", 128).expect("final ok");
+        assert_eq!(resp.new_diff_id, 77);
+        assert_eq!(state.cursor(), 77);
     }
 }

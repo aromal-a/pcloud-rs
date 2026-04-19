@@ -33,17 +33,28 @@ use crate::{
     server::{IpcError, MAX_REQUEST_BYTES},
 };
 
-/// Hard cap on the number of simultaneously active IPC connections
-/// across the entire process.
+/// Default hard cap on the number of simultaneously active IPC
+/// connections across the entire process.
 ///
 /// When the cap is reached, newly accepted connections are closed
 /// immediately (without reading or responding) so the server-side thread
 /// pool cannot be exhausted by a burst of idle or slow clients.
 /// 128 is well above typical real-world concurrency (one or two CLI
 /// callers at a time) while bounding worst-case thread/fd consumption.
+///
+/// # Runtime override (ncx.59)
+///
+/// This is a default only. The active cap is held in
+/// [`MAX_IPC_CONNECTIONS_RUNTIME`] and can be raised or lowered at
+/// daemon startup via [`set_ipc_connection_caps`], which is wired from
+/// `pcloud-config` [`ResourceLimits`](pcloud_config::limits::ResourceLimits).
+/// The runtime API makes enterprise deployments with large numbers of
+/// local automation clients (e.g. per-service-account CLI callers)
+/// possible without a rebuild.
 pub const MAX_IPC_CONNECTIONS: usize = 128;
 
-/// Per-peer (per-UID) cap on simultaneously active IPC connections.
+/// Default per-peer (per-UID) cap on simultaneously active IPC
+/// connections.
 ///
 /// Even when the process-global cap has not been reached, a single local
 /// user cannot hold more than this many concurrent connections. This
@@ -51,7 +62,56 @@ pub const MAX_IPC_CONNECTIONS: usize = 128;
 /// slot pool before other users can connect.
 ///
 /// Default: 32 (generous for legitimate use; tight enough to limit abuse).
+///
+/// See [`MAX_IPC_CONNECTIONS`] for the runtime-override story (ncx.59).
 pub const MAX_IPC_CONNECTIONS_PER_PEER: usize = 32;
+
+/// Active process-wide IPC connection cap.
+///
+/// Initialised to [`MAX_IPC_CONNECTIONS`]; mutable at daemon bootstrap
+/// via [`set_ipc_connection_caps`] so operators can raise the cap without
+/// recompiling. Read on every accepted connection in
+/// [`ConnectionGuard::acquire`].
+static MAX_IPC_CONNECTIONS_RUNTIME: AtomicUsize = AtomicUsize::new(MAX_IPC_CONNECTIONS);
+
+/// Active per-peer IPC connection cap.
+///
+/// Initialised to [`MAX_IPC_CONNECTIONS_PER_PEER`]; mutable at daemon
+/// bootstrap via [`set_ipc_connection_caps`]. Read on every accepted
+/// connection in [`ConnectionGuard::acquire`].
+static MAX_IPC_CONNECTIONS_PER_PEER_RUNTIME: AtomicUsize =
+    AtomicUsize::new(MAX_IPC_CONNECTIONS_PER_PEER);
+
+/// Install runtime caps for the process-global and per-peer IPC
+/// connection limits (ncx.59, P3-E6).
+///
+/// Called exactly once at daemon bootstrap from `pcloud-daemon::bootstrap`
+/// so the values sourced from the validated
+/// [`ResourceLimits`](pcloud_config::limits::ResourceLimits) configuration
+/// override the compile-time defaults. Calling again simply overwrites
+/// the previous values; the caller is responsible for not racing caps
+/// during live serve (the daemon only wires this at startup).
+///
+/// `global` must be at least `per_peer`; otherwise the per-peer cap is
+/// clamped down to `global` silently. Both are capped at `usize::MAX`;
+/// passing `0` effectively disables accepts.
+pub fn set_ipc_connection_caps(global: usize, per_peer: usize) {
+    let per_peer = per_peer.min(global);
+    MAX_IPC_CONNECTIONS_RUNTIME.store(global, AtomicOrdering::Release);
+    MAX_IPC_CONNECTIONS_PER_PEER_RUNTIME.store(per_peer, AtomicOrdering::Release);
+}
+
+/// Inspect the active process-global IPC connection cap.
+#[must_use]
+pub fn ipc_connection_cap() -> usize {
+    MAX_IPC_CONNECTIONS_RUNTIME.load(AtomicOrdering::Acquire)
+}
+
+/// Inspect the active per-peer IPC connection cap.
+#[must_use]
+pub fn ipc_connection_cap_per_peer() -> usize {
+    MAX_IPC_CONNECTIONS_PER_PEER_RUNTIME.load(AtomicOrdering::Acquire)
+}
 
 /// Process-wide active connection counter. Incremented on accept,
 /// decremented when the connection handler returns (via RAII guard).
@@ -82,6 +142,13 @@ impl ConnectionGuard {
     /// Both caps are checked and incremented atomically under the
     /// `PEER_CONNECTIONS` mutex to avoid TOCTOU races.
     fn acquire(peer_uid: u32) -> Option<Self> {
+        // ncx.59: read runtime-configurable caps on every accept. The
+        // atomic load is cheap (Acquire ordering matches the Release
+        // store in `set_ipc_connection_caps`) and the value is set once
+        // at bootstrap, so there is no steady-state contention.
+        let global_cap = MAX_IPC_CONNECTIONS_RUNTIME.load(AtomicOrdering::Acquire);
+        let per_peer_cap = MAX_IPC_CONNECTIONS_PER_PEER_RUNTIME.load(AtomicOrdering::Acquire);
+
         // Lock the per-peer map first, then CAS the global counter.
         // Holding the lock during the global CAS is intentional: it
         // serialises the (check global, check peer, increment both)
@@ -91,7 +158,7 @@ impl ConnectionGuard {
 
         // Check and reserve the per-peer slot first (cheaper check).
         let peer_count = map.entry(peer_uid).or_insert(0);
-        if *peer_count >= MAX_IPC_CONNECTIONS_PER_PEER {
+        if *peer_count >= per_peer_cap {
             return None;
         }
 
@@ -99,7 +166,7 @@ impl ConnectionGuard {
         // Use a CAS loop so we never overshoot even under concurrent pressure.
         loop {
             let global = ACTIVE_CONNECTIONS.load(AtomicOrdering::Relaxed);
-            if global >= MAX_IPC_CONNECTIONS {
+            if global >= global_cap {
                 // Clean up the tentative per-peer reservation.
                 if *peer_count == 0 {
                     map.remove(&peer_uid);
@@ -235,6 +302,12 @@ pub enum IpcTransportError {
 /// [`Self::serve_once`] loop is the deliberate production path;
 /// `accept_and_spawn` is retained for embedders whose handler types are
 /// `Send`.
+///
+/// This decision is formalised in
+/// `docs/adr/0019-ipc-serve-loop-single-threaded.md` (ncx.56 — audit-06
+/// §7-sonnet M2). That ADR lists the read/write timeouts and connection
+/// caps that bound worst-case latency today, and the conditions under
+/// which the serve loop may migrate to a channel-based dispatcher.
 #[derive(Debug)]
 pub struct BoundIpcServer {
     listener: UnixListener,

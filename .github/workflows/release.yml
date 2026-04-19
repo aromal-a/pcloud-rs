@@ -21,7 +21,8 @@ jobs:
     name: Build release artifacts (Linux x86_64)
     runs-on: ubuntu-latest
     outputs:
-      binary-path: target/release/pcloudd
+      daemon-path: target/release/pcloudd
+      cli-path: target/release/pcloudc
     steps:
       - uses: actions/checkout@v4
 
@@ -33,15 +34,21 @@ jobs:
       - name: Build with cargo-auditable
         # cargo-auditable embeds a dependency manifest inside the binary
         # (pcloud-rs-s1p.55 / FIX-PLAN P2-7 H-4).
+        # Both pcloudd (daemon) and pcloudc (CLI) are shipped: the nfpm
+        # Debian/RPM manifest (packaging/debian/nfpm.yaml:65-72) places both
+        # under /usr/bin, and end users need the CLI to drive the daemon.
+        # (pcloud-rs-ncx.26 / audit-06 P2-12)
         run: |
           cargo install cargo-auditable --locked
           export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
-          cargo auditable build --release -p pcloud-daemon
+          cargo auditable build --release -p pcloud-daemon -p pcloud-cli
 
       - name: Compute SHA-256 digests
         run: |
           sha256sum target/release/pcloudd > target/release/pcloudd.sha256
+          sha256sum target/release/pcloudc > target/release/pcloudc.sha256
           cat target/release/pcloudd.sha256
+          cat target/release/pcloudc.sha256
 
       - uses: actions/upload-artifact@v4
         with:
@@ -49,6 +56,8 @@ jobs:
           path: |
             target/release/pcloudd
             target/release/pcloudd.sha256
+            target/release/pcloudc
+            target/release/pcloudc.sha256
 
   # ── SBOM generation ─────────────────────────────────────────────────────
   sbom:
@@ -70,6 +79,9 @@ jobs:
             | sh -s -- -b /usr/local/bin
 
       - name: Generate SBOM (CycloneDX JSON)
+        # Syft is invoked against the daemon binary; both pcloudd and
+        # pcloudc are built from the same Cargo.lock so the dependency
+        # inventory is identical. The SBOM therefore covers both binaries.
         run: |
           syft dist/pcloudd \
             --source-name pcloud-rs \
@@ -126,7 +138,7 @@ jobs:
           COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
         run: |
-          for artifact in dist/pcloudd dist/pcloud-rs.sbom.cdx.json dist/pcloud-rs.sbom.spdx.json; do
+          for artifact in dist/pcloudd dist/pcloudc dist/pcloud-rs.sbom.cdx.json dist/pcloud-rs.sbom.spdx.json; do
             if [ -f "$artifact" ]; then
               if [ -n "${COSIGN_KEY}" ]; then
                 # Key-based fallback path.
@@ -177,6 +189,8 @@ jobs:
           files: |
             dist/pcloudd
             dist/pcloudd.sha256
+            dist/pcloudc
+            dist/pcloudc.sha256
             dist/pcloud-rs.sbom.cdx.json
             dist/pcloud-rs.sbom.spdx.json
             dist/*.sig

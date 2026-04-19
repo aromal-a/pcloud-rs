@@ -27,6 +27,7 @@
   - [0008 — Streaming Download Buffer Size](./adr/0008.md)
   - [0009 — Parity Matrix Truth Source](./adr/0009.md)
   - [0010 — FUSE Write-Path Daemon Wiring Pending](./adr/0010.md)
+  - [0019 — IPC Serve Loop Is Single-Threaded](./adr/0019.md)
 
 # Security
 

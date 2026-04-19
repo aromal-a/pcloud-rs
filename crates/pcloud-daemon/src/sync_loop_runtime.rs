@@ -185,9 +185,10 @@ impl RealSyncLoopRuntime {
 
         let full_scan_interval = Duration::from_secs(config.sync_loop.full_scan_interval_secs);
 
-        // TODO(pcloud-rs-8mb.29/L-3): AuditRepository load failure silently
-        // falls back to an empty default; surface as a warn so operators
-        // see that audit history was lost on restart.
+        // TODO(pcloud-rs-0cx): AuditRepository load failure silently
+        // falls back to an empty default. A `log::warn!` below surfaces the
+        // fallback to operators; a future refactor may return this as a
+        // typed Err so callers can opt into hard-fail on audit-log loss.
         let audit = AuditRepository::load(&conn).unwrap_or_else(|err| {
             log::warn!("sync loop: failed to restore audit log from DB, starting fresh: {err}");
             Default::default()

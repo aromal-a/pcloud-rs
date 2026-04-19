@@ -129,9 +129,11 @@ pub const CONFIG_SCHEMA_JSON: &str = r#"{
           "additionalProperties": false,
           "required": ["max_concurrent_uploads","max_concurrent_downloads","max_parser_frame_bytes"],
           "properties": {
-            "max_concurrent_uploads":   { "type": "integer", "minimum": 0 },
-            "max_concurrent_downloads": { "type": "integer", "minimum": 0 },
-            "max_parser_frame_bytes":   { "type": "integer", "minimum": 0 }
+            "max_concurrent_uploads":       { "type": "integer", "minimum": 0 },
+            "max_concurrent_downloads":     { "type": "integer", "minimum": 0 },
+            "max_parser_frame_bytes":       { "type": "integer", "minimum": 0 },
+            "max_ipc_connections":          { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "max_ipc_connections_per_peer": { "type": "integer", "minimum": 1, "maximum": 65535 }
           }
         },
         "mount": {
@@ -544,6 +546,23 @@ static LIMITS_NODE: Node = Node::Object {
             &Node::Integer {
                 min: Some(0),
                 max: None,
+            },
+        ),
+        // ncx.59: optional IPC connection caps. Not in `required` so
+        // older envelopes load cleanly; typed values are bounded at
+        // [1, 65_535] and cross-validated in `ResourceLimits::validate_ipc_limits`.
+        (
+            "max_ipc_connections",
+            &Node::Integer {
+                min: Some(1),
+                max: Some(65_535),
+            },
+        ),
+        (
+            "max_ipc_connections_per_peer",
+            &Node::Integer {
+                min: Some(1),
+                max: Some(65_535),
             },
         ),
     ],

@@ -753,14 +753,22 @@ impl PublicLinkRuntime {
     ///
     /// See the module-level documentation for the dispatch contract, error
     /// translation, and side-effect ordering shared by all entry points.
+    ///
+    /// `password` is taken as `Option<SecretString>` (ncx.66) so the
+    /// end-user-chosen link-protection secret is zeroized on drop and
+    /// never appears unredacted in `Debug`. It is exposed exactly once,
+    /// at the wire-encoding boundary, via `SecretString::expose_secret`.
     pub fn change_public_link_password(
         &self,
         auth_token: SecretString,
         link_id: u64,
-        password: Option<String>,
+        password: Option<SecretString>,
     ) -> Result<(), PublicLinksApiError<PublicLinkBackendError>> {
-        self.api
-            .change_public_link_password(auth_token.expose_secret(), link_id, password)
+        self.api.change_public_link_password(
+            auth_token.expose_secret(),
+            link_id,
+            password.as_ref().map(|p| p.expose_secret().to_owned()),
+        )
     }
 
     /// Invoke `change_public_link_upload` on this backend.

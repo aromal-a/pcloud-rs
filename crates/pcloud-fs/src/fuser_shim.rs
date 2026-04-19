@@ -14,7 +14,14 @@
 #![cfg(target_os = "linux")]
 
 // **PLATFORM:** Linux
-// **GATING:** none (portable; uses Linux-only idioms — see TODO(bd-xplat)).
+// **GATING:** `#[cfg(target_os = "linux")]` at line 14 (this is the real
+// gate — the entire module vanishes on non-Linux targets). The
+// "TODO(bd-xplat)" mentioned below is **not** a gap in the gate; it is
+// a reminder that the `fuser` crate itself is Linux-only, so shared
+// code that wants cross-platform behaviour must go through the
+// portable [`crate::fuse_adapter::FuseAdapter`] trait (which macos/
+// windows implement in `src/platform/`). audit-06 LOW fuse L-3 /
+// pcloud-rs-ncx.82-c: cfg-gate clarified.
 
 use std::collections::HashMap;
 use std::ffi::OsStr;

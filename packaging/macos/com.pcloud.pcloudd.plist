@@ -45,10 +45,18 @@
     <key>Label</key>
     <string>com.pcloud.pcloudd</string>
 
+    <!-- argv[0] is the daemon binary; `serve` selects the long-running IPC
+         serve loop (matches ExecStart in packaging/systemd/pcloudd.service).
+         Without `serve`, the daemon prints a one-shot runtime summary and
+         exits, which launchd would then restart in a loop via KeepAlive.
+         The non-existent `--system` flag was removed in audit-06 (bd
+         pcloud-rs-ncx.25): the daemon parser at crates/pcloud-daemon/src/
+         main.rs:56-64 rejects unknown args, so the plist previously caused
+         an immediate launchd crash-loop. -->
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/libexec/pcloudd</string>
-        <string>--system</string>
+        <string>serve</string>
     </array>
 
     <key>RunAtLoad</key>

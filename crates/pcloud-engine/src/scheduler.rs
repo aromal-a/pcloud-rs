@@ -283,15 +283,33 @@ impl Scheduler {
     /// inside each of two independent sync trees) otherwise caused a
     /// single ack to evict both dispatched entries, silently dropping
     /// the crash-recovery guarantee for the un-acked root.
+    ///
+    /// **Audit-06 §4-opus M-4.2 / ncx.40:** for wide batches the naive
+    /// O(N·M) `retain` nested-scan scales poorly (N = dispatched slot
+    /// size, M = ack batch width). We build a `HashSet<(SyncId,
+    /// &str)>` index over `items` once, then do a single O(N) pass
+    /// over `dispatched_operations` with O(1) membership tests. The
+    /// index is only built when both the ack batch and the dispatched
+    /// slot are non-trivial, so the common tight-loop case (single
+    /// ack) does not pay the hashing overhead.
     pub fn ack_batch(&mut self, items: &[(SyncId, &str)]) {
         if items.is_empty() || self.dispatched_operations.is_empty() {
             return;
         }
-        self.dispatched_operations.retain(|op| {
-            !items
-                .iter()
-                .any(|(sid, p)| op.sync_id() == *sid && op.path() == *p)
-        });
+        // Fast path: a single ack is cheaper as a direct scan than as a
+        // hashed lookup (cache-friendly, no allocation).
+        if items.len() == 1 {
+            let (sid, p) = items[0];
+            self.dispatched_operations
+                .retain(|op| !(op.sync_id() == sid && op.path() == p));
+            return;
+        }
+        // General path: build an index of (sync_id, path) keys and do a
+        // single linear pass with O(1) lookups. ncx.40 hardening.
+        let index: std::collections::HashSet<(SyncId, &str)> =
+            items.iter().map(|(sid, p)| (*sid, *p)).collect();
+        self.dispatched_operations
+            .retain(|op| !index.contains(&(op.sync_id(), op.path())));
     }
 
     fn take_fair_batch(&mut self) -> Vec<PlannedOperation> {
@@ -450,6 +468,21 @@ impl Scheduler {
     /// ```
     #[must_use]
     pub fn next_batch_fair(&self, max_per_root: usize) -> Vec<&PlannedOperation> {
+        self.peek_batch_fair(max_per_root)
+    }
+
+    /// Peek a fair batch without mutating scheduler state.
+    ///
+    /// This is the non-misleading name for [`Self::next_batch_fair`]:
+    /// the method returns borrowed references to the front of
+    /// `queued_operations` without consuming them, exactly mirroring the
+    /// non-fair [`Self::peek_batch`]. The `next_batch_fair` name is
+    /// retained for source compatibility but will be removed in a future
+    /// release.
+    ///
+    /// audit-06 LOW sync L-04 / pcloud-rs-ncx.81-e.
+    #[must_use]
+    pub fn peek_batch_fair(&self, max_per_root: usize) -> Vec<&PlannedOperation> {
         let global_limit = (self.max_parallel_uploads + self.max_parallel_downloads).max(1);
         let mut per_root: std::collections::HashMap<SyncId, usize> =
             std::collections::HashMap::new();
@@ -649,6 +682,63 @@ mod tests {
             scheduler.dispatched_operations.is_empty(),
             "both dispatched entries must now be evicted"
         );
+    }
+
+    /// Audit-06 §4-opus M-4.2 / ncx.40 regression: `ack_batch` must
+    /// handle wide batches against large dispatched slots without
+    /// O(N·M) blow-up. This is a correctness test (not a strict timing
+    /// assertion) that drives 1 000 acks against a 10 000-item
+    /// dispatched slot and asserts (a) the survivors are exactly the
+    /// unacked 9 000, (b) the operation completes in well under a
+    /// wall-clock budget a quadratic scan would blow through.
+    #[test]
+    fn ack_batch_handles_wide_batches_in_linear_time() {
+        let mut scheduler = Scheduler::default();
+        let mut ops = Vec::with_capacity(10_000);
+        for i in 0..10_000u64 {
+            ops.push(PlannedOperation::UploadFile {
+                sync_id: SyncId::new((i % 4) + 1),
+                path: format!("file-{i:06}.bin"),
+                remote_parent_folder_id: None,
+                remote_name: format!("file-{i:06}.bin"),
+            });
+        }
+        // Seed the dispatched slot directly (bypass next_batch to keep
+        // the test independent of the fair-batch limits).
+        scheduler.dispatched_operations = ops.clone();
+
+        // Ack the first 1 000 entries.
+        let ack_items: Vec<(SyncId, &str)> = ops[..1_000]
+            .iter()
+            .map(|op| (op.sync_id(), op.path()))
+            .collect();
+
+        let start = std::time::Instant::now();
+        scheduler.ack_batch(&ack_items);
+        let elapsed = start.elapsed();
+
+        assert_eq!(
+            scheduler.dispatched_operations.len(),
+            9_000,
+            "1000 acked out of 10000"
+        );
+        // Budget: 250ms is ~1000x larger than what a hashed index needs
+        // on modern hardware but still tight enough to catch a true
+        // quadratic regression on this workload. Tuned loose to avoid
+        // CI flakiness while still asserting the hot path is not O(N*M).
+        assert!(
+            elapsed < std::time::Duration::from_millis(250),
+            "ack_batch took {elapsed:?} for 1000 acks over 10000 dispatched — \
+             likely O(N*M) regression of ncx.40"
+        );
+
+        // Additionally verify the survivors are exactly the unacked
+        // tail: O(N*M) retains can also get correctness wrong under
+        // aliasing, so we double-check.
+        for (i, op) in scheduler.dispatched_operations.iter().enumerate() {
+            let expected_idx = i + 1_000;
+            assert_eq!(op.path(), format!("file-{expected_idx:06}.bin"));
+        }
     }
 
     #[test]

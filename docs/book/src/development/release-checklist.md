@@ -426,7 +426,7 @@ Each may land asynchronously. None block the tag.
 
 - [ ] Homebrew tap (`pcloud-rs.rb`).
 - [ ] Chocolatey (`pcloud-rs.nuspec`, `chocolateyinstall.ps1`).
-- [ ] winget (`manifests/p/pcloudcom/pcloud-rs/<version>/`).
+- [ ] winget (`manifests/e/ezechiel203/pcloud-rs/<version>/`).
 - [ ] Debian APT repo (`reprepro includedeb`).
 - [ ] RPM YUM repo (`createrepo_c` + sign `repomd.xml`).
 - [ ] BSD ports notifications.

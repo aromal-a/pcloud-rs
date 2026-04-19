@@ -2,7 +2,7 @@
 
 Date: 2026-04-14
 Source matrix: `C_FEATURE_PARITY_MATRIX.csv`
-Total rows with status `Rejected`: **28** (matrix rows 2, 5, 6, 10, 12, 13, 43, 44, 45, 46, 99, 100, 101, 102, 103, 104, 105, 106, 113, 114, 115, 126, 151, 152, 157, 160, 167, 169).
+Total rows with status `Rejected`: **30** (matrix rows 2, 5, 6, 10, 12, 13, 23, 24, 43, 44, 45, 46, 99, 100, 101, 102, 103, 104, 105, 106, 113, 114, 115, 126, 151, 152, 157, 160, 167, 169).
 
 ## Cross-reference with the matrix
 
@@ -156,6 +156,18 @@ Categories used:
 - C: `pclsync/psynclib.h:739`. Body at `pclsync/psynclib.c:2534` rate-limits a UI event id and posts it to `pqevent_queue_eventid`. Used as a thread entrypoint via `prun_thread1("psync_async_sync_delete", psync_async_ui_callback, …)` in `pclsync/pfs.c:2685`.
 - Category: **C-internal-plumbing** (UI bridge).
 - Rust replacement: the Rust CLI talks directly to the daemon over IPC; rate-limited UI dispatch is unnecessary because there is no shared in-process UI loop.
+
+### Row 23 — `psync_tfa_has_devices`
+- C: `pclsync/psynclib.h:635`. Pre-flight boolean probe the C desktop UI calls before deciding whether to offer the "resend device notification" button. Server-side info (whether any TFA devices are enrolled) is *also* returned in-band by `send_two_factor_notification`, which is already `Implemented` on the Rust path (matrix row 22).
+- Category: **C-internal-plumbing** (UI bridge) + **Replaced** (by the `devices` array returned from `send_two_factor_notification`).
+- Rust replacement: `crates/pcloud-proto/src/auth_api.rs:509` returns `TwoFactorNotificationDelivery { devices: Vec<LoggedDevice> }` on the same call that triggers the push, so adaptive UI can check `devices.is_empty()` without a separate pre-flight RPC. The standalone probe was a desktop-UI affordance, not a protocol requirement.
+- Audit reference: ncx.4 (audit-06 wave 2). Matrix row 23 flipped `Partial` → `Rejected`.
+
+### Row 24 — `psync_tfa_type`
+- C: `pclsync/psynclib.h:638`. Returns the TFA "type" (SMS vs device-notification vs TOTP vs recovery) so the desktop UI can render the right prompt. C consumer: `main.cpp` interactive login wizard.
+- Category: **C-internal-plumbing** (UI bridge) + **Replaced** (by explicit caller-driven dispatch).
+- Rust replacement: the Rust flow does not need a server probe to pick a method. Callers invoke whichever `AuthApi` entrypoint corresponds to their chosen method: `send_two_factor_sms` (sms), `send_two_factor_notification` (device push), `submit_two_factor_code` (TOTP *or* recovery code via `is_recovery_code` flag). The CLI / SDK / IPC surfaces accept all methods interchangeably — see `crates/pcloud-proto/src/auth_api.rs:410-510` and `crates/pcloud-backends/src/auth_backend.rs`. No protocol-level value in replicating a stateless C UI helper.
+- Audit reference: ncx.4 (audit-06 wave 2). Matrix row 24 flipped `Partial` → `Rejected`.
 
 ### Row 99 — `psync_send_backup_del_event`
 - C: `pclsync/psynclib.h:736`. Body at `pclsync/psynclib.c:2593` rate-limits and posts `PEVENT_BKUP_F_DEL_NOTSYNCED` / `PEVENT_BKUP_F_DEL_SYNCED` to the queue. Called from `pclsync/plocalscan_helpers.c:126`.

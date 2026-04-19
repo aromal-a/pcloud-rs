@@ -227,6 +227,17 @@ manual_string_new = "allow"
 # TODO(pcloud-rs-8mb.34/L-14): promote these to "deny" once per-crate
 # counts (pcloud-fs: 531, pcloud-daemon: 382, …) are driven below 50 in
 # non-test src/. Tracked by P3-batch-G M6 sweep beads.
+#
+# audit-06 LOW quality / pcloud-rs-ncx.86-a status note:
+# These two lints remain COMMENTED (not "warn", not "deny") by
+# deliberate choice — enabling them workspace-wide with today's counts
+# would flood CI with ~900 warnings and crowd out real regressions.
+# The staged rollout plan is:
+#   1. drive every non-test crate below 50 unwrap/expect (per-crate beads);
+#   2. flip to "warn" workspace-wide and wait one release cycle;
+#   3. flip to "deny" in workspace [lints];
+# Do not flip directly to "deny" in a single commit — the CI blast
+# radius would be unreviewable.
 # unwrap_used = "warn"
 # expect_used = "warn"
 

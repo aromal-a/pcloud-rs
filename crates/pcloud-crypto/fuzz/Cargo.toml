@@ -4,11 +4,11 @@ version = "0.0.0"
 publish = false
 edition = "2021"
 
+# Exclude from parent workspace; cargo-fuzz is nightly-only.
+[workspace]
+
 [package.metadata]
 cargo-fuzz = true
-
-[lib]
-crate-type = ["cdylib"]
 
 [[bin]]
 name = "fuzz_open_sector"
@@ -16,8 +16,20 @@ path = "fuzz_targets/fuzz_open_sector.rs"
 test = false
 doc = false
 
+# Audit-06 wave-2 (bd-pcloud-rs-ncx.70): fuzz the pclsync reversible
+# filename encoder/decoder round-trip. `decode_filename` parses
+# untrusted wire-form base32 and then runs a custom AES256/HMAC-SHA512
+# construction, so any panic inside the decode or pad-validation path
+# would be a directory-listing DoS on a crypto folder.
+[[bin]]
+name = "fuzz_pclsync_filename_decode"
+path = "fuzz_targets/fuzz_pclsync_filename_decode.rs"
+test = false
+doc = false
+
 [dependencies]
 libfuzzer-sys = "0.4"
+pcloud-secret = { path = "../../pcloud-secret" }
 
 [dependencies.pcloud-crypto]
 path = ".."

@@ -426,6 +426,16 @@ pub fn open_sector(
     ciphertext: &[u8],
     auth_tag: &[u8; PCLSYNC_AUTH_TAG_SIZE],
 ) -> Result<Zeroizing<Vec<u8>>, SectorError> {
+    // audit-06 P3 (pcloud-rs-ncx.34): explicitly reject a zero-length
+    // sector. `pcrypto_decode_sec` in C (`pcrypto.c:562`) does not
+    // produce nor accept an empty plaintext/ciphertext pair: the encoder
+    // never emits one, so any open_sector() call with empty ciphertext
+    // is a caller-contract bug. Surfacing the error explicitly (rather
+    // than silently succeeding on `plaintext = []`) makes the wire
+    // contract auditable and mirrors the encode-side guard above.
+    if ciphertext.is_empty() {
+        return Err(SectorError::EmptySector);
+    }
     if ciphertext.len() > PCLSYNC_SECTOR_SIZE {
         return Err(SectorError::CiphertextTooLong(ciphertext.len()));
     }
@@ -758,6 +768,28 @@ mod tests {
             },
             0,
             &[],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(err, SectorError::EmptySector),
+            "expected EmptySector, got {err:?}"
+        );
+    }
+
+    /// audit-06 P3 (pcloud-rs-ncx.34): decoder must reject zero-length
+    /// ciphertext with the same explicit contract as the encoder.
+    #[test]
+    fn open_rejects_empty_ciphertext() {
+        let (aes, hmac) = keys_fixture();
+        let tag = [0u8; PCLSYNC_AUTH_TAG_SIZE];
+        let err = open_sector(
+            SectorKeys {
+                aes_key: &aes,
+                hmac_key: &hmac,
+            },
+            0,
+            &[],
+            &tag,
         )
         .unwrap_err();
         assert!(

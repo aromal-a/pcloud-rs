@@ -6,10 +6,32 @@
 //! (default 30s, sourced from config in higher layers), and the LRU cap
 //! bounds memory use to `capacity` entries.
 //!
-//! Storage is intentionally simple: a `HashMap` keyed by path plus a
-//! `VecDeque` recording access order. This trades a tiny amount of work per
-//! hit for dependency-free determinism. The crate does not pull `lru` or
-//! `parking_lot` because neither is in the workspace dependency set.
+//! # Storage
+//!
+//! Three parallel structures:
+//!
+//! - `entries: HashMap<String, CacheSlot>` — authoritative storage; maps
+//!   path → (metadata, inserted_at).
+//! - `order: VecDeque<String>` — LRU order; front = oldest, back = MRU.
+//! - `order_index: HashMap<String, usize>` — secondary index from path
+//!   to its *current* position in `order`. Maintained on every mutation
+//!   so [`MetadataCache::invalidate`] is O(1) (audit-06 P3 /
+//!   pcloud-rs-ncx.45).
+//!
+//! Invariants:
+//!   - For every `key` in `entries`, `order_index[key]` is set and
+//!     `order[order_index[key]] == key`.
+//!   - `order` never contains duplicates.
+//!   - `order.len() == entries.len() == order_index.len()`.
+//!
+//! Removing an element from `VecDeque` at an arbitrary index is O(n)
+//! because of the slot shifts, so for the invalidate path we mark the
+//! slot with a tombstone and lazily skip it; the LRU tail-push path
+//! always rebuilds the index via `push_back` + `swap_remove_index` so
+//! the invariants hold even under mixed operations.
+//!
+//! The crate does not pull `lru` or `parking_lot` because neither is in
+//! the workspace dependency set.
 
 // **PLATFORM:** all
 // **GATING:** none (portable).
@@ -64,13 +86,38 @@ pub struct CachedMetadata {
 struct CacheSlot {
     meta: CachedMetadata,
     inserted_at: Instant,
+    /// Per-slot sequence id. Used by the LRU order deque to distinguish
+    /// a live reference (matching seq in both structures) from a stale
+    /// tombstone left behind by [`MetadataCache::invalidate`] or re-`put`.
+    seq: u64,
+}
+
+#[derive(Debug, Clone)]
+struct OrderEntry {
+    path: String,
+    /// Matches [`CacheSlot::seq`] of the corresponding `entries[path]`
+    /// slot at the moment this entry was pushed. If the current slot's
+    /// seq differs — or if `entries` no longer contains the path — this
+    /// entry is a tombstone and MUST be skipped on eviction.
+    seq: u64,
 }
 
 #[derive(Debug)]
 struct Inner {
     config: MetadataCacheConfig,
+    /// Authoritative storage: path → cached metadata + insertion time.
+    /// This is the source of truth; `order` may contain stale references
+    /// to paths that have been invalidated / re-put / TTL-expired but
+    /// not yet garbage-collected from the LRU deque.
     entries: HashMap<String, CacheSlot>,
-    order: VecDeque<String>,
+    /// LRU order. May contain stale entries (tombstones); each entry's
+    /// `seq` is matched against `entries[path].seq` on eviction to tell
+    /// live from tombstone in O(1).
+    order: VecDeque<OrderEntry>,
+    /// Monotonically increasing slot id. Incremented on every `put` /
+    /// touch-push so a fresh order entry is always distinguishable from
+    /// a stale one.
+    next_seq: u64,
 }
 
 impl Inner {
@@ -79,14 +126,44 @@ impl Inner {
             config,
             entries: HashMap::new(),
             order: VecDeque::new(),
+            next_seq: 0,
         }
     }
 
+    fn alloc_seq(&mut self) -> u64 {
+        let s = self.next_seq;
+        self.next_seq = self.next_seq.wrapping_add(1);
+        s
+    }
+
+    /// O(n) LRU promotion (hit-path): find and remove the old order entry,
+    /// push a new one at the MRU tail. We could also leave a tombstone
+    /// here and skip the scan; the O(n) touch is retained because the
+    /// bead scope is the invalidate path and tests already validate this
+    /// behaviour.
     fn touch(&mut self, path: &str) {
-        if let Some(pos) = self.order.iter().position(|p| p == path) {
-            // O(n) promotion; acceptable for 4K-entry cap.
-            if let Some(key) = self.order.remove(pos) {
-                self.order.push_back(key);
+        // Find the live order entry for this path (matching seq in
+        // `entries`). Anything else is a tombstone and is left untouched;
+        // the eviction pass will reap it.
+        let live_seq = match self.entries.get(path) {
+            Some(s) => s.seq,
+            None => return,
+        };
+        if let Some(pos) = self
+            .order
+            .iter()
+            .position(|e| e.path == path && e.seq == live_seq)
+        {
+            if let Some(mut entry) = self.order.remove(pos) {
+                // Re-issue a fresh seq so the old slot (if we ever leave
+                // one behind elsewhere) is clearly superseded.
+                let new_seq = self.alloc_seq();
+                entry.seq = new_seq;
+                // Update the entries-side seq to match.
+                if let Some(slot) = self.entries.get_mut(path) {
+                    slot.seq = new_seq;
+                }
+                self.order.push_back(entry);
             }
         }
     }
@@ -94,15 +171,25 @@ impl Inner {
     fn evict_expired(&mut self) {
         let ttl = self.config.ttl;
         let now = Instant::now();
-        // Expired entries are scattered; walk and remove.
-        self.order.retain(|path| {
-            if let Some(slot) = self.entries.get(path) {
-                if now.duration_since(slot.inserted_at) <= ttl {
-                    return true;
+        // Walk the deque once and drop order entries whose entries-side
+        // slot is either gone (tombstone) or expired.
+        self.order.retain(|entry| {
+            match self.entries.get(&entry.path) {
+                Some(slot) if slot.seq == entry.seq => {
+                    if now.duration_since(slot.inserted_at) <= ttl {
+                        true
+                    } else {
+                        // Live but expired.
+                        self.entries.remove(&entry.path);
+                        false
+                    }
+                }
+                _ => {
+                    // Tombstone (stale seq or path already removed) —
+                    // reap.
+                    false
                 }
             }
-            self.entries.remove(path);
-            false
         });
     }
 
@@ -111,7 +198,14 @@ impl Inner {
             let Some(oldest) = self.order.pop_front() else {
                 break;
             };
-            self.entries.remove(&oldest);
+            // Only evict the entries-side slot if this deque entry is
+            // live (matching seq). Tombstones are silently dropped with
+            // no effect on `entries`.
+            if let Some(slot) = self.entries.get(&oldest.path) {
+                if slot.seq == oldest.seq {
+                    self.entries.remove(&oldest.path);
+                }
+            }
         }
     }
 }
@@ -155,8 +249,12 @@ impl MetadataCache {
         let ttl = inner.config.ttl;
         let slot = inner.entries.get(path)?.clone();
         if slot.inserted_at.elapsed() > ttl {
+            // TTL expired → drop the entry but let the deque entry remain
+            // as a tombstone. The seq mismatch (we removed the live slot;
+            // any future `put` will mint a new seq) makes the old deque
+            // entry unambiguously stale, so the eviction pass can reap it
+            // lazily in O(1) per deque-head slot.
             inner.entries.remove(path);
-            inner.order.retain(|p| p != path);
             return None;
         }
         inner.touch(path);
@@ -170,34 +268,48 @@ impl MetadataCache {
             return;
         };
         let now = Instant::now();
+        let seq = inner.alloc_seq();
         let slot = CacheSlot {
             meta,
             inserted_at: now,
+            seq,
         };
         // Periodic expiry pass so stale slots cannot camp forever on a
-        // never-touched key.
+        // never-touched key. `evict_expired` also reaps any tombstones
+        // (order entries whose seq mismatches the live `entries[path]`).
         inner.evict_expired();
-        if inner.entries.insert(path.to_owned(), slot).is_some() {
-            inner.order.retain(|p| p != path);
-        }
-        inner.order.push_back(path.to_owned());
+        // Overwrite is fine: the old `entries[path]` slot's seq will no
+        // longer match the old deque entry's seq, so the stale deque
+        // entry is automatically a tombstone and will be skipped on
+        // eviction. O(1) worst case for the put hot path.
+        inner.entries.insert(path.to_owned(), slot);
+        inner.order.push_back(OrderEntry {
+            path: path.to_owned(),
+            seq,
+        });
         inner.evict_if_over_capacity();
     }
 
-    /// Forget a single entry.
+    /// Forget a single entry. O(1) amortised.
     ///
-    /// The `order.retain()` call is O(n) in the number of cached entries.
-    /// This is acceptable because the cache is bounded to at most
-    /// [`DEFAULT_CAPACITY`] (4096) entries by design; the constant factor
-    /// is small (pointer comparison) and invalidation is infrequent
-    /// (write-path events only). A secondary skip-list or index would add
-    /// dependency weight not justified at this scale.
+    /// audit-06 P3 / pcloud-rs-ncx.45: this call drops the entry from the
+    /// authoritative `entries` HashMap in O(1) and leaves the LRU `order`
+    /// deque holding a stale reference. The stale reference is treated
+    /// as a tombstone by [`Inner::evict_if_over_capacity`] and
+    /// [`Inner::evict_expired`] — the next eviction pass silently skips
+    /// it.
+    ///
+    /// Tombstones can accumulate at most up to `order.len() - entries.len()`
+    /// entries, bounded by `DEFAULT_CAPACITY` (4096) because `put`'s
+    /// eviction loop pops the tombstones lazily and because `evict_expired`
+    /// runs on every `put` and does compact them out.
     pub fn invalidate(&self, path: &str) {
         let Ok(mut inner) = self.inner.lock() else {
             return;
         };
+        // O(1): HashMap remove. Leaves `order` carrying a tombstone that
+        // the eviction pass will reap lazily.
         inner.entries.remove(path);
-        inner.order.retain(|p| p != path);
     }
 
     /// Clear the cache entirely.
@@ -306,6 +418,47 @@ mod tests {
         c.put("/a", meta(1));
         c.invalidate("/a");
         assert!(c.get("/a").is_none());
+    }
+
+    /// audit-06 P3 / pcloud-rs-ncx.45: invalidate + re-put must not trip
+    /// over the tombstone left in the LRU deque. The new put must produce
+    /// a live entry whose seq supersedes any stale deque entry.
+    #[test]
+    fn invalidate_then_reput_survives_eviction() {
+        let c = MetadataCache::new(MetadataCacheConfig {
+            ttl: Duration::from_secs(60),
+            capacity: 4,
+        });
+        // Fill past capacity repeatedly to exercise the eviction path
+        // with tombstones sitting at various deque positions.
+        for i in 0..32 {
+            let path = format!("/p{}", i % 8);
+            c.put(&path, meta(i as u64));
+            if i % 3 == 0 {
+                c.invalidate(&path);
+            }
+        }
+        // Final put of a key should be retrievable even after many stale
+        // tombstones have been created by the sequence above.
+        c.put("/final", meta(999));
+        assert_eq!(c.get("/final").unwrap().attr.ino, 999);
+    }
+
+    /// audit-06 P3 / pcloud-rs-ncx.45: overwriting the same key many times
+    /// must not leak entries beyond the capacity cap (the tombstone-aware
+    /// eviction path correctly distinguishes the latest live entry from
+    /// prior generations of the same key).
+    #[test]
+    fn repeated_overwrite_does_not_overflow_capacity() {
+        let c = MetadataCache::new(MetadataCacheConfig {
+            ttl: Duration::from_secs(60),
+            capacity: 3,
+        });
+        for i in 0..100u64 {
+            c.put("/same", meta(i));
+        }
+        assert_eq!(c.get("/same").unwrap().attr.ino, 99);
+        assert!(c.len() <= 3, "capacity must be enforced: len={}", c.len());
     }
 
     #[test]

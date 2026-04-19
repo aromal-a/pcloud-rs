@@ -174,6 +174,20 @@ pub enum CryptoShareError {
     #[error("temppass derivation failed")]
     /// `TemppassDerivation` variant.
     TemppassDerivation,
+    /// The active crypto backend is [`pcloud_crypto::CryptoBackend::PclsyncCompat`]
+    /// but the share-invite handoff requires the RSA-4096-OAEP wrap
+    /// flow that the retained Rust path has not yet implemented.
+    /// Surfacing this distinctly (instead of swallowing it into
+    /// [`Self::TemppassDerivation`]) lets the daemon emit an explicit
+    /// audit event and the CLI print an actionable error, rather than
+    /// silently producing an envelope that C clients cannot decrypt.
+    /// See audit-06 ncx.5 and the follow-up RSA-4096 share invitation
+    /// bead.
+    #[error(
+        "crypto share invitation requires RSA-4096 wrap; not yet supported on the PclsyncCompat backend"
+    )]
+    /// `RsaBackendRequired` variant.
+    RsaBackendRequired,
     #[error(transparent)]
     /// `Api` variant.
     Api(#[from] SharesApiError<SharesBackendError>),
@@ -184,6 +198,7 @@ impl From<TemppassError> for CryptoShareError {
         match err {
             TemppassError::Locked => Self::Locked,
             TemppassError::EmptyPassword => Self::EmptyTemppass,
+            TemppassError::RsaBackendRequired => Self::RsaBackendRequired,
             _ => Self::TemppassDerivation,
         }
     }
@@ -804,6 +819,53 @@ mod tests {
             )
             .unwrap();
         assert_eq!(outcome.share_request_id, Some(888));
+    }
+
+    #[test]
+    fn crypto_share_folder_rejects_pclsync_compat_backend() {
+        // Audit-06 ncx.5: the backend guard in derive_temppass_wire
+        // must surface through the shares runtime as a distinct
+        // RsaBackendRequired variant so dispatch can emit an
+        // actionable audit event instead of treating it as a generic
+        // "temppass derivation failed" error.
+        let runtime = dev_runtime();
+        let mut shell = started_shell("master");
+        shell.backend = Some(pcloud_crypto::CryptoBackend::PclsyncCompat);
+        let err = runtime
+            .crypto_share_folder(
+                token(),
+                &shell,
+                SecretString::new("temp"),
+                7,
+                "name".into(),
+                "a@b.com".into(),
+                "hi".into(),
+                SharePermissions::from_bits(3),
+                Some("hint".into()),
+            )
+            .unwrap_err();
+        assert!(matches!(err, CryptoShareError::RsaBackendRequired));
+    }
+
+    #[test]
+    fn crypto_account_team_share_rejects_pclsync_compat_backend() {
+        let runtime = dev_runtime();
+        let mut shell = started_shell("master");
+        shell.backend = Some(pcloud_crypto::CryptoBackend::PclsyncCompat);
+        let err = runtime
+            .crypto_account_team_share(
+                token(),
+                &shell,
+                SecretString::new("temp"),
+                7,
+                "team-crypto".into(),
+                9,
+                "msg".into(),
+                SharePermissions::from_bits(27),
+                Some("hint".into()),
+            )
+            .unwrap_err();
+        assert!(matches!(err, CryptoShareError::RsaBackendRequired));
     }
 
     #[test]

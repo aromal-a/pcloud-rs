@@ -346,6 +346,102 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// ---------------------------------------------------------------------------
+// pCloud result-code classifier (audit-06 §5-sonnet L-2 / ncx.48).
+//
+// Upstream `pclsync/pupload.c` treats a set of pCloud `result` codes as
+// permanent (`Err: ...`) and the rest as transient (retry with backoff).
+// The Rust write path mirrors this split via `WritePathError::Upload{Transient,Permanent}`
+// so `chunked_flush`'s retry loop can drive the right behavior. Mapping
+// below is the single source of truth for that classification.
+// ---------------------------------------------------------------------------
+
+/// Classification of a pCloud server result code for upload-path RPCs
+/// (`upload_create` / `upload_write` / `upload_save`).
+///
+/// Returned by [`classify_upload_result`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UploadResultClass {
+    /// `result == 0` — success; the caller should not inspect any error.
+    Ok,
+    /// The server rejected the request in a way that will not change on
+    /// retry. The write path must surface this to the caller (or,
+    /// during chunked writes, let `chunked_flush` restart the whole
+    /// session once with a fresh `upload_create` before giving up).
+    Permanent,
+    /// The server rejected the request because of a transient,
+    /// retriable condition (rate limiting, server restart, 5xxx
+    /// infrastructure errors). The chunked flush retry loop will
+    /// exponentially back off and try again.
+    Transient,
+}
+
+/// Classify a pCloud server `result` code returned by an `upload_*` RPC.
+///
+/// Mapping below follows the pCloud binprotocol error map and mirrors
+/// `pclsync/pupload.c` behaviour:
+///
+/// | Code  | Meaning                         | Class      |
+/// |-------|---------------------------------|------------|
+/// | 0     | OK                              | `Ok`       |
+/// | 1000..=1999 | Client/protocol errors    | Permanent (caller bug / bad args) |
+/// | 2000  | Log in required                 | Permanent  |
+/// | 2003  | Access denied                   | Permanent  |
+/// | 2005  | Directory/file does not exist   | Permanent  |
+/// | 2008  | User over quota                 | Permanent  |
+/// | 2010  | Name too long                   | Permanent  |
+/// | 2069  | Upload not found / GC'd         | Permanent (forces session restart) |
+/// | 2094  | Invalid session (auth expired)  | Permanent  |
+/// | 4000  | Too many login tries / rate     | Transient  |
+/// | 5000..=5999 | Server internal errors    | Transient  |
+/// | 6000..=6999 | Temporary server errors   | Transient  |
+/// | 7000..=7999 | Temporary not-available   | Transient  |
+/// | other non-zero                          | Transient (safer default for retries) |
+///
+/// The "unknown → transient" default mirrors the upstream C client's
+/// conservative retry bias: if the server adds a new error code we
+/// have not mapped, the safer outcome is to retry a bounded number of
+/// times rather than surface a permanent failure that forces the
+/// write path to discard local staging state.
+pub(crate) fn classify_upload_result(result: u64) -> UploadResultClass {
+    match result {
+        0 => UploadResultClass::Ok,
+        // Client/protocol bugs (bad args, payload too large, etc.).
+        1000..=1999 => UploadResultClass::Permanent,
+        // Auth / access / quota / name-constraint family — retrying
+        // will not help.
+        2000 | 2003 | 2005 | 2008 | 2010 | 2094 => UploadResultClass::Permanent,
+        // Upload session garbage-collected. Permanent for the current
+        // session; the chunked flush outer loop triggers a fresh
+        // `upload_create` exactly once.
+        2069 => UploadResultClass::Permanent,
+        // Rate limiting / login-flood protection.
+        4000 => UploadResultClass::Transient,
+        // Server-side 5xxx / 6xxx / 7xxx families — "try again later".
+        5000..=7999 => UploadResultClass::Transient,
+        // Unknown non-zero: bias to transient (see doc).
+        _ => UploadResultClass::Transient,
+    }
+}
+
+/// Build the appropriate [`WritePathError`] for a non-zero pCloud
+/// `result` code on an upload-path RPC.
+///
+/// `op` is a short human-readable label ("upload_write",
+/// "upload_save") threaded into the error message for log correlation.
+pub(crate) fn upload_result_to_error(op: &str, result: u64) -> WritePathError {
+    let msg = format!("{op} result={result}");
+    match classify_upload_result(result) {
+        UploadResultClass::Ok => {
+            // Caller should have checked this before calling us; treat
+            // as a defensive Upload fallthrough.
+            WritePathError::Upload(msg)
+        }
+        UploadResultClass::Permanent => WritePathError::UploadPermanent(msg),
+        UploadResultClass::Transient => WritePathError::UploadTransient(msg),
+    }
+}
+
 /// Transport abstraction required by [`ProtoUploadBackend`]. Equivalent to
 /// [`pcloud_proto::auth_api::ProtocolTransport`] plus a body-bearing execute
 /// for `upload_write`. Implemented below for [`pcloud_proto::BinaryApiTransport`].
@@ -514,11 +610,12 @@ where
         let hw = resp_w
             .as_hash()
             .ok_or_else(|| WritePathError::Upload("upload_write: not a hash".to_owned()))?;
-        if matches!(hw.get_number("result"), Some(v) if v != 0) {
-            return Err(WritePathError::Upload(format!(
-                "upload_write result={}",
-                hw.get_number("result").unwrap_or(0)
-            )));
+        if let Some(v) = hw.get_number("result")
+            && v != 0
+        {
+            // ncx.48: classify transient vs permanent so chunked_flush
+            // retries the right way.
+            return Err(upload_result_to_error("upload_write", v));
         }
 
         // upload_save
@@ -544,11 +641,10 @@ where
         let hs = resp_s
             .as_hash()
             .ok_or_else(|| WritePathError::Upload("upload_save: not a hash".to_owned()))?;
-        if matches!(hs.get_number("result"), Some(v) if v != 0) {
-            return Err(WritePathError::Upload(format!(
-                "upload_save result={}",
-                hs.get_number("result").unwrap_or(0)
-            )));
+        if let Some(v) = hs.get_number("result")
+            && v != 0
+        {
+            return Err(upload_result_to_error("upload_save", v));
         }
         Ok(())
     }
@@ -713,11 +809,13 @@ where
         let hash = response
             .as_hash()
             .ok_or_else(|| WritePathError::Upload("upload_write: not a hash".to_owned()))?;
-        if matches!(hash.get_number("result"), Some(v) if v != 0) {
-            return Err(WritePathError::Upload(format!(
-                "upload_write result={}",
-                hash.get_number("result").unwrap_or(0)
-            )));
+        if let Some(v) = hash.get_number("result")
+            && v != 0
+        {
+            // ncx.48: transient/permanent classification so the outer
+            // retry loop can pick the right strategy (bounded backoff
+            // vs single session restart).
+            return Err(upload_result_to_error("upload_write", v));
         }
         Ok(())
     }
@@ -771,11 +869,10 @@ where
         let hash = response
             .as_hash()
             .ok_or_else(|| WritePathError::Upload("upload_save: not a hash".to_owned()))?;
-        if matches!(hash.get_number("result"), Some(v) if v != 0) {
-            return Err(WritePathError::Upload(format!(
-                "upload_save result={}",
-                hash.get_number("result").unwrap_or(0)
-            )));
+        if let Some(v) = hash.get_number("result")
+            && v != 0
+        {
+            return Err(upload_result_to_error("upload_save", v));
         }
 
         // Drop the session sidecar now that the commit succeeded.
@@ -1060,5 +1157,156 @@ pub mod mock {
             self.releases.fetch_add(1, Ordering::Relaxed);
             Ok(())
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests for the pCloud result-code classifier (ncx.48).
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod upload_classifier_tests {
+    use super::{
+        UploadResultClass, classify_upload_result, upload_result_to_error,
+    };
+    use crate::write_path::WritePathError;
+
+    #[test]
+    fn zero_is_ok() {
+        assert_eq!(classify_upload_result(0), UploadResultClass::Ok);
+    }
+
+    #[test]
+    fn log_in_required_is_permanent() {
+        // 2000 LOG_IN_REQUIRED — retrying won't recover a dead session.
+        assert_eq!(
+            classify_upload_result(2000),
+            UploadResultClass::Permanent
+        );
+    }
+
+    #[test]
+    fn access_denied_is_permanent() {
+        // 2003 ACCESS_DENIED.
+        assert_eq!(
+            classify_upload_result(2003),
+            UploadResultClass::Permanent
+        );
+    }
+
+    #[test]
+    fn not_found_is_permanent() {
+        // 2005 NOT_FOUND.
+        assert_eq!(
+            classify_upload_result(2005),
+            UploadResultClass::Permanent
+        );
+    }
+
+    #[test]
+    fn quota_exceeded_is_permanent() {
+        // 2008 QUOTA_EXCEEDED.
+        assert_eq!(
+            classify_upload_result(2008),
+            UploadResultClass::Permanent
+        );
+    }
+
+    #[test]
+    fn name_too_long_is_permanent() {
+        // 2010 NAME_TOO_LONG.
+        assert_eq!(
+            classify_upload_result(2010),
+            UploadResultClass::Permanent
+        );
+    }
+
+    #[test]
+    fn upload_gc_is_permanent() {
+        // 2069 — upload session GC'd; chunked_flush restarts once.
+        assert_eq!(
+            classify_upload_result(2069),
+            UploadResultClass::Permanent
+        );
+    }
+
+    #[test]
+    fn rate_limit_is_transient() {
+        // 4000 — rate limiting / login-flood; retry with backoff.
+        assert_eq!(
+            classify_upload_result(4000),
+            UploadResultClass::Transient
+        );
+    }
+
+    #[test]
+    fn server_5xxx_is_transient() {
+        for code in [5000u64, 5010, 5999] {
+            assert_eq!(
+                classify_upload_result(code),
+                UploadResultClass::Transient,
+                "server-side 5xxx code {code} must be transient"
+            );
+        }
+    }
+
+    #[test]
+    fn server_7xxx_is_transient() {
+        for code in [7000u64, 7100, 7999] {
+            assert_eq!(
+                classify_upload_result(code),
+                UploadResultClass::Transient,
+                "server-side 7xxx code {code} must be transient"
+            );
+        }
+    }
+
+    #[test]
+    fn client_1xxx_is_permanent() {
+        // 1000..=1999 are caller-side bugs (bad args, payload too large).
+        for code in [1000u64, 1500, 1999] {
+            assert_eq!(
+                classify_upload_result(code),
+                UploadResultClass::Permanent,
+                "client 1xxx code {code} must be permanent"
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_code_defaults_to_transient() {
+        // Safer to retry than to discard local state on an unmapped code.
+        assert_eq!(
+            classify_upload_result(9999),
+            UploadResultClass::Transient
+        );
+        assert_eq!(
+            classify_upload_result(3500),
+            UploadResultClass::Transient
+        );
+    }
+
+    #[test]
+    fn upload_result_to_error_produces_expected_variants() {
+        assert!(matches!(
+            upload_result_to_error("upload_write", 2005),
+            WritePathError::UploadPermanent(_)
+        ));
+        assert!(matches!(
+            upload_result_to_error("upload_write", 5000),
+            WritePathError::UploadTransient(_)
+        ));
+        assert!(matches!(
+            upload_result_to_error("upload_write", 9999),
+            WritePathError::UploadTransient(_)
+        ));
+    }
+
+    #[test]
+    fn upload_result_to_error_embeds_op_and_code() {
+        let e = upload_result_to_error("upload_save", 2008);
+        let msg = format!("{e}");
+        assert!(msg.contains("upload_save"), "op missing: {msg}");
+        assert!(msg.contains("2008"), "code missing: {msg}");
     }
 }

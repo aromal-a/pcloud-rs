@@ -46,6 +46,20 @@
 //! - **No auth token storage, no credential handling.** This crate
 //!   never reads, renders, or persists any secret material. Secrets
 //!   stay in the daemon behind the IPC boundary.
+//! - **No auth beyond same-user IPC (audit-06 LOW IPC / pcloud-rs-ncx.84-b).**
+//!   The management surface exposed by this crate relies entirely on
+//!   the owner-only UNIX socket permission check performed by
+//!   [`pcloud_ipc`] — there is **no** per-request authentication,
+//!   session token, CSRF cookie, HTTP Basic/Bearer header, or client
+//!   certificate. Any local process running as the same uid as the
+//!   daemon can call every route. This is an intentional threat-model
+//!   choice because the pCloud daemon itself already trusts any
+//!   same-user caller over IPC; adding per-request auth to the web
+//!   shim would give a false sense of security. Operators who want
+//!   remote or cross-user access MUST put a reverse proxy with its
+//!   own AuthN/AuthZ layer in front — shipping this crate on a
+//!   publicly-bindable address is a configuration bug. The loopback
+//!   bind guard and disabled CORS are the only defences in depth.
 //!
 //! ## IPC client pattern
 //!

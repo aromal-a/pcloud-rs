@@ -224,7 +224,40 @@ grep -E '"(password|token|master_key|temppass)":"[^"]' daemon.log
 If that grep ever prints, treat it as a security incident: rotate the
 credential and file a bead.
 
+### Log rotation (audit-06 LOW deployment / pcloud-rs-ncx.87-a)
+
+`pcloud-daemon` writes structured JSON to stderr by default; most
+installers tee this to `/var/log/pcloud-rs/daemon.log` or a systemd
+journal namespace. If you rotate the file externally (logrotate,
+`newsyslog`, or an operator script) you have two safe options:
+
+1. **`copytruncate` (recommended for logrotate).** Rotates by
+   copying the file and truncating the original in place. Requires
+   no daemon restart and no signal handling. The in-flight fd the
+   daemon writes through keeps appending to the truncated file.
+   This is the policy we ship in `packaging/linux/logrotate/` and
+   the one we test in CI.
+
+2. **`postrotate kill -HUP`.** The daemon listens for `SIGHUP` and
+   reopens all log sinks on receipt (see
+   `crates/pcloud-daemon/src/signals.rs`). This form is slightly
+   more efficient (no interim `cp` on large logs) but requires the
+   PID file to be correct. On systemd units use
+   `ExecReload=/bin/kill -HUP $MAINPID` or
+   `postrotate systemctl reload pcloud-daemon`.
+
+Do NOT use `create` rotation without `copytruncate` or `HUP` — the
+daemon's fd would continue writing to the rotated (renamed) inode
+and the new file would stay empty until the next daemon restart.
+
 ## Backup and restore of local state
+
+> Checklist cross-reference (audit-06 LOW deployment /
+> pcloud-rs-ncx.87-e): for disaster-recovery backup/restore of
+> page-cache and staging data (separate from config/vault), see
+> [`docs/book/src/operations/backup-snapshots.md`](docs/book/src/operations/backup-snapshots.md).
+> The procedures below cover operator-owned files; the `backup-snapshots`
+> doc covers daemon-managed transient state.
 
 State locations (default XDG paths):
 

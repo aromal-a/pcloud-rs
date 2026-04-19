@@ -516,12 +516,37 @@ impl EngineShell {
         if overflow.len() > PLANNER_OVERFLOW_MAX {
             let dropped = overflow.len() - PLANNER_OVERFLOW_MAX;
             overflow.truncate(PLANNER_OVERFLOW_MAX);
-            log::warn!(
-                "planner_overflow cap ({}) exceeded: dropped {} deferred candidates; \
-                 they will be re-discovered on the next full scan cycle",
-                PLANNER_OVERFLOW_MAX,
-                dropped,
-            );
+            // audit-06 LOW sync L-4.1 / pcloud-rs-ncx.81-a: rate-limit
+            // this warning to one emission per 60s. Without the limiter
+            // a heavy overflow storm would hammer the log with identical
+            // lines once per scan cycle. The AtomicU64 holds the epoch
+            // seconds of the last emission; we use `Relaxed` ordering
+            // because mis-ordering can only cause a duplicate warning
+            // (never silence a real overflow).
+            use std::sync::atomic::{AtomicU64, Ordering};
+            static LAST_WARN_EPOCH_S: AtomicU64 = AtomicU64::new(0);
+            const WARN_INTERVAL_S: u64 = 60;
+            let now_s = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            let last = LAST_WARN_EPOCH_S.load(Ordering::Relaxed);
+            if now_s.saturating_sub(last) >= WARN_INTERVAL_S {
+                LAST_WARN_EPOCH_S.store(now_s, Ordering::Relaxed);
+                log::warn!(
+                    "planner_overflow cap ({}) exceeded: dropped {} deferred candidates; \
+                     they will be re-discovered on the next full scan cycle \
+                     (rate-limited; 1/60s)",
+                    PLANNER_OVERFLOW_MAX,
+                    dropped,
+                );
+            } else {
+                log::debug!(
+                    "planner_overflow cap ({}) exceeded: dropped {} (rate-limited)",
+                    PLANNER_OVERFLOW_MAX,
+                    dropped,
+                );
+            }
         }
         overflow
     }

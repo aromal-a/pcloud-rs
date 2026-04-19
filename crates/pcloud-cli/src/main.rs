@@ -836,7 +836,7 @@ fn render_backend_prefix(
 
 /// For `crypto start` / `unlock-crypto`, append a `(backend: ...)`
 /// tail to the success line. See [`render_backend_prefix`] for the
-/// daemon-side TODO.
+/// pre-Wave-2 daemon compatibility notes.
 fn render_backend_suffix(
     command: &commands::Command,
     response: &pcloud_ipc::Response,

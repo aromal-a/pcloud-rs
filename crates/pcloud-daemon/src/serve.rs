@@ -65,8 +65,8 @@ fn sd_notify(msg: &str) {
 ///
 /// See: `man 8 launchd`, `man 3 launch_activate_socket`.
 ///
-/// TODO(pcloud-rs-8mb.32/L-2): Add launchd KeepAlive / XPC signalling if
-/// macOS launchd packaging is in scope (P2-7 wave).
+/// TODO(pcloud-rs-0cx): Add launchd KeepAlive / XPC signalling if
+/// macOS launchd packaging is in scope.
 #[cfg(target_os = "macos")]
 #[allow(dead_code)]
 fn sd_notify(_msg: &str) {
@@ -80,7 +80,7 @@ fn sd_notify(_msg: &str) {
 /// `SetServiceStatus`. If launchd/rc.d/SCM lifecycle signals become important,
 /// wire platform-specific calls in the branches below.
 ///
-/// TODO(pcloud-rs-8mb.32/L-2): BSD rc.d `daemon(8)` does not need sd_notify;
+/// TODO(pcloud-rs-0cx): BSD rc.d `daemon(8)` does not need sd_notify;
 /// document the supervision story in packaging/freebsd/pcloudd.rc instead.
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 #[allow(dead_code)]
@@ -259,7 +259,10 @@ pub(crate) fn dispatch_with_drain_gate(
         );
     }
     let _guard = signals::InFlightGuard::new();
-    crate::dispatch_with_peer(runtime, peer_uid, request)
+    // ncx.54 (P3-E1): thread peer_pid through to the dispatch path via
+    // `dispatch_with_peer_creds` so downstream audit sites can read it
+    // from `runtime.current_peer_pid` without re-resolving peer state.
+    crate::dispatch::dispatch_with_peer_creds(runtime, peer_uid, peer_pid, request)
 }
 
 /// Same as [`serve_until_shutdown`], but additionally honors an external

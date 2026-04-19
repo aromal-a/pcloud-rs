@@ -3,8 +3,8 @@
 //! target_os = "openbsd"))]`** -- gated at the `mod bsd;` line in
 //! `platform/mod.rs`.
 //!
-//! - FreeBSD (tier 2): libfuse2 via the `fuser` crate (mount path still
-//!   TODO). `MountinfoReader` wraps `getmntinfo(3)`.
+//! - FreeBSD (tier 2): libfuse2 via the `fuser` crate (mount path is
+//!   tracked under `bd-xplat-bsd`). `MountinfoReader` wraps `getmntinfo(3)`.
 //! - OpenBSD / NetBSD (tier 3): community-maintained; no first-party
 //!   mount implementation planned. `getmntinfo(3)` is still available
 //!   and is used here for orphan detection.
@@ -295,6 +295,26 @@ fn escape_mountinfo(input: &str) -> String {
 // ---------------------------------------------------------------------------
 // M-5.1: Signal-driven reaper stub for BSD.
 //
+// TIER-3 STATUS (pcloud-rs-ncx.29, audit-06): BSD signal-driven mount
+// cleanup is **scaffolded but not live-verified**. The signal handler
+// (sigaction SIGTERM/SIGINT) is installed and sets an AtomicBool
+// (async-signal-safe), and a reaper thread observes the flag and logs
+// a warning. However, the reaper does **not** drain an ACTIVE_MOUNTS
+// registry nor issue `unmount(MNT_FORCE)` because the BSD kernel mount
+// path itself is not wired in this fork (tracked under `bd-xplat-bsd`).
+//
+// Consistent with the Windows IPC Tier-3 disposition documented in
+// `CLAUDE.md`, BSD mount cleanup is accepted as Tier-3 / best-effort:
+// - Compile-tested across tier-2 CI (FreeBSD continue-on-error).
+// - Not live-verified on real hardware.
+// - Will not panic, will not silently swallow failures — the reaper
+//   logs when a signal arrives so operators see the event.
+//
+// When `bd-xplat-bsd` lands a real FreeBSD mount, the reaper here must
+// be upgraded to drain ACTIVE_MOUNTS and call `unmount(mnt, MNT_FORCE)`
+// (see `libc::unmount`) mirroring the Linux `umount2(MNT_DETACH)` path
+// in `platform/linux.rs::reap_all_mounts`.
+//
 // On Linux, `platform/linux.rs` registers a `sigaction(SIGTERM/SIGINT)`
 // handler and spawns a "pcloudfs-reaper" thread that drains ACTIVE_MOUNTS
 // on shutdown. BSD has no equivalent yet (tracked under `bd-xplat-bsd`).
@@ -367,12 +387,19 @@ mod reaper {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(200));
             if SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
-                // TODO(bd-xplat-bsd): drain ACTIVE_MOUNTS and issue
-                // platform-specific unmount (fusermount / umount) when
-                // the BSD kernel mount path is implemented.
+                // TIER-3 (pcloud-rs-ncx.29): BSD mount cleanup is
+                // scaffolded-only. When `bd-xplat-bsd` lands a real
+                // FreeBSD kernel mount, this body must drain
+                // ACTIVE_MOUNTS and issue `libc::unmount(path,
+                // libc::MNT_FORCE)` per-entry, mirroring the Linux
+                // `umount2(MNT_DETACH)` reaper in `platform/linux.rs`.
+                // Until then we only log so operators can observe the
+                // signal arrival — behaviourally a no-op on the
+                // mount registry (none exists on BSD yet).
                 log::warn!(
                     "pcloud-fs (BSD): shutdown signal received; \
-                     BSD kernel mount cleanup not yet implemented (bd-xplat-bsd)"
+                     BSD kernel mount cleanup not yet implemented (bd-xplat-bsd, \
+                     Tier-3 per CLAUDE.md)"
                 );
                 return;
             }

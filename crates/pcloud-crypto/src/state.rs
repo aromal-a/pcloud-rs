@@ -41,6 +41,18 @@ pub enum UnlockState {
     Locked,
     /// A `start` operation is in progress. This window is kept as narrow as
     /// possible and is intentionally never observed over IPC.
+    ///
+    /// # Observability (audit-06 LOW crypto / pcloud-rs-ncx.79-d)
+    /// This variant is `pub` by the same visibility rule as the rest of
+    /// [`UnlockState`] (the enum is part of the crate surface), but
+    /// daemon/IPC code MUST NOT leak this transient state outside the
+    /// crypto crate. The observable surface over IPC is limited to
+    /// `NotSetup` / `Locked` / `Unlocked` — `Unlocking` is an internal
+    /// detail of [`crate::CryptoShell::start`] that exists only so we
+    /// can clear plaintext on a panic between the Argon2id check and
+    /// the `active_key_material` assignment. Any code that serializes
+    /// this value for external consumers is a bug; report to
+    /// `bd-1du.10`.
     Unlocking,
     /// Crypto is active. Content/metadata operations are permitted.
     Unlocked,

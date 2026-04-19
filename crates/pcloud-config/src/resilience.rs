@@ -118,6 +118,37 @@ impl ResiliencePolicy {
     pub const fn retry_max_delay(&self) -> Duration {
         Duration::from_millis(self.retry_max_delay_ms)
     }
+
+    /// Replace `retry_jitter_seed` with a per-process random value.
+    ///
+    /// audit-06 LOW transport L-3 / pcloud-rs-ncx.83-e: the compile-time
+    /// default `0x00C0_FFEE_F00D` is deterministic across hosts, which
+    /// defeats the whole point of jitter (two machines retrying the
+    /// same request will line up their backoff). Config-loader code
+    /// paths should call this method after parsing the user config so
+    /// the seed is fresh per daemon invocation while the JSON on disk
+    /// remains reproducible.
+    ///
+    /// The seed is derived from wall-clock nanoseconds XOR'd with a
+    /// coarse address entropy nudge. This is NOT cryptographic
+    /// randomness — it does not need to be, since the seed is only
+    /// used to stagger retry storms among cooperating clients, not
+    /// to derive any secret.
+    pub fn randomize_jitter_seed(&mut self) {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        // Include a stack-address bit to diverge seeds for multiple
+        // daemons started in the same nanosecond window.
+        let addr = (&nanos as *const u64 as usize) as u64;
+        let mixed = nanos
+            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+            .rotate_left(17)
+            ^ addr.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        self.retry_jitter_seed = if mixed == 0 { 1 } else { mixed };
+    }
 }
 
 #[cfg(test)]
