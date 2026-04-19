@@ -7,7 +7,7 @@ publish.workspace = true
 description = "Enterprise resilience primitives (rate limiter, circuit breaker, retry, timeout) for pcloud-rs."
 
 [features]
-default = []
+default = ["transport-metrics"]
 # Tokio-backed `Timeout` helper. Off by default so the core primitives stay
 # runtime-agnostic and this crate remains a pure utility library.
 tokio-timeout = ["dep:tokio"]

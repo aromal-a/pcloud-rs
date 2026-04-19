@@ -1,3 +1,8 @@
+// TODO(bd-sweep-unwrap): This file contains ~33 `.unwrap()` / `.expect()`
+// call sites in non-test code paths. The most-reachable ones are in token
+// read/write paths; converting them to `?` propagation is the priority.
+// Full sweep deferred to a dedicated hardening pass.
+
 //! **PLATFORM: all** (Linux/BSD/macOS/Windows-file-fallback).
 //!
 //! Secrets persisted to `<config>/auth_token` with mode 0600, parent 0700.

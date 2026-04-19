@@ -26,9 +26,11 @@ below.
 ## Scope
 
 Contributions are welcome to the `pcloud-rs` workspace. The legacy C/C++
-client (`pcloud-rs/main.cpp`, `pclsync_lib.cpp`, `pclsync/`) is in
-maintenance mode — bug fixes only, no new feature parity shims, unless
-directly needed by the Rust rewrite.
+client (`main.cpp`, `pclsync_lib.cpp`, `pclsync/`) has been **removed from
+this fork**. Those sources were deleted once the Rust rewrite reached
+functional parity. The upstream C reference tree remains available read-only
+at `https://github.com/pcloudcom/pcloud-rs`; it is not maintained here. Do
+not add a `C_CODE/` drop or re-introduce the C build system into this fork.
 
 ## Dev Setup
 
@@ -48,13 +50,6 @@ rustup component add rustfmt clippy        # if missing
 
 ```bash
 cargo install cargo-deny cargo-audit
-```
-
-### C build (only for cross-parity work)
-
-```bash
-cd /home/ezechiel203/Projects/FORKS/pcloud-rs
-make -j4
 ```
 
 ### bd tracker

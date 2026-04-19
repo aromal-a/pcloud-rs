@@ -1,3 +1,9 @@
+// TODO(bd-sweep-unwrap): This file contains ~31 `.unwrap()` / `.expect()`
+// call sites in non-test code paths. The most-reachable ones are in the
+// upload/download execution paths (file open, path canonicalization).
+// Converting them to `?` propagation is the priority for this file.
+// Full sweep deferred to a dedicated hardening pass.
+
 //! Bridge between engine [`PlannedOperation`] / [`TransferTask`] items and
 //! real upload/download API calls via [`TransferRuntime`].
 //!

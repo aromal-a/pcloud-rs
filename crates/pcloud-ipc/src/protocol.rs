@@ -38,6 +38,22 @@ use crate::methods::{Request, RequestEnvelope, Response};
 /// ```
 pub const IPC_PROTOCOL_VERSION: u16 = 1;
 
+/// Minimum IPC protocol version accepted by the server.
+///
+/// Clients advertising a version in the range
+/// `[MIN_ACCEPTED_IPC_PROTOCOL_VERSION, IPC_PROTOCOL_VERSION]` are
+/// admitted with a deprecation log at `warn!` level so operators are
+/// notified without breaking running clients during rolling upgrades.
+/// Clients advertising a version below this floor or above the current
+/// version are rejected with [`ProtocolError::VersionMismatch`].
+///
+/// The window is intentionally narrow (one minor step). When a
+/// breaking wire change is made, bump `IPC_PROTOCOL_VERSION` and update
+/// this constant to `IPC_PROTOCOL_VERSION - 1` to allow one-version
+/// rolling upgrades, or to `IPC_PROTOCOL_VERSION` to require hard
+/// cutover.
+pub const MIN_ACCEPTED_IPC_PROTOCOL_VERSION: u16 = 1;
+
 /// Hard cap on an IPC payload. Protects the decoder from a malicious
 /// `payload_len` prefix demanding unbounded allocation.
 ///
@@ -252,11 +268,21 @@ pub fn encode_response<T: Serialize>(response: &T) -> Result<Vec<u8>, ProtocolEr
 pub fn decode_request(bytes: &[u8]) -> Result<Frame<RequestEnvelope>, ProtocolError> {
     let (payload_len, version, message_type) = decode_header(bytes)?;
 
-    if version != IPC_PROTOCOL_VERSION {
+    // Accept versions in the compat window [MIN_ACCEPTED, CURRENT].
+    // Versions below the floor or above the ceiling are rejected.
+    // Versions in the window but below CURRENT trigger a deprecation warning.
+    if version < MIN_ACCEPTED_IPC_PROTOCOL_VERSION || version > IPC_PROTOCOL_VERSION {
         return Err(ProtocolError::VersionMismatch {
             expected: IPC_PROTOCOL_VERSION,
             actual: version,
         });
+    }
+    if version < IPC_PROTOCOL_VERSION {
+        log::warn!(
+            "IPC client using deprecated protocol version {version}; \
+             current version is {IPC_PROTOCOL_VERSION}. \
+             Please upgrade the client to avoid future compatibility breaks."
+        );
     }
 
     let payload = &bytes[8..];
@@ -295,11 +321,18 @@ pub fn decode_request(bytes: &[u8]) -> Result<Frame<RequestEnvelope>, ProtocolEr
 pub fn decode_response(bytes: &[u8]) -> Result<Frame<Response>, ProtocolError> {
     let (payload_len, version, message_type) = decode_header(bytes)?;
 
-    if version != IPC_PROTOCOL_VERSION {
+    // Accept versions in the compat window [MIN_ACCEPTED, CURRENT].
+    if version < MIN_ACCEPTED_IPC_PROTOCOL_VERSION || version > IPC_PROTOCOL_VERSION {
         return Err(ProtocolError::VersionMismatch {
             expected: IPC_PROTOCOL_VERSION,
             actual: version,
         });
+    }
+    if version < IPC_PROTOCOL_VERSION {
+        log::warn!(
+            "IPC response using deprecated protocol version {version}; \
+             current version is {IPC_PROTOCOL_VERSION}."
+        );
     }
 
     let payload = &bytes[8..];

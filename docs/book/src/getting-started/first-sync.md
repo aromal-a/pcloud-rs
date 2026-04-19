@@ -599,6 +599,6 @@ macOS: `~/Library/Application Support/pcloud-rs/`.
   request/response enum, framing.
 - [Security model](../security/model.md) — threat model, trust
   boundaries, what the daemon protects and what it does not.
-- [STATUS](https://github.com/pcloudcom/pcloud-rs/blob/main/STATUS.md)
+- [STATUS](https://github.com/ezechiel203/pcloud-rs/blob/main/STATUS.md)
   — canonical parity counts. Mount and the `log`/`diff`/`restore`
   family are the honest open items.

@@ -34,7 +34,7 @@
 //! ## Threading
 //!
 //! All public handle types are `Send + Sync` and cheap to clone. Internal
-//! state is guarded by a standard [`std::sync::Mutex`]; critical sections are
+//! state is guarded by a [`parking_lot::Mutex`]; critical sections are
 //! short, bounded, and never hold the lock across an `await` point.
 //!
 //! [`Clock`]: clock::Clock

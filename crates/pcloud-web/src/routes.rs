@@ -91,6 +91,11 @@ pub(crate) fn router(state: AppState) -> Router {
 // -------------------------------------------------------------------
 
 /// `GET /health` — liveness probe. Never touches the daemon.
+///
+/// Intentionally unauthenticated: orchestrators (Kubernetes, systemd,
+/// load-balancers) must be able to probe liveness without a session
+/// token. The endpoint reveals only that the HTTP process is alive —
+/// no daemon state, no user data, no secrets.
 async fn health() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
@@ -102,6 +107,8 @@ async fn health() -> impl IntoResponse {
 /// Orchestrators that use `/livez` for liveness should only restart the
 /// container when this returns non-200 (i.e. the web server itself is
 /// wedged), not when the daemon is temporarily unreachable.
+///
+/// Intentionally unauthenticated for the same reasons as `/health`.
 async fn livez() -> impl IntoResponse {
     (StatusCode::OK, "ok")
 }
@@ -112,6 +119,8 @@ async fn livez() -> impl IntoResponse {
 /// set the shared `ready` flag to `true`, or 503 `"not ready"` while
 /// initialization is still in progress. Orchestrators should not route
 /// traffic to this instance until this endpoint returns 200.
+///
+/// Intentionally unauthenticated for the same reasons as `/health`.
 async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
     if state.ready.load(Ordering::Acquire) {
         (StatusCode::OK, "ok")
@@ -129,7 +138,15 @@ async fn index(State(state): State<AppState>, headers: HeaderMap) -> Response {
 }
 
 /// `GET /api/status` — JSON mirror of the landing page.
-async fn api_status(State(state): State<AppState>) -> Response {
+///
+/// Requires a valid `X-PCloud-Web-Token` header because this endpoint
+/// returns daemon state (sync root count, mount state) that is not
+/// appropriate to expose without authentication, unlike the bare liveness
+/// probes (`/health`, `/livez`, `/readyz`).
+async fn api_status(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
+        return resp;
+    }
     let status = fetch_status(&state.socket_path).await;
     let body = json!({
         "online": status.online,

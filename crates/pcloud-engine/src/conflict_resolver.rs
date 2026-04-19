@@ -37,8 +37,11 @@ pub enum ConflictPolicy {
     /// loop can execute the two-step operation atomically.
     RenameBoth,
     /// Emit a conflict event, skip the file, and let the user resolve
-    /// it manually through `pcloudc conflict resolve`. This is the
-    /// default.
+    /// it manually through `pcloudc conflict resolve`.
+    ///
+    /// **Not** the default policy. The default is [`ConflictPolicy::RenameBoth`]
+    /// (see [`ConflictResolver::default`]). Select `Error` explicitly via
+    /// `--on-conflict=error` or the daemon config key `sync.conflict_policy`.
     Error,
     /// Surface the conflict for manual review; do not resolve
     /// automatically. Alias for `Error` with a slightly different

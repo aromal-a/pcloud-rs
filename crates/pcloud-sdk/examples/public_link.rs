@@ -80,18 +80,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     println!("list-links: {:?} — {}", list_resp.status, list_resp.message);
 
-    // Parse the link id from the create response payload to demonstrate delete.
-    // In production code you would deserialise the JSON payload into a typed
-    // struct; here we extract the id heuristically for brevity.
-    if let Some(id_str) = create_resp.payload.as_ref().and_then(|p| {
-        // Payload is JSON; look for `"link_id":NNN` or `"id":NNN`.
-        let s = p.to_string();
+    // Parse the link id from the create response message to demonstrate delete.
+    // The message field carries the JSON payload for data-bearing responses.
+    // In production code you would deserialise the JSON into a typed struct;
+    // here we extract the id heuristically for brevity.
+    if let Some(id_str) = {
+        // message is JSON; look for `"link_id":NNN` or `"id":NNN`.
+        let s = &create_resp.message;
         s.split('"')
             .zip(s.split('"').skip(1))
             .find(|(k, _)| *k == "link_id" || *k == "id")
             .and_then(|(_, v)| v.trim_start_matches(':').trim().split([',', '}']).next())
             .map(|v| v.trim().to_owned())
-    }) {
+    } {
         if let Ok(link_id) = id_str.parse::<u64>() {
             let del_resp = daemon.dispatch(Request::DeletePublicLink { link_id });
             println!(

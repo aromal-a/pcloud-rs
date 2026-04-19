@@ -367,6 +367,16 @@ pub enum CryptoError {
     /// layer and produce an undecryptable blob (M-3.6 / audit-05).
     #[error("sector plaintext must not be empty")]
     EmptySector,
+    /// The in-memory master key has exceeded its configured TTL
+    /// ([`keys::KeyManager::cache_ttl_secs`]). The daemon must prompt the
+    /// user to re-enter their crypto password ([`CryptoShell::start`]) before
+    /// further encrypted operations are attempted.
+    ///
+    /// This error is returned by any operation that requires the master key
+    /// when lazy eviction detects an expired key. The key material is
+    /// zeroized before the error is surfaced.
+    #[error("master key TTL expired: re-unlock required")]
+    MasterKeyExpired,
 }
 
 impl From<pcloud_kms::KmsError> for CryptoError {
@@ -731,6 +741,26 @@ pub struct CryptoShell {
     #[cfg(feature = "pclsync-v2")]
     #[serde(skip)]
     pub pclsync_compat_state: Option<pclsync_compat_profile::PclsyncCompatState>,
+    /// Monotonic deadline until which further unlock attempts are rejected
+    /// (brute-force backoff). Complements [`Self::last_fail_at`] (wall-clock,
+    /// persisted) with a monotonic guard that survives clock rewind within
+    /// the same daemon session.
+    ///
+    /// Set on each failed unlock to `Instant::now() + lockout_backoff`.
+    /// Cleared on a successful unlock (`None`). Not serialised —
+    /// process-local `Instant` values have no meaning across restarts; the
+    /// persisted `last_fail_at` wall-clock timestamp handles the
+    /// cross-restart case.
+    ///
+    /// # Security
+    /// Mitigates: clock-rewind attacks where an attacker rewinds the
+    /// system clock to bypass the wall-clock backoff check. The monotonic
+    /// check cannot be sidestepped without killing the daemon process
+    /// (at which point the wall-clock guard takes over). Uses
+    /// `std::time::Instant` which is monotonic per POSIX and guaranteed
+    /// not to go backward within a process lifetime.
+    #[serde(skip)]
+    pub lockout_monotonic_floor: Option<std::time::Instant>,
 }
 
 impl CryptoShell {
@@ -824,7 +854,9 @@ impl fmt::Debug for CryptoShell {
             .field("unlock_state", &self.unlock_state)
             .field("folders", &self.folders)
             .field("next_local_folder_id", &self.next_local_folder_id)
-            .field("hint", &self.hint)
+            // hint: redact content; only show presence/absence to avoid leaking
+            // partial password context into logs (audit-06 LOW crypto L-1 / ncx.79-f).
+            .field("hint", &self.hint.as_deref().map(|_| "<set>"))
             .field("kms", &self.kms.name())
             .field("mode", &self.mode.tag())
             .field("backend", &self.backend)
@@ -853,6 +885,7 @@ impl Default for CryptoShell {
             pclsync_compat: None,
             #[cfg(feature = "pclsync-v2")]
             pclsync_compat_state: None,
+            lockout_monotonic_floor: None,
         }
     }
 }
@@ -888,6 +921,15 @@ fn lockout_backoff_secs(failures: u32) -> u64 {
     if failures <= 1 {
         return 0;
     }
+    // Invariant: `failures` should never substantially exceed
+    // MAX_CONSECUTIVE_FAILURES (10) plus a small processing-race margin.
+    // If it does, the counter is being incremented outside the normal lockout
+    // path. Surface the anomaly in debug builds (audit-06 LOW crypto L-1).
+    debug_assert!(
+        failures <= MAX_CONSECUTIVE_FAILURES + 30,
+        "lockout_backoff_secs: failures={} far exceeds MAX_CONSECUTIVE_FAILURES;          counter may be incremented from an unexpected path",
+        failures
+    );
     let shift = failures.min(40); // guard against shift overflow; 2^40 > 30min cap anyway
     let wait = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
     wait.min(MAX_LOCKOUT_BACKOFF_SECS)
@@ -1156,6 +1198,36 @@ impl CryptoShell {
         self.hint.as_deref()
     }
 
+    /// Borrow the active master key, enforcing the configured TTL.
+    ///
+    /// On each call:
+    /// 1. Calls [`keys::KeyManager::check_and_evict_if_stale`]; if the key
+    ///    has exceeded its TTL the key material is zeroized and
+    ///    [`CryptoError::MasterKeyExpired`] is returned.
+    /// 2. Returns [`CryptoError::Locked`] if there is no key.
+    /// 3. On success, calls [`keys::KeyManager::touch`] to slide the TTL
+    ///    window forward and returns a reference to the key.
+    ///
+    /// This is the single choke-point that all sector-encrypt / sector-decrypt
+    /// / filename-encrypt operations must go through so that `cache_ttl_secs`
+    /// is actually enforced. Setting `cache_ttl_secs = 0` disables TTL.
+    fn require_active_key(&mut self) -> Result<&pcloud_secret::secret_bytes::SecretBytes, CryptoError> {
+        if self.keys.check_and_evict_if_stale() {
+            // Key was live but has expired; drop back to Locked.
+            self.unlock_state = state::UnlockState::Locked;
+            return Err(CryptoError::MasterKeyExpired);
+        }
+        // Touch (refresh the LRU timestamp) before borrowing key material so
+        // that Rust's borrow checker sees only one &mut self operation here.
+        self.keys.touch();
+        let key = self
+            .keys
+            .active_key_material
+            .as_ref()
+            .ok_or(CryptoError::Locked)?;
+        Ok(key)
+    }
+
     /// One-time crypto setup. Derives the master key with
     /// Argon2id (default parameters, 16-byte salt, 32-byte output, see
     /// [`keys::KeyManager::derive_key_material`]), records its
@@ -1338,6 +1410,34 @@ impl CryptoShell {
     /// assert!(c.is_started());
     /// ```
     pub fn start(&mut self, password: SecretString) -> Result<(), CryptoError> {
+        self.start_inner(password, None)
+    }
+
+    /// Backend-pinned variant of [`Self::start`]: callers that already
+    /// know which backend they expect (e.g. the daemon after loading
+    /// persisted config) pass it explicitly. If the persisted profile was
+    /// sealed under a different backend we refuse with
+    /// [`CryptoError::BackendMismatch`] rather than silently dispatching
+    /// to the wrong key schedule and corrupting ciphertext on later
+    /// sector ops.
+    ///
+    /// # Errors
+    /// - [`CryptoError::BackendMismatch`] when the on-disk profile does
+    ///   not match `expected`.
+    /// - Plus every error documented on [`Self::start`].
+    pub fn start_with_backend(
+        &mut self,
+        password: SecretString,
+        expected: CryptoBackend,
+    ) -> Result<(), CryptoError> {
+        self.start_inner(password, Some(expected))
+    }
+
+    fn start_inner(
+        &mut self,
+        password: SecretString,
+        expected: Option<CryptoBackend>,
+    ) -> Result<(), CryptoError> {
         // Preserve legacy pre-dispatch guards so callers that have never
         // run setup see `NotSetup` regardless of effective backend.
         if !self.policy.is_safe() {
@@ -1348,6 +1448,21 @@ impl CryptoShell {
         }
         if !self.is_setup() {
             return Err(CryptoError::NotSetup);
+        }
+        // audit-06 P1 (pcloud-rs-ncx.8): if the caller pinned a backend
+        // via `start_with_backend`, the on-disk profile MUST match.
+        // Dispatching a PclsyncCompat profile through the Enhanced key
+        // schedule (or vice versa) would silently desync key derivation
+        // from ciphertext and corrupt every subsequent sector op, so we
+        // refuse here before any key material is derived.
+        if let Some(expected) = expected {
+            let effective = self.effective_backend();
+            if effective != expected {
+                return Err(CryptoError::BackendMismatch {
+                    expected: effective,
+                    provided: expected,
+                });
+            }
         }
         // Dispatch on the effective backend. Backend is inferred lazily from
         // the persisted profile; see `effective_backend` for the sentinel
@@ -1393,9 +1508,9 @@ impl CryptoShell {
         }
         // Brute-force guard: hard cap on total consecutive failures plus
         // an exponential backoff window enforced against the persisted
-        // `last_fail_at` timestamp. Both counters survive daemon restart
-        // via serde so an attacker cannot reset the lockout by killing
-        // the process (H-5 in the crypto audit plan).
+        // `last_fail_at` timestamp (wall-clock, restart-persistent) AND a
+        // monotonic `lockout_monotonic_floor` (process-local, clock-rewind-
+        // resistant). Both must agree before unlock is attempted (H-5).
         let failures = self
             .consecutive_failures
             .load(std::sync::atomic::Ordering::SeqCst);
@@ -1404,10 +1519,20 @@ impl CryptoShell {
         }
         let backoff = lockout_backoff_secs(failures);
         if backoff > 0 {
+            // Wall-clock check (persisted, handles cross-restart backoff).
             let last = self.last_fail_at.load(std::sync::atomic::Ordering::SeqCst);
             let now = unix_now_secs();
             if last > 0 && now.saturating_sub(last) < backoff {
                 return Err(CryptoError::BruteForceLockedOut);
+            }
+            // Monotonic check (process-local, handles clock-rewind within
+            // the same daemon session). `Instant::now()` is guaranteed not
+            // to go backward within a process, so this cannot be bypassed
+            // by clock manipulation without killing the daemon.
+            if let Some(floor) = self.lockout_monotonic_floor {
+                if std::time::Instant::now() < floor {
+                    return Err(CryptoError::BruteForceLockedOut);
+                }
             }
         }
 
@@ -1430,10 +1555,21 @@ impl CryptoShell {
             // which triggers the backoff earlier — the correct direction for
             // security). SeqCst removes any store-reorder ambiguity within
             // this calling thread.
-            self.consecutive_failures
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let new_failures = self
+                .consecutive_failures
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                .saturating_add(1);
             self.last_fail_at
                 .store(unix_now_secs(), std::sync::atomic::Ordering::SeqCst);
+            // Set monotonic floor so clock rewind cannot bypass the backoff
+            // within this daemon session (H-5 clock-rewind mitigation).
+            let new_backoff = lockout_backoff_secs(new_failures);
+            if new_backoff > 0 {
+                self.lockout_monotonic_floor = Some(
+                    std::time::Instant::now()
+                        + std::time::Duration::from_secs(new_backoff),
+                );
+            }
             return Err(CryptoError::WrongPassword);
         }
         self.keys.active_key_material = Some(derived);
@@ -1445,6 +1581,8 @@ impl CryptoShell {
             .store(0, std::sync::atomic::Ordering::SeqCst);
         self.last_fail_at
             .store(0, std::sync::atomic::Ordering::SeqCst);
+        // Clear the monotonic lockout floor on successful unlock.
+        self.lockout_monotonic_floor = None;
         Ok(())
     }
 
@@ -1469,7 +1607,8 @@ impl CryptoShell {
         if self.pclsync_compat_state.is_some() {
             return Err(CryptoError::AlreadyStarted);
         }
-        // Honor the same brute-force lockout as the Enhanced path.
+        // Honor the same brute-force lockout as the Enhanced path, including
+        // the monotonic floor guard (H-5 clock-rewind mitigation).
         let failures = self
             .consecutive_failures
             .load(std::sync::atomic::Ordering::SeqCst);
@@ -1478,10 +1617,17 @@ impl CryptoShell {
         }
         let backoff = lockout_backoff_secs(failures);
         if backoff > 0 {
+            // Wall-clock check (cross-restart persistence).
             let last = self.last_fail_at.load(std::sync::atomic::Ordering::SeqCst);
             let now = unix_now_secs();
             if last > 0 && now.saturating_sub(last) < backoff {
                 return Err(CryptoError::BruteForceLockedOut);
+            }
+            // Monotonic check (clock-rewind resistant, same session).
+            if let Some(floor) = self.lockout_monotonic_floor {
+                if std::time::Instant::now() < floor {
+                    return Err(CryptoError::BruteForceLockedOut);
+                }
             }
         }
 
@@ -1497,15 +1643,27 @@ impl CryptoShell {
                     .store(0, std::sync::atomic::Ordering::SeqCst);
                 self.last_fail_at
                     .store(0, std::sync::atomic::Ordering::SeqCst);
+                // Clear the monotonic lockout floor on successful unlock.
+                self.lockout_monotonic_floor = None;
                 Ok(())
             }
             Err(_) => {
                 self.unlock_state = state::UnlockState::Locked;
                 // SeqCst: see the Enhanced path for the ordering rationale.
-                self.consecutive_failures
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let new_failures = self
+                    .consecutive_failures
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                    .saturating_add(1);
                 self.last_fail_at
                     .store(unix_now_secs(), std::sync::atomic::Ordering::SeqCst);
+                // Set monotonic floor (H-5 clock-rewind mitigation).
+                let new_backoff = lockout_backoff_secs(new_failures);
+                if new_backoff > 0 {
+                    self.lockout_monotonic_floor = Some(
+                        std::time::Instant::now()
+                            + std::time::Duration::from_secs(new_backoff),
+                    );
+                }
                 Err(CryptoError::WrongPassword)
             }
         }
@@ -1720,6 +1878,15 @@ impl CryptoShell {
             }
             self.mode = new_mode;
         }
+
+        // audit-06 P1 (pcloud-rs-ncx.30): the per-session AES-256-GCM
+        // nonce budget is scoped to the active master key. The rotation
+        // just replaced that key, so the old nonce space is logically
+        // a different random domain — we MUST reset the counter or the
+        // rotated session will prematurely exhaust the budget based on
+        // seals done under the previous key schedule.
+        self.sectors_sealed
+            .store(0, std::sync::atomic::Ordering::SeqCst);
 
         Ok(ReencodedPrivateKey {
             private_key_hex: blob,
@@ -2011,8 +2178,16 @@ impl CryptoShell {
         new_password: SecretString,
         flags: u32,
     ) -> Result<ChangePasswordResult, CryptoError> {
-        if !matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
-            return Err(CryptoError::NotYetWired);
+        // audit-06 P1-3 (Opus §3 C-1): cross-backend dispatch must surface
+        // the actual backend mismatch instead of the generic `NotYetWired`.
+        // This helper is PclsyncCompat-only; an Enhanced-sealed profile
+        // landing here means the caller is using the wrong entry point.
+        let effective = self.effective_backend();
+        if !matches!(effective, CryptoBackend::PclsyncCompat) {
+            return Err(CryptoError::BackendMismatch {
+                expected: effective,
+                provided: CryptoBackend::PclsyncCompat,
+            });
         }
         let rekeyed = self.change_password_pclsync_compat_reencoded(
             old_password,
@@ -2170,8 +2345,8 @@ impl CryptoShell {
     //
     // All helpers refuse with `CryptoError::Locked` when the PclsyncCompat
     // runtime state is not resident (i.e. the shell is not unlocked), and
-    // with `CryptoError::NotYetWired` when the shell is configured for the
-    // Enhanced backend — these helpers have no meaning on that path.
+    // with `CryptoError::BackendMismatch` when the shell is configured for
+    // the Enhanced backend — these helpers have no meaning on that path.
     // --------------------------------------------------------------------
 
     /// Insert (or overwrite) a plaintext folder sym-key into the
@@ -2180,7 +2355,7 @@ impl CryptoShell {
     /// does not need to round-trip it through the server.
     ///
     /// # Errors
-    /// - [`CryptoError::NotYetWired`] on Enhanced shells.
+    /// - [`CryptoError::BackendMismatch`] on Enhanced shells.
     /// - [`CryptoError::Locked`] if the PclsyncCompat runtime state is
     ///   absent (shell never unlocked in this process lifetime).
     #[cfg(feature = "pclsync-v2")]
@@ -2189,8 +2364,15 @@ impl CryptoShell {
         folder_id: u64,
         sym: pclsync_rsa::SymKeyVer1,
     ) -> Result<(), CryptoError> {
-        if !matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
-            return Err(CryptoError::NotYetWired);
+        // audit-06 P1-3 (Opus §3 C-1): raise `BackendMismatch` so the
+        // caller learns that the shell is sealed under a different backend
+        // rather than swallowing the gap behind the generic `NotYetWired`.
+        let effective = self.effective_backend();
+        if !matches!(effective, CryptoBackend::PclsyncCompat) {
+            return Err(CryptoError::BackendMismatch {
+                expected: effective,
+                provided: CryptoBackend::PclsyncCompat,
+            });
         }
         let state = self
             .pclsync_compat_state
@@ -2211,8 +2393,15 @@ impl CryptoShell {
         file_id: u64,
         sym: pclsync_rsa::SymKeyVer1,
     ) -> Result<(), CryptoError> {
-        if !matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
-            return Err(CryptoError::NotYetWired);
+        // audit-06 P1-3 (Opus §3 C-1): surface `BackendMismatch` rather than
+        // `NotYetWired` for Enhanced-sealed profiles so the caller sees the
+        // real reason a PclsyncCompat-only helper is being refused.
+        let effective = self.effective_backend();
+        if !matches!(effective, CryptoBackend::PclsyncCompat) {
+            return Err(CryptoError::BackendMismatch {
+                expected: effective,
+                provided: CryptoBackend::PclsyncCompat,
+            });
         }
         let state = self
             .pclsync_compat_state
@@ -2232,7 +2421,7 @@ impl CryptoShell {
     /// `crypto_getfolderkey` proto response already delivers raw bytes).
     ///
     /// # Errors
-    /// - [`CryptoError::NotYetWired`] on Enhanced shells.
+    /// - [`CryptoError::BackendMismatch`] on Enhanced shells.
     /// - [`CryptoError::Locked`] when the shell is not unlocked.
     /// - [`CryptoError::PclsyncCompat`] on RSA-OAEP or sym-key parse failure
     ///   (wire-level taxonomy is deliberately collapsed to an opaque
@@ -2243,8 +2432,15 @@ impl CryptoShell {
         folder_id: u64,
         wrapped: &[u8],
     ) -> Result<(), CryptoError> {
-        if !matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
-            return Err(CryptoError::NotYetWired);
+        // audit-06 P1-3 (Opus §3 C-1): raise `BackendMismatch` on an
+        // Enhanced shell so the daemon's OAEP-unwrap entry point cannot
+        // silently fail with the generic `NotYetWired`.
+        let effective = self.effective_backend();
+        if !matches!(effective, CryptoBackend::PclsyncCompat) {
+            return Err(CryptoError::BackendMismatch {
+                expected: effective,
+                provided: CryptoBackend::PclsyncCompat,
+            });
         }
         let state = self
             .pclsync_compat_state
@@ -2279,8 +2475,14 @@ impl CryptoShell {
         // TODO(bd-1du.10): thread `hash` through the cache so stale
         // entries can be invalidated when the server bumps file version.
         let _ = hash;
-        if !matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
-            return Err(CryptoError::NotYetWired);
+        // audit-06 P1-3 (Opus §3 C-1): surface `BackendMismatch` instead
+        // of `NotYetWired` so cross-backend dispatch is diagnosable.
+        let effective = self.effective_backend();
+        if !matches!(effective, CryptoBackend::PclsyncCompat) {
+            return Err(CryptoError::BackendMismatch {
+                expected: effective,
+                provided: CryptoBackend::PclsyncCompat,
+            });
         }
         let state = self
             .pclsync_compat_state
@@ -2468,7 +2670,7 @@ impl CryptoShell {
     /// assert_eq!(open, b"hello");
     /// ```
     pub fn seal_sector(
-        &self,
+        &mut self,
         file_seed: &[u8],
         sector_index: u32,
         plaintext: &[u8],
@@ -2499,23 +2701,52 @@ impl CryptoShell {
         // `u32::MAX - NONCE_BUDGET_SAFETY_MARGIN` — before birthday-bound
         // collision probability becomes non-negligible. The daemon must
         // rotate the per-file / master key and reset before proceeding.
+        //
+        // audit-06 P1 (pcloud-rs-ncx.19): reserve a budget slot via a
+        // `compare_exchange_weak` loop BEFORE doing the crypto work.
+        // The previous `load(Relaxed) + fetch_add(Relaxed)` pattern
+        // permitted N concurrent threads to all pass the cap check and
+        // then increment, overshooting the ceiling by N-1. The CAS
+        // loop gives us a hard monotonic bound even under concurrent
+        // seal calls — the fast-path is a single uncontended CAS so
+        // the throughput cost is nil in the common case.
         let budget_cap = u64::from(u32::MAX) - NONCE_BUDGET_SAFETY_MARGIN;
-        let pre = self
-            .sectors_sealed
-            .load(std::sync::atomic::Ordering::Relaxed);
-        if pre >= budget_cap {
-            return Err(CryptoError::NonceBudgetExhausted);
-        }
+        let reserved = loop {
+            let cur = self
+                .sectors_sealed
+                .load(std::sync::atomic::Ordering::Acquire);
+            if cur >= budget_cap {
+                return Err(CryptoError::NonceBudgetExhausted);
+            }
+            match self.sectors_sealed.compare_exchange_weak(
+                cur,
+                cur + 1,
+                std::sync::atomic::Ordering::AcqRel,
+                std::sync::atomic::Ordering::Acquire,
+            ) {
+                Ok(_) => break cur + 1,
+                Err(_) => continue,
+            }
+        };
+        let _ = reserved;
         let file_key = self.derive_sector_file_key(file_seed)?;
-        let frame = content::seal_sector(
+        let frame = match content::seal_sector(
             &file_key,
             sector_index,
             plaintext,
             self.content.sector_size_bytes,
-        )?;
-        // Bump after success so a mid-seal error does not burn nonce budget.
-        self.sectors_sealed
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        ) {
+            Ok(frame) => frame,
+            Err(e) => {
+                // Crypto work failed AFTER we reserved a budget slot.
+                // Give the slot back so a transient error doesn't burn
+                // nonce budget. `fetch_sub(Release)` pairs with the
+                // next seal's `load(Acquire)` above.
+                self.sectors_sealed
+                    .fetch_sub(1, std::sync::atomic::Ordering::Release);
+                return Err(e.into());
+            }
+        };
         Ok(frame)
     }
 
@@ -2530,19 +2761,16 @@ impl CryptoShell {
     ///   the cache entry; this helper returns a `SecretBytes` HKDF
     ///   output that zeroizes on drop.
     fn derive_sector_file_key(
-        &self,
+        &mut self,
         file_seed: &[u8],
     ) -> Result<pcloud_secret::secret_bytes::SecretBytes, CryptoError> {
-        // Caller must still be unlocked in both modes. The master key
-        // is only used in Raw mode, but we keep the lock gate uniform
-        // so that `stop()` still blocks sector ops end-to-end.
-        let master = self
-            .keys
-            .active_key_material
-            .as_ref()
-            .ok_or(CryptoError::Locked)?;
+        // Enforce TTL: evict the key if it has exceeded `cache_ttl_secs`
+        // (lazy eviction — no background thread required). Returns
+        // `CryptoError::MasterKeyExpired` if stale, `CryptoError::Locked`
+        // if absent, and slides the TTL window forward on success.
+        let master = self.require_active_key()?.clone_secret();
         match &self.mode {
-            CryptoMode::Raw => Ok(content::derive_file_key(master, file_seed)),
+            CryptoMode::Raw => Ok(content::derive_file_key(&master, file_seed)),
             CryptoMode::Kms { .. } => {
                 let dek = self.unwrap_active_dek()?;
                 // Treat the unwrapped DEK as a SecretBytes for the
@@ -2579,7 +2807,7 @@ impl CryptoShell {
     /// [`content::ContentCryptoError`] via `CryptoError::Content` on
     /// frame-shape / tag / index failures.
     pub fn open_sector(
-        &self,
+        &mut self,
         file_seed: &[u8],
         sector_index: u32,
         frame: &[u8],
@@ -2627,7 +2855,7 @@ impl CryptoShell {
     /// - [`CryptoError::NotSetup`] / [`CryptoError::PclsyncCompat`]
     ///   if the PclsyncCompat runtime state is absent or malformed.
     pub fn seal_sector_with_context(
-        &self,
+        &mut self,
         file_seed: &[u8],
         sector_index: u64,
         plaintext: &[u8],
@@ -2691,13 +2919,13 @@ impl CryptoShell {
     /// # Errors
     /// Same taxonomy as [`Self::seal_sector_with_context`].
     pub fn open_sector_with_context(
-        &self,
+        &mut self,
         file_seed: &[u8],
         sector_index: u64,
         ciphertext: &[u8],
         auth_tag: Option<&[u8; 32]>,
         context: SectorContext,
-    ) -> Result<Vec<u8>, CryptoError> {
+    ) -> Result<zeroize::Zeroizing<Vec<u8>>, CryptoError> {
         if matches!(self.effective_backend(), CryptoBackend::PclsyncCompat) {
             #[cfg(feature = "pclsync-v2")]
             {
@@ -2731,7 +2959,11 @@ impl CryptoShell {
         // are protocol errors at the caller layer.
         let sector_index_u32: u32 = u32::try_from(sector_index)
             .map_err(|_| CryptoError::Content(content::ContentCryptoError::SectorIndexMismatch))?;
+        // audit-06 P1 (pcloud-rs-ncx.31): wrap Enhanced plaintext in
+        // `Zeroizing` so the return type is uniform across backends
+        // and the caller's plaintext zeroes on drop.
         self.open_sector(file_seed, sector_index_u32, ciphertext)
+            .map(zeroize::Zeroizing::new)
     }
 }
 
@@ -3472,7 +3704,7 @@ mod tests {
         let opened = c
             .open_sector_with_context(&[], 7, &sealed.ciphertext, sealed.auth_tag.as_ref(), ctx)
             .expect("open");
-        assert_eq!(opened, plaintext);
+        assert_eq!(opened.as_slice(), plaintext.as_slice());
     }
 
     #[cfg(feature = "pclsync-v2")]

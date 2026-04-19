@@ -1756,7 +1756,7 @@ extern "system" fn cb_read_directory(
                 // hosts can diagnose and upgrade; Explorer surfaces the
                 // `STATUS_NOT_SUPPORTED` as "The request is not
                 // supported."
-                eprintln!(
+                log::error!(
                     "pcloud_fs::winfsp: ReadDirectory on inode {} requires FspFileSystemAddDirInfo (missing from loaded winfsp-x64.dll; please upgrade WinFSP to 1.x or newer)",
                     ctx.ino,
                 );

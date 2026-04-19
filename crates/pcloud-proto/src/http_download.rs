@@ -39,6 +39,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use pcloud_resilience::transport::parse_retry_after_from_headers;
 use pcloud_resilience::BandwidthPacer;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConnection, StreamOwned};
@@ -72,11 +73,16 @@ pub struct HttpDownloadConfig {
     pub use_tls: bool,
     /// The `connect_timeout` field (connect timeout).
     pub connect_timeout: Duration,
-    /// Per-syscall read/write timeout applied to the underlying
-    /// `TcpStream`. Bounds any single kernel-level I/O call but does
-    /// not bound the overall lifetime of a download — see
-    /// [`Self::total_request_timeout`] for the whole-request deadline.
+    /// Per-syscall read timeout applied to the underlying `TcpStream`.
+    /// Bounds any single kernel-level read call but does not bound the
+    /// overall lifetime of a download — see [`Self::total_request_timeout`].
     pub read_timeout: Duration,
+    /// Per-syscall write timeout applied to the underlying `TcpStream`.
+    ///
+    /// Defaults to [`Self::read_timeout`] for backward compatibility.
+    /// Operators that need more time to flush large request headers can
+    /// raise this independently of the read timeout.
+    pub write_timeout: Duration,
     /// Hard upper bound on the entire download — from the first byte
     /// written on the GET to the last body byte read. If exceeded,
     /// [`HttpDownloadError::TotalTimeoutExceeded`] is returned and the
@@ -118,6 +124,7 @@ impl PartialEq for HttpDownloadConfig {
         self.use_tls == other.use_tls
             && self.connect_timeout == other.connect_timeout
             && self.read_timeout == other.read_timeout
+            && self.write_timeout == other.write_timeout
             && self.total_request_timeout == other.total_request_timeout
             && self.max_header_bytes == other.max_header_bytes
             && self.max_body_bytes == other.max_body_bytes
@@ -133,6 +140,7 @@ impl Default for HttpDownloadConfig {
             use_tls: true,
             connect_timeout: Duration::from_secs(5),
             read_timeout: Duration::from_secs(15),
+            write_timeout: Duration::from_secs(15),
             // 10 min: generous enough for multi-GiB downloads over slow
             // residential links, still bounded so a wedged server cannot
             // pin a caller forever.
@@ -364,17 +372,14 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
-/// Parse a `Retry-After: N` header value (integer seconds) from raw HTTP
-/// response headers. Returns `None` when the header is absent or the value
-/// is not a valid unsigned integer. The returned duration is capped at 300 s
-/// to prevent indefinite blocking from a misbehaving or malicious server.
+/// Parse a `Retry-After` header from raw HTTP response headers.
+///
+/// Delegates to [`pcloud_resilience::transport::parse_retry_after_from_headers`],
+/// the canonical workspace-wide parser that handles both integer and
+/// floating-point second values (integer-only parsing was a previous
+/// limitation — this alias preserves the local call site without duplication).
 fn parse_retry_after(headers: &str) -> Option<Duration> {
-    headers
-        .lines()
-        .find(|l| l.to_ascii_lowercase().starts_with("retry-after:"))
-        .and_then(|l| l.splitn(2, ':').nth(1))
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .map(|secs| Duration::from_secs(secs.min(300)))
+    parse_retry_after_from_headers(headers)
 }
 
 /// Attempt a TCP connect to each resolved address in turn (happy-eyeballs
@@ -405,7 +410,7 @@ fn connect_socket(
                     .set_read_timeout(Some(config.read_timeout))
                     .map_err(HttpDownloadError::SocketConfig)?;
                 stream
-                    .set_write_timeout(Some(config.read_timeout))
+                    .set_write_timeout(Some(config.write_timeout))
                     .map_err(HttpDownloadError::SocketConfig)?;
                 return Ok(stream);
             }
@@ -1198,6 +1203,7 @@ mod tests {
                 use_tls: false,
                 connect_timeout: Duration::from_secs(2),
                 read_timeout: Duration::from_secs(2),
+                write_timeout: Duration::from_secs(2),
                 max_header_bytes: 4096,
                 total_request_timeout: Duration::from_secs(30),
                 max_body_bytes: 1024,
@@ -1239,6 +1245,7 @@ mod tests {
                 use_tls: false,
                 connect_timeout: Duration::from_secs(2),
                 read_timeout: Duration::from_secs(2),
+                write_timeout: Duration::from_secs(2),
                 max_header_bytes: 4096,
                 total_request_timeout: Duration::from_secs(30),
                 max_body_bytes: 4,
@@ -1281,6 +1288,7 @@ mod tests {
                 use_tls: false,
                 connect_timeout: Duration::from_secs(2),
                 read_timeout: Duration::from_secs(2),
+                write_timeout: Duration::from_secs(2),
                 max_header_bytes: 4096,
                 total_request_timeout: Duration::from_secs(30),
                 max_body_bytes: 1024,
@@ -1323,6 +1331,7 @@ mod tests {
                 use_tls: false,
                 connect_timeout: Duration::from_secs(2),
                 read_timeout: Duration::from_secs(2),
+                write_timeout: Duration::from_secs(2),
                 max_header_bytes: 4096,
                 total_request_timeout: Duration::from_secs(30),
                 max_body_bytes: 4,

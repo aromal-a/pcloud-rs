@@ -425,7 +425,7 @@ pub fn open_sector(
     sector_id: u64,
     ciphertext: &[u8],
     auth_tag: &[u8; PCLSYNC_AUTH_TAG_SIZE],
-) -> Result<Vec<u8>, SectorError> {
+) -> Result<Zeroizing<Vec<u8>>, SectorError> {
     if ciphertext.len() > PCLSYNC_SECTOR_SIZE {
         return Err(SectorError::CiphertextTooLong(ciphertext.len()));
     }
@@ -490,12 +490,11 @@ pub fn open_sector(
         return Err(SectorError::AuthFailed);
     }
 
-    // Success: move plaintext out of Zeroizing. Clone into a plain Vec so
-    // the Zeroizing wrapper still zeroes its original buffer on drop.
-    // TODO(pcloud-rs-8mb.28/L-4): upgrade return type to Zeroizing<Vec<u8>> so
-    // the caller's copy is also zeroed; requires a public API change and
-    // updating all call sites in lib.rs.
-    Ok(plaintext.to_vec())
+    // audit-06 P1 (pcloud-rs-ncx.31): return the `Zeroizing<Vec<u8>>`
+    // directly so the caller's plaintext also zeroes on drop. Callers
+    // that need a plain `Vec<u8>` (e.g. FUSE write-path) deliberately
+    // opt out of zeroization via `(*pt).clone()` or explicit copy.
+    Ok(plaintext)
 }
 
 // ---------------------------------------------------------------------------
@@ -540,7 +539,7 @@ mod tests {
             &sealed.auth_tag,
         )
         .expect("open");
-        assert_eq!(opened, pt);
+        assert_eq!(opened.as_slice(), pt);
     }
 
     #[test]

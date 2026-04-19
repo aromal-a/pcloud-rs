@@ -891,12 +891,17 @@ impl EngineShell {
         combined
     }
 
-    /// P2-b (H2): acknowledge successful completion of `path`. Removes
-    /// the entry from the scheduler's `dispatched_operations` slot so
-    /// it is no longer re-queued on restart. Idempotent; unknown paths
-    /// are a no-op.
-    pub fn ack_dispatched_path(&mut self, path: &str) {
-        self.scheduler.ack_batch(&[path]);
+    /// P2-b (H2): acknowledge successful completion of `(sync_id, path)`.
+    /// Removes the matching entry from the scheduler's
+    /// `dispatched_operations` slot so it is no longer re-queued on
+    /// restart. Idempotent; unknown entries are a no-op.
+    ///
+    /// **Audit-06 §4-sonnet M-04-S04 / P1-9:** this now scopes the ack
+    /// to the owning sync root, preventing a cross-root collision on a
+    /// shared relative path from silently evicting a sibling root's
+    /// un-acked dispatched operation.
+    pub fn ack_dispatched_path(&mut self, sync_id: SyncId, path: &str) {
+        self.scheduler.ack_batch(&[(sync_id, path)]);
     }
 
     /// Mark a sync root as paused and drop any scheduled work for it so it

@@ -125,7 +125,7 @@ closure work. Findings:
       caller. All other upload wire methods (uploadfile, upload_create,
       upload_write, upload_info, upload_save, upload_delete,
       upload_blockchecksums, getchecksumlink) are live-wired end-to-end.
-      TODO marker at `crates/pcloud-backends/src/transfer_backend.rs:445`.
+      TODO marker at `crates/pcloud-backends/src/transfer_backend.rs:601-613`.
     - **Row 149** (`links,ptree_public_link`): id-based tree-public-link
       create is wired end-to-end (proto + backend + IPC + CLI). The
       path-based CLI (`pcloudc publink create-tree-from-paths` /
@@ -530,6 +530,8 @@ Every other document must link here and avoid hard-coded totals.
 | ADRs landed | **18** | `docs/adr/0001`–`0018` |
 | Open parity beads | **3** | `bd-1du`, `bd-1du.4`, `bd-1du.10` — see "Open Parity Beads" section. Non-parity engineering beads (`bd-1du.4.6.1`, `bd-1du.5`) are listed separately under "Open Engineering Beads". |
 | Tier-1 live platforms | Linux x86_64/aarch64 | macOS and Windows scaffolded + CI-compiled; mounts not hardware-verified |
+| FreeBSD CI posture | Tier-3 best-effort | `continue-on-error: true` in CI; job is informational only and regressions do not fail the PR gate. See `.github/workflows/ci.yml` FreeBSD job comment. |
+| Windows IPC posture | Tier-3 scaffolded | Named-pipe `WindowsIpc` compiles and passes unit tests; `serve_once_with_peer` accept loop is **not** wired through the Windows backend. Live IPC on Windows is tracked under `bd-xplat-windows`. |
 
 Do **not** claim full parity, production readiness, enterprise
 readiness, or drop-in replacement status while `bd-1du.10` remains
@@ -606,7 +608,7 @@ Five rows remain Partial after the 2026-04-18 audit-04/05 corrections:
   `source_hash`, `offset`, `count`) and proptest-round-tripped, but the
   daemon handler is a stub. Needs `TransferRuntime::upload_write_from_file`
   method that invokes `UploadWriteFromFileRequest` on the wire.
-  TODO at `crates/pcloud-backends/src/transfer_backend.rs:445`.
+  TODO at `crates/pcloud-backends/src/transfer_backend.rs:601-613`.
 - **Row 124** — `crypto,psync_crypto_share_folder`. The `share_temppass`
   flow uses HMAC-SHA256 rather than the RSA-4096 asymmetric signature
   the C client requires for the share-invite handoff. Tracked under

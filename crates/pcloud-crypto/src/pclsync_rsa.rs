@@ -179,10 +179,19 @@ pub struct SymKeyVer1 {
     pub flags: u32,
 
     /// 32-byte AES-256 key. Zeroized on drop.
-    pub aes_key: [u8; PCLSYNC_AES_KEY_LEN],
+    ///
+    /// `pub(crate)`: external code must not copy raw key material; use
+    /// `Arc<SymKeyVer1>` sharing or the `ct_eq` accessor instead. Making the
+    /// field crate-internal prevents accidental bypass of the no-`Clone`
+    /// discipline (audit-06 LOW-2.4).
+    pub(crate) aes_key: [u8; PCLSYNC_AES_KEY_LEN],
 
     /// 128-byte HMAC-SHA-512 key. Zeroized on drop.
-    pub hmac_key: [u8; PCLSYNC_HMAC_KEY_LEN],
+    ///
+    /// `pub(crate)`: same rationale as `aes_key` — crate-level access only
+    /// to prevent raw key-material copies escaping `pcloud-crypto` (audit-06
+    /// LOW-2.4).
+    pub(crate) hmac_key: [u8; PCLSYNC_HMAC_KEY_LEN],
 }
 
 impl core::fmt::Debug for SymKeyVer1 {

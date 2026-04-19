@@ -230,7 +230,7 @@ fn should_reject_during_drain(request: &Request) -> bool {
 /// enabled. The peer uid is reported as the daemon owner uid because
 /// `serve_once` already enforces that only owner-uid peers reach this
 /// handler — unauthorized peers never produce a dispatch call.
-fn dispatch_with_drain_gate(
+pub(crate) fn dispatch_with_drain_gate(
     runtime: &mut RuntimeShell,
     peer_uid: u32,
     peer_pid: u32,

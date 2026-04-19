@@ -38,8 +38,10 @@ const REQUESTS_PER_CLIENT: usize = 500;
 /// a Linux-only capability in this test. The fd-drift assertion below is
 /// therefore only meaningful on Linux.
 ///
-/// TODO(bd-xplat): add macOS `sysctl KERN_PROC_FD` and BSD `procstat -f`
-/// paths if cross-platform fd-leak detection becomes a requirement.
+/// Cross-platform fd-leak detection (macOS `sysctl KERN_PROC_FD`, BSD
+/// `procstat -f`) is Linux-only by design in this test. If cross-platform
+/// coverage is needed, wire it under `bd-1du.4` cross-platform hardware
+/// verification (audit-06 LOW IPC L-7.3 / ncx.84).
 fn open_fd_count() -> io::Result<usize> {
     #[cfg(target_os = "linux")]
     {

@@ -5,7 +5,7 @@
 //! - OpenBSD,
 //! - NetBSD,
 //! - macOS      → `platform::unix::UnixIpc`     (getpeereid on AF_UNIX)
-//! - Windows    → `platform::windows::WindowsIpc` (named pipes + SID check) — STUB
+//! - Windows    → `platform::windows::WindowsIpc` (named pipes + SID check) — scaffolded, not live-wired through serve_once_with_peer
 //!
 //! This module defines the [`PlatformIpc`] trait and the [`ActivePlatform`]
 //! type alias resolved at compile time via `#[cfg]`. Callers in
@@ -91,7 +91,14 @@ pub type ActivePlatform = linux::LinuxIpc;
 pub type ActivePlatform = unix::UnixIpc;
 
 /// Alias resolved at compile time to the platform backend for the
-/// current target OS. Windows is currently a stub pending the named-pipe
-/// implementation tracked under `bd-xplat-windows`.
+/// current target OS.
+///
+/// **Windows IPC status (Tier-3 scaffolded-only):** `WindowsIpc` compiles
+/// and the `bind_listener` / `peer_uid` / `peer_display` trait methods are
+/// implemented, but the named-pipe backend is **not** wired through the
+/// `serve_once_with_peer` accept loop in `transport.rs`. Windows is
+/// therefore Tier-3 for IPC — compile-tested in CI but not live-verified
+/// end-to-end. Live wiring is tracked under `bd-xplat-windows`.
+/// See `STATUS.md` platform matrix and `CLAUDE.md` for the honest posture.
 #[cfg(windows)]
 pub type ActivePlatform = windows::WindowsIpc;

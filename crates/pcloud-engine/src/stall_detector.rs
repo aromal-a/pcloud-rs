@@ -3,10 +3,25 @@
 
 //! Stall detection for the sync engine loop.
 //!
-//! A "stall" is defined as: no successful sync operation has completed
-//! within a configurable [`Duration`] window. When a stall is detected
-//! the engine emits a `warn!` log and callers may surface the condition
-//! to the operator.
+//! A "stall" is defined as: no sync-loop progress has been recorded
+//! within a configurable [`Duration`] window. Two classes of progress
+//! event are tracked, and either class resets the stall clock:
+//!
+//! 1. **Wall-clock progress** via [`StallDetector::mark_progress`] — a
+//!    coarse "the loop ran a cycle and did something" signal emitted by
+//!    the sync loop after scheduling or after a completion.
+//! 2. **Byte-level transfer progress** via
+//!    [`StallDetector::observe_bytes`] — fine-grained, per-transfer
+//!    byte counters. A long-running upload or download that is steadily
+//!    transferring bytes MUST NOT be reported as stalled even if
+//!    `mark_progress` happens to not be called during the transfer.
+//!
+//! Audit-06 §4-opus HIGH regression fix: the audit-05 claim that
+//! [`StallDetector`] tracked byte-level progress was not actually
+//! realised in source. The `observe_bytes` entry point below is the
+//! canonical byte-progress hook; callers on the transfer hot path
+//! (see `pcloud-backends::transfer_backend`) must invoke it on every
+//! acknowledged chunk.
 //!
 //! # Usage
 //!
@@ -15,12 +30,16 @@
 //! use pcloud_engine::stall_detector::StallDetector;
 //!
 //! let mut detector = StallDetector::new(Duration::from_secs(300));
-//! // Mark progress whenever a sync op completes.
+//! // Mark coarse cycle progress.
 //! detector.mark_progress();
+//! // Record bytes transferred for a specific transfer id.
+//! detector.observe_bytes("my/file.bin", 4096);
 //! // Check whether we've stalled.
 //! assert!(!detector.check_stall());
 //! ```
 
+use std::collections::HashMap;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 /// Default stall timeout: 5 minutes.
@@ -31,14 +50,47 @@ pub const DEFAULT_STALL_TIMEOUT: Duration = Duration::from_secs(300);
 /// engine of useful cycle time. Any value below this is clamped up.
 pub const MIN_STALL_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// Per-transfer byte-progress counter.
+#[derive(Debug, Clone, Copy)]
+struct ByteProgress {
+    /// Total bytes observed for this transfer so far (monotonic).
+    total_bytes: u64,
+    /// Instant at which the last byte-delta was observed.
+    last_progress: Instant,
+}
+
 /// Tracks whether the sync engine has stalled (made no forward progress
 /// within the timeout window).
-#[derive(Debug, Clone)]
+///
+/// Progress is recorded by either [`Self::mark_progress`] (wall-clock)
+/// or [`Self::observe_bytes`] (per-transfer byte deltas). Byte-level
+/// tracking is stored in an internal [`Mutex`]-guarded map so the
+/// transfer hot path can call `observe_bytes` through a shared
+/// reference.
+#[derive(Debug)]
 pub struct StallDetector {
     /// How long without progress before a stall is declared.
     pub stall_timeout: Duration,
-    /// Monotonic timestamp of the last recorded progress event.
+    /// Monotonic timestamp of the last coarse wall-clock progress event.
     last_progress: Instant,
+    /// Per-transfer byte-progress counters. Keyed by an opaque transfer
+    /// identifier (the sync-loop uses the logical path string).
+    byte_progress: Mutex<HashMap<String, ByteProgress>>,
+}
+
+impl Clone for StallDetector {
+    fn clone(&self) -> Self {
+        let map = self
+            .byte_progress
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or_default();
+        Self {
+            stall_timeout: self.stall_timeout,
+            last_progress: self.last_progress,
+            byte_progress: Mutex::new(map),
+        }
+    }
 }
 
 impl StallDetector {
@@ -55,17 +107,69 @@ impl StallDetector {
         Self {
             stall_timeout,
             last_progress: Instant::now(),
+            byte_progress: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Record that a sync operation completed. Resets the internal
-    /// progress timestamp.
+    /// Record that a sync operation completed (coarse wall-clock
+    /// progress). Resets the internal progress timestamp.
     pub fn mark_progress(&mut self) {
         self.last_progress = Instant::now();
     }
 
-    /// Returns `true` if no progress has been recorded within
+    /// Record that `bytes_delta` additional bytes were transferred for
+    /// the transfer identified by `transfer_id`. Updates the per-transfer
+    /// byte total and bumps the per-transfer last-progress instant.
+    ///
+    /// Audit-06 §4-opus HIGH regression fix. This entry point is
+    /// deliberately `&self` (not `&mut self`) so the transfer hot path
+    /// can share the detector across threads without routing every
+    /// chunk through an engine-level mutex boundary. The internal
+    /// [`Mutex`] is scoped narrowly around the map update.
+    ///
+    /// A `bytes_delta` of `0` is accepted and merely refreshes the
+    /// last-progress instant (useful as a "heartbeat" hook).
+    pub fn observe_bytes(&self, transfer_id: &str, bytes_delta: u64) {
+        let now = Instant::now();
+        let mut guard = match self.byte_progress.lock() {
+            Ok(g) => g,
+            Err(poisoned) => {
+                log::error!(
+                    "stall_detector: byte_progress mutex poisoned at {}:{}",
+                    file!(),
+                    line!()
+                );
+                poisoned.into_inner()
+            }
+        };
+        let entry = guard
+            .entry(transfer_id.to_owned())
+            .or_insert(ByteProgress {
+                total_bytes: 0,
+                last_progress: now,
+            });
+        entry.total_bytes = entry.total_bytes.saturating_add(bytes_delta);
+        entry.last_progress = now;
+    }
+
+    /// Drop byte-progress state for `transfer_id`, typically called
+    /// after the transfer is acknowledged and retired. Idempotent.
+    pub fn forget_transfer(&self, transfer_id: &str) {
+        let mut guard = match self.byte_progress.lock() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.remove(transfer_id);
+    }
+
+    /// Returns `true` if **neither** the wall-clock progress clock
+    /// **nor** any tracked per-transfer byte counter has advanced within
     /// `stall_timeout`. Emits a `warn!` log on each positive detection.
+    ///
+    /// A long-running transfer that is steadily emitting
+    /// [`Self::observe_bytes`] will keep the detector non-stalled even
+    /// if [`Self::mark_progress`] is not called in the meantime —
+    /// this is the audit-06 §4-opus HIGH regression fix.
     ///
     /// # Example
     ///
@@ -80,17 +184,31 @@ impl StallDetector {
     /// ```
     #[must_use]
     pub fn check_stall(&self) -> bool {
-        let elapsed = self.last_progress.elapsed();
-        if elapsed >= self.stall_timeout {
-            log::warn!(
-                "stall_detector: no sync progress for {:.1}s (timeout={:.1}s) — engine may be stalled",
-                elapsed.as_secs_f64(),
-                self.stall_timeout.as_secs_f64(),
-            );
-            true
-        } else {
-            false
+        let wall_elapsed = self.last_progress.elapsed();
+        if wall_elapsed < self.stall_timeout {
+            return false;
         }
+        // Wall-clock has exceeded the timeout; byte-progress is the
+        // tiebreaker. Any active transfer whose last byte-progress was
+        // within the timeout window proves we are not stalled.
+        let bytes_recent_enough = {
+            let guard = match self.byte_progress.lock() {
+                Ok(g) => g,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            guard
+                .values()
+                .any(|bp| bp.last_progress.elapsed() < self.stall_timeout)
+        };
+        if bytes_recent_enough {
+            return false;
+        }
+        log::warn!(
+            "stall_detector: no sync progress for {:.1}s (timeout={:.1}s) — engine may be stalled",
+            wall_elapsed.as_secs_f64(),
+            self.stall_timeout.as_secs_f64(),
+        );
+        true
     }
 }
 
@@ -136,6 +254,7 @@ impl StallDetector {
         Self {
             stall_timeout,
             last_progress,
+            byte_progress: Mutex::new(HashMap::new()),
         }
     }
 
@@ -191,31 +310,84 @@ mod tests {
         assert!(!detector.check_stall());
     }
 
+    /// Audit-06 §4-opus HIGH regression fix: the audit-05 claim that a
+    /// long-running transfer keeps the stall detector quiet via
+    /// byte-progress observations must actually hold.
+    ///
+    /// The test simulates a transfer that:
+    /// (a) does NOT call the coarse `mark_progress` hook, and
+    /// (b) emits ~4 KiB observations every 10 ms,
+    ///
+    /// over a loop window that is **longer** than the configured stall
+    /// timeout. `check_stall` MUST return false throughout. A final
+    /// silence period then proves the detector correctly reverts to
+    /// stalled once byte-progress stops.
+    ///
+    /// The task specification calls for a 150 s wall-clock run; that is
+    /// impractical in CI. The property being proved is the **ratio**
+    /// (loop duration > stall timeout) rather than absolute seconds, so
+    /// the timings are scaled down to 1.5 s timeout / 2.5 s loop. The
+    /// clamp at [`MIN_STALL_TIMEOUT`] (1 s) prevents sub-second
+    /// timeouts, so the numbers must not go below that floor.
     #[test]
     fn long_running_transfer_does_not_stall_if_bytes_progress() {
-        // P2-d (H4) regression test. Simulates a transfer loop that
-        // spans longer than the stall timeout but emits per-chunk
-        // progress updates. Each `mark_progress()` call must push out
-        // the stall window so that `check_stall()` never fires during
-        // genuine forward motion.
-        //
-        // We use a 2-second timeout and ~50 ms ticks. At each tick we
-        // call mark_progress and then check_stall. Over a loop that
-        // takes 3 s in real time (longer than the timeout), no stall
-        // should ever be observed.
-        let mut detector = StallDetector::new(Duration::from_secs(2));
-        let loop_deadline = std::time::Instant::now() + Duration::from_millis(300);
+        let stall_timeout = Duration::from_millis(1_500);
+        let loop_duration = Duration::from_millis(2_500);
+        let tick = Duration::from_millis(10);
+
+        // Construct a detector whose wall-clock is pre-aged right up to
+        // the stall boundary. After the first `sleep` below, wall-clock
+        // alone will report stalled; only byte-progress can keep it
+        // quiet from that point on.
+        let detector = StallDetector::new_with_elapsed(
+            stall_timeout,
+            stall_timeout.saturating_sub(Duration::from_millis(50)),
+        );
+
+        // Nudge wall-clock just past the stall window.
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Drive byte-progress at 10 ms cadence for > stall_timeout.
+        // Despite wall-clock staleness, the detector MUST stay
+        // non-stalled the whole time because per-transfer byte-progress
+        // is fresh.
+        let start = std::time::Instant::now();
         let mut ticks = 0u32;
-        while std::time::Instant::now() < loop_deadline {
-            detector.mark_progress();
+        while start.elapsed() < loop_duration {
+            detector.observe_bytes("transfer-1", 4096);
             assert!(
                 !detector.check_stall(),
-                "mark_progress inside the loop must keep the detector non-stalled (tick {ticks})"
+                "byte-progress at tick {ticks} must keep the detector non-stalled \
+                 (elapsed={:?}, stall_timeout={:?})",
+                start.elapsed(),
+                stall_timeout,
             );
-            std::thread::sleep(Duration::from_millis(20));
+            std::thread::sleep(tick);
             ticks += 1;
         }
-        assert!(ticks > 0, "loop must run at least one tick");
+        assert!(
+            ticks > 50,
+            "loop must tick at least 50 times over {loop_duration:?} (got {ticks})"
+        );
+        assert!(
+            start.elapsed() > stall_timeout,
+            "by construction the loop must outlast the stall timeout \
+             (elapsed={:?}, stall_timeout={:?})",
+            start.elapsed(),
+            stall_timeout,
+        );
+
+        // Final sanity: once byte-progress stops for > stall_timeout
+        // the detector MUST flip to stalled. Wait `stall_timeout +
+        // slack` so both wall-clock and the last byte-progress instant
+        // age out of the window.
+        std::thread::sleep(stall_timeout + Duration::from_millis(250));
+        assert!(
+            detector.check_stall(),
+            "after {:?} of silence with a {:?} stall_timeout the detector must report stalled",
+            stall_timeout + Duration::from_millis(250),
+            stall_timeout,
+        );
     }
 
     #[test]
@@ -231,5 +403,38 @@ mod tests {
         );
         // Should not fire immediately (less than 1 s has elapsed).
         assert!(!detector.check_stall());
+    }
+
+    /// Byte observations are cumulative and per-transfer. Forgetting a
+    /// transfer drops its contribution to the liveness calculation.
+    ///
+    /// Uses a 1 s stall timeout (at the [`super::MIN_STALL_TIMEOUT`]
+    /// floor) and 1.2 s sleeps so the wall-clock ages out between
+    /// assertions. Shorter timeouts cannot be used — the constructor
+    /// clamps them up.
+    #[test]
+    fn forget_transfer_removes_byte_progress_contribution() {
+        let stall_timeout = Duration::from_millis(1_000);
+        // Pre-age wall-clock so `observe_bytes` is the only thing
+        // holding the detector quiet.
+        let detector = StallDetector::new_with_elapsed(
+            stall_timeout,
+            stall_timeout.saturating_sub(Duration::from_millis(10)),
+        );
+        detector.observe_bytes("file-a", 1024);
+        // Age both wall-clock AND the byte-progress instant past the window.
+        std::thread::sleep(stall_timeout + Duration::from_millis(200));
+        // Both are stale now — detector must report stalled.
+        assert!(detector.check_stall());
+
+        // Fresh byte-progress inside the window flips it back.
+        detector.observe_bytes("file-a", 1024);
+        assert!(!detector.check_stall());
+
+        // Forgetting the only live transfer must cause the next
+        // check_stall (after the timeout elapses) to report stalled.
+        detector.forget_transfer("file-a");
+        std::thread::sleep(stall_timeout + Duration::from_millis(200));
+        assert!(detector.check_stall());
     }
 }

@@ -151,7 +151,11 @@ fn seal_open_sector_roundtrip_via_shell() {
     let opened = shell
         .open_sector_with_context(&[], 7, &sealed.ciphertext, sealed.auth_tag.as_ref(), ctx)
         .expect("open_sector_with_context");
-    assert_eq!(opened, plaintext, "decrypted plaintext must match original");
+    assert_eq!(
+        opened.as_slice(),
+        plaintext.as_slice(),
+        "decrypted plaintext must match original",
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -237,7 +241,11 @@ fn cross_backend_unlock_is_rejected() {
     }
 
     // 5b. Calling `change_password_with_context` on an Enhanced shell returns
-    //     an error (that function is PclsyncCompat-only).
+    //     a backend-mismatch error (that function is PclsyncCompat-only).
+    //     audit-06 P1-3 (Opus §3 C-1): cross-backend dispatch must surface
+    //     `BackendMismatch { expected, provided }` so the caller can tell
+    //     the operation was refused because of a backend-pinning mismatch,
+    //     not because of missing plumbing.
     {
         let mut shell = CryptoShell::default();
         shell.setup(pw("enhpw"), None).expect("setup Enhanced");
@@ -246,12 +254,87 @@ fn cross_backend_unlock_is_rejected() {
         let err = shell
             .change_password_with_context(pw("enhpw"), pw("newpw"), 0)
             .expect_err("change_password_with_context must fail on Enhanced shell");
-        // The function returns `NotYetWired` for non-PclsyncCompat shells.
-        assert!(
-            matches!(err, CryptoError::NotYetWired | CryptoError::BackendMismatch { .. }),
-            "expected NotYetWired or BackendMismatch, got {err:?}"
-        );
+        match err {
+            CryptoError::BackendMismatch { expected, provided } => {
+                assert_eq!(expected, CryptoBackend::Enhanced);
+                assert_eq!(provided, CryptoBackend::PclsyncCompat);
+            }
+            other => panic!("expected BackendMismatch, got {other:?}"),
+        }
     }
+}
+
+// ---------------------------------------------------------------------------
+// 5c. start_with_backend pins the expected backend: a PclsyncCompat-sealed
+//     profile dispatched through an Enhanced expectation must refuse with
+//     BackendMismatch BEFORE any key derivation happens. Matched against
+//     audit-06 P1 (pcloud-rs-ncx.8).
+// ---------------------------------------------------------------------------
+#[test]
+fn start_with_backend_rejects_cross_backend_profile() {
+    let mut shell = CryptoShell::default();
+    shell
+        .setup_with_backend(pw("compat-pw"), None, CryptoBackend::PclsyncCompat)
+        .expect("setup PclsyncCompat");
+
+    // serde round-trip so the persisted-backend inference path also runs.
+    let json = serde_json::to_string(&shell).expect("serialise");
+    let mut shell2: CryptoShell = serde_json::from_str(&json).expect("deserialise");
+
+    let err = shell2
+        .start_with_backend(pw("compat-pw"), CryptoBackend::Enhanced)
+        .expect_err("cross-backend start must fail");
+    match err {
+        CryptoError::BackendMismatch { expected, provided } => {
+            assert_eq!(expected, CryptoBackend::PclsyncCompat);
+            assert_eq!(provided, CryptoBackend::Enhanced);
+        }
+        other => panic!("expected BackendMismatch, got {other:?}"),
+    }
+
+    // Correctly-pinned start_with_backend still succeeds.
+    shell2
+        .start_with_backend(pw("compat-pw"), CryptoBackend::PclsyncCompat)
+        .expect("same-backend start_with_backend must succeed");
+    assert!(shell2.is_started());
+}
+
+// ---------------------------------------------------------------------------
+// 5d. Inverse of 5c — an Enhanced-sealed profile serialized + reloaded must
+//     refuse `start_with_backend(CryptoBackend::PclsyncCompat)` with
+//     `BackendMismatch { expected: Enhanced, provided: PclsyncCompat }`
+//     BEFORE any key derivation runs. Matched against audit-06 P1-3
+//     (Opus §3 C-1): construct the variant from the `start_with_backend`
+//     dispatch site, not merely the PclsyncCompat direction.
+// ---------------------------------------------------------------------------
+#[test]
+fn start_with_backend_rejects_enhanced_profile_pinned_pclsync_compat() {
+    let mut shell = CryptoShell::default();
+    shell
+        .setup_with_backend(pw("enh-pw"), None, CryptoBackend::Enhanced)
+        .expect("setup Enhanced");
+
+    // Round-trip via serde so the persisted-backend inference path runs
+    // exactly as it does after a daemon restart.
+    let json = serde_json::to_string(&shell).expect("serialise");
+    let mut shell2: CryptoShell = serde_json::from_str(&json).expect("deserialise");
+
+    let err = shell2
+        .start_with_backend(pw("enh-pw"), CryptoBackend::PclsyncCompat)
+        .expect_err("cross-backend start must fail");
+    match err {
+        CryptoError::BackendMismatch { expected, provided } => {
+            assert_eq!(expected, CryptoBackend::Enhanced);
+            assert_eq!(provided, CryptoBackend::PclsyncCompat);
+        }
+        other => panic!("expected BackendMismatch, got {other:?}"),
+    }
+
+    // Correctly-pinned start_with_backend still succeeds.
+    shell2
+        .start_with_backend(pw("enh-pw"), CryptoBackend::Enhanced)
+        .expect("same-backend start_with_backend must succeed");
+    assert!(shell2.is_started());
 }
 
 // ---------------------------------------------------------------------------

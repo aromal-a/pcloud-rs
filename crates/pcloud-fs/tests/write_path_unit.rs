@@ -391,3 +391,197 @@ fn unopened_inode_write_returns_invalid() {
     let err = svc.write(999, 0, b"x").unwrap_err();
     assert_eq!(err.to_errno(), pcloud_fs::errors::EINVAL);
 }
+
+// ---------------------------------------------------------------------------
+// Chunked upload_write with reduced CHUNK_SIZE + mid-chunk retry injection.
+//
+// Gated: M-2 from audit-06 §5. No PCLOUD_LIVE_E2E required — this test
+// uses a fully in-process mock backend that forces a transient failure on
+// the first upload_write call and verifies the retry path completes the
+// upload with byte-identical output.
+//
+// Why a reduced chunk size:
+//   Using UPLOAD_CHUNK_BYTES (4 MiB) for this unit test would make it
+//   very slow and allocate large buffers unnecessarily. Instead we use a
+//   tiny synthetic chunk size (64 KiB) forced via WritePathOptions to
+//   exercise the same multi-chunk code path in milliseconds.
+// ---------------------------------------------------------------------------
+
+/// Backend that fails the first `upload_write` call with a transient error,
+/// then succeeds on retry. Used to verify that mid-chunk retry injection
+/// produces byte-identical output.
+#[derive(Debug, Default)]
+struct MidChunkRetryBackend {
+    write_calls: AtomicU32,
+    fail_write_calls: u32,
+    in_progress: Mutex<std::collections::HashMap<u64, (String, String, Vec<u8>)>>,
+    uploads: Mutex<std::collections::HashMap<String, Vec<u8>>>,
+    next_id: Mutex<u64>,
+}
+
+impl MidChunkRetryBackend {
+    fn new(fail_write_calls: u32) -> Self {
+        Self {
+            fail_write_calls,
+            next_id: Mutex::new(1),
+            ..Self::default()
+        }
+    }
+}
+
+impl FileUploadBackend for MidChunkRetryBackend {
+    fn upload_file(
+        &self,
+        _parent_path: &str,
+        _name: &str,
+        _staging_file: &Path,
+    ) -> Result<(), WritePathError> {
+        Err(WritePathError::Upload(
+            "whole-file fallback not expected in chunked test".into(),
+        ))
+    }
+
+    fn unlink_remote(&self, _path: &str) -> Result<(), WritePathError> {
+        Ok(())
+    }
+
+    fn rename_remote(&self, _from: &str, _to: &str) -> Result<(), WritePathError> {
+        Ok(())
+    }
+
+    fn upload_create(&self, parent_path: &str, name: &str) -> Result<u64, WritePathError> {
+        let mut id = self.next_id.lock().unwrap();
+        let upload_id = *id;
+        *id += 1;
+        self.in_progress.lock().unwrap().insert(
+            upload_id,
+            (parent_path.to_owned(), name.to_owned(), Vec::new()),
+        );
+        Ok(upload_id)
+    }
+
+    fn upload_write(
+        &self,
+        upload_id: u64,
+        offset: u64,
+        chunk: &[u8],
+    ) -> Result<(), WritePathError> {
+        let n = self.write_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if n < self.fail_write_calls {
+            // Simulate a transient mid-chunk error (network flap).
+            return Err(WritePathError::UploadTransient(format!(
+                "injected transient error on write call #{n}"
+            )));
+        }
+        let mut inp = self.in_progress.lock().unwrap();
+        let entry = inp.get_mut(&upload_id).ok_or_else(|| {
+            WritePathError::Upload(format!("upload_write: unknown id {upload_id}"))
+        })?;
+        let end = (offset as usize) + chunk.len();
+        if entry.2.len() < end {
+            entry.2.resize(end, 0);
+        }
+        entry.2[offset as usize..end].copy_from_slice(chunk);
+        Ok(())
+    }
+
+    fn upload_status(&self, upload_id: u64) -> Result<UploadStatus, WritePathError> {
+        match self.in_progress.lock().unwrap().get(&upload_id) {
+            Some((_, _, bytes)) => Ok(UploadStatus::Bytes(bytes.len() as u64)),
+            None => Ok(UploadStatus::NotFound),
+        }
+    }
+
+    fn upload_save(
+        &self,
+        upload_id: u64,
+        parent_path: &str,
+        name: &str,
+        total_size: u64,
+    ) -> Result<(), WritePathError> {
+        let mut inp = self.in_progress.lock().unwrap();
+        let (_, _, bytes) = inp
+            .remove(&upload_id)
+            .ok_or_else(|| WritePathError::Upload(format!("save: unknown id {upload_id}")))?;
+        let full = if parent_path == "/" {
+            format!("/{name}")
+        } else {
+            format!("{parent_path}/{name}")
+        };
+        drop(inp);
+        self.uploads
+            .lock()
+            .unwrap()
+            .insert(full, bytes[..total_size as usize].to_vec());
+        Ok(())
+    }
+}
+
+/// Chunked upload_write with reduced chunk size and mid-chunk retry injection.
+///
+/// Verifies:
+/// 1. A payload spanning multiple synthetic chunks succeeds despite a
+///    transient failure injected on the first `upload_write` call.
+/// 2. The final uploaded bytes are byte-identical to the original payload.
+/// 3. The retry path does not corrupt the chunk order or introduce gaps.
+///
+/// Uses `WritePathOptions::with_chunk_size` (64 KiB) to force multi-chunk
+/// dispatch without allocating the full 4 MiB production chunk size.
+#[test]
+fn chunked_upload_write_mid_chunk_retry_produces_correct_output() {
+    // 200 KiB payload → 3 full chunks (64 KiB) + 1 partial tail at 64 KiB
+    // chunk size. We fail the first write call; the retry must complete all
+    // chunks and produce byte-identical bytes.
+    const CHUNK_SIZE: usize = 64 * 1024; // 64 KiB — reduced for speed.
+    const PAYLOAD_SIZE: usize = 200 * 1024; // 200 KiB.
+
+    // Build a deterministic payload: bytes 0x00..0xFF repeating.
+    let payload: Vec<u8> = (0..PAYLOAD_SIZE).map(|i| (i % 256) as u8).collect();
+
+    let tmp = tempfile::tempdir().unwrap();
+    let stage = StagingDir::open(tmp.path().join("stage")).unwrap();
+    let journal = WriteJournal::open(stage.journal_path()).unwrap();
+
+    // Fail the first upload_write call with a transient error.
+    let backend = Arc::new(MidChunkRetryBackend::new(1));
+
+    let svc = WritePathService::new(
+        stage,
+        journal,
+        Arc::clone(&backend),
+        WritePathOptions::default()
+            // Small flush threshold so the chunked path fires on our 200 KiB payload.
+            .with_flush_threshold(CHUNK_SIZE as u64)
+            // Small chunk size to exercise multi-chunk dispatch without slow I/O.
+            .with_chunk_size(CHUNK_SIZE)
+            // Use 1ms backoff so retries don't slow CI.
+            .with_chunk_retry_initial_backoff(Duration::from_millis(1))
+            .with_flush_interval(Duration::from_secs(3600)),
+    );
+
+    svc.create(55, "/", "chunked_retry.bin").unwrap();
+
+    // write() with payload > flush_threshold triggers chunked_flush internally.
+    // The mid-chunk retry (fail_write_calls=1) must succeed on the second attempt,
+    // completing the upload as part of the write() call itself.
+    let write_result = svc.write(55, 0, &payload);
+    assert!(
+        write_result.is_ok(),
+        "write with mid-chunk retry must succeed, got: {write_result:?}"
+    );
+
+    // The uploaded bytes must be byte-identical to the original payload.
+    let uploads = backend.uploads.lock().unwrap();
+    let uploaded = uploads
+        .get("/chunked_retry.bin")
+        .expect("chunked_retry.bin must have been uploaded");
+    assert_eq!(
+        uploaded.len(),
+        PAYLOAD_SIZE,
+        "uploaded byte count must equal payload size"
+    );
+    assert_eq!(
+        *uploaded, payload,
+        "uploaded bytes must be byte-identical to original payload"
+    );
+}

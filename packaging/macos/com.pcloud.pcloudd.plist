@@ -62,6 +62,16 @@
         <true/>
     </dict>
 
+    <!-- Allow the daemon 30 s to drain in-flight IPC work before launchd
+         sends SIGKILL. Matches TimeoutStopSec=30s in the systemd unit. -->
+    <key>ExitTimeOut</key>
+    <integer>30</integer>
+
+    <!-- Prevent a crash-loop from hammering the system: launchd will not
+         restart the daemon more than once every 10 seconds. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
     <key>UserName</key>
     <string>_pcloudd</string>
     <key>GroupName</key>

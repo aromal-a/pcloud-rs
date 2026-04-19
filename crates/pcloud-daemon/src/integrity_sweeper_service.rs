@@ -1,3 +1,9 @@
+// TODO(bd-sweep-unwrap): This file contains ~50 `.unwrap()` / `.expect()`
+// call sites in non-test code paths. The sweeper scheduler thread and
+// Mutex-guarded state accesses are the primary targets. Full sweep deferred
+// to a dedicated hardening pass; scheduler thread panics are logged and the
+// sweeper silently disables itself on the next bootstrap.
+
 //! Background-integrity-sweeper daemon service (H14d).
 //!
 //! ## Purpose

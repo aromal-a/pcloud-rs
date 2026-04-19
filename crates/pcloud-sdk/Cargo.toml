@@ -19,6 +19,13 @@ description = "Embeddable high-level SDK surface for pcloud-rs (auth, upload/dow
 #
 # Until then, rustls + webpki-roots is the only supported transport backend.
 
+[features]
+# pcloud-sdk has no optional deps today (§8:221 audit compliance).
+# All deps are unconditional; the crate compiles correctly with no flags.
+# Feature gates will be added here when optional surfaces are introduced
+# (e.g. `mount = ["dep:pcloud-fs"]` once pcloud-fs is an optional dep).
+default = []
+
 [dependencies]
 pcloud-config = { path = "../pcloud-config" }
 pcloud-daemon = { path = "../pcloud-daemon" }
@@ -54,6 +61,10 @@ path = "examples/public_link.rs"
 [[example]]
 name = "crypto_lifecycle"
 path = "examples/crypto_lifecycle.rs"
+
+[[example]]
+name = "create_tree_public_link_from_paths"
+path = "examples/create_tree_public_link_from_paths.rs"
 
 [[bench]]
 name = "upload_session"

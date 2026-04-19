@@ -26,7 +26,7 @@
 
 use std::path::PathBuf;
 
-use pcloud_ipc::{Method, Request, ResponseStatus};
+use pcloud_ipc::{redacted::RedactedString, Request, ResponseStatus};
 use pcloud_sdk::EmbeddedDaemon;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,7 +58,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let auth_resp = daemon.dispatch(Request::PasswordSubmission {
         username: email,
-        password: pcloud_secret::secret_string::SecretString::new(password),
+        value: RedactedString::new(password),
     });
     if auth_resp.status != ResponseStatus::Ok {
         return Err(format!("auth failed: {}", auth_resp.message).into());

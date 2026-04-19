@@ -3495,6 +3495,7 @@ dependencies = [
  "arbitrary",
  "base64",
  "criterion",
+ "log",
  "pcloud-config",
  "pcloud-ipc",
  "pcloud-model",

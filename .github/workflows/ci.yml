@@ -5,6 +5,12 @@ on:
     branches: [development, main]
   pull_request:
     branches: [development, main]
+  workflow_dispatch:
+  schedule:
+    # Weekly live-e2e window: Sunday 02:00 UTC.
+    # Only the live-e2e job uses the schedule trigger; all other jobs
+    # run only on push/pull_request.
+    - cron: '0 2 * * 0'
 
 env:
   CARGO_TERM_COLOR: always
@@ -200,3 +206,44 @@ jobs:
             exit 1
           fi
           echo "OK: [${VERSION}] entry found in CHANGELOG.md."
+
+  # Live end-to-end test suite (pcloud-rs FIX-PLAN §9-10 H4).
+  #
+  # IMPORTANT: This job runs against a real pCloud account. It must NOT
+  # run on every PR push — it is gated to workflow_dispatch and the
+  # weekly schedule only. Secrets (PCLOUD_TEST_USER, PCLOUD_TEST_PASSWORD)
+  # must be configured in the repository secret store by an admin.
+  #
+  # continue-on-error is set intentionally while account stability and
+  # test isolation are being established. Remove it once the live-e2e
+  # suite has run cleanly for at least four consecutive weekly windows.
+  live-e2e:
+    name: Live E2E (weekly / manual)
+    runs-on: ubuntu-latest
+    # Only run on workflow_dispatch or the weekly schedule; never on PR.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    continue-on-error: true  # Provisional: remove once suite is stable (≥4 green weekly runs).
+    env:
+      PCLOUD_LIVE_E2E: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install system deps (FUSE)
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: Run live E2E tests (ignored tests, single-threaded)
+        env:
+          PCLOUD_TEST_USER: ${{ secrets.PCLOUD_TEST_USER }}
+          PCLOUD_TEST_PASSWORD: ${{ secrets.PCLOUD_TEST_PASSWORD }}
+        run: |
+          cargo test -p pcloud-live-e2e -- --ignored --test-threads=1
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-e2e-logs-${{ github.run_id }}
+          # Upload logs only — no secrets are written to files by the test suite.
+          path: |
+            target/debug/build/**/output
+            /tmp/pcloud-live-e2e-*
+          retention-days: 7

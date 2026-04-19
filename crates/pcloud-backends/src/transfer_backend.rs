@@ -146,6 +146,25 @@ pub enum TransferBackendError {
     #[error("response was malformed: {0}")]
     /// `Malformed` variant.
     Malformed(&'static str),
+    /// `PermanentResultCode` variant — server returned a non-zero result code
+    /// that is classified as permanent (4xx-equivalent, no retry).
+    ///
+    /// Error codes are mapped per `pclsync/pnetlibs.c` taxonomy:
+    /// - `2003 / 2005 / 2007 / 2009 / 2029 / 2067 / 5002` → permanent
+    ///   (auth failure, quota exceeded, unsupported operation, etc.)
+    /// All other non-zero codes are classified as transient.
+    #[error("upload_write permanent error (result code {result})")]
+    PermanentResultCode {
+        /// The non-zero result code from the server response.
+        result: u64,
+    },
+    /// `TransientResultCode` variant — server returned a non-zero result code
+    /// that is classified as transient (5xx-equivalent, caller may retry).
+    #[error("upload_write transient error (result code {result}), caller may retry")]
+    TransientResultCode {
+        /// The non-zero result code from the server response.
+        result: u64,
+    },
     #[error("network byte transfer execution is not implemented yet")]
     /// `NetworkExecutionUnavailable` variant.
     NetworkExecutionUnavailable,
@@ -178,6 +197,64 @@ impl ApiServerHintConsumer for TransferTransportMode {
             Self::Development(transport) => transport.apply_api_server_hint(api_server),
             Self::Network(transport) => transport.apply_api_server_hint(api_server),
         }
+    }
+}
+
+/// Audit-06 §4-opus HIGH byte-progress observer hook.
+///
+/// Thin callback invoked from the upload/download chunk loops with the
+/// number of bytes transferred since the last invocation (NOT the
+/// cumulative total). Callers wire this to
+/// `pcloud_engine::stall_detector::StallDetector::observe_bytes` so a
+/// long-running transfer that steadily emits chunks is not mis-classified
+/// as stalled by the sync-loop wall-clock timer.
+///
+/// Boxed behind `Arc` so the same observer instance can be shared across
+/// multiple concurrent upload / download invocations without cloning the
+/// underlying detector state.
+pub type TransferProgressObserver = Arc<dyn Fn(u64) + Send + Sync + 'static>;
+
+/// Audit-06 §4-opus HIGH adapter: a [`std::io::Write`] wrapper that
+/// notifies an optional [`TransferProgressObserver`] on every successful
+/// write of the inner writer. The underlying writer in the download path
+/// is `BufWriter<File>`; the HTTP streaming layer calls `write` with
+/// ≤ 64 KiB slices, so the observer sees near-real-time byte progress.
+struct ObservingWriter {
+    inner: std::io::BufWriter<std::fs::File>,
+    observer: Option<TransferProgressObserver>,
+}
+
+impl ObservingWriter {
+    fn new(
+        inner: std::io::BufWriter<std::fs::File>,
+        observer: Option<TransferProgressObserver>,
+    ) -> Self {
+        Self { inner, observer }
+    }
+
+    /// Finish the writer and return the underlying `File`, mirroring the
+    /// semantics of `BufWriter::into_inner` so existing call sites can
+    /// continue to `sync_all` the result.
+    fn into_inner_file(
+        self,
+    ) -> Result<std::fs::File, std::io::IntoInnerError<std::io::BufWriter<std::fs::File>>> {
+        self.inner.into_inner()
+    }
+}
+
+impl std::io::Write for ObservingWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let n = self.inner.write(buf)?;
+        if n > 0
+            && let Some(obs) = self.observer.as_ref()
+        {
+            obs(n as u64);
+        }
+        Ok(n)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
     }
 }
 
@@ -443,6 +520,24 @@ impl TransferRuntime {
         link: &DownloadLink,
         dest_path: &std::path::Path,
     ) -> Result<(SignedDownload, u64), TransferBackendError> {
+        self.download_to_path_with_observer(link, dest_path, None)
+    }
+
+    /// Audit-06 §4-opus HIGH variant of [`Self::download_to_path`] that
+    /// accepts an optional [`TransferProgressObserver`]. The observer is
+    /// invoked with the incremental byte count from the HTTP streaming
+    /// read loop — once per `Write::write` call from
+    /// `fetch_download_verified_streaming`, which writes ≤ 64 KiB per
+    /// call. Callers wire this to
+    /// `StallDetector::observe_bytes(transfer_id, delta)` so a multi-GiB
+    /// download does not get mis-classified as stalled by the sync-loop
+    /// wall-clock timer.
+    pub fn download_to_path_with_observer(
+        &self,
+        link: &DownloadLink,
+        dest_path: &std::path::Path,
+        observer: Option<TransferProgressObserver>,
+    ) -> Result<(SignedDownload, u64), TransferBackendError> {
         use std::io::Write as _;
 
         // Ensure parent exists — caller is responsible for choosing a
@@ -462,7 +557,8 @@ impl TransferRuntime {
             .truncate(true)
             .open(dest_path)
             .map_err(|e| TransferBackendError::Download(HttpDownloadError::Io(e)))?;
-        let mut writer = std::io::BufWriter::with_capacity(64 * 1024, file);
+        let buf_writer = std::io::BufWriter::with_capacity(64 * 1024, file);
+        let mut writer = ObservingWriter::new(buf_writer, observer);
 
         match self.mode {
             TransferMode::Development => {
@@ -482,7 +578,7 @@ impl TransferRuntime {
                     .write_all(body.as_bytes())
                     .map_err(|e| TransferBackendError::Download(HttpDownloadError::Io(e)))?;
                 let written = body.len() as u64;
-                let file = writer.into_inner().map_err(|e| {
+                let file = writer.into_inner_file().map_err(|e| {
                     TransferBackendError::Download(HttpDownloadError::Io(e.into_error()))
                 })?;
                 file.sync_all()
@@ -507,7 +603,7 @@ impl TransferRuntime {
                         &mut writer,
                     ) {
                         Ok(written) => {
-                            let file = writer.into_inner().map_err(|e| {
+                            let file = writer.into_inner_file().map_err(|e| {
                                 TransferBackendError::Download(HttpDownloadError::Io(
                                     e.into_error(),
                                 ))
@@ -521,7 +617,7 @@ impl TransferRuntime {
                     }
                 }
                 // Best-effort cleanup on total failure.
-                let _ = writer.into_inner();
+                let _ = writer.into_inner_file();
                 let _ = std::fs::remove_file(dest_path);
                 Err(TransferBackendError::Download(last_error.unwrap_or(
                     HttpDownloadError::Malformed("download link missing host"),
@@ -540,11 +636,32 @@ impl TransferRuntime {
         session: &UploadSession,
         payload: &[u8],
     ) -> Result<StreamFrame, TransferBackendError> {
+        self.upload_bytes_with_observer(auth_token, session, payload, None)
+    }
+
+    /// Audit-06 §4-opus HIGH variant of [`Self::upload_bytes`] that
+    /// accepts an optional [`TransferProgressObserver`]. The observer is
+    /// called exactly once per successful `upload_write` (this path is
+    /// single-shot — callers needing per-chunk observations during a
+    /// pipelined chunked upload should use
+    /// [`Self::upload_bytes_chunked_with_observer`]).
+    pub fn upload_bytes_with_observer(
+        &self,
+        auth_token: SecretString,
+        session: &UploadSession,
+        payload: &[u8],
+        observer: Option<TransferProgressObserver>,
+    ) -> Result<StreamFrame, TransferBackendError> {
         match self.mode {
-            TransferMode::Development => Ok(StreamFrame {
-                stream_id: session.upload_id as u32,
-                payload_len: payload.len(),
-            }),
+            TransferMode::Development => {
+                if let Some(obs) = observer.as_ref() {
+                    obs(payload.len() as u64);
+                }
+                Ok(StreamFrame {
+                    stream_id: session.upload_id as u32,
+                    payload_len: payload.len(),
+                })
+            }
             TransferMode::Network => {
                 let transport = self
                     .network_transport
@@ -568,6 +685,9 @@ impl TransferRuntime {
                 }
                 let response = transport.execute_with_body(&encoded, payload)?;
                 expect_ok_result(response.as_hash(), "upload_write")?;
+                if let Some(obs) = observer.as_ref() {
+                    obs(payload.len() as u64);
+                }
 
                 let upload_save = UploadSaveRequest {
                     auth_token: pcloud_proto::redacted::RedactedProtoString::from(
@@ -653,8 +773,37 @@ impl TransferRuntime {
         auth_token: SecretString,
         req: ChunkedUploadRequest,
         payload: &[u8],
+        progress: C,
+        refresher: &mut R,
+    ) -> Result<ChunkedUploadResult, ChunkedUploadError>
+    where
+        C: FnMut(u64),
+        R: SessionRefresher,
+    {
+        self.upload_bytes_chunked_with_observer(
+            conn, machine, auth_token, req, payload, progress, refresher, None,
+        )
+    }
+
+    /// Audit-06 §4-opus HIGH variant of [`Self::upload_bytes_chunked`]
+    /// that accepts an optional [`TransferProgressObserver`]. The
+    /// observer is invoked with the **delta** byte count for each
+    /// successfully-acknowledged `upload_write` chunk (typically
+    /// `PSYNC_COPY_BUFFER_SIZE` / 256 KiB). Callers wire this to
+    /// `StallDetector::observe_bytes(transfer_id, delta)` to prove
+    /// liveness on long uploads that exceed the sync-loop wall-clock
+    /// stall window.
+    #[allow(clippy::too_many_arguments)]
+    pub fn upload_bytes_chunked_with_observer<C, R>(
+        &self,
+        conn: &rusqlite::Connection,
+        machine: &mut UploadStateMachine,
+        auth_token: SecretString,
+        req: ChunkedUploadRequest,
+        payload: &[u8],
         mut progress: C,
         refresher: &mut R,
+        observer: Option<TransferProgressObserver>,
     ) -> Result<ChunkedUploadResult, ChunkedUploadError>
     where
         C: FnMut(u64),
@@ -680,6 +829,7 @@ impl TransferRuntime {
             req.clone(),
             &mut progress,
             self.upload_pacer.clone(),
+            observer,
         );
 
         let state_req = StateUploadRequest {
@@ -858,6 +1008,11 @@ struct ChunkedUploadDriver<'a, C: FnMut(u64)> {
     /// Optional bandwidth pacer (bead pcloud-rs-6mx). `None` disables
     /// pacing; set from the enclosing [`TransferRuntime::upload_pacer`].
     bandwidth_pacer: Option<Arc<pcloud_resilience::BandwidthPacer>>,
+    /// Audit-06 §4-opus HIGH byte-progress observer. Called with the
+    /// **delta** byte count (NOT cumulative) after each successful
+    /// `upload_write` chunk so the enclosing sync-loop stall detector
+    /// can recognise a long-running upload as live.
+    observer: Option<TransferProgressObserver>,
 }
 
 impl<'a, C: FnMut(u64)> ChunkedUploadDriver<'a, C> {
@@ -868,6 +1023,7 @@ impl<'a, C: FnMut(u64)> ChunkedUploadDriver<'a, C> {
         req: ChunkedUploadRequest,
         progress: &'a mut C,
         bandwidth_pacer: Option<Arc<pcloud_resilience::BandwidthPacer>>,
+        observer: Option<TransferProgressObserver>,
     ) -> Self {
         Self {
             transport,
@@ -878,6 +1034,7 @@ impl<'a, C: FnMut(u64)> ChunkedUploadDriver<'a, C> {
             upload_id_cell: Arc::new(std::sync::Mutex::new(None)),
             auth_cache: String::new(),
             bandwidth_pacer,
+            observer,
         }
     }
 
@@ -971,6 +1128,13 @@ impl<'a, C: FnMut(u64)> UploadDriver for ChunkedUploadDriver<'a, C> {
 
         let new_offset = offset + chunk_len;
         (self.progress)(new_offset);
+        // Audit-06 §4-opus HIGH: notify the byte-progress observer with
+        // the **delta** (chunk_len), not the cumulative offset, so the
+        // enclosing StallDetector can refresh its per-transfer
+        // last-progress instant.
+        if let Some(obs) = self.observer.as_ref() {
+            obs(chunk_len);
+        }
         Ok(new_offset)
     }
 
@@ -1047,14 +1211,28 @@ fn split_host_port(host: &str) -> (String, Option<u16>) {
     (host.to_owned(), None)
 }
 
+/// Check the `result` field of a server hash response.
+///
+/// Maps non-zero result codes to [`TransferBackendError::PermanentResultCode`]
+/// or [`TransferBackendError::TransientResultCode`] using the pCloud error
+/// taxonomy from `pclsync/pnetlibs.c`:
+/// - 0 / absent → success
+/// - `2003 / 2005 / 2007 / 2009 / 2029 / 2067 / 5002` → permanent (no retry)
+/// - all other non-zero → transient (caller may retry)
 fn expect_ok_result(
     hash: Option<HashView<'_>>,
-    command: &'static str,
+    _command: &'static str,
 ) -> Result<(), TransferBackendError> {
+    use pcloud_proto::methods::upload::{UploadErrorClass, UploadErrorClass as C};
     let hash = hash.ok_or(TransferBackendError::Malformed("response was not a hash"))?;
     match hash.get_number("result") {
         Some(0) | None => Ok(()),
-        Some(_) => Err(TransferBackendError::Malformed(command)),
+        Some(result) => match UploadErrorClass::classify(result) {
+            Some(C::PermFail | C::Auth) => {
+                Err(TransferBackendError::PermanentResultCode { result })
+            }
+            _ => Err(TransferBackendError::TransientResultCode { result }),
+        },
     }
 }
 

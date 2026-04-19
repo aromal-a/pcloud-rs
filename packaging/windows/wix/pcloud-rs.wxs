@@ -38,8 +38,10 @@
     <!-- WinFSP is required for the mounted-drive / FUSE-equivalent feature. -->
     <PackageDependency Id="winfsp" />
 
+    <!-- Icon: not yet shipped. Uncomment once pcloud-rs.ico is committed.
     <Icon Id="pcloud-rs.ico" SourceFile="pcloud-rs.ico" />
     <Property Id="ARPPRODUCTICON" Value="pcloud-rs.ico" />
+    -->
     <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
     <UIRef Id="WixUI_InstallDir" />
     <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />

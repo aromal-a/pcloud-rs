@@ -228,6 +228,17 @@ impl Scheduler {
     /// `dispatched_operations`.
     #[must_use]
     pub fn peek_batch(&self) -> Vec<PlannedOperation> {
+        // Misuse guard: callers that call peek_batch in a tight loop without
+        // draining or tracking in-flight paths externally will spin on the
+        // same items forever. This is not incorrect (peek is non-mutating by
+        // design) but indicates a logic error in the integration. The
+        // recommended pattern is next_batch() + ack_batch() or external
+        // in-flight tracking. See doc-comment above.
+        // audit-06 LOW sync L-4.3 / ncx.81-c.
+        debug_assert!(
+            !self.queued_operations.is_empty() || self.dispatched_operations.is_empty(),
+            "peek_batch called on a scheduler with no queued ops but with dispatched ops:              likely a tight-loop integration that should use next_batch + ack_batch instead"
+        );
         self.peek_fair_batch_cloned()
     }
 
@@ -259,20 +270,28 @@ impl Scheduler {
         out
     }
 
-    /// P2-b (H2): remove the named paths from the `dispatched_operations`
-    /// slot. Called by the embedding runtime after each successful
-    /// upload/download completion. Operations still in
-    /// `dispatched_operations` after a daemon shutdown will be restored
-    /// into `queued_operations` on the next boot so retry is guaranteed.
+    /// P2-b (H2): remove the named `(sync_id, path)` entries from the
+    /// `dispatched_operations` slot. Called by the embedding runtime
+    /// after each successful upload/download completion. Operations
+    /// still in `dispatched_operations` after a daemon shutdown will
+    /// be restored into `queued_operations` on the next boot so retry
+    /// is guaranteed.
     ///
-    /// Path match is used rather than by index so the caller can ack in
-    /// any order relative to how operations were peeked / dispatched.
-    pub fn ack_batch(&mut self, paths: &[&str]) {
-        if paths.is_empty() || self.dispatched_operations.is_empty() {
+    /// **Audit-06 §4-sonnet M-04-S04 / P1-9:** match is on
+    /// `(sync_id, path)` tuples rather than path alone. Two sync roots
+    /// that happen to share the same relative path (e.g. a README
+    /// inside each of two independent sync trees) otherwise caused a
+    /// single ack to evict both dispatched entries, silently dropping
+    /// the crash-recovery guarantee for the un-acked root.
+    pub fn ack_batch(&mut self, items: &[(SyncId, &str)]) {
+        if items.is_empty() || self.dispatched_operations.is_empty() {
             return;
         }
-        self.dispatched_operations
-            .retain(|op| !paths.iter().any(|p| op.path() == *p));
+        self.dispatched_operations.retain(|op| {
+            !items
+                .iter()
+                .any(|(sid, p)| op.sync_id() == *sid && op.path() == *p)
+        });
     }
 
     fn take_fair_batch(&mut self) -> Vec<PlannedOperation> {
@@ -555,7 +574,7 @@ mod tests {
 
         // Step 2: ack ONE but crash before the second (simulated by not
         // calling ack on b.txt).
-        scheduler.ack_batch(&["a.txt"]);
+        scheduler.ack_batch(&[(SyncId::new(1), "a.txt")]);
         assert_eq!(scheduler.dispatched_operations.len(), 1);
         assert_eq!(scheduler.dispatched_operations[0].path(), "b.txt");
 
@@ -575,6 +594,60 @@ mod tests {
         assert!(
             restarted.dispatched_operations.is_empty(),
             "restart must start with clean dispatched slot; retry will re-populate"
+        );
+    }
+
+    /// Audit-06 §4-sonnet M-04-S04 / P1-9 regression: two sync roots
+    /// dispatch operations that happen to share the same relative path.
+    /// Acking the path for root 1 MUST NOT silently evict root 2's
+    /// dispatched entry (which would defeat H2 crash-recovery for that
+    /// root's in-flight work).
+    #[test]
+    fn ack_batch_respects_sync_id_scope() {
+        let mut scheduler = Scheduler::default();
+        scheduler.replace_queue(vec![
+            PlannedOperation::UploadFile {
+                sync_id: SyncId::new(1),
+                path: "README.md".to_owned(),
+                remote_parent_folder_id: None,
+                remote_name: "README.md".to_owned(),
+            },
+            PlannedOperation::UploadFile {
+                sync_id: SyncId::new(2),
+                path: "README.md".to_owned(),
+                remote_parent_folder_id: None,
+                remote_name: "README.md".to_owned(),
+            },
+        ]);
+
+        // Dispatch both: the dispatched slot holds one entry per root
+        // even though both share the same relative path.
+        let batch = scheduler.next_batch();
+        assert_eq!(batch.len(), 2);
+        assert_eq!(
+            scheduler.dispatched_operations.len(),
+            2,
+            "both dispatched entries must be recorded"
+        );
+
+        // Ack only root 1's README.md. Root 2's entry MUST remain.
+        scheduler.ack_batch(&[(SyncId::new(1), "README.md")]);
+        assert_eq!(
+            scheduler.dispatched_operations.len(),
+            1,
+            "only root 1's entry must be removed"
+        );
+        assert_eq!(
+            scheduler.dispatched_operations[0].sync_id(),
+            SyncId::new(2),
+            "surviving dispatched entry must belong to root 2"
+        );
+
+        // Now ack root 2's README.md; dispatched slot drains.
+        scheduler.ack_batch(&[(SyncId::new(2), "README.md")]);
+        assert!(
+            scheduler.dispatched_operations.is_empty(),
+            "both dispatched entries must now be evicted"
         );
     }
 

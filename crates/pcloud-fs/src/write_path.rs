@@ -1235,8 +1235,18 @@ impl UploadProgress {
         std::fs::rename(&tmp, path)
             .map_err(|e| WritePathError::Upload(format!("rename progress tmp: {e}")))?;
         if let Some(parent) = path.parent() {
+            // Sync the parent directory so the rename of the progress file
+            // is durable in the containing directory entry. A failure here
+            // is non-fatal (the content was already sync_all'd above), but
+            // we log it so operators can detect broken tmpfs/overlay setups.
+            // audit-06 LOW FUSE L-2 / ncx.82-b: was `let _ = dir.sync_all()`.
             if let Ok(dir) = std::fs::File::open(parent) {
-                let _ = dir.sync_all();
+                if let Err(e) = dir.sync_all() {
+                    log::debug!(
+                        "write_path: parent-dir fsync failed on {} (non-fatal, rename already done): {e}",
+                        parent.display()
+                    );
+                }
             }
         }
         Ok(())

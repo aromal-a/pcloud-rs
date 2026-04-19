@@ -3,7 +3,7 @@
 Distilled from the 20-reviewer bundle (`.reviews/01..20-*.md`) and the
 R1–R10 comparative review wave (`.reviews/R1..R10-*.md`). Each answer is
 under 100 words. For authoritative status see
-[`STATUS.md`](https://github.com/pcloudcom/pcloud-rs/blob/main/STATUS.md)
+[`STATUS.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/STATUS.md)
 and the [Parity Status](./parity/status.md) chapter.
 
 ## Status & Readiness
@@ -124,7 +124,7 @@ boundary commits (`.archive/reviews/UPLOAD-SPEC-14042026.md`). On
 daemon restart the single-shot path resumes from the last durable
 offset. The chunked multi-write resume story is still Partial until
 the state machine behind matrix row 92 lands — see the
-[closure checklist](https://github.com/pcloudcom/pcloud-rs/blob/main/docs/parity/bd-1du-10-closure-checklist.md).
+[closure checklist](https://github.com/ezechiel203/pcloud-rs/blob/main/docs/parity/bd-1du-10-closure-checklist.md).
 
 ## Testing
 
@@ -243,7 +243,7 @@ reproduces the aggregate (ADR [0009](./adr/0009.md)). Reviewer 19
 (`19-parity-honesty.md`) re-runs on each wave and grades; current
 grade is B+, targeting A at `bd-1du.10` close. Every `Partial` row
 has a tracked bead, an exit criterion with a named test, and a
-justification in the [closure checklist](https://github.com/pcloudcom/pcloud-rs/blob/main/docs/parity/bd-1du-10-closure-checklist.md).
+justification in the [closure checklist](https://github.com/ezechiel203/pcloud-rs/blob/main/docs/parity/bd-1du-10-closure-checklist.md).
 Rejected rows live in `REJECTED-RATIONALES-14042026.md`.
 
 ### 25. Where do I start if I want to contribute?

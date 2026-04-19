@@ -1633,16 +1633,12 @@ pub(crate) fn register_active_session(
 /// by `teardown_macos` before `fuse_session_destroy` so the reaper
 /// does not race with session destruction on a delayed signal.
 ///
-/// TODO(bd-1du.4 follow-up): `mount_service::MountHandle::teardown_macos`
-/// currently does not call this helper (edit restricted to `macos*.rs`
-/// in the audit-04 patch that introduced the reaper). A delayed signal
-/// arriving between `fuse_session_destroy` and process exit could cause
-/// the reaper to call `fuse_session_exit` on a freed pointer. The
-/// narrow mitigation in place: `teardown_macos` flips the per-session
-/// `shutdown` AtomicBool before destroy, and the reaper snapshot runs
-/// under the registry lock — but the destroy-then-signal window remains.
-/// Follow-up: wire `deregister_active_session(inner.session)` into
-/// `teardown_macos` before the `fuse_session_destroy` call.
+/// audit-06 closure (2026-04-18): `mount_service::MountHandle::teardown_macos`
+/// (see `mount_service.rs:556`) now invokes this helper BEFORE the
+/// `fuse_session_destroy` call (and before the loop-thread join), closing
+/// the prior destroy-then-signal UAF window. The stale audit-04 TODO
+/// previously living on this function has been removed because the
+/// teardown path is now correct.
 pub(crate) fn deregister_active_session(session: *mut macos_ffi::fuse_session) {
     if let Ok(mut guard) = session_registry().lock() {
         guard.retain(|e| e.session != session);

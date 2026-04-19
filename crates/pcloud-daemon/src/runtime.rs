@@ -2711,10 +2711,10 @@ impl RuntimeShell {
         _count: u64,
     ) -> Response {
         Response {
-            status: ResponseStatus::InternalError,
-            message:
-                "not yet wired: requires server-side copy via UploadWriteFromFileRequest (bd-1du)"
-                    .to_owned(),
+            status: ResponseStatus::Unavailable,
+            message: "upload_writefromfile (server-side copy) is not yet implemented; \
+                TransferRuntime::upload_write_from_file wiring is pending (bd-1du row 93)"
+                .to_owned(),
         }
     }
 

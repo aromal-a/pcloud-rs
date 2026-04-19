@@ -129,6 +129,34 @@ pub fn build_cli() -> Command {
                 .subcommand(sub("start", "Unlock crypto folder"))
                 .subcommand(sub("stop", "Lock crypto folder"))
                 .subcommand(sub("status", "Show crypto backend and lifecycle"))
+                .subcommand(sub("reset", "Wipe local crypto fingerprint and folder registry"))
+                .subcommand(sub("priv-key-flags", "Return current crypto private-key flags"))
+                .subcommand(sub(
+                    "send-change-private",
+                    "Request server-side code to authorise a crypto password rotation",
+                ))
+                .subcommand(
+                    sub("change-password", "Rotate the crypto passphrase")
+                        .arg(
+                            Arg::new("password-stdin")
+                                .long("password-stdin")
+                                .action(ArgAction::SetTrue)
+                                .help("Read old crypto password from stdin"),
+                        ),
+                )
+                .subcommand(
+                    sub(
+                        "change-password-unlocked",
+                        "Rotate the crypto passphrase when the shell is already unlocked",
+                    )
+                    .arg(
+                        Arg::new("password-stdin")
+                            .long("password-stdin")
+                            .action(ArgAction::SetTrue)
+                            .help("Read new crypto password from stdin"),
+                    ),
+                )
+                .subcommand(sub("hint", "Fetch the stored crypto passphrase hint"))
                 .subcommand(
                     Command::new("setup")
                         .about(
@@ -165,7 +193,9 @@ pub fn build_cli() -> Command {
                     // M-8.2: add positional folder-id and password-source flags.
                     sub(
                         "get-folder-key",
-                        "Fetch + cache a folder's wrapped sym-key (debugging helper)",
+                        "Fetch + cache a folder's wrapped sym-key (debugging helper). \
+                         SENSITIVE: output contains wrapped key material; \
+                         do not log or share the response.",
                     )
                     .arg(
                         Arg::new("folder-id")
@@ -206,7 +236,9 @@ pub fn build_cli() -> Command {
                     // M-8.2: add positional file-id and password-source flags.
                     sub(
                         "get-file-key",
-                        "Fetch + cache a file's wrapped sym-key (debugging helper)",
+                        "Fetch + cache a file's wrapped sym-key (debugging helper). \
+                         SENSITIVE: output contains wrapped key material; \
+                         do not log or share the response.",
                     )
                     .arg(
                         Arg::new("file-id")
@@ -446,6 +478,125 @@ pub fn build_cli() -> Command {
                 .subcommand(Command::new("snapshot-restore").about("Restore a backup snapshot"))
                 .subcommand(Command::new("snapshot-verify").about("Verify a backup snapshot"))
                 .subcommand(Command::new("snapshot-prune").about("Prune old backup snapshots")),
+        )
+        .subcommand(
+            Command::new("download")
+                .about("File download helpers")
+                .subcommand(
+                    sub("link", "Resolve the download URL for a remote file").arg(
+                        Arg::new("file-id")
+                            .required(true)
+                            .value_parser(clap::value_parser!(u64))
+                            .help("Numeric pCloud file ID"),
+                    ),
+                )
+                .subcommand(
+                    sub("file", "Download a remote file to a local path")
+                        .arg(
+                            Arg::new("file-id")
+                                .required(true)
+                                .value_parser(clap::value_parser!(u64))
+                                .help("Numeric pCloud file ID"),
+                        )
+                        .arg(
+                            Arg::new("local-path")
+                                .required(true)
+                                .help("Local destination path"),
+                        ),
+                ),
+        )
+        .subcommand(
+            Command::new("account")
+                .about("Account and auth management")
+                .subcommand(sub("verify-email", "Send a verification email for the active session"))
+                .subcommand(
+                    sub(
+                        "verify-email-restricted",
+                        "Verify email via a restricted verify-token",
+                    )
+                    .arg(
+                        Arg::new("token")
+                            .required(true)
+                            .help("Verification token"),
+                    ),
+                )
+                .subcommand(
+                    sub("lost-password", "Send a password-reset email").arg(
+                        Arg::new("email")
+                            .required(true)
+                            .help("Account email address"),
+                    ),
+                )
+                .subcommand(sub("change-password", "Change the account password"))
+                .subcommand(
+                    sub("register", "Register a new pCloud account")
+                        .arg(
+                            Arg::new("email")
+                                .required(true)
+                                .help("Email address for the new account"),
+                        )
+                        .arg(
+                            Arg::new("accept-terms")
+                                .long("accept-terms")
+                                .action(ArgAction::SetTrue)
+                                .help("Accept the pCloud Terms of Service"),
+                        ),
+                )
+                .subcommand(sub("api-servers", "List available pCloud API server regions"))
+                .subcommand(
+                    sub("set-api-server", "Pin the daemon to a specific API region")
+                        .arg(
+                            Arg::new("location-id")
+                                .required(true)
+                                .help("Region location ID"),
+                        )
+                        .arg(
+                            Arg::new("binapi")
+                                .required(true)
+                                .help("Binary API endpoint URL"),
+                        ),
+                )
+                .subcommand(
+                    sub("set-language", "Set the account language preference").arg(
+                        Arg::new("lang")
+                            .required(true)
+                            .help("BCP-47 language tag (e.g. en, de, fr)"),
+                    ),
+                )
+                .subcommand(sub("promo", "Fetch the promotional URL for this platform")),
+        )
+        .subcommand(
+            sub("log", "Show git-log-style revision history for a synced file")
+                .arg(
+                    Arg::new("path")
+                        .required(true)
+                        .help("Absolute pCloud-drive path"),
+                )
+                .arg(
+                    Arg::new("limit")
+                        .long("limit")
+                        .value_parser(clap::value_parser!(u32))
+                        .help("Maximum number of revisions to return"),
+                ),
+        )
+        .subcommand(
+            sub("diff", "Show diff between two file revisions")
+                .arg(
+                    Arg::new("path")
+                        .required(true)
+                        .help("Absolute pCloud-drive path"),
+                )
+                .arg(Arg::new("rev-a").required(true).help("First revision ID"))
+                .arg(Arg::new("rev-b").required(true).help("Second revision ID")),
+        )
+        .subcommand(
+            sub("restore", "Restore a file to a specific revision")
+                .arg(
+                    Arg::new("path")
+                        .required(true)
+                        .help("Absolute pCloud-drive path"),
+                )
+                .arg(Arg::new("rev").required(true).help("Target revision ID")),
         )
         .subcommand(sub("mount", "Mount the pCloud filesystem"))
         .subcommand(sub("unmount", "Unmount the pCloud filesystem"))

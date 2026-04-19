@@ -1313,3 +1313,48 @@ fn full_lifecycle_via_fuset() {
         "write+fsync must produce an upload record, got: {uploads:?}"
     );
 }
+
+/// audit-06 regression test: mount → teardown → assert no segfault.
+///
+/// The fix for the macOS UAF landed at `mount_service.rs:556`, which
+/// invokes `deregister_active_session(inner.session)` BEFORE
+/// `fuse_session_destroy` so a delayed SIGTERM can no longer reach the
+/// reaper after the session has been freed.
+///
+/// This test mounts a trivial in-memory filesystem via fuse-t and
+/// immediately unmounts. If the teardown ordering regresses the
+/// process will segfault mid-teardown; a clean exit proves the
+/// deregister-before-destroy discipline is in force.
+#[test]
+#[ignore = "requires PCLOUD_FUSE_TEST=1 and fuse-t installed on macOS"]
+fn teardown_does_not_race_reaper_audit06() {
+    if !fuse_gate_enabled() {
+        return;
+    }
+    let _fuse_lock = fuse_serial_lock();
+
+    let folder = Arc::new(MockFolderBackend::new());
+    folder.insert_dir("/", 1, vec![]);
+    let files = Arc::new(MockFileBackend::new());
+    let adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    );
+
+    let mnt = tempfile::tempdir().expect("mount tempdir");
+    let svc = MountService::new();
+    let handle = match svc.mount(
+        mnt.path(),
+        adapter,
+        MountOptions { read_only: false, ..MountOptions::default() },
+    ) {
+        Ok(h) => h,
+        Err(err) if should_skip_mount_error(&err.to_string()) => return,
+        Err(err) => panic!("mount: {err}"),
+    };
+
+    // Immediate unmount exercises the teardown path which calls
+    // deregister_active_session before fuse_session_destroy.
+    handle.unmount().expect("unmount must succeed without segfault");
+}

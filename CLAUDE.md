@@ -49,7 +49,7 @@ Issue tracker source of truth:
 
 - `bd`
 
-## Current Truth (2026-04-18, post Audit 03)
+## Current Truth (2026-04-18, post Audit 06)
 
 The Rust implementation is **substantially complete** and the tracker is down to the final parity-proof phase, but it is still **not** honest to call it "full parity", "production ready", or "drop-in replacement" while the last proof beads remain open.
 
@@ -57,15 +57,11 @@ Open parity epics/tasks (3 beads):
 
 - `bd-1du` - Close verified C-to-Rust feature parity gaps (epic)
 - `bd-1du.4` - Replace filesystem shell with real mounted-drive parity (substantially landed; cross-platform hardware verification remaining)
-- `bd-1du.10` - Prove and gate final C parity claims (5 Partial rows + human sign-off remaining: rows 26, 27, 93, 124, 142)
+- `bd-1du.10` - Prove and gate final C parity claims (see [`STATUS.md`](STATUS.md) for the authoritative Partial row count + human sign-off remaining)
 
 Single source of truth for counts: [`STATUS.md`](STATUS.md). Per-row
 rejected rationale lives in `REJECTED-RATIONALES-14042026.md`. Do not
 hard-code count numbers in this file; link to `STATUS.md` instead.
-
-Audit 05 (2026-04-18) corrected the count to **see `STATUS.md` for the
-authoritative count (currently 5 Partial rows)**. Audit 03 had reported
-156 Implemented / 2 Partial — that figure is superseded.
 
 Important corrections:
 
@@ -73,9 +69,10 @@ Important corrections:
 - shares/business/team parity is implemented on the retained path,
 - public-link parity is implemented on the retained path,
 - backup/device/account parity is implemented on the retained path,
+- `psync_send_publink` is implemented (row 42, `account_backend.rs`),
 - sync helper parity is implemented on the retained path,
 - Linux FUSE read+write is live-verified end-to-end on a real kernel mount,
-- the remaining parity work is narrow: two IPC-wiring gaps plus cross-platform mount hardware verification and final reviewer sign-off.
+- the remaining parity work is narrow: see [`STATUS.md`](STATUS.md) for open Partial rows plus cross-platform mount hardware verification and final reviewer sign-off.
 
 Do **not** claim:
 
@@ -294,7 +291,6 @@ Implemented:
 Still partial because:
 
 - the backup helpers intentionally do not auto-register/remove local sync roots as an implicit side effect,
-- `psync_send_publink` remains missing,
 - update-check declarations in this fork are ghost surfaces and should stay `Rejected`.
 
 Primary files:
@@ -383,9 +379,9 @@ Current state (Audit 05, 2026-04-18):
 Remaining work to close the gate:
 
 - land a `Request::UploadWriteFromFile` IPC variant, wire it through
-  `TransferRuntime` and the CLI, live-verify server-side copy;
-- land a `Request::CreateTreePublicLinkFromPaths` IPC variant with
-  server-side path resolution under daemon auth context;
+  `TransferRuntime` and the CLI, live-verify server-side copy (row 93);
+- close remaining open Partial rows — see [`STATUS.md`](STATUS.md) for
+  the authoritative list;
 - sweep docs for any "production ready" / "full parity" claims (none
   found by this audit, but gate must re-verify at close-time);
 - run the nine-gate CI once more against the final tree;
@@ -396,9 +392,9 @@ line-level closure checklist.
 
 ### P1 blockers
 
-There are no remaining non-filesystem parity beads below P0. The two
-residual `Partial` rows (93, 149) are narrow IPC wiring gaps tracked
-under `bd-1du.10`.
+There are no remaining non-filesystem parity beads below P0. Open
+Partial rows are tracked under `bd-1du.10` — see [`STATUS.md`](STATUS.md)
+for the authoritative list.
 
 ## Feature Parity Matrix Summary
 
@@ -412,8 +408,8 @@ High-level status (2026-04-18):
 - `CLI`: implemented for the retained legacy surface
 - `Sync root management`: implemented on the retained path
 - `Sync engine`: implemented on the retained path, background sync loop wired at daemon startup
-- `Transfers`: implemented; one Partial row remains (`upload_writefromfile` server-side copy IPC wiring, row 93)
-- `Public links`: implemented; one Partial row remains (`ptree_public_link` path-based IPC variant, row 149)
+- `Transfers`: implemented; row 93 (`upload_writefromfile` server-side copy IPC wiring) Partial — see [`STATUS.md`](STATUS.md)
+- `Public links`: implemented; see [`STATUS.md`](STATUS.md) for open Partial rows
 - `Filesystem / mounted drive`: Linux live-verified; macOS/Windows scaffolded, hardware verification remaining
 - `Crypto`: implemented on the retained path
 - `Shares / business / teams`: implemented on the retained path
@@ -479,6 +475,21 @@ Current secure posture:
 - explicit peer checks,
 - malformed/slow client isolation,
 - audit persistence failures surfaced instead of being silently ignored.
+
+**Windows IPC posture (Tier-3 scaffolded-only):** `WindowsIpc` in
+`crates/pcloud-ipc/src/platform/windows.rs` compiles and the
+`bind_listener` / `peer_uid` / `peer_display` trait methods are
+implemented, but the named-pipe backend is **not** wired through the
+`serve_once_with_peer` accept loop in `transport.rs`. Windows is
+therefore Tier-3 for IPC — compile-tested in CI but not live-verified
+end-to-end. Do not document Windows as a supported IPC platform until
+`bd-xplat-windows` is closed and live-verified.
+
+**FreeBSD CI posture (Tier-3 best-effort):** The FreeBSD CI job has
+`continue-on-error: true`. It is informational only; regressions on
+FreeBSD do not fail the PR gate. See the FreeBSD job comment in
+`.github/workflows/ci.yml` for the documented conditions under which
+`continue-on-error` may be removed.
 
 Rules:
 
@@ -585,13 +596,6 @@ Focused Rust validation commonly used so far:
 cargo test -p pcloud-proto -p pcloud-daemon -p pcloud-cli
 cargo test -p pcloud-config -p pcloud-store -p pcloud-daemon -p pcloud-sdk
 cargo test -p pcloud-engine -p pcloud-daemon
-```
-
-C build:
-
-```bash
-cd /home/ezechiel203/Projects/FORKS/pcloud-rs
-make -j4
 ```
 
 Tracker:

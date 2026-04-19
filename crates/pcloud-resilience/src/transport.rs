@@ -170,6 +170,89 @@ mod metrics_impl {
 
 }
 
+// ── Public metrics surface ─────────────────────────────────────────────────
+
+/// Record a transport latency observation on the
+/// `pcloud_transport_latency_seconds` histogram.
+///
+/// When the `transport-metrics` feature is disabled this is a no-op so that
+/// call sites compile unconditionally.  The `host` parameter is accepted for
+/// API stability; per-host sub-histograms will be wired once the
+/// `pcloud-observability` histogram API gains a label dimension.
+pub fn observe_transport_latency(host: &str, outcome: TransportOutcomeLabel, latency_secs: f64) {
+    #[cfg(feature = "transport-metrics")]
+    metrics_impl::observe_latency(host, outcome, latency_secs);
+    #[cfg(not(feature = "transport-metrics"))]
+    {
+        let _ = (host, outcome, latency_secs);
+    }
+}
+
+/// Increment the `pcloud_transport_errors_total` counter for the given class.
+///
+/// No-op when the `transport-metrics` feature is disabled.
+pub fn observe_transport_error(host: &str, class: TransportErrorClass) {
+    #[cfg(feature = "transport-metrics")]
+    metrics_impl::increment_error(host, class);
+    #[cfg(not(feature = "transport-metrics"))]
+    {
+        let _ = (host, class);
+    }
+}
+
+// ── Retry-After header parsing ────────────────────────────────────────────
+
+/// Parse a `Retry-After` header value into a [`Duration`].
+///
+/// Handles both forms allowed by RFC 7231:
+/// - **Integer seconds** (`Retry-After: 30`)
+/// - **Floating-point seconds** (`Retry-After: 1.5`)
+///
+/// HTTP-date form (`Retry-After: Wed, 21 Oct 2015 07:28:00 GMT`) is not
+/// supported; if the value is not parseable as a number `None` is returned.
+///
+/// The returned duration is capped at 300 seconds to prevent indefinite
+/// stalls from a misbehaving or malicious server.
+///
+/// This is the canonical `Retry-After` parser for the workspace. Both the
+/// HTTP-download path and the resilience-transport path use it to guarantee
+/// consistent behaviour.
+///
+/// # Example
+///
+/// ```
+/// use std::time::Duration;
+/// use pcloud_resilience::transport::parse_retry_after_header;
+/// assert_eq!(parse_retry_after_header("30"), Some(Duration::from_secs(30)));
+/// assert_eq!(parse_retry_after_header("1.5"), Some(Duration::from_millis(1500)));
+/// assert_eq!(parse_retry_after_header("Wed, 21 Oct 2015 07:28:00 GMT"), None);
+/// assert_eq!(parse_retry_after_header("999"), Some(Duration::from_secs(300)));
+/// ```
+pub fn parse_retry_after_header(value: &str) -> Option<Duration> {
+    let secs: f64 = value.trim().parse().ok()?;
+    if secs < 0.0 || !secs.is_finite() {
+        return None;
+    }
+    let capped = secs.min(300.0);
+    Some(Duration::from_millis((capped * 1000.0) as u64))
+}
+
+/// Parse a `Retry-After` header out of a raw HTTP response header block.
+///
+/// Locates the first `Retry-After:` line (case-insensitive), extracts the
+/// value, and delegates to [`parse_retry_after_header`].  Returns `None` when
+/// the header is absent or the value cannot be parsed as a number.
+///
+/// Used by the HTTP-download path, which receives headers as a raw string
+/// before they are split into a map.
+pub fn parse_retry_after_from_headers(headers: &str) -> Option<Duration> {
+    headers
+        .lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("retry-after:"))
+        .and_then(|l| l.splitn(2, ':').nth(1))
+        .and_then(|v| parse_retry_after_header(v))
+}
+
 // ── Error classification ───────────────────────────────────────────────────
 
 /// Coarse error kind used by the retry loop.
@@ -526,26 +609,14 @@ impl TransportResponse {
 
     /// Parse the `Retry-After` header (if present) into a [`Duration`].
     ///
-    /// Supports:
-    /// - integer seconds (`Retry-After: 30`)
-    /// - floating-point seconds (`Retry-After: 1.5`)
-    ///
-    /// The returned duration is capped at 300 seconds to prevent indefinite
-    /// stalls from misbehaving servers.
+    /// Delegates to [`parse_retry_after_header`], which handles both integer
+    /// and floating-point second values and caps the result at 300 seconds.
     pub fn retry_after(&self) -> Option<Duration> {
         let raw = self
             .headers
             .get("retry-after")
             .or_else(|| self.headers.get("Retry-After"))?;
-
-        // Try integer seconds first, then float.
-        let secs: f64 = raw.trim().parse().ok()?;
-        if secs < 0.0 || !secs.is_finite() {
-            return None;
-        }
-        // Cap at 300 s to prevent indefinite stalls.
-        let capped = secs.min(300.0);
-        Some(Duration::from_millis((capped * 1000.0) as u64))
+        parse_retry_after_header(raw)
     }
 }
 

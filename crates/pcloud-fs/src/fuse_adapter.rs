@@ -1370,7 +1370,7 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
         let file_id = match self.resolve_file_id(ino) {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("[pcloud-adapter] open ino={ino} resolve_file_id FAILED: {e:?}");
+                log::debug!("[pcloud-adapter] open ino={ino} resolve_file_id FAILED: {e:?}");
                 return Err(e.to_errno());
             }
         };
@@ -1439,7 +1439,7 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
         let (ino, shared) = {
             let tbl = self.handles.lock().map_err(|_| crate::errors::EIO)?;
             let slot = tbl.by_id.get(&handle).ok_or_else(|| {
-                eprintln!(
+                log::debug!(
                     "[pcloud-adapter] read handle={handle} off={offset} len={len} EBADF — no slot"
                 );
                 EBADF
@@ -1458,7 +1458,7 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
 
         let page_size = self.options.page_cache.page_size as u64;
         if page_size == 0 {
-            eprintln!("[pcloud-adapter] read handle={handle} page_size=0 — fatal config");
+            log::error!("[pcloud-adapter] read handle={handle} page_size=0 — fatal config");
             return Err(crate::errors::EIO);
         }
         let mut out = Vec::with_capacity(len);
@@ -1487,7 +1487,7 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
                 {
                     Ok(b) => b,
                     Err(e) => {
-                        eprintln!(
+                        log::debug!(
                             "[pcloud-adapter] read file_id={} page_start={page_start} len={page_size} backend.read FAILED: {e:?}",
                             shared.file_id
                         );

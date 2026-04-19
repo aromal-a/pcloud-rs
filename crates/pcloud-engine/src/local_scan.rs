@@ -135,6 +135,20 @@ pub enum ScanDecision {
 /// each cycle needs a full tree walk or can get by with watcher events
 /// alone.
 ///
+/// # Persistence
+///
+/// `last_full_scan` is held as monotonic `Instant` values and is
+/// **not** persisted by this struct. On daemon restart all roots
+/// start with `last_full_scan = None`, triggering a full scan on the
+/// first cycle (the safe default). If a cross-restart persistence
+/// guarantee is required the caller (e.g. `SyncLoopRuntime`) should
+/// persist the per-root wall-clock `SystemTime` under
+/// `sync.incremental.last_scan_<sync_id>` in the `value_kv` store
+/// and reconstruct an approximate `Instant` on startup via
+/// `Instant::now() - SystemTime::now().duration_since(stored_time)`.
+/// This is intentionally not done inside the engine crate to keep it
+/// free of a `pcloud-store` dependency (P3-B5 / audit-06).
+///
 /// # Thread safety
 ///
 /// This type is `Send` but not `Sync` — it lives on the sync loop
@@ -278,7 +292,6 @@ impl IncrementalScanTracker {
 /// Returns the first I/O error encountered while reading directory entries.
 /// Entries that cannot be `stat(2)`'d individually are skipped with a
 /// `log::warn!` rather than aborting the walk.
-#[allow(dead_code)] // called from the sync loop; unused in unit tests
 pub fn walk_local_tree<F>(root: &std::path::Path, max_depth: usize, visitor: &mut F) -> std::io::Result<()>
 where
     F: FnMut(&std::path::Path, bool /* is_dir */),

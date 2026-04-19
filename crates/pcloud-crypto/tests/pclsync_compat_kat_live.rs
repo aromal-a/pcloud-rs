@@ -361,7 +361,7 @@ fn pclsync_compat_decrypts_official_pcloud_ciphertext() {
     // -------------------------------------------------------------------
     // 8. Byte-exact + SHA-256 match vs. the committed plaintext fixture.
     // -------------------------------------------------------------------
-    let got_sha = Sha256::digest(&plaintext);
+    let got_sha = Sha256::digest(plaintext.as_slice());
     assert_eq!(
         got_sha.as_slice(),
         expected_sha.as_slice(),
@@ -370,7 +370,8 @@ fn pclsync_compat_decrypts_official_pcloud_ciphertext() {
         hex_encode(&got_sha),
     );
     assert_eq!(
-        plaintext, plaintext_fixture,
+        plaintext.as_slice(),
+        plaintext_fixture.as_slice(),
         "byte-exact plaintext mismatch (SHA match? that would be impossible here)",
     );
 

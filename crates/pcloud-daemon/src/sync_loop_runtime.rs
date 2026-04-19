@@ -1,3 +1,10 @@
+// TODO(bd-sweep-unwrap): This file contains ~91 `.unwrap()` / `.expect()`
+// call sites in non-test code paths. Hot-path ones (auth-token lock
+// acquisitions, channel sends on the sync-loop thread) should be converted
+// to proper error propagation or `log::error!` + graceful loop exit.
+// Full sweep is deferred to a dedicated hardening pass; panics in the
+// sync-loop thread are caught by the thread join in `main.rs`.
+
 //! Real [`SyncLoopRuntime`] implementation that bridges to the daemon's
 //! backend subsystems for autonomous background sync.
 //!
@@ -602,21 +609,43 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                                         DOWNLOAD_INMEM_MIRROR_THRESHOLD
                                     );
                                 }
+                                // Audit-06 §4-opus HIGH: record real
+                                // byte-level progress for this transfer
+                                // so a long-running download that
+                                // exceeds the wall-clock stall window
+                                // is still recognised as non-stalled
+                                // via its byte counter.
+                                self.stall_detector
+                                    .observe_bytes(path, written as u64);
                                 if self.engine.mark_transfer_completed(path) {
                                     completed += 1;
                                     // P2-b (H2): durable ack — remove
                                     // the dispatched entry so the
                                     // persisted scheduler snapshot no
                                     // longer carries this op on the
-                                    // next persist.
-                                    self.engine.ack_dispatched_path(path);
+                                    // next persist. Audit-06 §4-sonnet
+                                    // M-04-S04: scope the ack to the
+                                    // owning sync root so a cross-root
+                                    // path collision cannot evict a
+                                    // sibling root's un-acked entry.
+                                    self.engine.ack_dispatched_path(
+                                        task.operation.sync_id(),
+                                        path,
+                                    );
                                     // P2-d (H4): bytes transferred
                                     // count as progress; reset the
                                     // stall timer.
                                     self.stall_detector.mark_progress();
+                                    // Byte-progress state is retired
+                                    // alongside the dispatched slot.
+                                    self.stall_detector.forget_transfer(path);
                                 }
                             }
                             Err(err) => {
+                                // Drop any byte-progress state for the
+                                // failed transfer so the next attempt
+                                // starts clean.
+                                self.stall_detector.forget_transfer(path);
                                 // Best-effort cleanup of any partial file.
                                 let _ = std::fs::remove_file(&staged_path);
                                 let decision = self.engine.classify_failure(
@@ -769,8 +798,14 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                             Ok(_frame) => {
                                 if self.engine.mark_transfer_completed(path) {
                                     completed += 1;
-                                    // P2-b (H2): durable ack.
-                                    self.engine.ack_dispatched_path(path);
+                                    // P2-b (H2): durable ack. Audit-06
+                                    // §4-sonnet M-04-S04: scope to
+                                    // owning sync root to avoid
+                                    // cross-root path collisions.
+                                    self.engine.ack_dispatched_path(
+                                        task.operation.sync_id(),
+                                        path,
+                                    );
                                     // P2-d (H4): bytes transferred →
                                     // stall timer reset on completion.
                                     self.stall_detector.mark_progress();
@@ -1156,31 +1191,52 @@ fn commit_diff_batch(
     // return paths above.
 }
 
-/// P2-c (H3): RAII guard that temporarily sets SQLite's `synchronous`
-/// pragma to `FULL` and restores the previous value (`NORMAL` by
-/// convention in this crate) on drop. The restore runs even on panic or
-/// early `?` propagation, preventing the "connection stuck at FULL
-/// forever" bug flagged by audit-05 P2-c.
+/// P2-c (H3) / Audit-06 §4-opus HIGH: RAII guard that temporarily sets
+/// SQLite's `synchronous` pragma to `FULL` and restores the **previously
+/// observed** value on drop. The old value is captured by a `PRAGMA
+/// synchronous` query at construction time so that restoration is
+/// correct regardless of whether the caller's baseline was `NORMAL`,
+/// `OFF`, or something else. The restore runs even on panic or early
+/// `?` propagation, preventing the "connection stuck at FULL forever"
+/// bug flagged by audit-05 P2-c and re-flagged by audit-06 §4-opus HIGH.
 struct SynchronousGuard<'a> {
     conn: &'a Connection,
+    /// Mnemonic for the pragma value that was live before `set_full`
+    /// was called. One of `"OFF"`, `"NORMAL"`, `"FULL"`, or `"EXTRA"`.
+    old: &'static str,
 }
 
 impl<'a> SynchronousGuard<'a> {
     fn set_full(conn: &'a Connection) -> Result<Self, rusqlite::Error> {
+        // SQLite returns the pragma as the integer encoding
+        // (0=OFF, 1=NORMAL, 2=FULL, 3=EXTRA). Capture that first so we
+        // can restore the exact mode on drop.
+        let old_code: i64 =
+            conn.query_row("PRAGMA synchronous;", [], |row| row.get::<_, i64>(0))?;
+        let old = match old_code {
+            0 => "OFF",
+            1 => "NORMAL",
+            2 => "FULL",
+            3 => "EXTRA",
+            // Unknown encoding — fall back to NORMAL on restore rather
+            // than risk a syntax error in the pragma exec.
+            _ => "NORMAL",
+        };
         conn.pragma_update(None, "synchronous", "FULL")?;
-        Ok(Self { conn })
+        Ok(Self { conn, old })
     }
 }
 
 impl Drop for SynchronousGuard<'_> {
     fn drop(&mut self) {
-        // Best-effort: if restoring NORMAL fails we log but cannot
-        // propagate — Drop has no error channel. A failure here leaves
-        // the connection at FULL, which is safer than leaving it at
-        // NORMAL with no durability guarantee.
-        if let Err(err) = self.conn.pragma_update(None, "synchronous", "NORMAL") {
+        // Best-effort: if restoring the previous mode fails we log but
+        // cannot propagate — Drop has no error channel. A failure here
+        // leaves the connection at FULL, which is safer than leaving it
+        // at a weaker mode with no durability guarantee.
+        if let Err(err) = self.conn.pragma_update(None, "synchronous", self.old) {
             log::warn!(
-                "sync loop: failed to restore synchronous=NORMAL on commit_diff_batch drop: {err}"
+                "sync loop: failed to restore synchronous={} on commit_diff_batch drop: {err}",
+                self.old
             );
         }
     }
@@ -1441,7 +1497,7 @@ mod tests {
     /// FULL for the rest of the daemon's life and every subsequent
     /// write pays an extra fsync.
     #[test]
-    fn synchronous_guard_restores_normal_on_panic() {
+    fn synchronous_guard_restores_on_panic() {
         let tmp = TempDir::new().expect("tempdir");
         let db = tmp.path().join("sync_guard.sqlite");
         let conn = Connection::open(&db).expect("open");
@@ -1473,6 +1529,38 @@ mod tests {
         assert_eq!(
             mode, 1,
             "SynchronousGuard::drop must restore synchronous=NORMAL after panic (got mode={mode})"
+        );
+    }
+
+    /// Audit-06 §4-opus HIGH: the guard must restore the **observed**
+    /// prior mode, not hard-code NORMAL. If the connection was already
+    /// at FULL when the guard was constructed, dropping the guard must
+    /// leave it at FULL — not silently demote it to NORMAL.
+    #[test]
+    fn synchronous_guard_restores_prior_mode_not_hardcoded_normal() {
+        let tmp = TempDir::new().expect("tempdir");
+        let db = tmp.path().join("sync_guard_prior.sqlite");
+        let conn = Connection::open(&db).expect("open");
+        conn.pragma_update(None, "synchronous", "FULL")
+            .expect("init full");
+
+        {
+            let _g = SynchronousGuard::set_full(&conn).expect("set full");
+            // Still FULL inside the scope (expected).
+            let inside: i64 = conn
+                .query_row("PRAGMA synchronous;", [], |r| r.get::<_, i64>(0))
+                .unwrap();
+            assert_eq!(inside, 2, "pragma should be FULL inside guard scope");
+        }
+
+        // Guard has dropped: must have restored the *prior* value
+        // (FULL), not defaulted to NORMAL.
+        let after: i64 = conn
+            .query_row("PRAGMA synchronous;", [], |r| r.get::<_, i64>(0))
+            .unwrap();
+        assert_eq!(
+            after, 2,
+            "SynchronousGuard::drop must restore the previously observed mode (FULL=2), got {after}"
         );
     }
 

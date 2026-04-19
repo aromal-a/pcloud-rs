@@ -1,7 +1,7 @@
 # Architecture Decision Records
 
 This chapter mirrors
-[`docs/adr/README.md`](https://github.com/pcloudcom/pcloud-rs/tree/main/docs/adr)
+[`docs/adr/README.md`](https://github.com/ezechiel203/pcloud-rs/tree/main/docs/adr)
 inside the mdBook tree so readers can hop between ADRs 0001–0010
 without leaving the book. ADR **source files** live in
 `docs/adr/*.md` and the pages under this chapter include

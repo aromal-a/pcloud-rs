@@ -101,9 +101,14 @@ pub struct TransportConfig {
     use_tls: bool,
     /// Timeout for the initial `TcpStream::connect_timeout` call.
     pub connect_timeout: Duration,
-    /// Deadline applied to each read / write syscall **and** to the
-    /// overall deadline loop that drives them.
+    /// Deadline applied to each read syscall and to the overall deadline loop.
     pub read_timeout: Duration,
+    /// Deadline applied to each write syscall.
+    ///
+    /// Defaults to [`Self::read_timeout`] for backward compatibility. Operators
+    /// that want to allow larger upload chunks before giving up can raise this
+    /// independently of the read timeout.
+    pub write_timeout: Duration,
     /// Sleep duration injected between `Interrupted` / `WouldBlock` retries
     /// inside the write/read deadline loops. The default is 10 ms, which
     /// amortizes syscall overhead without burning CPU on tight-loop retries.
@@ -129,8 +134,11 @@ pub struct TransportConfig {
 impl TransportConfig {
     /// Default `TcpStream::connect_timeout` used by the constructors.
     pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-    /// Default per-syscall read/write timeout used by the constructors.
+    /// Default per-syscall read timeout used by the constructors.
     pub const DEFAULT_READ_TIMEOUT: Duration = Duration::from_secs(30);
+    /// Default per-syscall write timeout used by the constructors.
+    /// Matches `DEFAULT_READ_TIMEOUT` for backward compatibility.
+    pub const DEFAULT_WRITE_TIMEOUT: Duration = Duration::from_secs(30);
     /// Default `Interrupted` / `WouldBlock` retry backoff.
     pub const DEFAULT_INTERRUPT_RETRY_DELAY: Duration = Duration::from_millis(10);
     /// Default whole-request deadline.
@@ -152,6 +160,7 @@ impl TransportConfig {
             use_tls: true,
             connect_timeout: Self::DEFAULT_CONNECT_TIMEOUT,
             read_timeout: Self::DEFAULT_READ_TIMEOUT,
+            write_timeout: Self::DEFAULT_WRITE_TIMEOUT,
             interrupt_retry_delay: Self::DEFAULT_INTERRUPT_RETRY_DELAY,
             total_request_timeout: Self::DEFAULT_TOTAL_REQUEST_TIMEOUT,
             max_response_bytes: Self::DEFAULT_MAX_RESPONSE_BYTES,
@@ -178,6 +187,7 @@ impl TransportConfig {
             use_tls: false,
             connect_timeout: Self::DEFAULT_CONNECT_TIMEOUT,
             read_timeout: Self::DEFAULT_READ_TIMEOUT,
+            write_timeout: Self::DEFAULT_WRITE_TIMEOUT,
             interrupt_retry_delay: Self::DEFAULT_INTERRUPT_RETRY_DELAY,
             total_request_timeout: Self::DEFAULT_TOTAL_REQUEST_TIMEOUT,
             max_response_bytes: Self::DEFAULT_MAX_RESPONSE_BYTES,
@@ -211,6 +221,7 @@ impl TransportConfig {
             use_tls,
             connect_timeout,
             read_timeout,
+            write_timeout: read_timeout,
             interrupt_retry_delay: Self::DEFAULT_INTERRUPT_RETRY_DELAY,
             total_request_timeout: Self::DEFAULT_TOTAL_REQUEST_TIMEOUT,
             max_response_bytes: Self::DEFAULT_MAX_RESPONSE_BYTES,
@@ -412,6 +423,13 @@ impl ApiServerHintConsumer for BinaryApiTransport {
         // pCloud domains. An attacker who can inject a forged hint must not
         // be able to redirect traffic to an arbitrary host.
         if !is_known_safe_host(&host) {
+            // Log the rejection so operators can diagnose unexpected hint
+            // sources without silently losing the steering signal.
+            // audit-06 LOW transport P3-D5 / ncx.83.
+            log::warn!(
+                "apply_api_server_hint: rejected non-allowlisted host '{host}'; \
+                 hint ignored to prevent traffic redirection"
+            );
             return;
         }
 
@@ -465,7 +483,7 @@ fn connect_socket(config: &TransportConfig) -> Result<TcpStream, TransportError>
                     .set_read_timeout(Some(config.read_timeout))
                     .map_err(TransportError::SocketConfig)?;
                 stream
-                    .set_write_timeout(Some(config.read_timeout))
+                    .set_write_timeout(Some(config.write_timeout))
                     .map_err(TransportError::SocketConfig)?;
                 return Ok(stream);
             }

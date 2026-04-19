@@ -144,8 +144,27 @@ fn run_listener(listener: TcpListener, read_timeout: Duration) {
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                let current = in_flight.load(Ordering::Relaxed);
-                if current >= MAX_CONCURRENT_HEALTH_CONNECTIONS {
+                // audit-06 P3-E4 / ncx.57: replace the load-then-fetch_add
+                // TOCTOU with a compare_exchange_weak CAS loop so two
+                // accept threads cannot race past the cap and both admit
+                // connection number N+1. Mirrors the
+                // `ConnectionGuard::acquire` pattern in pcloud-ipc.
+                let mut current = in_flight.load(Ordering::Acquire);
+                let acquired = loop {
+                    if current >= MAX_CONCURRENT_HEALTH_CONNECTIONS {
+                        break false;
+                    }
+                    match in_flight.compare_exchange_weak(
+                        current,
+                        current + 1,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => break true,
+                        Err(observed) => current = observed,
+                    }
+                };
+                if !acquired {
                     log::warn!(
                         "health server: connection limit ({MAX_CONCURRENT_HEALTH_CONNECTIONS}) \
                          reached; dropping connection"
@@ -155,18 +174,17 @@ fn run_listener(listener: TcpListener, read_timeout: Duration) {
                 }
                 let rt = Arc::clone(&read_timeout);
                 let counter = Arc::clone(&in_flight);
-                counter.fetch_add(1, Ordering::Relaxed);
                 thread::Builder::new()
                     .name("pcloud-health-conn".into())
                     .spawn(move || {
                         handle_connection(stream, *rt);
-                        counter.fetch_sub(1, Ordering::Relaxed);
+                        counter.fetch_sub(1, Ordering::Release);
                     })
                     .unwrap_or_else(|err| {
                         log::warn!("health server: failed to spawn connection thread: {err}");
                         // Account for the counter increment we made before the
                         // spawn failed so the slot is not leaked.
-                        in_flight.fetch_sub(1, Ordering::Relaxed);
+                        in_flight.fetch_sub(1, Ordering::Release);
                         // Return a dummy JoinHandle to satisfy the type system.
                         thread::spawn(|| {})
                     });

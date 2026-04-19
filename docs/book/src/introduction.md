@@ -3,7 +3,7 @@
 > **TL;DR** — `pcloud-rs` is a from-scratch Rust rewrite of the legacy C/C++
 > pCloud console client. It is **not** yet a drop-in replacement. Parity is
 > tracked row-by-row; the authoritative count lives in
-> [`STATUS.md`](https://github.com/pcloudcom/pcloud-rs/blob/main/STATUS.md).
+> [`STATUS.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/STATUS.md).
 > This handbook documents what the Rust path actually does today, not what we
 > hope it will do by the next release.
 
@@ -165,7 +165,7 @@ between Linux, macOS, and Windows.
   misbehaves.
 - [First sync](getting-started/first-sync.md) — add a sync root, watch
   progress, remove it cleanly.
-- [`STATUS.md`](https://github.com/pcloudcom/pcloud-rs/blob/main/STATUS.md)
+- [`STATUS.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/STATUS.md)
   — the single source of truth for "is feature X done yet?".
 - [Architecture Decision Records](../architecture/adrs.md) — why the
   rewrite made the shape it did.

@@ -16,7 +16,7 @@
     { "type": "panel", "id": "stat", "name": "Stat", "version": "" }
   ],
   "annotations": { "list": [] },
-  "description": "pcloud-rs daemon overview — IPC throughput, sync queue, crypto health, mount state, transport budget.",
+  "description": "pcloud-rs daemon overview — auth attempts, request latency, transfer bytes, crypto state, IPC clients, panics.",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -25,14 +25,15 @@
   "panels": [
     {
       "id": 1,
-      "title": "IPC Request Rate",
+      "title": "Auth Attempts Rate",
+      "description": "Rate of auth attempts by result label. Spike or sustained failure rate triggers PcloudAuthAttemptSpike / PcloudHighAuthFailureRate.",
       "type": "timeseries",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "rate(pcloud_ipc_requests_total[2m])",
-          "legendFormat": "{{status}}",
+          "expr": "rate(pcloud_auth_attempts_total[2m])",
+          "legendFormat": "{{result}}",
           "refId": "A"
         }
       ],
@@ -42,101 +43,127 @@
     },
     {
       "id": 2,
-      "title": "IPC Error Rate %",
-      "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "title": "Request Latency p50 / p99",
+      "description": "IPC request latency percentiles. p99 > 5 s triggers PcloudHighRequestLatency.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "100 * rate(pcloud_ipc_requests_total{status=\"error\"}[5m]) / rate(pcloud_ipc_requests_total[5m])",
-          "legendFormat": "Error %",
+          "expr": "histogram_quantile(0.50, rate(pcloud_request_latency_seconds_bucket[5m]))",
+          "legendFormat": "p50 {{method}}",
           "refId": "A"
+        },
+        {
+          "expr": "histogram_quantile(0.99, rate(pcloud_request_latency_seconds_bucket[5m]))",
+          "legendFormat": "p99 {{method}}",
+          "refId": "B"
         }
       ],
       "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              { "color": "green", "value": null },
-              { "color": "yellow", "value": 1 },
-              { "color": "red", "value": 5 }
-            ]
-          }
-        }
+        "defaults": { "unit": "s" }
       }
     },
     {
       "id": 3,
-      "title": "Mount Active",
-      "type": "stat",
-      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "title": "Transfer Bytes Rate",
+      "description": "Bytes transferred per second by direction (upload / download). Flat line with sync roots active triggers PcloudTransferStale.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "pcloud_mount_active",
-          "legendFormat": "mount",
+          "expr": "rate(pcloud_transfer_bytes_total[2m])",
+          "legendFormat": "{{direction}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "Bps" }
+      }
+    },
+    {
+      "id": 4,
+      "title": "Crypto Lock State",
+      "description": "-1 = unsetup, 0 = locked, 1 = unlocked. Value 0 with sync roots active triggers PcloudCryptoUnexpectedlyLocked.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "targets": [
+        {
+          "expr": "pcloud_crypto_lock_state",
+          "legendFormat": "crypto state",
           "refId": "A"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "mappings": [
-            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } }
+            {
+              "type": "value",
+              "options": {
+                "-1": { "text": "UNSETUP", "color": "blue" },
+                "0":  { "text": "LOCKED",  "color": "red"  },
+                "1":  { "text": "UNLOCKED","color": "green"}
+              }
+            }
           ]
         }
       }
     },
     {
-      "id": 4,
-      "title": "Sync Queue Depth",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
-      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
-      "targets": [
-        {
-          "expr": "pcloud_sync_queue_depth",
-          "legendFormat": "queue depth",
-          "refId": "A"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": { "unit": "short" }
-      }
-    },
-    {
       "id": 5,
-      "title": "Transport Rate-Limit Rejections",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "title": "IPC Connected Clients",
+      "description": "Currently connected IPC peers. Cap is 128; reaching it triggers PcloudIpcClientsExhausted.",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "rate(pcloud_transport_ratelimit_rejected_total[2m])",
-          "legendFormat": "rejected/s",
+          "expr": "pcloud_ipc_connected_clients",
+          "legendFormat": "clients",
           "refId": "A"
         }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "reqps" }
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 64   },
+              { "color": "red",    "value": 120  }
+            ]
+          }
+        }
       }
     },
     {
       "id": 6,
-      "title": "Crypto Operation Rate",
-      "type": "timeseries",
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "title": "Panic Count",
+      "description": "Lifetime panic counter. Any value > 0 triggers PcloudPanicDetected (critical).",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 12 },
       "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
       "targets": [
         {
-          "expr": "rate(pcloud_crypto_operations_total[2m])",
-          "legendFormat": "{{status}}",
+          "expr": "pcloud_panic_count",
+          "legendFormat": "panics",
           "refId": "A"
         }
       ],
       "fieldConfig": {
-        "defaults": { "unit": "ops" }
+        "defaults": {
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red",   "value": 1    }
+            ]
+          }
+        }
       }
     }
   ],
@@ -149,5 +176,5 @@
   "timezone": "browser",
   "title": "pcloud-rs Daemon Overview",
   "uid": "pcloud-rs-overview",
-  "version": 1
+  "version": 2
 }

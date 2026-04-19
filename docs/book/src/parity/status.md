@@ -35,10 +35,16 @@ is authoritative.
 
 ## Remaining Partial Rows
 
-All previously `Partial` rows (76, 85, 92, 93, 94, 187) have since been
-flipped to `Implemented`. See
-[`STATUS.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/STATUS.md)
-for the current counts.
+For the authoritative list of current `Partial` rows see
+[`STATUS.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/STATUS.md).
+As of Audit 03 (2026-04-18), two genuine Partial rows remain:
+
+- **Row 93** (`transfers,upload_writefromfile`) — proto encoder exists;
+  `Request::UploadWriteFromFile` IPC variant and CLI caller are not yet
+  wired. TODO at `crates/pcloud-backends/src/transfer_backend.rs:601-613`.
+- **Row 149** (`links,ptree_public_link`) — id-based IPC is wired
+  end-to-end; path-based CLI variant resolves paths client-side rather
+  than via a dedicated daemon-side IPC variant.
 
 The footnotes below (Reviewer 19 risk-of-misread notes) are retained
 because they explain nuances of the flipped rows that auditors should

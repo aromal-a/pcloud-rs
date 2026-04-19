@@ -49,6 +49,17 @@
 //!   Local-only helpers return in microseconds. Pair with your own
 //!   timeout/backoff strategy — the SDK does not retry transparently.
 //!
+//! # Semver
+//!
+//! `pcloud-sdk` re-exports only the types defined in `upload_session` and
+//! `pcloud_proto::Notification`. Types from private workspace crates such as
+//! `pcloud_config::{ConfigProfile, Environment}` are NOT re-exported; callers
+//! that need them must add a direct dependency on `pcloud-config`. This
+//! constraint is intentional: it prevents pcloud-sdk's semver from being
+//! implicitly coupled to private crate churn. Any future public re-export of
+//! a private-crate type must be wrapped in an SDK-owned newtype or alias, and
+//! documented here (§8:221 audit compliance).
+//!
 //! # Examples
 //!
 //! Bootstrap an embedded daemon and probe health:

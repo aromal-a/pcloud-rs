@@ -39,6 +39,9 @@ use pcloud_resilience::{
     Clock, GlobalRetryBudget, RateLimitError, RetryDecision, RetryPolicy, SystemClock, TokenBucket,
     TokenBucketConfig,
 };
+use pcloud_resilience::transport::{
+    TransportErrorClass, TransportOutcomeLabel, observe_transport_error, observe_transport_latency,
+};
 use thiserror::Error;
 
 use crate::EncodedRequest;
@@ -137,6 +140,10 @@ where
     /// Shared global retry budget — limits total retries across all concurrent
     /// operations on this transport. `None` when no budget was configured.
     budget: Option<Arc<GlobalRetryBudget>>,
+    /// Endpoint label used for metric dimensions (e.g. `"binapi.pcloud.com"`).
+    /// Empty string when no label is configured; the metric is still emitted
+    /// but the label value will be blank in Prometheus output.
+    host: String,
 }
 
 impl<T> Clone for ResilientTransport<T>
@@ -153,6 +160,7 @@ where
             classifier: self.classifier.clone(),
             rate_mode: self.rate_mode,
             budget: self.budget.clone(),
+            host: self.host.clone(),
         }
     }
 }
@@ -163,6 +171,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ResilientTransport")
+            .field("host", &self.host)
             .field("bucket", &self.bucket)
             .field("breaker", &self.breaker)
             .field("retry", &self.retry)
@@ -266,7 +275,18 @@ where
             classifier,
             rate_mode,
             budget,
+            host: String::new(),
         })
+    }
+
+    /// Override the host label used for metric dimensions.
+    ///
+    /// By default the label is taken from
+    /// [`ResiliencePolicy::endpoint_label`]. Call this after construction to
+    /// set or override the label (e.g. when the API-server hint changes the
+    /// active endpoint).
+    pub fn set_host_label(&mut self, host: impl Into<String>) {
+        self.host = host.into();
     }
 
     /// Observable breaker state. Primarily for diagnostics/tests.
@@ -280,29 +300,12 @@ where
     ///
     /// ## Observability
     ///
-    /// Per-attempt wall-clock duration is captured and the call site is
-    /// annotated for the future `pcloud-observability` wiring. When that
-    /// dependency is added, replace the `TODO(bd-1du)` blocks below with:
-    ///
-    /// ```ignore
-    /// use pcloud_observability::metrics::{register_histogram, DEFAULT_LATENCY_BUCKETS};
-    /// static TRANSPORT_LATENCY: OnceLock<HistogramHandle> = OnceLock::new();
-    /// let h = TRANSPORT_LATENCY.get_or_init(|| {
-    ///     register_histogram(
-    ///         "pcloud_transport_latency_seconds",
-    ///         DEFAULT_LATENCY_BUCKETS,
-    ///     )
-    /// });
-    /// h.observe(latency.as_secs_f64());
-    /// ```
-    ///
-    /// And use `MetricFamilies::observe_request(command, outcome, latency_s)`
-    /// for the error counter path.
-    ///
-    /// TODO(bd-1du): wire `pcloud_transport_latency_seconds` and
-    /// `pcloud_transport_errors_total` once `pcloud-observability` is added
-    /// as a dependency of `pcloud-proto` (requires workspace Cargo.toml
-    /// change reviewed separately from transport audit fixes).
+    /// Per-attempt wall-clock latency is emitted to
+    /// `pcloud_transport_latency_seconds{outcome}` via the
+    /// `pcloud-resilience` `transport-metrics` feature (on by default).
+    /// Errors increment `pcloud_transport_errors_total{class}`.
+    /// The `host` label dimension is set via [`Self::set_host_label`] (defaults
+    /// to an empty string when not configured).
     ///
     /// ## Upload mutation safety
     ///
@@ -316,6 +319,7 @@ where
     pub fn execute(&self, request: &EncodedRequest) -> Result<Value, ResilientError<T::Error>> {
         let call_start = std::time::Instant::now();
         let mut attempt: u32 = 0;
+        let mut had_retry = false;
         loop {
             attempt = attempt.saturating_add(1);
             let attempt_start = std::time::Instant::now();
@@ -353,20 +357,29 @@ where
                     if let Some(ref budget) = self.budget {
                         budget.replenish(1);
                     }
-                    // TODO(bd-1du): emit pcloud_transport_latency_seconds{outcome="ok"}
-                    // via pcloud_observability::metrics::register_histogram (see doc above).
-                    let _latency = attempt_start.elapsed();
-                    let _total = call_start.elapsed();
+                    let latency = attempt_start.elapsed();
+                    observe_transport_latency(
+                        &self.host,
+                        if had_retry {
+                            TransportOutcomeLabel::Retry
+                        } else {
+                            TransportOutcomeLabel::Success
+                        },
+                        latency.as_secs_f64(),
+                    );
                     return Ok(v);
                 }
                 Err(err) => {
-                    // TODO(bd-1du): emit pcloud_transport_latency_seconds{outcome="error"}
-                    // and pcloud_transport_errors_total{class=<classify>}
-                    // via pcloud_observability::metrics::MetricFamilies::observe_request.
-                    let _latency = attempt_start.elapsed();
+                    let latency = attempt_start.elapsed();
                     self.breaker.record_failure();
                     let class = (self.classifier)(&err);
                     if class == ErrorClass::Permanent {
+                        observe_transport_error(&self.host, TransportErrorClass::Io);
+                        observe_transport_latency(
+                            &self.host,
+                            TransportOutcomeLabel::GiveUp,
+                            latency.as_secs_f64(),
+                        );
                         return Err(ResilientError::Inner(err));
                     }
                     // SAFETY: upload_write and upload_save are NOT idempotent.
@@ -376,6 +389,12 @@ where
                     // error response. Return immediately so the state machine
                     // can retry with the correct offset.
                     if is_upload_mutation(request) {
+                        observe_transport_error(&self.host, TransportErrorClass::Io);
+                        observe_transport_latency(
+                            &self.host,
+                            TransportOutcomeLabel::GiveUp,
+                            latency.as_secs_f64(),
+                        );
                         return Err(ResilientError::Inner(err));
                     }
                     match self.retry.next(attempt) {
@@ -383,15 +402,31 @@ where
                             // Check global budget before consuming a retry slot.
                             if let Some(ref budget) = self.budget {
                                 if !budget.try_consume() {
+                                    observe_transport_error(
+                                        &self.host,
+                                        TransportErrorClass::BudgetExhausted,
+                                    );
+                                    observe_transport_latency(
+                                        &self.host,
+                                        TransportOutcomeLabel::GiveUp,
+                                        call_start.elapsed().as_secs_f64(),
+                                    );
                                     return Err(ResilientError::BudgetExhausted);
                                 }
                             }
+                            had_retry = true;
                             if !wait.is_zero() {
                                 self.waiter.wait(wait);
                             }
                             continue;
                         }
                         RetryDecision::GiveUp => {
+                            observe_transport_error(&self.host, TransportErrorClass::Io);
+                            observe_transport_latency(
+                                &self.host,
+                                TransportOutcomeLabel::GiveUp,
+                                call_start.elapsed().as_secs_f64(),
+                            );
                             return Err(ResilientError::Inner(err));
                         }
                     }

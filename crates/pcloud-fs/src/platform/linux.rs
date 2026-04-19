@@ -629,13 +629,51 @@ fn registry() -> &'static Mutex<BTreeSet<PathBuf>> {
     ACTIVE_MOUNTS.get_or_init(|| Mutex::new(BTreeSet::new()))
 }
 
-/// Register `path` in the active-mount set. Canonicalises when possible
-/// so the unregister-at-Drop path matches exactly what was registered.
-/// Debug-asserts that the insertion was novel (no double-register).
+/// Canonicalise a mount path to a stable key usable by both
+/// register/unregister. audit-06 fix: both register and unregister MUST
+/// derive the key the same way so that two user-typed variants of the
+/// same mount (e.g. `/mnt/a` and `/mnt/a/`) map to a single BTreeSet
+/// entry, eliminating the "skip removal / duplicate entry" race under
+/// concurrent mount + unmount of the same underlying target.
+///
+/// Resolution order:
+///   1. `fs::canonicalize` (dereferences symlinks, strips trailing slash),
+///   2. fallback to `path.absolutize`-style component normalisation via
+///      joining onto CWD when canonicalize fails (e.g. path no longer
+///      exists because the kernel mount was already torn down).
+///
+/// This guarantees that `canonical_key(p)` is pure with respect to the
+/// user-typed path string even when the filesystem state changes
+/// between register and unregister.
+fn canonical_key(path: &Path) -> PathBuf {
+    if let Ok(c) = std::fs::canonicalize(path) {
+        return c;
+    }
+    // Fallback: if the path no longer exists (e.g. mid-teardown) we
+    // still need a deterministic key. Join onto CWD when relative and
+    // strip a trailing separator so that `/mnt/a` and `/mnt/a/` collide.
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .unwrap_or_else(|_| path.to_path_buf())
+    };
+    // Strip trailing separator by round-tripping components.
+    let mut normalised = PathBuf::new();
+    for comp in abs.components() {
+        normalised.push(comp.as_os_str());
+    }
+    normalised
+}
+
+/// Register `path` in the active-mount set. Uses [`canonical_key`] so
+/// the unregister-at-Drop path matches exactly what was registered.
+/// Logs at `error!` level on double-register (a lifecycle bug).
 fn register_mount(path: &Path) {
-    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let key = canonical_key(path);
     if let Ok(mut guard) = registry().lock() {
-        let inserted = guard.insert(canonical);
+        let inserted = guard.insert(key);
         // M-5.2: Use log::error! instead of debug_assert! — debug_assert!
         // is a no-op in release builds and the race is possible in both
         // debug and release. A double-register is not fatal but indicates
@@ -649,17 +687,19 @@ fn register_mount(path: &Path) {
     }
 }
 
-/// Remove `path` from the active-mount set. Debug-asserts the entry was
-/// present so unbalanced drops surface in tests rather than silently
-/// leaking.
+/// Remove `path` from the active-mount set using [`canonical_key`] —
+/// the same derivation used by [`register_mount`]. audit-06 fix: the
+/// previous raw-path fallback (`|| guard.remove(path)`) has been removed
+/// because the canonical key is now deterministic in both directions,
+/// so a fallback would only mask a bug.
 fn unregister_mount(path: &Path) {
-    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let key = canonical_key(path);
     if let Ok(mut guard) = registry().lock() {
-        let removed = guard.remove(&canonical) || guard.remove(path);
+        let removed = guard.remove(&key);
         // M-5.2: Use log::error! instead of debug_assert! (inactive in release).
         if !removed {
             log::error!(
-                "ACTIVE_MOUNTS unregister miss: {path:?}; \
+                "ACTIVE_MOUNTS unregister miss: {path:?} (key={key:?}); \
                  this indicates an unbalanced mount/unmount lifecycle bug"
             );
         }
@@ -1451,4 +1491,63 @@ where
         mountpoint: mountpoint.to_path_buf(),
         session: Some(session),
     }))
+}
+
+// -----------------------------------------------------------------------------
+// audit-06 concurrency regression tests for ACTIVE_MOUNTS canonicalisation.
+// -----------------------------------------------------------------------------
+#[cfg(test)]
+mod active_mounts_tests {
+    use super::{canonical_key, register_mount, registry, unregister_mount};
+    use std::path::PathBuf;
+    use std::sync::{Arc, Barrier};
+    use std::thread;
+
+    #[test]
+    fn canonical_key_collapses_trailing_slash() {
+        let k1 = canonical_key(&PathBuf::from("/nonexistent/aud06/a"));
+        let k2 = canonical_key(&PathBuf::from("/nonexistent/aud06/a/"));
+        assert_eq!(k1, k2, "trailing-slash variants must collapse");
+    }
+
+    #[test]
+    fn register_unregister_balanced_for_variants() {
+        let p1 = PathBuf::from("/nonexistent/aud06/balanced");
+        let p2 = PathBuf::from("/nonexistent/aud06/balanced/");
+        register_mount(&p1);
+        let before = registry().lock().unwrap().len();
+        unregister_mount(&p2);
+        let after = registry().lock().unwrap().len();
+        assert_eq!(before - 1, after, "unregister of slash variant must remove");
+    }
+
+    #[test]
+    fn concurrent_register_unregister_no_leak() {
+        const N: usize = 16;
+        const ITERS: usize = 64;
+        let barrier = Arc::new(Barrier::new(N));
+        let handles: Vec<_> = (0..N)
+            .map(|tid| {
+                let b = Arc::clone(&barrier);
+                thread::spawn(move || {
+                    let path = PathBuf::from(format!("/nonexistent/aud06/conc/t{tid}"));
+                    b.wait();
+                    for _ in 0..ITERS {
+                        register_mount(&path);
+                        unregister_mount(&path);
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("thread panicked");
+        }
+        let guard = registry().lock().unwrap();
+        for tid in 0..N {
+            let key = canonical_key(&PathBuf::from(format!(
+                "/nonexistent/aud06/conc/t{tid}"
+            )));
+            assert!(!guard.contains(&key), "leaked entry for t{tid}: {key:?}");
+        }
+    }
 }

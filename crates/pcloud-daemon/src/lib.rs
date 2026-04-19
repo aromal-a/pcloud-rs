@@ -1,6 +1,11 @@
 #![warn(unsafe_op_in_unsafe_fn)]
 // Daemon crate requires targeted unsafe for signal handlers and
 // FUSE mount-runtime helpers.
+// TODO(bd-sweep-unwrap): This file (lib.rs, reexports + module declarations)
+// and its inlined modules contain ~74 `.unwrap()` / `.expect()` call sites
+// in non-test code. A systematic sweep converting the most-reachable ones to
+// `?` propagation or `log::error!` + graceful degradation is deferred to a
+// dedicated hardening pass tracked under bd-sweep-unwrap.
 //! # pcloud-daemon
 //!
 //! Composition root for the Rust pcloud-rs service: wires configuration,

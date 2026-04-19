@@ -42,8 +42,23 @@ pub(crate) const FINGERPRINT_LEN: usize = 32;
 /// attacker with the on-disk fingerprint can test candidate passwords
 /// at Argon2id cost — that cost is the only barrier. Choose strong
 /// passwords; see [`crate::psync_password_quality`].
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SetupFingerprint(pub [u8; FINGERPRINT_LEN]);
+
+impl core::fmt::Debug for SetupFingerprint {
+    /// Redact the fingerprint to first 4 bytes (hex) to prevent the full
+    /// 32-byte HMAC-SHA-512 output appearing in logs or panic messages.
+    /// The truncated form is sufficient for operator correlation.
+    /// audit-06 LOW crypto L-1 / ncx.79-e.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "SetupFingerprint({:02x}{:02x}{:02x}{:02x}…[{} bytes])",
+            self.0[0], self.0[1], self.0[2], self.0[3],
+            FINGERPRINT_LEN
+        )
+    }
+}
 
 /// In-memory key-state manager for the crypto subsystem.
 ///
@@ -54,21 +69,24 @@ pub struct SetupFingerprint(pub [u8; FINGERPRINT_LEN]);
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KeyManager {
     /// Time-to-live (seconds) for the in-memory key cache after the last
-    /// successful authenticated operation. Non-secret.
+    /// successful authenticated crypto operation. Non-secret. Default: 300s.
     ///
-    /// **Current status: dead policy state (M-3.3 / audit-05).**
-    /// The field is serialised for forward-compatibility (operators may set it
-    /// in a profile) but the daemon does not yet start an auto-stop timer keyed
-    /// on this value.
+    /// **Wired as of P3 audit-06.** Lazy eviction is enforced on every call
+    /// to [`KeyManager::check_and_evict_if_stale`], which is called by
+    /// `CryptoShell::require_active_key` — the choke-point for all
+    /// `seal_sector` / `open_sector` / `encrypt_filename` operations.
     ///
-    /// To wire it: after a successful `start()` the daemon should spawn a task
-    /// `tokio::time::sleep(Duration::from_secs(cache_ttl_secs))` that calls
-    /// `CryptoShell::stop()` on wake, reset the timer on every successful
-    /// authenticated operation, and cancel it on an explicit `stop()`. Until
-    /// that wiring lands the only way to evict the in-memory key is an explicit
-    /// `stop()` or daemon shutdown. The field is intentionally kept (not
-    /// deleted) so operators can pre-populate it in profiles without a schema
-    /// migration once the timer is wired.
+    /// When the TTL elapses the key is zeroized in-process and
+    /// `CryptoError::MasterKeyExpired` is returned. The user must re-enter
+    /// their crypto password to continue. Setting `cache_ttl_secs = 0`
+    /// disables automatic eviction (the key lives until `stop()` or daemon
+    /// shutdown — the legacy behaviour for single-user deployments that
+    /// manage session lifetime externally).
+    ///
+    /// No background timer is needed because eviction is lazy. The TTL
+    /// window slides forward on every authenticated operation via
+    /// [`KeyManager::touch`]. This avoids a background thread while still
+    /// bounding the key's in-memory residence time.
     pub cache_ttl_secs: u64,
     /// Per-profile Argon2id salt (16 bytes, OS-random). Non-secret, but must
     /// remain stable once `setup()` has recorded a fingerprint or the fingerprint
@@ -90,6 +108,15 @@ pub struct KeyManager {
     /// on drop and cleared on `stop()`/`reset()`. Never serialized or logged.
     #[serde(skip)]
     pub active_key_material: Option<SecretBytes>,
+    /// Monotonic timestamp of the last successful authenticated crypto
+    /// operation. Used by [`Self::check_ttl`] to decide whether the in-memory
+    /// key has exceeded [`Self::cache_ttl_secs`].
+    ///
+    /// `None` until the first authenticated operation after `start()`. Not
+    /// serialised — TTL resets on daemon restart (acceptable: the user must
+    /// re-unlock after a restart regardless).
+    #[serde(skip)]
+    pub last_authenticated_at: Option<std::time::Instant>,
 }
 
 /// Bit 0 of [`KeyManager::private_flags`]: the current passphrase is a
@@ -112,6 +139,7 @@ impl Default for KeyManager {
             setup_fingerprint: None,
             private_flags: 0,
             active_key_material: None,
+            last_authenticated_at: None,
         }
     }
 }
@@ -202,6 +230,46 @@ impl KeyManager {
         mac.update(LABEL);
         let bytes: [u8; FINGERPRINT_LEN] = mac.finalize().into_bytes().into();
         SetupFingerprint(bytes)
+    }
+
+    /// Check whether the in-memory key has exceeded the configured TTL and
+    /// evict it if so.
+    ///
+    /// Returns `true` if the key is stale and has been evicted (the caller
+    /// must surface [`crate::CryptoError::MasterKeyExpired`] and require the
+    /// user to re-unlock). Returns `false` if the key is still within TTL.
+    ///
+    /// When `cache_ttl_secs` is `0` the check is disabled (key never
+    /// auto-expires). This makes `0` the opt-out sentinel for environments
+    /// that manage session lifetime externally (e.g. daemon shutdown).
+    ///
+    /// # Side effect
+    ///
+    /// If stale, `active_key_material` is set to `None` and
+    /// `last_authenticated_at` is cleared so the memory is zeroized before
+    /// the caller sees the error.
+    pub fn check_and_evict_if_stale(&mut self) -> bool {
+        if self.cache_ttl_secs == 0 {
+            return false;
+        }
+        let Some(last) = self.last_authenticated_at else {
+            // Never accessed since start — not stale yet.
+            return false;
+        };
+        if last.elapsed().as_secs() >= self.cache_ttl_secs {
+            // Key expired. Zeroize and return stale signal.
+            self.active_key_material = None;
+            self.last_authenticated_at = None;
+            return true;
+        }
+        false
+    }
+
+    /// Update the last-authenticated timestamp to the current monotonic
+    /// instant. Call this after every successful use of `active_key_material`
+    /// to slide the TTL window forward.
+    pub fn touch(&mut self) {
+        self.last_authenticated_at = Some(std::time::Instant::now());
     }
 
     /// Returns true iff the derived key matches the stored setup fingerprint.

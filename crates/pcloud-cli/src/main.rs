@@ -49,6 +49,26 @@ use crate::globals::{GlobalFlags, OutputFormat};
 use crate::json_output::JsonEnvelope;
 
 fn main() {
+    // Warn in release builds when build provenance metadata is missing.
+    // Debug builds (cargo run / cargo test) routinely omit GIT_HASH, so
+    // the check is skipped there to avoid noise in development workflows.
+    #[cfg(not(debug_assertions))]
+    {
+        if option_env!("GIT_HASH").is_none() {
+            eprintln!(
+                "warning: pcloudc built without GIT_HASH; \
+                 build provenance is unknown. \
+                 Ensure the build.rs git-hash injection ran correctly."
+            );
+        }
+        if option_env!("BUILD_PROFILE").is_none() {
+            eprintln!(
+                "warning: pcloudc built without BUILD_PROFILE; \
+                 build profile is unknown."
+            );
+        }
+    }
+
     let argv: Vec<String> = std::env::args().collect();
     let code = run(&argv);
     std::process::exit(code.as_i32());

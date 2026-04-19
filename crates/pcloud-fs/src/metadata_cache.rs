@@ -185,6 +185,13 @@ impl MetadataCache {
     }
 
     /// Forget a single entry.
+    ///
+    /// The `order.retain()` call is O(n) in the number of cached entries.
+    /// This is acceptable because the cache is bounded to at most
+    /// [`DEFAULT_CAPACITY`] (4096) entries by design; the constant factor
+    /// is small (pointer comparison) and invalidation is infrequent
+    /// (write-path events only). A secondary skip-list or index would add
+    /// dependency weight not justified at this scale.
     pub fn invalidate(&self, path: &str) {
         let Ok(mut inner) = self.inner.lock() else {
             return;

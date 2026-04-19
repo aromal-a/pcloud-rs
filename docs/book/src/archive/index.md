@@ -8,7 +8,7 @@ why a given design decision was made, **not** as operational guidance.
 For operational guidance use the Operations chapter and the top-level
 runbook. For decisions use the [ADR index](../adr/index.md). For parity
 claims use [C-to-Rust Status](../parity/status.md) and the
-[`STATUS.md`](https://github.com/pcloudcom/pcloud-rs/blob/main/STATUS.md)
+[`STATUS.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/STATUS.md)
 source of truth.
 
 ## Two Archive Trees
@@ -22,7 +22,7 @@ reconciliation, or audit output. These snapshots are deliberately
 **not reconciled** against later code — they are historical records
 of what the tree looked like when the wave ran. The rolling index is
 maintained at
-[`.archive/reviews/INDEX.md`](https://github.com/pcloudcom/pcloud-rs/tree/main/.archive/reviews)
+[`.archive/reviews/INDEX.md`](https://github.com/ezechiel203/pcloud-rs/tree/main/.archive/reviews)
 (directory listing if no `INDEX.md` is present).
 
 Representative snapshots you will find there:

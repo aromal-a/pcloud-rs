@@ -8,89 +8,144 @@
 # All alerts assume metrics are scraped from the pcloudd /metrics endpoint
 # (default: http://localhost:9180/metrics, configurable via PCLOUD_METRICS_ADDR).
 #
+# Authoritative metric names (crates/pcloud-observability/src/metrics.rs):
+#   pcloud_request_count{method, status}          counter
+#   pcloud_request_latency_seconds{method}         histogram
+#   pcloud_auth_attempts_total{result}             counter
+#   pcloud_transfer_bytes_total{direction}         counter
+#   pcloud_crypto_lock_state                       gauge  (-1=unsetup, 0=locked, 1=unlocked)
+#   pcloud_sync_root_count                         gauge
+#   pcloud_ipc_connected_clients                   gauge
+#   pcloud_panic_count                             counter
+#
+# TODO(bd-1du.4): add pcloud_mount_state{mount_point} gauge (1=active, 0=inactive)
+#   when mount_service has a single AtomicU8 to expose it.
+# TODO(bd-1du.10): add pcloud_sync_queue_depth gauge once per-root queue
+#   sizes are summed in SyncRuntime and exposed.
+#
 # Label conventions:
-#   severity: page | ticket | warning
-#   subsystem: auth | transfer | crypto | mount | sync | transport
+#   severity: critical | warning
+#   subsystem: auth | transfer | crypto | ipc | sync | panic
 
 groups:
   - name: pcloud-rs
     interval: 60s
     rules:
 
-      # 1. High error rate — more than 5% of IPC requests fail over 5 minutes.
-      - alert: PcloudHighIpcErrorRate
+      # 1. Auth spike — more than 10 auth attempts per second over 5 minutes.
+      #    Possible brute-force or misconfigured reconnect loop.
+      - alert: PcloudAuthAttemptSpike
         expr: |
-          rate(pcloud_ipc_requests_total{status="error"}[5m])
-          /
-          rate(pcloud_ipc_requests_total[5m]) > 0.05
+          rate(pcloud_auth_attempts_total[5m]) > 10
         for: 5m
         labels:
-          severity: page
+          severity: warning
+          subsystem: auth
+        annotations:
+          summary: "Auth attempt spike on {{ $labels.instance }}"
+          description: >
+            pcloud_auth_attempts_total is increasing at more than 10/s over the
+            last 5 minutes (current: {{ $value | humanize }}/s).
+            Could indicate a brute-force attempt or a reconnect loop.
+            Check result labels for failure/success breakdown.
+
+      # 2. Auth failure rate — more than 20% of auth attempts are failing.
+      - alert: PcloudHighAuthFailureRate
+        expr: |
+          rate(pcloud_auth_attempts_total{result="failure"}[10m])
+          /
+          rate(pcloud_auth_attempts_total[10m]) > 0.20
+        for: 5m
+        labels:
+          severity: critical
+          subsystem: auth
+        annotations:
+          summary: "High auth failure rate on {{ $labels.instance }}"
+          description: >
+            More than 20% of auth attempts are failing over the last 10 minutes
+            (current: {{ $value | humanizePercentage }}).
+            Check credentials, token rotation, and pcloud_auth_attempts_total{result="failure"}.
+
+      # 3. Request latency p99 above 5 seconds.
+      - alert: PcloudHighRequestLatency
+        expr: |
+          histogram_quantile(0.99,
+            rate(pcloud_request_latency_seconds_bucket[10m])
+          ) > 5
+        for: 5m
+        labels:
+          severity: warning
           subsystem: ipc
         annotations:
-          summary: "High IPC error rate on {{ $labels.instance }}"
+          summary: "High p99 request latency on {{ $labels.instance }}"
           description: >
-            More than 5% of IPC requests are failing over the last 5 minutes
-            (current: {{ $value | humanizePercentage }}).
-            Check daemon logs and pcloud_ipc_requests_total{status="error"}.
+            p99 request latency has exceeded 5 seconds over the last 10 minutes
+            (current p99: {{ $value | humanizeDuration }}).
+            Inspect pcloud_request_latency_seconds by method label for the slow path.
 
-      # 2. Drain stuck — sync queue depth not decreasing after 15 minutes.
-      - alert: PcloudSyncDrainStuck
+      # 4. Crypto lock state unexpected — crypto was set up but is now locked
+      #    for more than 10 minutes (state == 0 while sync roots are configured).
+      - alert: PcloudCryptoUnexpectedlyLocked
         expr: |
-          increase(pcloud_sync_queue_depth[15m]) >= 0
-          and pcloud_sync_queue_depth > 100
-        for: 15m
+          pcloud_crypto_lock_state == 0
+          and pcloud_sync_root_count > 0
+        for: 10m
         labels:
-          severity: ticket
-          subsystem: sync
-        annotations:
-          summary: "Sync drain appears stuck on {{ $labels.instance }}"
-          description: >
-            pcloud_sync_queue_depth has not decreased in 15 minutes and
-            is above 100 items (current: {{ $value }}).
-            The sync engine may be blocked or throttled.
-
-      # 3. Crypto failure rate — encrypted-folder operations failing.
-      - alert: PcloudCryptoFailureRate
-        expr: |
-          rate(pcloud_crypto_operations_total{status="error"}[10m]) > 0.1
-        for: 5m
-        labels:
-          severity: page
+          severity: warning
           subsystem: crypto
         annotations:
-          summary: "Elevated crypto operation failures on {{ $labels.instance }}"
+          summary: "Crypto unexpectedly locked on {{ $labels.instance }}"
           description: >
-            Crypto operation error rate exceeds 0.1/s over the last 10 minutes
-            (current: {{ $value | humanize }}/s).
-            Check key availability and CryptoShell state.
+            pcloud_crypto_lock_state is 0 (locked) while sync roots are
+            configured (pcloud_sync_root_count > 0). Encrypted folders may be
+            inaccessible. Unlock via the CLI or IPC crypto control surface.
 
-      # 4. Transport budget exhausted — rate-limiter rejections spiking.
-      - alert: PcloudTransportBudgetExhausted
+      # 5. IPC client count at or above the hardcoded cap of 128.
+      #    At cap, new connections are rejected — daemon becomes effectively
+      #    unreachable for new callers.
+      - alert: PcloudIpcClientsExhausted
         expr: |
-          rate(pcloud_transport_ratelimit_rejected_total[5m]) > 1
+          pcloud_ipc_connected_clients >= 128
         for: 2m
         labels:
-          severity: ticket
-          subsystem: transport
+          severity: critical
+          subsystem: ipc
         annotations:
-          summary: "Transport rate-limit rejections on {{ $labels.instance }}"
+          summary: "IPC client cap reached on {{ $labels.instance }}"
           description: >
-            The outbound HTTP rate-limiter is rejecting more than 1 request/s
-            (current: {{ $value | humanize }}/s).
-            Uploads/downloads may be stalling. Check pcloud_transport_* metrics.
+            pcloud_ipc_connected_clients has been >= 128 (the hardcoded cap)
+            for 2 minutes (current: {{ $value }}).
+            New IPC connections are being rejected. Check for leaked clients
+            or a connection storm; consider restarting stale callers.
 
-      # 5. Mount flap — FUSE mount toggling up/down frequently.
-      - alert: PcloudMountFlap
+      # 6. Panic counter non-zero — any panic in a production daemon is critical.
+      - alert: PcloudPanicDetected
         expr: |
-          changes(pcloud_mount_active[10m]) > 4
+          pcloud_panic_count > 0
         for: 0m
         labels:
-          severity: page
-          subsystem: mount
+          severity: critical
+          subsystem: panic
         annotations:
-          summary: "FUSE mount flapping on {{ $labels.instance }}"
+          summary: "Panic detected in pcloudd on {{ $labels.instance }}"
           description: >
-            pcloud_mount_active has toggled more than 4 times in 10 minutes.
-            The FUSE filesystem may be crashing and restarting.
-            Check kernel logs (dmesg) and pcloudd stderr for FUSE errors.
+            pcloud_panic_count is {{ $value }} (> 0). The daemon has panicked
+            at least once since last restart. Review stderr / journal logs
+            immediately for the panic backtrace.
+
+      # 7. Transfer staleness — no bytes transferred in 30 minutes while sync
+      #    roots are configured (possible stalled upload/download engine).
+      - alert: PcloudTransferStale
+        expr: |
+          rate(pcloud_transfer_bytes_total[30m]) == 0
+          and pcloud_sync_root_count > 0
+        for: 30m
+        labels:
+          severity: warning
+          subsystem: transfer
+        annotations:
+          summary: "No transfer activity for 30 min on {{ $labels.instance }}"
+          description: >
+            pcloud_transfer_bytes_total has not changed in 30 minutes while
+            pcloud_sync_root_count > 0. The sync/upload engine may be stalled.
+            Check transfer backend logs and network connectivity.

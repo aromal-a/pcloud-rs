@@ -91,7 +91,7 @@ bug — it is the hardening baseline, not a preference.
 | Runtime state | `~/.local/state/pcloud-rs/` | `0700` |
 | Man pages | `pcloudc.1`, `pcloud-daemon.1`, `pcloud.conf.5` | `0644` |
 
-See [`packaging/README.md`](https://github.com/pcloudcom/pcloud-rs/blob/main/packaging/README.md)
+See [`packaging/README.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/packaging/README.md)
 for the per-channel truth table. The **honest status (2026-04-16)** from
 that file: Linux channels are wired end-to-end, Docker images are
 cosign-signed; macOS Developer ID notarisation is **pending a valid
@@ -106,7 +106,7 @@ only**.
 ```bash
 # Rust 1.80+ — matches Cargo.toml `rust-version`
 rustc --version
-git clone https://github.com/pcloudcom/pcloud-rs
+git clone https://github.com/ezechiel203/pcloud-rs
 cd pcloud-rs/
 cargo build --workspace --release --locked          # 5–15 min on a laptop
 sudo install -m 0755 target/release/pcloudc        /usr/local/bin/
@@ -243,7 +243,7 @@ in production:
 
 ```bash
 cosign verify ghcr.io/pcloudcom/pcloud-rs:stable \
-  --certificate-identity-regexp 'github.com/pcloudcom/pcloud-rs' \
+  --certificate-identity-regexp 'github.com/ezechiel203/pcloud-rs' \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com
 ```
 
@@ -266,7 +266,7 @@ prompt lets you grant a host directory on first `sync add`.
 
 ```bash
 curl -fsSL -o pcloudc.AppImage \
-  https://github.com/pcloudcom/pcloud-rs/releases/latest/download/pcloudc-x86_64.AppImage
+  https://github.com/ezechiel203/pcloud-rs/releases/latest/download/pcloudc-x86_64.AppImage
 chmod +x pcloudc.AppImage
 ./pcloudc.AppImage --version
 ```
@@ -306,7 +306,7 @@ not require a kernel extension.
 
 ```bash
 curl -fsSL -o pcloud-rs.pkg \
-  https://github.com/pcloudcom/pcloud-rs/releases/latest/download/pcloud-rs-universal.pkg
+  https://github.com/ezechiel203/pcloud-rs/releases/latest/download/pcloud-rs-universal.pkg
 sudo installer -pkg pcloud-rs.pkg -target /
 ```
 
@@ -362,7 +362,7 @@ sudo pkg install pcloud-rs
 cd /usr/ports/net/pcloud-rs && sudo make install clean
 
 # NetBSD / OpenBSD — build from source
-git clone https://github.com/pcloudcom/pcloud-rs
+git clone https://github.com/ezechiel203/pcloud-rs
 cd pcloud-rs/
 cargo build --workspace --release --locked
 sudo install -m 0755 target/release/pcloudc         /usr/local/bin/

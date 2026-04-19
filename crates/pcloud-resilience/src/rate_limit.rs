@@ -10,8 +10,10 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
+
+use parking_lot::Mutex;
 
 use thiserror::Error;
 
@@ -155,7 +157,7 @@ impl TokenBucket {
                 capacity: self.cfg.capacity,
             });
         }
-        let mut state = self.state.lock().expect("token-bucket mutex poisoned");
+        let mut state = self.state.lock();
         self.refill_locked(&mut state);
         let need = f64::from(n);
         if state.tokens >= need {
@@ -193,7 +195,7 @@ impl TokenBucket {
                 capacity: self.cfg.capacity,
             });
         }
-        let mut state = self.state.lock().expect("token-bucket mutex poisoned");
+        let mut state = self.state.lock();
         self.refill_locked(&mut state);
         let need = f64::from(n);
         // Always deduct; tokens go negative by at most `need`. The wait
@@ -222,7 +224,7 @@ impl TokenBucket {
 
     /// Returns the approximate current token count (for diagnostics/tests).
     pub fn available_tokens(&self) -> f64 {
-        let mut state = self.state.lock().expect("token-bucket mutex poisoned");
+        let mut state = self.state.lock();
         self.refill_locked(&mut state);
         state.tokens.max(0.0)
     }
@@ -245,7 +247,7 @@ impl TokenBucket {
                 capacity: self.cfg.capacity,
             });
         }
-        let mut state = self.state.lock().expect("token-bucket mutex poisoned");
+        let mut state = self.state.lock();
         self.refill_locked(&mut state);
         let need = f64::from(n);
         if state.tokens >= need {

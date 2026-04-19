@@ -1548,10 +1548,34 @@ pub fn parse_command(args: &[String]) -> Result<Command, CommandParseError> {
     normalize_args(args).map(|(cmd, _)| cmd)
 }
 
-#[must_use]
-pub fn parse_inputs(args: &[String]) -> SecretInputs {
-    let command = parse_command(args).expect("CLI command should parse");
-    parse_inputs_for_command(&command, args).expect("CLI inputs should resolve")
+/// Aggregated error returned by [`parse_inputs`].
+///
+/// Downstream SDK callers should propagate this rather than panicking on
+/// malformed args. The two inner variants correspond to the two distinct
+/// failure points inside `parse_inputs`.
+#[derive(Debug, Error)]
+pub enum ParseInputsError {
+    /// The command token(s) were not recognised by [`parse_command`].
+    #[error("command parse error: {0}")]
+    Command(#[from] CommandParseError),
+    /// The secret-input extraction step failed (e.g. unknown flag, I/O error
+    /// from a TTY prompt, or required positional argument absent).
+    #[error("input resolution error: {0}")]
+    Inputs(#[from] crate::prompt::PromptError),
+}
+
+/// Parse [`SecretInputs`] from `args`, returning a [`ParseInputsError`] on
+/// any malformed or unrecognised input rather than panicking.
+///
+/// # Errors
+///
+/// Returns [`ParseInputsError::Command`] if the command token(s) cannot be
+/// classified, or [`ParseInputsError::Inputs`] if secret-input extraction
+/// fails (invalid flags, I/O, missing required args).
+pub fn parse_inputs(args: &[String]) -> Result<SecretInputs, ParseInputsError> {
+    let command = parse_command(args)?;
+    let inputs = parse_inputs_for_command(&command, args)?;
+    Ok(inputs)
 }
 
 pub fn parse_inputs_for_command(

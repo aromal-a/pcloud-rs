@@ -299,7 +299,18 @@ impl BoundIpcServer {
     /// framed request, hand it to `handler`, and write the response
     /// back.
     ///
-    /// Error isolation discipline:
+    /// # Crash-recovery invariant
+    ///
+    /// Each IPC connection carries exactly one request and receives exactly
+    /// one atomic response before the connection is closed. There is no
+    /// mid-stream state. If the daemon crashes between accepting the
+    /// connection and writing the response the client gets a broken-pipe
+    /// error and can safely retry; no partial state is left on the daemon
+    /// side because each handler invocation is logically atomic — the
+    /// daemon either completes the operation and replies, or it crashes
+    /// before the operation is committed (audit-06 LOW IPC L-1 / ncx.84-a).
+    ///
+    /// # Error isolation discipline
     ///
     /// * Oversized frame declaration → close without replying (the
     ///   stream is not framed-recoverable).
@@ -690,6 +701,19 @@ impl IpcServer {
             fs::remove_file(socket_path)?;
         }
 
+        // TOCTOU NOTE (audit-06 P3-A2): there is a brief window between
+        // `UnixListener::bind` (which creates the socket with mode 0o777 &
+        // ~umask) and the `set_permissions` call below that sets it to 0o600.
+        // A local attacker racing in that window could connect before chmod.
+        //
+        // Primary mitigation: the parent directory is already 0o700 (set above),
+        // so no local user other than the owner can even see the socket path
+        // during the window. The chmod here provides defence-in-depth only.
+        //
+        // A fully race-free alternative would use `fchmod(fd, 0o600)` on the
+        // bound socket fd before the first `accept`. Rust's std does not expose
+        // fchmod on `UnixListener`. A future hardening pass could use `nix::sys::
+        // stat::fchmod` to eliminate the window entirely (audit-06 LOW residual).
         let listener = UnixListener::bind(socket_path)?;
         fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))?;
 

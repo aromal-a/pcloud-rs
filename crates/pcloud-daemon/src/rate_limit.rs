@@ -146,30 +146,54 @@ impl SessionRateLimiter {
 /// path is ever moved off the serve thread). The `RateLimitPolicy` is
 /// cloned once at construction and reused for every new peer.
 ///
+/// # Peer-map size cap
+///
+/// `cap_peers` bounds the number of distinct peer-uid entries in the map.
+/// When the cap is reached the entry with the numerically smallest uid is
+/// evicted before inserting the new uid (audit-06 P3-A3). This is a
+/// simple eviction policy; true LRU would require an ordered structure
+/// but adds complexity that does not pay off in the owner-only production
+/// case where the map never exceeds 1 entry. The cap prevents unbounded
+/// map growth if the daemon is accidentally exposed to multiple distinct
+/// uids (e.g. a misconfigured test harness or a future multi-user mode).
+///
+/// Default cap: 1024 (far above any realistic owner-only deployment).
+///
 /// Note: eviction tied to connection-count drop is intentionally *not*
 /// wired. `pcloud-ipc::transport::ConnectionGuard` already evicts peer
 /// entries when their live-connection count returns to 0; this limiter
 /// holds at most one entry per *uid*, not per-connection, and retains
 /// token state across short reconnects to prevent a burst-reconnect
-/// workaround for bucket exhaustion. Memory footprint is bounded by the
-/// number of distinct authorized uids (owner-only: 1 in production).
+/// workaround for bucket exhaustion.
 pub struct PerPeerRateLimiter {
     policy: RateLimitPolicy,
     peers: Mutex<HashMap<u32, SessionRateLimiter>>,
+    /// Maximum number of distinct peer-uid entries. Entries beyond this
+    /// cap are evicted (smallest uid first) before inserting the new entry.
+    cap_peers: usize,
 }
 
 impl PerPeerRateLimiter {
     /// Build a new per-peer registry from a validated policy.
+    /// Uses the default cap of 1024 distinct peer uids.
     #[must_use]
     pub fn new(policy: &RateLimitPolicy) -> Self {
+        Self::with_cap(policy, 1024)
+    }
+
+    /// Build a new per-peer registry with an explicit peer-map size cap.
+    #[must_use]
+    pub fn with_cap(policy: &RateLimitPolicy, cap_peers: usize) -> Self {
         Self {
             policy: policy.clone(),
             peers: Mutex::new(HashMap::new()),
+            cap_peers,
         }
     }
 
     /// Admission check for a request arriving from `peer_uid`. Creates
-    /// a fresh `SessionRateLimiter` for the peer on first sight.
+    /// a fresh `SessionRateLimiter` for the peer on first sight, evicting
+    /// the smallest-uid entry first if the map has reached `cap_peers`.
     #[must_use]
     pub fn check(&self, peer_uid: u32, request: &Request) -> RateDecision {
         let mut guard = match self.peers.lock() {
@@ -179,6 +203,18 @@ impl PerPeerRateLimiter {
                 poisoned.into_inner()
             }
         };
+        // Evict before inserting to keep the map within cap_peers.
+        if !guard.contains_key(&peer_uid) && guard.len() >= self.cap_peers {
+            // Evict the entry with the smallest uid (simple, deterministic).
+            if let Some(&oldest) = guard.keys().min() {
+                guard.remove(&oldest);
+                log::warn!(
+                    "pcloud-daemon: PerPeerRateLimiter cap ({}) reached; evicted uid {}",
+                    self.cap_peers,
+                    oldest
+                );
+            }
+        }
         let limiter = guard
             .entry(peer_uid)
             .or_insert_with(|| SessionRateLimiter::new(&self.policy));
