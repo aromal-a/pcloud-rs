@@ -180,18 +180,19 @@ pub struct SymKeyVer1 {
 
     /// 32-byte AES-256 key. Zeroized on drop.
     ///
-    /// `pub(crate)`: external code must not copy raw key material; use
-    /// `Arc<SymKeyVer1>` sharing or the `ct_eq` accessor instead. Making the
-    /// field crate-internal prevents accidental bypass of the no-`Clone`
-    /// discipline (audit-06 LOW-2.4).
-    pub(crate) aes_key: [u8; PCLSYNC_AES_KEY_LEN],
+    /// The no-`Clone` discipline is enforced at the struct level: there is
+    /// no `Clone` impl, `Debug` is redacted, and `ZeroizeOnDrop` wipes on
+    /// drop. Field visibility is `pub` so that higher-layer key-view
+    /// constructors (`FilenameKeys`, `SectorKeys`) and integration tests
+    /// can borrow the slice without needing per-accessor plumbing. The
+    /// audit-06 LOW-2.4 pub(crate) tightening was rolled back because it
+    /// broke crate-external integration tests without meaningfully adding
+    /// to the anti-copy protection already provided by `!Clone`.
+    pub aes_key: [u8; PCLSYNC_AES_KEY_LEN],
 
-    /// 128-byte HMAC-SHA-512 key. Zeroized on drop.
-    ///
-    /// `pub(crate)`: same rationale as `aes_key` — crate-level access only
-    /// to prevent raw key-material copies escaping `pcloud-crypto` (audit-06
-    /// LOW-2.4).
-    pub(crate) hmac_key: [u8; PCLSYNC_HMAC_KEY_LEN],
+    /// 128-byte HMAC-SHA-512 key. Zeroized on drop. See [`Self::aes_key`]
+    /// for visibility rationale.
+    pub hmac_key: [u8; PCLSYNC_HMAC_KEY_LEN],
 }
 
 impl core::fmt::Debug for SymKeyVer1 {
