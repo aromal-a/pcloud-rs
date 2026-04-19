@@ -168,7 +168,12 @@ impl fuser::Filesystem for BoxedFuserShim {
             #[allow(unsafe_code)]
             {
                 let path_cstr = std::ffi::CString::new(p.to_string_lossy().as_bytes()).ok()?;
+                // SAFETY: `sv` is a POD C struct with no invalid bit patterns;
+                // `zeroed()` is the correct way to initialise it before
+                // passing it to `statvfs64(2)`, which writes all fields.
                 let mut sv: libc::statvfs64 = unsafe { std::mem::zeroed() };
+                // SAFETY: `path_cstr` is NUL-terminated and alive for this
+                // call. `statvfs64` writes into `sv` which we own exclusively.
                 let rc = unsafe { libc::statvfs64(path_cstr.as_ptr(), &mut sv) };
                 if rc == 0 { Some(sv) } else { None }
             }
@@ -930,7 +935,12 @@ impl<A: FuseAdapter> fuser::Filesystem for FuserShim<A> {
             #[allow(unsafe_code)]
             {
                 let path_cstr = std::ffi::CString::new(p.to_string_lossy().as_bytes()).ok()?;
+                // SAFETY: `sv` is a POD C struct with no invalid bit patterns;
+                // `zeroed()` is the correct initialiser before `statvfs64(2)`
+                // overwrites all fields on success.
                 let mut sv: libc::statvfs64 = unsafe { std::mem::zeroed() };
+                // SAFETY: `path_cstr` is NUL-terminated and alive for the
+                // call duration; `sv` is exclusively owned by this scope.
                 let rc = unsafe { libc::statvfs64(path_cstr.as_ptr(), &mut sv) };
                 if rc == 0 { Some(sv) } else { None }
             }

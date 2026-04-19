@@ -630,7 +630,12 @@ impl IpcServer {
         }
 
         // Take the first fd; we only configure one socket per plist entry.
+        // SAFETY: `fds` is non-null (checked above) and `count >= 1`, so
+        // dereferencing the first element is within the launchd-allocated array.
         let fd = unsafe { *fds };
+        // SAFETY: `fds` was allocated by launchd (`launch_activate_socket`
+        // uses malloc internally); `free` is the matching deallocator.
+        // After this call `fds` is no longer valid — we never use it again.
         unsafe { libc::free(fds as *mut libc::c_void) };
 
         // SAFETY: launchd hands us a valid, pre-bound, pre-listening socket fd.

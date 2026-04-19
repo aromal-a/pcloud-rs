@@ -242,6 +242,7 @@ mod tests {
             spawn_from_env(Environment::Production, shutdown, bridge).expect("spawn exporter");
         assert!(handle.local_addr().ip().is_loopback());
         drop(handle);
+        // SAFETY: single-threaded cleanup; no concurrent env readers in this test.
         unsafe {
             std::env::remove_var("PCLOUD_METRICS_PORT");
         }

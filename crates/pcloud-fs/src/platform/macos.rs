@@ -1456,9 +1456,12 @@ extern "C" fn thunk_statfs(req: macos_ffi::fuse_req_t, _ino: macos_ffi::fuse_ino
         st.f_bavail = free_blocks.min(u32::MAX as u64) as u32;
         st.f_files = 1_000_000;
         st.f_ffree = 999_000;
+        // SAFETY: `req` is a valid libfuse request handle; `&st` is a
+        // fully-initialised `statvfs` on the stack, alive for this call.
         unsafe { macos_ffi::fuse_reply_statfs(req, &st) };
     })
     .unwrap_or_else(|_| {
+        // SAFETY: panic recovery; `req` is still valid and must be replied to.
         unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
     });
 }
@@ -1743,11 +1746,15 @@ fn probe_with_dlopen(path: &str) -> bool {
     let sym_name = match CString::new("fuse_mount") {
         Ok(s) => s,
         Err(_) => {
+            // SAFETY: `handle` was successfully returned by `dlopen` above
+            // and has not been closed yet. `dlclose` on a valid handle is safe.
             unsafe { libc::dlclose(handle) };
             return false;
         }
     };
     let sym = unsafe { libc::dlsym(handle, sym_name.as_ptr()) };
+    // SAFETY: `handle` is a valid, non-null `dlopen` result; closing it here
+    // releases our brief probe hold. No Rust reference to the library remains.
     unsafe { libc::dlclose(handle) };
     !sym.is_null()
 }
@@ -1877,13 +1884,20 @@ extern "C" fn thunk_opendir(
 ) {
     let _ = std::panic::catch_unwind(|| {
         if fi.is_null() {
+            // SAFETY: `req` is a valid libfuse request handle for the
+            // duration of this callback. `fuse_reply_err` consumes it.
             unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
             return;
         }
+        // SAFETY: `fi` is non-null and libfuse-owned for this callback;
+        // writing `fh` is the documented way to set the file handle.
         unsafe { (*fi).fh = ino };
+        // SAFETY: `req`, `fi` are libfuse-owned and valid for this call.
         unsafe { macos_ffi::fuse_reply_open(req, fi) };
     })
     .unwrap_or_else(|_| {
+        // SAFETY: `req` is a valid libfuse request handle; panic recovery
+        // path must still reply to avoid a hung kernel operation.
         unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
     });
 }
@@ -1896,9 +1910,13 @@ extern "C" fn thunk_releasedir(
     _fi: *mut macos_ffi::fuse_file_info,
 ) {
     let _ = std::panic::catch_unwind(|| {
+        // SAFETY: `req` is a valid libfuse request handle for the
+        // duration of this callback; 0 means success (no error).
         unsafe { macos_ffi::fuse_reply_err(req, 0) };
     })
     .unwrap_or_else(|_| {
+        // SAFETY: panic recovery path; `req` is still valid and must
+        // be replied to so the kernel request does not hang.
         unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
     });
 }
@@ -1919,9 +1937,14 @@ extern "C" fn thunk_getxattr(
         // defined as 93. Use the raw constant so we don't depend on a
         // non-portable libc symbol.
         const ENOATTR: i32 = 93;
+        // SAFETY: `req` is a valid libfuse request handle for the
+        // duration of this callback; replying with ENOATTR is the
+        // documented response for "attribute does not exist".
         unsafe { macos_ffi::fuse_reply_err(req, ENOATTR) };
     })
     .unwrap_or_else(|_| {
+        // SAFETY: panic recovery; `req` is still valid and must be
+        // replied to so the kernel request does not hang.
         unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
     });
 }
@@ -1935,13 +1958,17 @@ extern "C" fn thunk_listxattr(
     let _ = std::panic::catch_unwind(|| {
         if size == 0 {
             // Query: return total size needed (0 = no xattrs).
+            // SAFETY: `req` is a valid libfuse request handle.
             unsafe { macos_ffi::fuse_reply_xattr(req, 0) };
         } else {
             // Read: return empty buffer.
+            // SAFETY: `req` is valid; null buf + 0 size is documented
+            // by libfuse as "return empty data", not a null deref.
             unsafe { macos_ffi::fuse_reply_buf(req, std::ptr::null(), 0) };
         }
     })
     .unwrap_or_else(|_| {
+        // SAFETY: panic recovery; `req` is still valid.
         unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
     });
 }
@@ -1957,9 +1984,12 @@ extern "C" fn thunk_setxattr_op(
     _position: u32,
 ) {
     let _ = std::panic::catch_unwind(|| {
+        // SAFETY: `req` is a valid libfuse request handle; ENOTSUP is
+        // the correct response for unsupported xattr writes on macOS.
         unsafe { macos_ffi::fuse_reply_err(req, libc::ENOTSUP) };
     })
     .unwrap_or_else(|_| {
+        // SAFETY: panic recovery; `req` is still valid.
         unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
     });
 }
@@ -1972,9 +2002,12 @@ extern "C" fn thunk_removexattr(
 ) {
     let _ = std::panic::catch_unwind(|| {
         const ENOATTR: i32 = 93;
+        // SAFETY: `req` is a valid libfuse request handle; ENOATTR
+        // indicates "no such attribute" as required by the protocol.
         unsafe { macos_ffi::fuse_reply_err(req, ENOATTR) };
     })
     .unwrap_or_else(|_| {
+        // SAFETY: panic recovery; `req` is still valid.
         unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
     });
 }
@@ -1988,9 +2021,12 @@ extern "C" fn thunk_access(
     _mask: i32,
 ) {
     let _ = std::panic::catch_unwind(|| {
+        // SAFETY: `req` is a valid libfuse request handle; replying
+        // with 0 grants access and is async-signal-safe from a thunk.
         unsafe { macos_ffi::fuse_reply_err(req, 0) };
     })
     .unwrap_or_else(|_| {
+        // SAFETY: panic recovery; `req` is still valid.
         unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
     });
 }
@@ -2478,6 +2514,7 @@ mod tests {
                 "spelling '{val}' should map to FuseT"
             );
         }
+        // SAFETY: test-only cleanup; no concurrent readers of this var.
         unsafe { std::env::remove_var("PCLOUD_MACOS_FUSE_BACKEND") };
     }
 
@@ -2492,6 +2529,7 @@ mod tests {
                 "spelling '{val}' should map to MacFuse"
             );
         }
+        // SAFETY: test-only cleanup; no concurrent readers of this var.
         unsafe { std::env::remove_var("PCLOUD_MACOS_FUSE_BACKEND") };
     }
 
@@ -2500,6 +2538,7 @@ mod tests {
         // SAFETY: test-only env mutation.
         unsafe { std::env::set_var("PCLOUD_MACOS_FUSE_BACKEND", "auto") };
         assert_eq!(MacFuseBackend::from_env(), MacFuseBackend::Auto);
+        // SAFETY: test-only cleanup.
         unsafe { std::env::remove_var("PCLOUD_MACOS_FUSE_BACKEND") };
     }
 
@@ -2508,6 +2547,7 @@ mod tests {
         // SAFETY: test-only env mutation.
         unsafe { std::env::set_var("PCLOUD_MACOS_FUSE_BACKEND", "doris") };
         assert_eq!(MacFuseBackend::from_env(), MacFuseBackend::FuseT);
+        // SAFETY: test-only cleanup.
         unsafe { std::env::remove_var("PCLOUD_MACOS_FUSE_BACKEND") };
     }
 

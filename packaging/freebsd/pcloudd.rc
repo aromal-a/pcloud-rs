@@ -58,6 +58,12 @@ command_args=""
 start_precmd()
 {
     kldload -n fusefs 2>/dev/null || true
+    # Ensure the pid-file directory exists and is writable by the daemon user.
+    # rc.subr writes ${pidfile} = /var/run/${name}.pid, which lives directly in
+    # /var/run/ (always present on FreeBSD). If you change pidfile to a
+    # subdirectory (e.g. /var/run/pcloudd/pcloudd.pid), create the directory
+    # here with install -d -o ${pcloudd_user} -m 0755.
+    : # /var/run is always present; no subdirectory needed for the default pidfile path
 }
 
 pcloudd_precmd="start_precmd"

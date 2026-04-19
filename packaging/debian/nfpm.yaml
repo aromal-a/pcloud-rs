@@ -22,6 +22,16 @@
 # CI note: the .deb build is not yet wired into ci.yml (tracked pcloud-rs-s1p.69).
 # To add it, run the amd64 build command above in a post-release workflow step
 # and upload dist/*.deb as a release asset.
+#
+# TODO(pcloud-rs-8mb.39): wire arm64 cross-build via cross-rs in release.yml.
+# Once cross-rs is set up, the cross command is:
+#   cross build --release --target aarch64-unknown-linux-gnu -p pcloud-daemon
+#   NFPM_ARCH=arm64 VERSION=$(git describe --tags --abbrev=0) \
+#     nfpm pkg --config packaging/debian/nfpm.yaml --packager deb --target dist/
+# The contents paths below reference ../../target/release/* (amd64 default).
+# For the arm64 .deb, override the src paths to point at:
+#   ../../target/aarch64-unknown-linux-gnu/release/pcloudd
+#   ../../target/aarch64-unknown-linux-gnu/release/pcloudc
 
 name: pcloud-rs
 # arch is overridden at build time via NFPM_ARCH env var for cross-compiled targets.

@@ -1517,6 +1517,8 @@ mod tests {
     #[test]
     fn unmount_with_force_env_and_path_routes_to_force() {
         let _g = force_umount_env_guard();
+        // SAFETY: env-var mutation is serialized via `force_umount_env_guard`;
+        // no concurrent readers of PCLOUD_FORCE_UMOUNT in this test process.
         unsafe { std::env::set_var("PCLOUD_FORCE_UMOUNT", "1") };
         let mut inputs = fresh_inputs();
         inputs.mount_path = std::path::PathBuf::from("/home/alice/pCloudDrive");
@@ -1527,6 +1529,7 @@ mod tests {
             }
             other => panic!("expected MountForceUnmount, got {other:?}"),
         }
+        // SAFETY: serialized via the guard; cleanup before next test.
         unsafe { std::env::remove_var("PCLOUD_FORCE_UMOUNT") };
     }
 
@@ -1537,10 +1540,12 @@ mod tests {
         // variant. Fall back to the regular graceful `Unmount` so the
         // daemon can use its own bookkeeping.
         let _g = force_umount_env_guard();
+        // SAFETY: serialized via `force_umount_env_guard`; no concurrent env readers.
         unsafe { std::env::set_var("PCLOUD_FORCE_UMOUNT", "yes") };
         let inputs = fresh_inputs(); // mount_path empty
         let req = Command::Unmount.into_request(&inputs);
         assert!(matches!(req, Request::Unmount), "got {req:?}");
+        // SAFETY: cleanup; still under the guard.
         unsafe { std::env::remove_var("PCLOUD_FORCE_UMOUNT") };
     }
 
@@ -1548,13 +1553,16 @@ mod tests {
     fn env_force_umount_truthy_tokens() {
         let _g = force_umount_env_guard();
         for tok in ["1", "true", "yes", "on", "TRUE", "YES", "On"] {
+            // SAFETY: serialized via `force_umount_env_guard`.
             unsafe { std::env::set_var("PCLOUD_FORCE_UMOUNT", tok) };
             assert!(env_force_umount_enabled(), "{tok} should be truthy");
         }
         for tok in ["", "0", "false", "no", "off", "maybe"] {
+            // SAFETY: serialized via `force_umount_env_guard`.
             unsafe { std::env::set_var("PCLOUD_FORCE_UMOUNT", tok) };
             assert!(!env_force_umount_enabled(), "{tok} should not be truthy");
         }
+        // SAFETY: cleanup; still under the guard.
         unsafe { std::env::remove_var("PCLOUD_FORCE_UMOUNT") };
     }
 }

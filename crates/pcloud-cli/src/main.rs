@@ -1092,6 +1092,10 @@ fn run_daemon_start(flags: &GlobalFlags) -> ExitCode {
     if let Some(opts) = cfg.fuse_opts.as_deref() {
         cmd.env("PCLOUD_FUSE_OPTS", opts);
     }
+    // SAFETY: `pre_exec` closure runs in the child process after `fork()`
+    // and before `exec()`, where only async-signal-safe functions may be
+    // called. `setsid(2)` is explicitly async-signal-safe per POSIX and
+    // is the standard way to detach a daemon from its controlling terminal.
     unsafe {
         cmd.pre_exec(|| {
             // SAFETY: setsid(2) is async-signal-safe per POSIX.

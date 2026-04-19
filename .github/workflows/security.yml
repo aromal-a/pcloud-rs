@@ -19,12 +19,44 @@ jobs:
   deny:
     name: cargo deny
     runs-on: ubuntu-latest
+    # SARIF upload requires security-events: write; the action falls back to
+    # table output when the permission is absent (e.g. fork PRs).
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
-      - uses: EmbarkStudios/cargo-deny-action@v2
+      - name: cargo deny (SARIF output)
+        # Run deny in a way that captures output; we convert to SARIF manually
+        # because cargo-deny-action@v2 does not yet support --format sarif.
+        # Fallback: if cargo-deny isn't installed the action installs it.
+        uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check
           arguments: --all-features
+        # cargo-deny exits non-zero on findings; we still want to upload SARIF.
+        continue-on-error: true
+        id: cargo-deny-check
+      - name: Install cargo-deny (for SARIF generation)
+        run: cargo install cargo-deny --locked 2>/dev/null || true
+      - name: Generate cargo-deny SARIF
+        run: |
+          cargo deny --format sarif check --all-features 2>/dev/null \
+            > deny-results.sarif || true
+          # If no SARIF was produced (older cargo-deny), create a minimal empty one.
+          if [ ! -s deny-results.sarif ]; then
+            echo '{"version":"2.1.0","$schema":"https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json","runs":[]}' \
+              > deny-results.sarif
+          fi
+      - name: Upload cargo-deny SARIF to Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: deny-results.sarif
+          category: cargo-deny
+        if: always()
+      - name: Re-fail if cargo deny found violations
+        if: steps.cargo-deny-check.outcome == 'failure'
+        run: exit 1
 
   container-scan:
     name: Trivy container scan
@@ -32,11 +64,30 @@ jobs:
     # Run on schedule only — building the image on every Cargo.toml push
     # would be expensive and is not useful without a real release image.
     if: github.event_name == 'schedule'
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
       - name: Build Docker image for scanning
         run: docker build -f packaging/docker/Dockerfile -t pcloud-rs:scan .
-      - name: Run Trivy vulnerability scanner
+      - name: Run Trivy vulnerability scanner (SARIF)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'pcloud-rs:scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+      - name: Upload Trivy SARIF to Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+        if: always()
+      - name: Fail on CRITICAL/HIGH findings
+        # Re-run in table mode to get a human-readable summary on failure.
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: 'pcloud-rs:scan'

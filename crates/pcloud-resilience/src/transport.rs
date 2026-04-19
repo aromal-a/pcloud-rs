@@ -211,32 +211,251 @@ pub fn is_retryable_io_kind(kind: std::io::ErrorKind) -> bool {
     )
 }
 
-/// Classify an error string into an [`ErrorKind`].
+/// Typed transport error categorisation consumed by [`classify_transport_error`].
 ///
-/// # Certificate / TLS errors → Terminal
+/// This is the input to the retry classifier. Callers are expected to map
+/// their concrete error type (`std::io::Error`, `rustls::Error`,
+/// `reqwest::Error`, a crate-local `TransportError` enum, etc.) onto one of
+/// these variants. The classifier then decides [`ErrorKind::Transient`] vs.
+/// [`ErrorKind::Terminal`] by matching on the variant, **not** on substring
+/// patterns of a human-readable error message.
 ///
-/// Any error whose message (case-insensitive) contains one of:
-/// `"certificate"`, `"tls"`, `"ssl"`, `"handshake"`, or `"invalid cert"`
-/// is classified as [`ErrorKind::Terminal`].
+/// See bead `pcloud-rs-8mb.37` (audit-05 §6-opus H-1): the previous
+/// string-match classifier was fragile across library versions and locales;
+/// this typed shape replaces it.
+#[derive(Debug, Clone)]
+pub enum TransportError {
+    /// A `std::io::Error` kind. Only the kind is needed for classification.
+    Io(std::io::ErrorKind),
+    /// A TLS-layer failure: bad certificate, bad server name, version
+    /// mismatch, handshake alert, revoked cert, etc. Always [`ErrorKind::Terminal`].
+    Tls(TlsError),
+    /// A TCP-level connect failure (DNS flap, transient unreachable, reset
+    /// during handshake). Treated as transient.
+    Connect,
+    /// The server hostname configured by the caller failed DNS lookup or is
+    /// structurally invalid. Terminal — re-running will not fix a typo.
+    InvalidAddress,
+    /// HTTP request/response timed out. Transient.
+    Timeout,
+    /// HTTP body read/write error (premature EOF, chunked-encoding frame
+    /// error). Transient — the TCP connection may be reusable on retry.
+    Body,
+    /// Response decode / deserialization error (malformed JSON/binary).
+    /// Terminal — the server returned garbage, retrying will not help.
+    Decode,
+    /// The response exceeded a caller-enforced size limit. Terminal.
+    ResponseTooLarge,
+    /// Socket configuration error (bind, SO_* setsockopt failed). Terminal —
+    /// a local configuration problem will recur on retry.
+    SocketConfig,
+    /// Truly-unknown error type that could not be mapped. Classified as
+    /// [`ErrorKind::Terminal`] (fail-closed) to avoid burning the retry
+    /// budget on a condition the caller does not understand.
+    Unknown,
+}
+
+/// Sub-categorisation of TLS failures. All variants are classified as
+/// [`ErrorKind::Terminal`] — retrying a TLS failure either masks a live
+/// security incident or wastes the retry budget on a misconfiguration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TlsError {
+    /// `rustls::Error::InvalidCertificate` (any reason).
+    InvalidCertificate,
+    /// The peer sent an alert (handshake_failure, bad_certificate, …).
+    AlertReceived,
+    /// Version mismatch or no common cipher suite.
+    NoVersionOrCipher,
+    /// Name verification failed — SNI/hostname did not match the cert.
+    InvalidServerName,
+    /// Any other rustls error variant not explicitly enumerated above.
+    /// Still Terminal.
+    Other,
+}
+
+/// Classify a [`TransportError`] into [`ErrorKind`].
 ///
-/// Certificate errors are always Terminal — retrying will not fix a bad cert
-/// and masks a security event.
+/// # Typed classification (replaces legacy string matching)
 ///
-/// All other errors default to [`ErrorKind::Transient`] and let the policy
-/// decide whether to retry.
+/// Previously this module matched on stringified error messages
+/// (`err.to_string().contains("tls")` etc.). That was fragile across
+/// rustls/reqwest releases and on non-English locales. The classifier now
+/// matches on typed variants:
+///
+/// - [`TransportError::Io`]: classified by [`std::io::ErrorKind`]. Transient
+///   for `TimedOut | Interrupted | WouldBlock | ConnectionReset |
+///   BrokenPipe | ConnectionAborted`. Everything else
+///   (`PermissionDenied`, `NotFound`, `AlreadyExists`, `InvalidInput`,
+///   `InvalidData`, `Other`, …) is Terminal.
+/// - [`TransportError::Tls`]: always Terminal — a bad cert, bad server
+///   name, version mismatch, or alert must never be retried.
+/// - [`TransportError::Connect`] / [`TransportError::Timeout`] /
+///   [`TransportError::Body`]: Transient — the TCP/HTTP stream may recover
+///   on a fresh attempt.
+/// - [`TransportError::InvalidAddress`] / [`TransportError::Decode`] /
+///   [`TransportError::ResponseTooLarge`] / [`TransportError::SocketConfig`]:
+///   Terminal — a configuration or protocol-layer error that will recur.
+/// - [`TransportError::Unknown`]: Terminal (fail-closed). Rather than burn
+///   retry budget on an error type the caller did not understand, the
+///   request is aborted so the caller can surface it for diagnosis.
+///
+/// See bead `pcloud-rs-8mb.37` (audit-05 §6-opus H-1).
+pub fn classify_transport_error(err: &TransportError) -> ErrorKind {
+    match err {
+        TransportError::Io(kind) => {
+            if is_retryable_io_kind(*kind) {
+                ErrorKind::Transient
+            } else {
+                ErrorKind::Terminal
+            }
+        }
+        // Any TLS failure is Terminal — never mask a security event by
+        // retrying.
+        TransportError::Tls(_) => ErrorKind::Terminal,
+        TransportError::Connect => ErrorKind::Transient,
+        TransportError::Timeout => ErrorKind::Transient,
+        TransportError::Body => ErrorKind::Transient,
+        TransportError::InvalidAddress => ErrorKind::Terminal,
+        TransportError::Decode => ErrorKind::Terminal,
+        TransportError::ResponseTooLarge => ErrorKind::Terminal,
+        TransportError::SocketConfig => ErrorKind::Terminal,
+        // Fail-closed: unknown error types surface to the caller instead of
+        // wasting retry budget.
+        TransportError::Unknown => ErrorKind::Terminal,
+    }
+}
+
+/// Stable wire-tag prefix used by [`TransportResponse::typed_error`] to
+/// encode a [`TransportError`] into the `Option<String>` error slot on
+/// [`TransportResponse`]. Callers that build a `TransportResponse` from a
+/// typed error should prefer [`TransportResponse::typed_error`] to
+/// [`TransportResponse::transport_error`] so the retry loop can classify
+/// by variant rather than by message text.
+pub(crate) const TYPED_ERR_PREFIX: &str = "pcloud-resilience:typed:";
+
+/// Legacy string-form classifier kept only for backwards compatibility with
+/// callers that still encode their error as a free-form message through
+/// [`TransportResponse::transport_error`].
+///
+/// # Recommended migration path
+///
+/// New callers should map their concrete error into [`TransportError`] and
+/// use [`classify_transport_error`] directly, or build the response with
+/// [`TransportResponse::typed_error`]. When a response carries a typed tag
+/// (see [`TYPED_ERR_PREFIX`]) this function decodes it and delegates to
+/// [`classify_transport_error`].
+///
+/// When the message has no typed tag, the conservative default is
+/// [`ErrorKind::Terminal`] (fail-closed). This reverses the historical
+/// default (which was Transient) so that a caller passing a plain free-form
+/// string can no longer accidentally trigger a retry storm on an unknown
+/// error. Callers that want the legacy permissive behaviour must migrate
+/// to the typed API.
+///
+/// See bead `pcloud-rs-8mb.37`.
 pub fn classify_error(error_message: &str) -> ErrorKind {
-    let lower = error_message.to_lowercase();
-    // Certificate errors are always Terminal — retrying will not fix a bad
-    // cert and masks a security event.
-    if lower.contains("certificate")
-        || lower.contains("tls")
-        || lower.contains("ssl")
-        || lower.contains("handshake")
-        || lower.contains("invalid cert")
-    {
+    if let Some(rest) = error_message.strip_prefix(TYPED_ERR_PREFIX) {
+        if let Some(err) = decode_typed_tag(rest) {
+            return classify_transport_error(&err);
+        }
+        // Malformed typed tag → fail-closed.
         return ErrorKind::Terminal;
     }
-    ErrorKind::Transient
+    // Unknown free-form string → fail-closed.
+    ErrorKind::Terminal
+}
+
+/// Decode the wire tag produced by [`encode_typed_tag`]. Returns `None` if
+/// the tag is malformed or references an unknown variant.
+fn decode_typed_tag(rest: &str) -> Option<TransportError> {
+    let (variant, payload) = match rest.split_once(':') {
+        Some((v, p)) => (v, p),
+        None => (rest, ""),
+    };
+    match variant {
+        "io" => {
+            use std::io::ErrorKind as K;
+            let kind = match payload {
+                "TimedOut" => K::TimedOut,
+                "Interrupted" => K::Interrupted,
+                "WouldBlock" => K::WouldBlock,
+                "ConnectionReset" => K::ConnectionReset,
+                "BrokenPipe" => K::BrokenPipe,
+                "ConnectionAborted" => K::ConnectionAborted,
+                "PermissionDenied" => K::PermissionDenied,
+                "NotFound" => K::NotFound,
+                "AlreadyExists" => K::AlreadyExists,
+                "InvalidInput" => K::InvalidInput,
+                "InvalidData" => K::InvalidData,
+                "UnexpectedEof" => K::UnexpectedEof,
+                "Other" => K::Other,
+                _ => K::Other,
+            };
+            Some(TransportError::Io(kind))
+        }
+        "tls" => {
+            let tls = match payload {
+                "InvalidCertificate" => TlsError::InvalidCertificate,
+                "AlertReceived" => TlsError::AlertReceived,
+                "NoVersionOrCipher" => TlsError::NoVersionOrCipher,
+                "InvalidServerName" => TlsError::InvalidServerName,
+                _ => TlsError::Other,
+            };
+            Some(TransportError::Tls(tls))
+        }
+        "connect" => Some(TransportError::Connect),
+        "timeout" => Some(TransportError::Timeout),
+        "body" => Some(TransportError::Body),
+        "invalid_address" => Some(TransportError::InvalidAddress),
+        "decode" => Some(TransportError::Decode),
+        "response_too_large" => Some(TransportError::ResponseTooLarge),
+        "socket_config" => Some(TransportError::SocketConfig),
+        "unknown" => Some(TransportError::Unknown),
+        _ => None,
+    }
+}
+
+/// Encode a [`TransportError`] to its wire tag. Inverse of [`decode_typed_tag`].
+fn encode_typed_tag(err: &TransportError) -> String {
+    match err {
+        TransportError::Io(kind) => {
+            use std::io::ErrorKind as K;
+            let name = match *kind {
+                K::TimedOut => "TimedOut",
+                K::Interrupted => "Interrupted",
+                K::WouldBlock => "WouldBlock",
+                K::ConnectionReset => "ConnectionReset",
+                K::BrokenPipe => "BrokenPipe",
+                K::ConnectionAborted => "ConnectionAborted",
+                K::PermissionDenied => "PermissionDenied",
+                K::NotFound => "NotFound",
+                K::AlreadyExists => "AlreadyExists",
+                K::InvalidInput => "InvalidInput",
+                K::InvalidData => "InvalidData",
+                K::UnexpectedEof => "UnexpectedEof",
+                _ => "Other",
+            };
+            format!("{TYPED_ERR_PREFIX}io:{name}")
+        }
+        TransportError::Tls(tls) => {
+            let name = match tls {
+                TlsError::InvalidCertificate => "InvalidCertificate",
+                TlsError::AlertReceived => "AlertReceived",
+                TlsError::NoVersionOrCipher => "NoVersionOrCipher",
+                TlsError::InvalidServerName => "InvalidServerName",
+                TlsError::Other => "Other",
+            };
+            format!("{TYPED_ERR_PREFIX}tls:{name}")
+        }
+        TransportError::Connect => format!("{TYPED_ERR_PREFIX}connect:"),
+        TransportError::Timeout => format!("{TYPED_ERR_PREFIX}timeout:"),
+        TransportError::Body => format!("{TYPED_ERR_PREFIX}body:"),
+        TransportError::InvalidAddress => format!("{TYPED_ERR_PREFIX}invalid_address:"),
+        TransportError::Decode => format!("{TYPED_ERR_PREFIX}decode:"),
+        TransportError::ResponseTooLarge => format!("{TYPED_ERR_PREFIX}response_too_large:"),
+        TransportError::SocketConfig => format!("{TYPED_ERR_PREFIX}socket_config:"),
+        TransportError::Unknown => format!("{TYPED_ERR_PREFIX}unknown:"),
+    }
 }
 
 // ── Transport response ─────────────────────────────────────────────────────
@@ -265,12 +484,28 @@ impl TransportResponse {
         }
     }
 
-    /// Construct an error response (no HTTP status received).
+    /// Construct an error response (no HTTP status received) from a free-form
+    /// message. Prefer [`Self::typed_error`] on new code so the retry loop
+    /// can classify by typed variant instead of a string-match fallback.
     pub fn transport_error(message: impl Into<String>) -> Self {
         Self {
             status: 0,
             headers: HashMap::new(),
             error: Some(message.into()),
+        }
+    }
+
+    /// Construct an error response from a typed [`TransportError`]. The
+    /// variant is encoded into the error slot with a stable wire tag so
+    /// [`classify_error`] can round-trip it back to
+    /// [`classify_transport_error`].
+    ///
+    /// See bead `pcloud-rs-8mb.37`.
+    pub fn typed_error(err: TransportError) -> Self {
+        Self {
+            status: 0,
+            headers: HashMap::new(),
+            error: Some(encode_typed_tag(&err)),
         }
     }
 
@@ -458,14 +693,18 @@ impl ResilientTransport {
             {
                 #[cfg(feature = "transport-metrics")]
                 {
-                    // TLS errors map to the `tls` class; other terminal errors
-                    // fall through to `io`.
-                    let cls = if err_msg.to_lowercase().contains("tls")
-                        || err_msg.to_lowercase().contains("ssl")
-                        || err_msg.to_lowercase().contains("certificate")
-                        || err_msg.to_lowercase().contains("handshake")
-                    {
-                        TransportErrorClass::Tls
+                    // Typed classification: decode the wire tag if present;
+                    // otherwise fall back to `Io`. Legacy free-form messages
+                    // (no tag) are mapped to `Io` since we cannot distinguish
+                    // TLS from other I/O without a typed input.
+                    let cls = if let Some(rest) = err_msg.strip_prefix(TYPED_ERR_PREFIX) {
+                        if rest.starts_with("tls:") {
+                            TransportErrorClass::Tls
+                        } else if rest.starts_with("connect:") {
+                            TransportErrorClass::Connect
+                        } else {
+                            TransportErrorClass::Io
+                        }
                     } else {
                         TransportErrorClass::Io
                     };
@@ -667,25 +906,145 @@ mod tests {
 
     async fn no_sleep(_: Duration) {}
 
-    // ── Fix 1: TLS/cert errors are Terminal ───────────────────────────────
+    // ── Typed classifier: bead pcloud-rs-8mb.37 ──────────────────────────
 
     #[test]
-    fn classify_error_certificate_is_terminal() {
-        assert_eq!(classify_error("invalid certificate"), ErrorKind::Terminal);
-        assert_eq!(classify_error("TLS handshake failed"), ErrorKind::Terminal);
-        assert_eq!(classify_error("SSL error"), ErrorKind::Terminal);
-        assert_eq!(classify_error("handshake timeout"), ErrorKind::Terminal);
-        assert_eq!(classify_error("invalid cert chain"), ErrorKind::Terminal);
+    fn classify_transport_error_tls_is_always_terminal() {
+        for tls in [
+            TlsError::InvalidCertificate,
+            TlsError::AlertReceived,
+            TlsError::NoVersionOrCipher,
+            TlsError::InvalidServerName,
+            TlsError::Other,
+        ] {
+            assert_eq!(
+                classify_transport_error(&TransportError::Tls(tls)),
+                ErrorKind::Terminal,
+                "TLS variant {tls:?} must be Terminal"
+            );
+        }
     }
 
     #[test]
-    fn classify_error_connection_reset_is_transient() {
+    fn classify_transport_error_io_transient_kinds() {
+        use std::io::ErrorKind as K;
+        for k in [
+            K::TimedOut,
+            K::Interrupted,
+            K::WouldBlock,
+            K::ConnectionReset,
+            K::BrokenPipe,
+            K::ConnectionAborted,
+        ] {
+            assert_eq!(
+                classify_transport_error(&TransportError::Io(k)),
+                ErrorKind::Transient,
+                "io::ErrorKind::{k:?} must be Transient"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_transport_error_io_terminal_kinds() {
+        use std::io::ErrorKind as K;
+        for k in [
+            K::PermissionDenied,
+            K::NotFound,
+            K::AlreadyExists,
+            K::InvalidInput,
+            K::InvalidData,
+            K::Other,
+        ] {
+            assert_eq!(
+                classify_transport_error(&TransportError::Io(k)),
+                ErrorKind::Terminal,
+                "io::ErrorKind::{k:?} must be Terminal"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_transport_error_connect_and_timeout_are_transient() {
         assert_eq!(
-            classify_error("connection reset by peer"),
+            classify_transport_error(&TransportError::Connect),
             ErrorKind::Transient
         );
-        assert_eq!(classify_error("dns lookup failed"), ErrorKind::Transient);
-        assert_eq!(classify_error("timeout"), ErrorKind::Transient);
+        assert_eq!(
+            classify_transport_error(&TransportError::Timeout),
+            ErrorKind::Transient
+        );
+        assert_eq!(
+            classify_transport_error(&TransportError::Body),
+            ErrorKind::Transient
+        );
+    }
+
+    #[test]
+    fn classify_transport_error_config_layer_is_terminal() {
+        assert_eq!(
+            classify_transport_error(&TransportError::InvalidAddress),
+            ErrorKind::Terminal
+        );
+        assert_eq!(
+            classify_transport_error(&TransportError::Decode),
+            ErrorKind::Terminal
+        );
+        assert_eq!(
+            classify_transport_error(&TransportError::ResponseTooLarge),
+            ErrorKind::Terminal
+        );
+        assert_eq!(
+            classify_transport_error(&TransportError::SocketConfig),
+            ErrorKind::Terminal
+        );
+    }
+
+    #[test]
+    fn classify_transport_error_unknown_fails_closed() {
+        // Fail-closed: an unknown error type must NOT trigger retries.
+        assert_eq!(
+            classify_transport_error(&TransportError::Unknown),
+            ErrorKind::Terminal
+        );
+    }
+
+    #[test]
+    fn classify_error_typed_tag_roundtrip() {
+        // Each typed variant round-trips through the wire tag and classifies
+        // identically to the direct typed classifier.
+        for (err, expected) in [
+            (
+                TransportError::Tls(TlsError::InvalidCertificate),
+                ErrorKind::Terminal,
+            ),
+            (
+                TransportError::Io(std::io::ErrorKind::ConnectionReset),
+                ErrorKind::Transient,
+            ),
+            (
+                TransportError::Io(std::io::ErrorKind::PermissionDenied),
+                ErrorKind::Terminal,
+            ),
+            (TransportError::Connect, ErrorKind::Transient),
+            (TransportError::Timeout, ErrorKind::Transient),
+            (TransportError::InvalidAddress, ErrorKind::Terminal),
+            (TransportError::Unknown, ErrorKind::Terminal),
+        ] {
+            let resp = TransportResponse::typed_error(err);
+            let tag = resp.error.as_deref().unwrap();
+            assert_eq!(classify_error(tag), expected, "tag={tag}");
+        }
+    }
+
+    #[test]
+    fn classify_error_unknown_freeform_is_terminal_fail_closed() {
+        // Free-form strings without a typed tag fail closed. This is the
+        // deliberate opposite of the pre-8mb.37 default so callers that
+        // still hand in stringified errors do not accidentally retry-storm
+        // unknown conditions.
+        assert_eq!(classify_error("some unknown error"), ErrorKind::Terminal);
+        assert_eq!(classify_error(""), ErrorKind::Terminal);
+        assert_eq!(classify_error("connection reset by peer"), ErrorKind::Terminal);
     }
 
     #[tokio::test]
@@ -701,9 +1060,9 @@ mod tests {
                     let cnt = attempts_clone.clone();
                     async move {
                         cnt.fetch_add(1, Ordering::SeqCst);
-                        TransportResponse::transport_error(
-                            "TLS handshake failed: certificate rejected",
-                        )
+                        TransportResponse::typed_error(TransportError::Tls(
+                            TlsError::InvalidCertificate,
+                        ))
                     }
                 },
                 no_sleep,
@@ -957,7 +1316,9 @@ mod tests {
             .execute(
                 RetryClass::Idempotent,
                 move || async move {
-                    TransportResponse::transport_error("TLS handshake failed: cert rejected")
+                    TransportResponse::typed_error(TransportError::Tls(
+                        TlsError::InvalidCertificate,
+                    ))
                 },
                 no_sleep,
             )

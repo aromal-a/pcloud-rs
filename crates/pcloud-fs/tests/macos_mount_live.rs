@@ -958,6 +958,7 @@ fn backend_env_macfuse_probe() {
         }
         Err(other) => panic!("unexpected error: {other:?}"),
     }
+    // SAFETY: test-only cleanup; pairs with the set_var above.
     unsafe { std::env::remove_var("PCLOUD_MACOS_FUSE_BACKEND") };
 }
 

@@ -89,14 +89,15 @@ jobs:
     name: Sign release artifacts (cosign)
     runs-on: ubuntu-latest
     needs: [build-artifacts, sbom]
-    # Requires the following repository secrets (or OIDC keyless signing):
-    #   COSIGN_KEY      — PEM-encoded cosign private key (optional if using keyless)
-    #   COSIGN_PASSWORD — passphrase for the key      (optional if using keyless)
-    # To use keyless (Sigstore), remove the key/password references below and
-    # set `cosign sign-blob --yes` with `id-token: write` permission.
+    # Signing strategy (in priority order):
+    #   1. Keyless Sigstore OIDC (preferred on tag pushes — no secrets required).
+    #      Requires id-token: write permission (granted below).
+    #      Produces a transparency-log entry on https://rekor.sigstore.dev.
+    #   2. Key-based fallback: set COSIGN_KEY + COSIGN_PASSWORD repository
+    #      secrets for offline signing without a Sigstore log entry.
     permissions:
       contents: read
-      # id-token: write  # uncomment for keyless Sigstore signing
+      id-token: write   # required for Sigstore keyless OIDC signing
     steps:
       - uses: actions/checkout@v4
 
@@ -114,11 +115,13 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
-      - name: Sign binary and SBOM with cosign (key-based placeholder)
-        # NOTE: Replace ${{ secrets.COSIGN_KEY }} and ${{ secrets.COSIGN_PASSWORD }}
-        # with your actual signing key secret names, or switch to keyless:
-        #   cosign sign-blob --yes --rekor-url https://rekor.sigstore.dev dist/pcloudd
-        # Key-based signing (offline, no Sigstore transparency log):
+      - name: Sign binary and SBOM with cosign
+        # Keyless path: when COSIGN_KEY secret is absent (the default for this
+        # repo), sign with Sigstore OIDC — no key management required on GitHub
+        # Actions. The --yes flag suppresses the interactive confirmation prompt.
+        #
+        # Key-based fallback: if COSIGN_KEY is set as a repository secret,
+        # use it for offline signing (no transparency log entry).
         env:
           COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
@@ -126,6 +129,7 @@ jobs:
           for artifact in dist/pcloudd dist/pcloud-rs.sbom.cdx.json dist/pcloud-rs.sbom.spdx.json; do
             if [ -f "$artifact" ]; then
               if [ -n "${COSIGN_KEY}" ]; then
+                # Key-based fallback path.
                 echo "${COSIGN_KEY}" > /tmp/cosign.key
                 cosign sign-blob \
                   --key /tmp/cosign.key \
@@ -133,8 +137,12 @@ jobs:
                   "${artifact}"
                 rm -f /tmp/cosign.key
               else
-                echo "COSIGN_KEY secret not set — skipping signing for $artifact"
-                echo "Configure COSIGN_KEY + COSIGN_PASSWORD secrets or enable keyless signing"
+                # Keyless Sigstore OIDC path (default).
+                cosign sign-blob \
+                  --yes \
+                  --rekor-url https://rekor.sigstore.dev \
+                  --output-signature "${artifact}.sig" \
+                  "${artifact}"
               fi
             fi
           done

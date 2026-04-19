@@ -658,6 +658,7 @@ mod tests {
     #[test]
     fn trace_id_flag_equals_form() {
         let _g = trace_env_guard();
+        // SAFETY: serialized via `trace_env_guard`; no concurrent env readers.
         unsafe { std::env::remove_var("TRACEPARENT") };
         let argv = s(&[
             "pcloud-rs",
@@ -671,6 +672,7 @@ mod tests {
     #[test]
     fn trace_id_rejects_bad_hex() {
         let _g = trace_env_guard();
+        // SAFETY: serialized via `trace_env_guard`; no concurrent env readers.
         unsafe { std::env::remove_var("TRACEPARENT") };
         let argv = s(&["pcloud-rs", "--trace-id", "not-hex", "status"]);
         let err = GlobalFlags::extract(&argv).unwrap_err();
@@ -680,6 +682,7 @@ mod tests {
     #[test]
     fn trace_id_missing_value_errors() {
         let _g = trace_env_guard();
+        // SAFETY: serialized via `trace_env_guard`; no concurrent env readers.
         unsafe { std::env::remove_var("TRACEPARENT") };
         let argv = s(&["pcloud-rs", "--trace-id"]);
         let err = GlobalFlags::extract(&argv).unwrap_err();
@@ -689,6 +692,7 @@ mod tests {
     #[test]
     fn traceparent_envvar_adopted_when_flag_absent() {
         let _g = trace_env_guard();
+        // SAFETY: serialized via `trace_env_guard`; no concurrent env readers.
         unsafe {
             std::env::set_var(
                 "TRACEPARENT",
@@ -701,12 +705,14 @@ mod tests {
             f.traceparent.as_deref(),
             Some("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
         );
+        // SAFETY: cleanup; still under the guard.
         unsafe { std::env::remove_var("TRACEPARENT") };
     }
 
     #[test]
     fn trace_id_flag_beats_envvar() {
         let _g = trace_env_guard();
+        // SAFETY: serialized via `trace_env_guard`; no concurrent env readers.
         unsafe {
             std::env::set_var(
                 "TRACEPARENT",
@@ -725,22 +731,26 @@ mod tests {
             tp.starts_with("00-4bf92f3577b34da6a3ce929d0e0e4736-"),
             "flag should win, got {tp}"
         );
+        // SAFETY: cleanup; still under the guard.
         unsafe { std::env::remove_var("TRACEPARENT") };
     }
 
     #[test]
     fn traceparent_envvar_malformed_dropped() {
         let _g = trace_env_guard();
+        // SAFETY: serialized via `trace_env_guard`; no concurrent env readers.
         unsafe { std::env::set_var("TRACEPARENT", "not-a-traceparent") };
         let argv = s(&["pcloud-rs", "status"]);
         let (f, _) = GlobalFlags::extract(&argv).unwrap();
         assert!(f.traceparent.is_none());
+        // SAFETY: cleanup; still under the guard.
         unsafe { std::env::remove_var("TRACEPARENT") };
     }
 
     #[test]
     fn no_trace_context_means_none() {
         let _g = trace_env_guard();
+        // SAFETY: serialized via `trace_env_guard`; no concurrent env readers.
         unsafe { std::env::remove_var("TRACEPARENT") };
         let argv = s(&["pcloud-rs", "status"]);
         let (f, _) = GlobalFlags::extract(&argv).unwrap();

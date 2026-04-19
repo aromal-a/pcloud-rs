@@ -160,3 +160,43 @@ jobs:
             | tar -xz -C /usr/local/bin)
       - name: Build docs/book
         run: mdbook build docs/book
+
+  # cargo doc gate (pcloud-rs-8mb.39 / §11-12-sonnet L-3)
+  # Fails on any rustdoc warning so public API documentation stays accurate.
+  cargo-doc:
+    name: cargo doc (no warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install system deps (FUSE)
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: cargo doc
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --no-deps --document-private-items
+
+  # CHANGELOG release-gate (pcloud-rs-8mb.39 / §11-12-sonnet L-2)
+  # On a tag push, verify that CHANGELOG.md has been bumped from [Unreleased]
+  # to a versioned heading matching the tag. Fails the release if the changelog
+  # still only has an [Unreleased] section with no corresponding version entry.
+  changelog-gate:
+    name: CHANGELOG release gate
+    runs-on: ubuntu-latest
+    # Only relevant on tag pushes; skip for branch pushes and PRs.
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify CHANGELOG has a versioned entry for this tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          # Strip leading 'v' so v0.1.0 matches [0.1.0].
+          VERSION="${TAG#v}"
+          echo "Checking CHANGELOG.md for [${VERSION}] entry..."
+          if ! grep -qE "^\#\# \[${VERSION}\]" CHANGELOG.md; then
+            echo "ERROR: CHANGELOG.md does not contain a versioned heading for [${VERSION}]."
+            echo "       Bump the [Unreleased] section to [${VERSION}] - $(date +%Y-%m-%d) before tagging."
+            exit 1
+          fi
+          echo "OK: [${VERSION}] entry found in CHANGELOG.md."

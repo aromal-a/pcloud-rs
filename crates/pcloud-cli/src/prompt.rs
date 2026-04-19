@@ -201,6 +201,10 @@ fn masked_tty_read() -> Result<String, PromptError> {
     }
     impl Drop for Restore {
         fn drop(&mut self) {
+            // SAFETY: `self.original` is a valid `libc::termios` saved via
+            // `tcgetattr` earlier in the same function. `fd 0` (stdin) is
+            // open for the duration of the process. `tcsetattr` does not
+            // read or write any Rust memory beyond `self.original`.
             unsafe {
                 let _ = libc::tcsetattr(0, libc::TCSANOW, &self.original);
             }
