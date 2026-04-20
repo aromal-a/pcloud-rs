@@ -49,6 +49,46 @@ pub fn shared_config() -> Arc<ClientConfig> {
     TLS_CONFIG.get_or_init(build_config).clone()
 }
 
+/// Placeholder hook for FedRAMP-style dynamic revocation checking
+/// (bead `pcloud-rs-t9o`).
+///
+/// The production implementation will consume the
+/// `pcloud_config::api::TlsRevocationCheck` setting and either
+///
+/// 1. Install a [`rustls::client::danger::ServerCertVerifier`] that
+///    inspects the stapled OCSP response returned by
+///    [`rustls::ClientConnection::peer_certificates`] +
+///    [`rustls::ClientConnection::ocsp_response`] (stapled modes), or
+/// 2. Load a CRL DER file from the operator-supplied path and wire it
+///    into a verifier that enforces the CRL before signaling handshake
+///    success (`CrlFile` mode).
+///
+/// It is intentionally NOT implemented in this revision because:
+///
+/// - FedRAMP-class customers must mount their own CRL; hardcoding a
+///   URL or location would be wrong.
+/// - Stapled-strict mode will break connectivity unless the API server
+///   actually staples OCSP. That is an observation, not a contract, so
+///   enabling it silently is a foot-gun.
+/// - A fail-closed default before infra is in place would break every
+///   current production deployment.
+///
+/// Callers should treat this as a documented extension point. The
+/// knob lives at `config.api.tls_revocation_check` and is currently
+/// [`pcloud_config::api::TlsRevocationCheck::Disabled`] by default.
+///
+/// Closure criteria for `pcloud-rs-t9o`:
+/// - deployment decision on CRL sourcing (operator path vs bundled),
+/// - confirmation that target API servers either do or do not staple,
+/// - failure-mode semantics agreed with the FedRAMP package owner,
+/// - end-to-end test against a synthetic revoked certificate.
+#[doc(hidden)]
+pub fn _t9o_revocation_placeholder() {
+    // See rustdoc above. This function exists solely as a rustdoc
+    // anchor so `cargo doc` surfaces the t9o design notes from the
+    // `pcloud-proto` crate's public API browse tree. It is a no-op.
+}
+
 fn build_config() -> Arc<ClientConfig> {
     let mut root_store = RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());

@@ -297,6 +297,105 @@ jobs:
             /tmp/pcloud-live-e2e-*
           retention-days: 7
 
+  # Coverage (pcloud-rs-ujp item d).
+  #
+  # Runs `cargo llvm-cov` to produce a line-coverage report for the
+  # workspace. The job is INTENTIONALLY non-gating (continue-on-error:
+  # true) because we do not yet have a project-agreed coverage
+  # threshold. A hard gate needs infrastructure decisions that sit
+  # above a fix-agent's pay grade:
+  #
+  #   - which crates to exclude (fuzz targets, live-e2e scaffolding,
+  #     platform-gated code that CI cannot exercise);
+  #   - the baseline threshold (30%? 60%? 85%?) and who signs off on
+  #     regressions;
+  #   - whether to track the metric per-crate, per-module, or
+  #     workspace-wide;
+  #   - whether to publish reports to a service (Codecov, Coveralls)
+  #     or keep artifacts in-repo only.
+  #
+  # Until those decisions land, the job publishes an informational
+  # report as a build artifact so humans can spot-check trends. Flip
+  # `continue-on-error` to false and add `--fail-under-lines=<N>`
+  # once the policy is agreed.
+  #
+  # Scheduled only (weekly + manual dispatch) so the normal fast-path
+  # CI stays quick.
+  coverage:
+    name: Coverage (weekly / manual, advisory)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    continue-on-error: true  # Advisory; see job comment for the infra-decision list.
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - name: Install system deps (FUSE)
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: Generate coverage
+        run: |
+          cargo llvm-cov --workspace --lcov --output-path lcov.info \
+            --ignore-filename-regex '(live_e2e|fuzz|benches)' || true
+          cargo llvm-cov report --summary-only | tee coverage-summary.txt
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}
+          path: |
+            lcov.info
+            coverage-summary.txt
+          retention-days: 30
+
+  # macOS live FUSE tests (pcloud-rs-ujp item f).
+  #
+  # DEFERRED: requires a macOS runner with `fuse-t` pre-installed.
+  # GitHub-hosted macOS runners do NOT have fuse-t (and cannot install
+  # it without a kernel-adjacent step requiring sudo + a signed kext/
+  # system extension workflow that SIP rejects in ephemeral runners).
+  #
+  # Closure paths:
+  #   1. Provision a self-hosted macOS runner with fuse-t pre-baked.
+  #   2. Use macOS runners with a community fuse-t action once one
+  #      exists that is production-trustworthy.
+  #   3. Accept Tier-2 hardware-only verification and never run these
+  #      in CI (documented in README).
+  #
+  # This is an infrastructure / budget decision; no CI job is landed
+  # here on purpose. Local reproducer:
+  #
+  #   PCLOUD_LIVE_E2E=1 PCLOUD_FUSE_TEST=1 \
+  #     cargo test -p pcloud-fs --test fuse_write_path_live \
+  #     -- --ignored --test-threads=1
+  #
+  # Tracking: pcloud-rs-ujp (item f).
+
+  # Chaos / fault-injection tests (pcloud-rs-ujp item g).
+  #
+  # DEFERRED: the chaos suite (disk_full_journal, slowloris_timeout,
+  # sigkill_mid_flush) is gated on `PCLOUD_CHAOS=1`. Moving it into
+  # a weekly CI job is straightforward mechanically, but the suite
+  # currently produces load-dependent timings that make it flaky on
+  # GitHub shared runners. Enabling it before the flakiness is
+  # stabilized would bury real regressions under noise.
+  #
+  # Closure paths:
+  #   1. Stabilize each chaos test's timing budget against
+  #      ubuntu-latest's jittery scheduler.
+  #   2. Land a separate `chaos` workflow on a self-hosted runner with
+  #      a pinned CPU budget.
+  #   3. Accept that chaos stays developer-run-only and document the
+  #      invocation in OPERATIONS-RUNBOOK.md (currently done).
+  #
+  # Local reproducer:
+  #
+  #   PCLOUD_CHAOS=1 cargo test --workspace -- --ignored
+  #
+  # Tracking: pcloud-rs-ujp (item g).
+
   # IPC stress test (audit-06 wave-2, bd-pcloud-rs-ncx.75).
   #
   # `crates/pcloud-ipc/tests/stress_concurrent_clients.rs` exercises

@@ -521,6 +521,22 @@ impl Drop for SyncLoopHandle {
     }
 }
 
+/// Errors that can occur when spawning the background sync loop.
+///
+/// Introduced by pcloud-rs-0cx to replace a previous `.expect()` panic
+/// at daemon startup with a typed, propagatable error so callers can
+/// log and report a structured failure instead of crashing the whole
+/// daemon on an OS-level resource-exhaustion condition.
+#[derive(Debug, thiserror::Error)]
+pub enum SpawnSyncLoopError {
+    /// `std::thread::Builder::spawn` returned an error. On Unix this is
+    /// typically `EAGAIN` (per-user thread / pthread limit reached, low
+    /// RLIMIT_NPROC). Fatal for daemon startup — the caller should
+    /// report the wrapped `io::Error` and abort the boot sequence.
+    #[error("failed to spawn sync loop thread: {0}")]
+    ThreadSpawn(#[source] std::io::Error),
+}
+
 /// Spawn the background sync loop on a dedicated `std::thread`.
 ///
 /// Returns a [`SyncLoopHandle`] the caller uses to query status, wake
@@ -528,41 +544,45 @@ impl Drop for SyncLoopHandle {
 ///
 /// If `config.enabled` is `false`, returns a handle with a `Disabled`
 /// state and no background thread.
+///
+/// # Errors
+///
+/// Returns [`SpawnSyncLoopError::ThreadSpawn`] if the OS refuses to
+/// create the sync-loop thread (typically `EAGAIN` from
+/// `pthread_create(3)` due to a per-user thread-count rlimit). This
+/// is unrecoverable for daemon startup; the caller is expected to
+/// propagate the error and exit.
 pub fn spawn_sync_loop<R: SyncLoopRuntime>(
     mut runtime: R,
     config: SyncLoopConfig,
     shared: Arc<SyncLoopShared>,
-) -> SyncLoopHandle {
+) -> Result<SyncLoopHandle, SpawnSyncLoopError> {
     if !config.enabled {
         if let Ok(mut status) = shared.status.lock() {
             status.state = SyncLoopState::Disabled;
         }
-        return SyncLoopHandle {
+        return Ok(SyncLoopHandle {
             shared,
             thread: None,
-        };
+        });
     }
 
     let shared_clone = Arc::clone(&shared);
+    // pcloud-rs-0cx: thread spawn failure is now propagated as a typed
+    // Err rather than a panic. Callers (bootstrap, tests) can log a
+    // structured error and abort cleanly instead of unwinding through
+    // `main`.
     let thread = thread::Builder::new()
         .name("pcloud-sync-loop".to_owned())
         .spawn(move || {
             sync_loop_main(&mut runtime, config, shared_clone);
         })
-        // INVARIANT: thread spawn failure is an OS-level resource exhaustion
-        // (EAGAIN / thread-limit) that is unrecoverable for daemon startup.
-        // Propagating through Result here would require callers to handle a
-        // failure mode they cannot meaningfully recover from; a panic with a
-        // clear message is the intended behaviour.
-        // TODO(pcloud-rs-0cx): surface as daemon startup Err so
-        // callers can log and report a structured error code instead of
-        // panicking on OS-level EAGAIN.
-        .expect("failed to spawn sync loop thread");
+        .map_err(SpawnSyncLoopError::ThreadSpawn)?;
 
-    SyncLoopHandle {
+    Ok(SyncLoopHandle {
         shared,
         thread: Some(thread),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -781,7 +801,7 @@ mod tests {
         };
         let shared = Arc::new(SyncLoopShared::new(SyncLoopState::Idle));
 
-        let handle = spawn_sync_loop(runtime, config, shared);
+        let handle = spawn_sync_loop(runtime, config, shared).expect("spawn disabled");
 
         assert_eq!(
             handle.shared.current_status().state,
@@ -800,7 +820,7 @@ mod tests {
         };
         let shared = Arc::new(SyncLoopShared::new(SyncLoopState::Idle));
 
-        let handle = spawn_sync_loop(runtime, config, shared);
+        let handle = spawn_sync_loop(runtime, config, shared).expect("spawn loop");
 
         // Let it run briefly
         thread::sleep(Duration::from_millis(50));
@@ -865,7 +885,7 @@ mod tests {
         };
         let shared = Arc::new(SyncLoopShared::new(SyncLoopState::Idle));
 
-        let handle = spawn_sync_loop(runtime, config, shared);
+        let handle = spawn_sync_loop(runtime, config, shared).expect("spawn loop");
 
         // Wait for first cycle to start
         thread::sleep(Duration::from_millis(50));

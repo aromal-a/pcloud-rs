@@ -185,14 +185,28 @@ impl RealSyncLoopRuntime {
 
         let full_scan_interval = Duration::from_secs(config.sync_loop.full_scan_interval_secs);
 
-        // TODO(pcloud-rs-0cx): AuditRepository load failure silently
-        // falls back to an empty default. A `log::warn!` below surfaces the
-        // fallback to operators; a future refactor may return this as a
-        // typed Err so callers can opt into hard-fail on audit-log loss.
-        let audit = AuditRepository::load(&conn).unwrap_or_else(|err| {
-            log::warn!("sync loop: failed to restore audit log from DB, starting fresh: {err}");
-            Default::default()
-        });
+        // pcloud-rs-0cx: audit repo load failure is now explicitly
+        // matched with a documented recovery strategy instead of a
+        // silent `unwrap_or_else` fallback. The daemon MUST still boot
+        // if the on-disk audit tail is corrupt or unreadable — a
+        // startup failure here would render the daemon un-recoverable
+        // from an audit-log schema regression. The `log::error!` below
+        // surfaces the loss to operators so it is not silent.
+        //
+        // If future policy demands hard-fail on audit-log loss, change
+        // this match to `return Err(err)`; the enclosing function
+        // already returns `Result<Self, rusqlite::Error>` so the error
+        // type flows cleanly to `spawn_daemon_sync_loop`.
+        let audit = match AuditRepository::load(&conn) {
+            Ok(repo) => repo,
+            Err(err) => {
+                log::error!(
+                    "sync loop: audit log unreadable on startup; starting a fresh chain \
+                     (operator action required to verify historical integrity): {err}"
+                );
+                Default::default()
+            }
+        };
 
         let mut engine = EngineShell::new();
 
@@ -914,6 +928,24 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
 // Public bootstrap helper
 // ---------------------------------------------------------------------------
 
+/// Errors raised by [`spawn_daemon_sync_loop`].
+///
+/// pcloud-rs-0cx: prior to this typed error the thread-spawn failure
+/// path inside `spawn_sync_loop` panicked via `.expect()`. Callers now
+/// receive a propagatable error for the full boot sequence (store
+/// connection open + sync-loop thread spawn) and can exit cleanly with
+/// a structured message.
+#[derive(Debug, thiserror::Error)]
+pub enum SpawnDaemonSyncLoopError {
+    /// Opening / tuning the sync-loop's SQLite connection failed.
+    #[error("sync loop store connection failed: {0}")]
+    Store(#[from] rusqlite::Error),
+    /// The OS refused to spawn the background sync-loop thread
+    /// (typically `EAGAIN` due to a per-user thread-count rlimit).
+    #[error(transparent)]
+    Spawn(#[from] crate::sync_loop::SpawnSyncLoopError),
+}
+
 /// Construct a [`RealSyncLoopRuntime`] from the daemon's runtime state
 /// and spawn it on the background sync loop thread.
 ///
@@ -923,11 +955,18 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
 ///
 /// Called by [`crate::serve::serve_with_shutdown`] after
 /// [`crate::bootstrap_shell`] completes.
+///
+/// # Errors
+///
+/// Returns [`SpawnDaemonSyncLoopError::Store`] if the sync-loop SQLite
+/// connection cannot be opened, or
+/// [`SpawnDaemonSyncLoopError::Spawn`] if the background thread cannot
+/// be created. Both are fatal for daemon startup.
 pub fn spawn_daemon_sync_loop(
     config: &ConfigProfile,
     auth: &pcloud_auth::SessionManager,
     db_path: std::path::PathBuf,
-) -> Result<(SyncLoopHandle, SharedAuthToken), rusqlite::Error> {
+) -> Result<(SyncLoopHandle, SharedAuthToken), SpawnDaemonSyncLoopError> {
     let token = shared_auth_token();
 
     // Seed the shared auth token with any existing auth state.
@@ -943,7 +982,15 @@ pub fn spawn_daemon_sync_loop(
     })?;
 
     let shared = Arc::new(SyncLoopShared::new(SyncLoopState::Idle));
-    let handle = crate::sync_loop::spawn_sync_loop(runtime, config.sync_loop.clone(), shared);
+    // pcloud-rs-0cx: spawn_sync_loop now returns a typed Err on thread
+    // creation failure instead of panicking via `.expect()`. Surface it
+    // through SpawnDaemonSyncLoopError so daemon bootstrap can log and
+    // exit cleanly.
+    let handle = crate::sync_loop::spawn_sync_loop(runtime, config.sync_loop.clone(), shared)
+        .map_err(|e| {
+            log::error!("sync loop: failed to spawn background thread: {e}");
+            e
+        })?;
 
     Ok((handle, token))
 }

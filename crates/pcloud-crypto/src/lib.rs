@@ -128,6 +128,12 @@ pub mod pclsync_filename;
 #[cfg(feature = "pclsync-v2")]
 pub mod pclsync_compat_profile;
 
+/// RSA-4096-OAEP wrap of a folder/file `SymKeyVer1` for crypto
+/// share-invitation (C-interop path). Tracked under
+/// `pcloud-rs-ncx.89`. See module docs for the C reference flow.
+#[cfg(feature = "pclsync-v2")]
+pub mod share_rsa;
+
 /// Lifecycle state machine (`NotSetup` / `Locked` / `Unlocking` / `Unlocked`).
 pub mod state;
 

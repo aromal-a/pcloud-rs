@@ -369,18 +369,73 @@ pub enum Command {
     /// revision-diff follow-up. Handled entirely CLI-side; never reaches
     /// the daemon. Always exits `Unavailable` for now.
     ///
+    /// # Why this is a stub
+    ///
+    /// Not exposed; requires pCloud upstream API surface for file
+    /// revisions. The pCloud HTTP API does not currently publish a
+    /// revision-diff endpoint to third-party clients — only the
+    /// official pCloud apps can diff two revisions of a file, and no
+    /// `listrevisions` / `getfilerevision` style method is available
+    /// on the public API index.
+    ///
+    /// # Rehydration acceptance criteria (pcloud-rs-07o)
+    ///
+    /// Re-enable this subcommand when upstream publishes:
+    ///
+    /// - `listrevisions` (or equivalent) returning the revision chain
+    ///   for a given `fileid`,
+    /// - a `getfilerevision` / `diffrevisions` method capable of
+    ///   fetching or diffing a historical revision body.
+    ///
+    /// At that point:
+    /// 1. drop the `#[doc(hidden)]` attribute below,
+    /// 2. remove the `.hide(true)` call on `diff` in
+    ///    `crates/pcloud-cli/src/completion.rs`,
+    /// 3. wire a real backend handler through a `Request::FileDiff`
+    ///    IPC variant (currently routed to `Request::Plain` as a
+    ///    sentinel — see the `to_request` impl below),
+    /// 4. add live-e2e coverage under
+    ///    `crates/pcloud-live-e2e/tests/`.
+    ///
     /// ncx.65: hidden from rustdoc and from `completion.rs` so operators
     /// do not discover a command whose only behaviour is `Unavailable`.
-    /// Follow-up tracked as `pcloud-rs-07o`.
+    /// Follow-up tracked as `pcloud-rs-07o` (tracking-upstream).
     #[doc(hidden)]
     FileDiff,
     /// `pcloudc restore <PATH> <REV>` — placeholder stub for the
     /// revision-restore follow-up. Handled entirely CLI-side; never
     /// reaches the daemon. Always exits `Unavailable` for now.
     ///
+    /// # Why this is a stub
+    ///
+    /// Not exposed; requires pCloud upstream API surface for file
+    /// revisions. A revision-restore flow needs both a way to
+    /// enumerate historical revisions and a way to promote a past
+    /// revision to the current version. Neither is currently exposed
+    /// on the public pCloud API.
+    ///
+    /// # Rehydration acceptance criteria (pcloud-rs-07o)
+    ///
+    /// Re-enable this subcommand when upstream publishes:
+    ///
+    /// - `listrevisions` (or equivalent) so the CLI can validate the
+    ///   `<REV>` argument before the restore call,
+    /// - a `revertfile` / `restorefilerevision` method that promotes
+    ///   a given historical revision to the current file body.
+    ///
+    /// At that point:
+    /// 1. drop the `#[doc(hidden)]` attribute below,
+    /// 2. remove the `.hide(true)` call on `restore` in
+    ///    `crates/pcloud-cli/src/completion.rs`,
+    /// 3. wire a real backend handler through a `Request::FileRestore`
+    ///    IPC variant (currently routed to `Request::Plain` as a
+    ///    sentinel — see the `to_request` impl below),
+    /// 4. add live-e2e coverage under
+    ///    `crates/pcloud-live-e2e/tests/`.
+    ///
     /// ncx.65: hidden from rustdoc and from `completion.rs`. See
     /// [`Command::FileDiff`] for rationale. Follow-up tracked as
-    /// `pcloud-rs-07o`.
+    /// `pcloud-rs-07o` (tracking-upstream).
     #[doc(hidden)]
     FileRestore,
     /// `pcloudc verify <PATH> [--recursive] [--fix] [--yes]` — walk a

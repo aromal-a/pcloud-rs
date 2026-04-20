@@ -699,11 +699,27 @@ impl IpcServer {
         let rc = unsafe { launch_activate_socket(name.as_ptr(), &mut fds, &mut count) };
 
         if rc != 0 {
+            // pcloud-rs-0cx: distinguish "not running under launchd"
+            // (normal) from an unexpected errno (operator-visible).
+            // Previously all non-zero rcs silently returned `Ok(None)`
+            // and the caller fell back to `bind()`, masking real
+            // launchd integration failures (e.g. misconfigured plist,
+            // EPERM). The "normal" errnos still return `Ok(None)` so
+            // non-launchd-supervised runs continue to fall through to
+            // regular bind; any other errno is surfaced as `Err` so
+            // the daemon startup path can log + exit with a structured
+            // code instead of silently degrading.
+            //
             // ENOENT (2)  — no such socket in the launchd plist: normal.
             // ESRCH (3)   — not running under launchd: normal.
-            // Any other errno is unexpected but still non-fatal: fall through
-            // to the regular bind path.
-            return Ok(None);
+            match rc {
+                libc::ENOENT | libc::ESRCH => return Ok(None),
+                other => {
+                    return Err(IpcTransportError::Io(std::io::Error::from_raw_os_error(
+                        other,
+                    )));
+                }
+            }
         }
 
         if count == 0 || fds.is_null() {

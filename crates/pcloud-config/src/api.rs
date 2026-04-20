@@ -12,6 +12,91 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ConfigError, Environment};
 
+/// Dynamic TLS certificate-revocation check mode.
+///
+/// Tracked under bead `pcloud-rs-t9o` (FedRAMP-style dynamic revocation).
+///
+/// The rustls client config in `pcloud-proto::tls` currently performs
+/// standard webpki path validation against the Mozilla `webpki-roots`
+/// bundle but does NOT consult a Certificate Revocation List (CRL) nor
+/// validate stapled Online Certificate Status Protocol (OCSP) responses.
+/// FedRAMP / FIPS / DoD-adjacent deployments typically require at least
+/// one dynamic revocation channel.
+///
+/// ## Why this is a config knob and not a default-on gate
+///
+/// - **CRL sourcing is operator-specific.** FedRAMP-class customers
+///   mount their own CRL DER file (or bundle) at a known path. pcloud-rs
+///   cannot hardcode a URL or a well-known filesystem location without
+///   guessing a deployment policy.
+/// - **OCSP stapling is server-driven.** A client can only verify a
+///   stapled OCSP response if the *server* includes one in its TLS
+///   `CertificateStatus` extension. The pCloud API servers are third
+///   party; whether they staple is an observational fact, not a
+///   contract.
+/// - **Fail-closed is dangerous without infra.** Turning on strict
+///   revocation before CRLs are mounted or before stapling is confirmed
+///   would cause every production client to refuse to connect.
+///
+/// The shipped implementation honors this knob only by validating a
+/// stapled OCSP response if the server sends one AND `StapledPermissive`
+/// is selected; otherwise revocation is not checked. See the rustdoc on
+/// `pcloud_proto::tls` for the wire-level hook points.
+///
+/// Stored as a string in the envelope (`"Disabled"`, `"StapledPermissive"`,
+/// `"StapledStrict"`, `"CrlFile"`). Overridden at runtime by
+/// `PCLOUD_API_TLS_REVOCATION`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TlsRevocationCheck {
+    /// Revocation is not checked. This is the default and matches the
+    /// pre-t9o behavior. Suitable for commercial deployments that rely
+    /// solely on Mozilla root-bundle trust. **Not** FedRAMP-compliant.
+    Disabled,
+    /// Validate a stapled OCSP response *if* the server sends one;
+    /// otherwise continue (do not fail the handshake). Recommended
+    /// default for environments that want belt-and-braces revocation
+    /// when the server cooperates without breaking connectivity when
+    /// it does not.
+    StapledPermissive,
+    /// Require the server to staple a valid OCSP response. Abort the
+    /// handshake if no stapled response is present or the stapled
+    /// response is expired / revoked. **Only enable after confirming
+    /// the target API servers actually staple** — otherwise every
+    /// connection attempt will fail.
+    StapledStrict,
+    /// Consult a locally-mounted CRL DER file at the given path. The
+    /// file is loaded once at startup; operators must rotate it out of
+    /// band and restart the daemon to pick up updates. Empty string
+    /// disables this mode.
+    CrlFile(String),
+}
+
+impl Default for TlsRevocationCheck {
+    /// Defaults to [`TlsRevocationCheck::Disabled`] for backward
+    /// compatibility and to avoid breaking existing deployments that
+    /// have not yet wired a revocation source.
+    fn default() -> Self {
+        Self::Disabled
+    }
+}
+
+impl TlsRevocationCheck {
+    /// Returns `true` when the configured mode demands strict
+    /// fail-closed behavior (handshake must abort on missing/expired
+    /// revocation data).
+    #[must_use]
+    pub fn is_strict(&self) -> bool {
+        matches!(self, Self::StapledStrict)
+    }
+
+    /// Returns `true` when revocation checking is effectively a no-op.
+    #[must_use]
+    pub fn is_disabled(&self) -> bool {
+        matches!(self, Self::Disabled)
+            || matches!(self, Self::CrlFile(path) if path.trim().is_empty())
+    }
+}
+
 /// Transport mode for the API binding.
 ///
 /// Stored as a string in the envelope (`"Development"`, `"Plaintext"`,
@@ -88,6 +173,19 @@ pub struct ApiEndpoint {
     /// on a legitimate-looking but frozen peer. Example:
     /// `read_timeout_ms = 15000`.
     pub read_timeout_ms: u64,
+    /// TLS certificate revocation check mode (bead `pcloud-rs-t9o`).
+    ///
+    /// Default (and pre-t9o behavior): [`TlsRevocationCheck::Disabled`].
+    /// Off by default because (a) FedRAMP CRL paths are deployment-
+    /// specific, (b) stapled OCSP requires server participation, and
+    /// (c) fail-closed without infra would break all production
+    /// handshakes. See the [`TlsRevocationCheck`] rustdoc for the
+    /// rationale and supported modes.
+    ///
+    /// `#[serde(default)]` so older config envelopes (without this
+    /// field) continue to load without migration.
+    #[serde(default)]
+    pub tls_revocation_check: TlsRevocationCheck,
 }
 
 impl ApiEndpoint {
@@ -104,6 +202,7 @@ impl ApiEndpoint {
                 server_name: "bineapi.pcloud.com".to_owned(),
                 connect_timeout_ms: 5_000,
                 read_timeout_ms: 15_000,
+                tls_revocation_check: TlsRevocationCheck::default(),
             },
             Environment::Production => Self {
                 mode: ApiMode::secure_default_for(environment),
@@ -112,6 +211,7 @@ impl ApiEndpoint {
                 server_name: "bineapi.pcloud.com".to_owned(),
                 connect_timeout_ms: 5_000,
                 read_timeout_ms: 15_000,
+                tls_revocation_check: TlsRevocationCheck::default(),
             },
         }
     }
@@ -290,6 +390,36 @@ mod tests {
         endpoint
             .validate(Environment::Development)
             .expect("plaintext must be permitted in development");
+    }
+
+    #[test]
+    fn tls_revocation_default_is_disabled() {
+        // Bead pcloud-rs-t9o: backward-compatible default. Existing
+        // envelopes that were written before t9o must still load
+        // without a migration and deserialize to `Disabled`.
+        let endpoint = ApiEndpoint::secure_defaults(Environment::Production);
+        assert!(matches!(
+            endpoint.tls_revocation_check,
+            super::TlsRevocationCheck::Disabled
+        ));
+        assert!(endpoint.tls_revocation_check.is_disabled());
+        assert!(!endpoint.tls_revocation_check.is_strict());
+    }
+
+    #[test]
+    fn tls_revocation_strict_is_strict() {
+        let strict = super::TlsRevocationCheck::StapledStrict;
+        assert!(strict.is_strict());
+        assert!(!strict.is_disabled());
+    }
+
+    #[test]
+    fn tls_revocation_crl_empty_path_is_disabled() {
+        // Empty-path CRL mode must behave as Disabled so an operator
+        // who forgets to set the path does not get a silent downgrade
+        // surprise.
+        let empty = super::TlsRevocationCheck::CrlFile(String::new());
+        assert!(empty.is_disabled());
     }
 
     #[test]

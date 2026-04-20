@@ -328,6 +328,17 @@ impl PclsyncCompatState {
         }
     }
 
+    /// Test-only constructor used by [`crate::share_rsa`] unit tests
+    /// to stand up a minimal `PclsyncCompatState` without going
+    /// through the full `unlock_profile` flow (which would require a
+    /// matching password, priv_key_ver1 blob, and pub fingerprint).
+    /// Gated on `#[cfg(test)]` at the crate level so it never ships.
+    #[cfg(test)]
+    #[doc(hidden)]
+    pub fn for_test(priv_key: rsa::RsaPrivateKey) -> Self {
+        Self::new(priv_key)
+    }
+
     /// Borrow the live RSA private key (for `crypto_getfolderkey` unwrap).
     #[must_use]
     pub fn priv_key(&self) -> &rsa::RsaPrivateKey {

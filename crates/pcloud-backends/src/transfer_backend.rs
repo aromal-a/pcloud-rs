@@ -1343,6 +1343,7 @@ mod tests {
             server_name: address.ip().to_string(),
             connect_timeout_ms: 2_000,
             read_timeout_ms: 2_000,
+            tls_revocation_check: Default::default(),
         };
 
         let runtime = TransferRuntime::from_config(&config);
@@ -1392,6 +1393,7 @@ mod tests {
             server_name: address.ip().to_string(),
             connect_timeout_ms: 500,
             read_timeout_ms: 2_000,
+            tls_revocation_check: Default::default(),
         };
 
         let runtime = TransferRuntime::from_config(&config);
@@ -1460,6 +1462,7 @@ mod tests {
             server_name: address.ip().to_string(),
             connect_timeout_ms: 2_000,
             read_timeout_ms: 2_000,
+            tls_revocation_check: Default::default(),
         };
 
         let runtime = TransferRuntime::from_config(&config);
@@ -1792,6 +1795,7 @@ mod tests {
             server_name: address.ip().to_string(),
             connect_timeout_ms: 2_000,
             read_timeout_ms: 2_000,
+            tls_revocation_check: Default::default(),
         };
         config
     }
@@ -2439,6 +2443,7 @@ mod verify_tests {
             server_name: address.ip().to_string(),
             connect_timeout_ms: 2_000,
             read_timeout_ms: 10_000,
+            tls_revocation_check: Default::default(),
         };
 
         let runtime = TransferRuntime::from_config(&config);

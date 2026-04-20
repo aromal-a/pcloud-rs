@@ -151,7 +151,7 @@ fn run(args: &[String]) -> Result<(), String> {
                     &runtime.auth,
                     store_path,
                 )
-                .map_err(|err| format!("sync loop store connection failed: {err}"))?;
+                .map_err(|err| format!("sync loop startup failed: {err}"))?;
             runtime.sync_loop_shared = Some(sync_loop_handle.shared.clone());
             if runtime.config.sync_loop.enabled {
                 println!(

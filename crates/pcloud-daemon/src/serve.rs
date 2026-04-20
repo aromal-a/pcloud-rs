@@ -459,7 +459,7 @@ pub fn serve_with_shutdown(shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
         &runtime.auth,
         store_path,
     )
-    .map_err(|err| anyhow::anyhow!("sync loop store connection failed: {err}"))?;
+    .map_err(|err| anyhow::anyhow!("sync loop startup failed: {err}"))?;
     runtime.sync_loop_shared = Some(sync_loop_handle.shared.clone());
 
     // Health HTTP server (GET /livez, GET /readyz). Disabled by default
