@@ -246,6 +246,10 @@ impl ShmSegment {
                 source: io::Error::last_os_error(),
             });
         }
+        // SAFETY: the preceding equality check rejects the sentinel
+        // `(void*)-1` that `shmat` uses for failure. Any other return
+        // value from `shmat` is a live, non-null mapping by kernel
+        // contract, so `NonNull::new` cannot return None here.
         let mapping = NonNull::new(addr.cast::<PsyncShm>()).expect("shmat returned non-null");
 
         Ok(Self {

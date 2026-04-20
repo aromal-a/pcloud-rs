@@ -13,7 +13,10 @@
 use std::io;
 
 use pcloud_config::{ConfigProfile, api::ApiMode};
-use pcloud_crypto::{CryptoShell, TemppassError, derive_temppass_wire};
+use pcloud_crypto::{
+    CryptoShell, TemppassError, derive_temppass_wire,
+    share_rsa::{self, ShareRsaError, ShareTarget},
+};
 use pcloud_model::shares::{
     ContactEntry, ShareEntry, ShareMutationResult, SharePermissions, ShareRequestEntry,
 };
@@ -191,6 +194,14 @@ pub enum CryptoShareError {
     #[error(transparent)]
     /// `Api` variant.
     Api(#[from] SharesApiError<SharesBackendError>),
+    /// RSA-4096-OAEP wrap of the sharer's folder/file sym-key against
+    /// the recipient's pubkey failed. Collapses the
+    /// [`ShareRsaError`] taxonomy (malformed pubkey / locked / missing
+    /// sym-key / OAEP failure) into a single actionable variant to
+    /// keep the wire path oracle-free. The inner cause is preserved
+    /// for log/audit tracing (never surfaced to end users).
+    #[error("RSA share-invitation wrap failed: {0}")]
+    RsaWrap(#[from] ShareRsaError),
 }
 
 impl From<TemppassError> for CryptoShareError {
@@ -522,6 +533,107 @@ impl SharesRuntime {
             hint,
             wire.private_key_b64,
             wire.signature_b64,
+        )?)
+    }
+
+    /// RSA-wrapped `psync_crypto_share_folder` (C-interop path, pclsync-v2).
+    ///
+    /// Pclsync-v2 equivalent of [`Self::crypto_share_folder`] that, instead
+    /// of the Rust-native temppass KEK-rewrap, attaches an RSA-4096-OAEP
+    /// ciphertext of the sharer's folder `sym_key_ver1` under the
+    /// recipient's pubkey, matching the C client's share-invite wire
+    /// shape exactly. See
+    /// [`pcloud_crypto::share_rsa::wrap_share_invitation_b64`] for the
+    /// crypto-layer primitive and `C_FEATURE_PARITY_MATRIX.csv` row 124.
+    ///
+    /// The caller is responsible for fetching the recipient's
+    /// `pub_key_ver1` blob (`CryptoApi::get_pub_key`) and populating the
+    /// folder-key cache on `crypto.pclsync_compat_state` (via
+    /// `crypto_getfolderkey` + RSA-unwrap) before this call. Layering
+    /// is intentional — `shares_backend` never issues crypto RPCs on
+    /// behalf of a caller, mirroring the split between this backend
+    /// and the daemon orchestrator.
+    ///
+    /// # Errors
+    /// - [`CryptoShareError::Locked`] when `crypto` is not started or
+    ///   no `PclsyncCompatState` is resident.
+    /// - [`CryptoShareError::RsaWrap`] when the pubkey blob is
+    ///   malformed or the OAEP wrap fails.
+    /// - [`CryptoShareError::Api`] when the wire request fails.
+    #[allow(clippy::too_many_arguments)]
+    pub fn crypto_share_folder_rsa(
+        &self,
+        auth_token: SecretString,
+        crypto: &CryptoShell,
+        folder_id: u64,
+        recipient_pub_blob: &[u8],
+        name: String,
+        mail: String,
+        message: String,
+        permissions: SharePermissions,
+        hint: Option<String>,
+    ) -> Result<ShareMutationResult, CryptoShareError> {
+        let state = crypto
+            .pclsync_compat_state
+            .as_ref()
+            .ok_or(CryptoShareError::Locked)?;
+        let wrapped = share_rsa::wrap_share_invitation_b64(
+            state,
+            ShareTarget::Folder(folder_id),
+            recipient_pub_blob,
+        )?;
+        Ok(self.api.crypto_share_folder_rsa(
+            auth_token.expose_secret(),
+            folder_id,
+            name,
+            mail,
+            message,
+            permissions,
+            hint,
+            wrapped,
+        )?)
+    }
+
+    /// RSA-wrapped `psync_crypto_account_teamshare` (C-interop path,
+    /// pclsync-v2). Structural sibling of
+    /// [`Self::crypto_share_folder_rsa`] for team shares; attaches the
+    /// wrapped sym-key under the `teamshare_key` parameter and targets
+    /// the team via its shared pubkey. See matrix row 142.
+    ///
+    /// The caller fetches the team's pubkey blob via
+    /// `CryptoApi::get_pub_key` with
+    /// [`pcloud_proto::methods::crypto::CryptoPubKeyRecipient::TeamId`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn crypto_account_team_share_rsa(
+        &self,
+        auth_token: SecretString,
+        crypto: &CryptoShell,
+        folder_id: u64,
+        team_pub_blob: &[u8],
+        name: String,
+        team_id: u64,
+        message: String,
+        permissions: SharePermissions,
+        hint: Option<String>,
+    ) -> Result<ShareMutationResult, CryptoShareError> {
+        let state = crypto
+            .pclsync_compat_state
+            .as_ref()
+            .ok_or(CryptoShareError::Locked)?;
+        let wrapped = share_rsa::wrap_share_invitation_b64(
+            state,
+            ShareTarget::Folder(folder_id),
+            team_pub_blob,
+        )?;
+        Ok(self.api.crypto_account_team_share_rsa(
+            auth_token.expose_secret(),
+            folder_id,
+            name,
+            team_id,
+            message,
+            permissions,
+            hint,
+            wrapped,
         )?)
     }
 
@@ -882,6 +994,50 @@ mod tests {
                 9,
                 "m".into(),
                 SharePermissions::from_bits(3),
+                None,
+            )
+            .unwrap_err();
+        assert!(matches!(err, CryptoShareError::Locked));
+    }
+
+    #[test]
+    fn crypto_share_folder_rsa_rejects_locked_crypto() {
+        // A default CryptoShell has no pclsync_compat_state resident.
+        // The RSA variant must reject with Locked before attempting any
+        // wire I/O or pubkey parsing.
+        let runtime = dev_runtime();
+        let shell = pcloud_crypto::CryptoShell::default();
+        // Any pubkey blob — it must never be parsed on this path.
+        let err = runtime
+            .crypto_share_folder_rsa(
+                token(),
+                &shell,
+                7,
+                b"ignored-because-locked-first",
+                "name".into(),
+                "a@b.com".into(),
+                "hi".into(),
+                SharePermissions::from_bits(3),
+                None,
+            )
+            .unwrap_err();
+        assert!(matches!(err, CryptoShareError::Locked));
+    }
+
+    #[test]
+    fn crypto_account_team_share_rsa_rejects_locked_crypto() {
+        let runtime = dev_runtime();
+        let shell = pcloud_crypto::CryptoShell::default();
+        let err = runtime
+            .crypto_account_team_share_rsa(
+                token(),
+                &shell,
+                7,
+                b"ignored-because-locked-first",
+                "team-crypto".into(),
+                9,
+                "msg".into(),
+                SharePermissions::from_bits(27),
                 None,
             )
             .unwrap_err();

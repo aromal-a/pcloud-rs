@@ -1,5 +1,13 @@
 //! Shared mock primitives for backend integration testing.
 //!
+//! # Mutex poisoning policy
+//!
+//! SAFETY: All `.expect("… mutex poisoned")` call sites in this module
+//! protect private mock-recorder fields that are only touched by the
+//! test harness. A poison here means another test thread panicked
+//! while holding the lock — which is exactly what we want to surface
+//! deterministically to the test runner rather than swallow.
+//!
 //! This module provides three reusable recorders promoted from the
 //! `pcloud-fs` mock-backend pattern (R18 wave-01 audit ask) so that each
 //! of the ten `pcloud-backends` subsystems can expose a `mock` submodule

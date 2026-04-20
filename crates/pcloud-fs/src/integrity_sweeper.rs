@@ -389,6 +389,10 @@ impl IntegritySweeper {
         if !self
             .rate_limiter
             .try_acquire(1)
+            // SAFETY: request size 1 is unconditionally <= the token-bucket
+            // capacity (construction enforces capacity >= 1). The only
+            // failure mode of `try_acquire`/`acquire` is an over-large
+            // request, which cannot occur here.
             .expect("rate-limit request size 1 ≤ capacity")
         {
             throttled = true;
@@ -406,7 +410,11 @@ impl IntegritySweeper {
             let wait = self
                 .rate_limiter
                 .acquire(1)
-                .expect("rate-limit request size 1 ≤ capacity");
+                // SAFETY: request size 1 is unconditionally <= the token-bucket
+            // capacity (construction enforces capacity >= 1). The only
+            // failure mode of `try_acquire`/`acquire` is an over-large
+            // request, which cannot occur here.
+            .expect("rate-limit request size 1 ≤ capacity");
             let bounded = wait.min(self.config.max_throttle_wait);
             if bounded > Duration::ZERO {
                 (self.sleep)(bounded);

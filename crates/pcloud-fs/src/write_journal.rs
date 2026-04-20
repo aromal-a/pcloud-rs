@@ -290,6 +290,10 @@ pub fn replay_path(path: impl AsRef<Path>) -> Result<Vec<JournalRecord>, WriteJo
             }
             return Err(err.into());
         }
+        // SAFETY: `header` is `[u8; 12]`; the three slices `[..4]`, `[4..8]`,
+        // `[8..12]` are each 4 bytes by construction, so `try_into::<[u8;4]>`
+        // is infallible. A panic here would mean a logic error in this
+        // decode loop, not runtime data corruption.
         let magic = u32::from_le_bytes(header[..4].try_into().unwrap());
         if magic != MAGIC {
             // Stop at the first foreign/garbage frame.

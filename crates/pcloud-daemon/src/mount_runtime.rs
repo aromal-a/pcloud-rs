@@ -83,6 +83,7 @@ use pcloud_fs::mount_orphan::ProcMountinfoReader;
 use pcloud_fs::platform::macos::MacosMountinfoReader;
 use pcloud_fs::mount_service::{MountError, MountHandle, MountOptions, MountService};
 use pcloud_ipc::{Response, ResponseStatus};
+use pcloud_observability::LockExt;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use pcloud_fs::backend::{ProtoFileBackend, ProtoFolderBackend, ProtoUploadBackend};
@@ -972,7 +973,8 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
         // never poisoned by a panic inside this function (no panics between
         // Mutex::new and this lock call). Poison here would indicate a bug
         // elsewhere in daemon startup and is not recoverable.
-        *writer_slot_for_factory.lock().expect("writer slot") = Some(Arc::clone(&writer));
+        *writer_slot_for_factory
+            .lock_or_poisoned("mount_runtime::writer_slot_for_factory") = Some(Arc::clone(&writer));
 
         // Wire the write-path into the adapter too so adapter-level FUSE
         // ops (setattr/create/etc. that flow through `FuseAdapter`) reach
@@ -1019,7 +1021,7 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
         // INVARIANT: `writer_slot` is only ever locked from this closure
         // (single drain hook) and from the factory above; neither path
         // panics while holding the lock, so it cannot be poisoned.
-        let w = writer_slot.lock().expect("writer slot");
+        let w = writer_slot.lock_or_poisoned("mount_runtime::writer_slot::drain_hook");
         let Some(writer) = w.as_ref() else {
             return "writer drain: no active writer".to_owned();
         };

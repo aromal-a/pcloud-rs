@@ -16,6 +16,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 sha2 = { workspace = true }
 zeroize = { workspace = true }
+pcloud-observability = { path = "../pcloud-observability" }
 pcloud-secret = { path = "../pcloud-secret" }
 
 # mTLS fleet agent implementation.

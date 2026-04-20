@@ -211,6 +211,11 @@ impl RpcMessage {
         if buf.len() < HEADER_SIZE {
             return Err(CodecError::ShortHeader(buf.len()));
         }
+        // SAFETY: the preceding length check guarantees `buf.len() >= HEADER_SIZE`
+        // (= 16 bytes), so `buf[0..4]` and `buf[8..16]` are in-bounds slices of
+        // exactly 4 and 8 bytes respectively. `try_into::<[u8;N]>` on a
+        // same-length slice is infallible — a panic here would mean the
+        // bounds check above was elided, a compiler/bug case.
         let type_code = u32::from_ne_bytes(buf[0..4].try_into().expect("4 bytes"));
         let length = u64::from_ne_bytes(buf[8..16].try_into().expect("8 bytes"));
         if length < HEADER_SIZE as u64 {

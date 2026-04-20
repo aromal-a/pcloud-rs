@@ -173,6 +173,47 @@ test fails, fix the code, do not add `#[ignore]` to hide it.
    document the hardware / credential requirement.
 4. Never use `#[ignore]` to hide a failing test. Fix the code.
 
+### Mutex poisoning policy
+
+Production code MUST acquire `std::sync::Mutex` / `std::sync::RwLock`
+through the project-wide helper instead of `.lock().unwrap()` (or
+`.lock().expect("…")`):
+
+```rust
+use pcloud_observability::LockExt; // or RwLockExt for RwLock
+
+let mut guard = some_mutex.lock_or_poisoned("module::function");
+```
+
+`LockExt::lock_or_poisoned(context)` (defined in
+[`crates/pcloud-observability/src/lock_ext.rs`](./crates/pcloud-observability/src/lock_ext.rs))
+emits a structured stderr error with the supplied `&'static str`
+context **before** panicking on poison, so operators can correlate the
+crash with the originating lock site. A bare `.lock().unwrap()`
+obscures that context and hides the fact that a previous thread panicked
+while holding the lock.
+
+Rules:
+
+- Production code: always `lock_or_poisoned("<crate>::<mod>::<fn>")`.
+  Use a stable `&'static str` that will survive refactors and is cheap
+  to search for in log aggregators.
+- `RwLock`: use `RwLockExt::read_or_poisoned` /
+  `RwLockExt::write_or_poisoned`.
+- Test code (`#[cfg(test)]` modules, the `tests/` integration dir, mock
+  harnesses, property-test fixtures): `.lock().unwrap()` is acceptable.
+  A poisoned lock inside a test already indicates a prior harness
+  panic; surfacing it through `unwrap` is sufficient.
+- `parking_lot::Mutex` (non-poisoning): unaffected by this rule — it
+  does not return a `Result` from `lock()`.
+- `lock_or_poisoned` deliberately panics after logging. Do not extend
+  the helper to silently `into_inner()` — poisoned state almost always
+  means corrupted invariants. If a specific site genuinely wants to
+  recover, call the `std` API directly and justify the choice in a
+  comment near the call.
+
+CI enforcement of this rule is tracked under `bd-pcloud-rs-f0r`.
+
 ## Commit Style
 
 - Write commits in the imperative mood: *"Add readdir handler"*,

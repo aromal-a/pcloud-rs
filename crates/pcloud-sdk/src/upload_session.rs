@@ -1,5 +1,13 @@
 //! High-level `UploadSession` handle for the SDK.
 //!
+//! # Mutex poisoning policy
+//!
+//! SAFETY: The `chunked` and `outcome` mutexes are private fields of
+//! `SharedInner`, only held briefly inside this module, and the critical
+//! sections are panic-free data-structure work. A poisoned lock here
+//! therefore indicates a prior panic in this module — a real bug that
+//! we surface via `.expect()` rather than silently fabricate a Result.
+//!
 //! The session is a real chunked-upload state machine backed by
 //! `upload_create` / `upload_write` / `upload_save` on the daemon's
 //! `TransferRuntime`. Chunk progress is persisted through the P1.2
@@ -44,6 +52,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use pcloud_daemon::upload_journal::{JournalEntry, UploadJournal};
+use pcloud_observability::LockExt;
 use pcloud_secret::secret_string::SecretString;
 use thiserror::Error;
 use tokio::sync::watch;
@@ -372,8 +381,7 @@ impl UploadSession {
         if let Some(state) = self
             .inner
             .chunked
-            .lock()
-            .expect("chunked mutex poisoned")
+            .lock_or_poisoned("sdk::upload_session::chunked")
             .as_mut()
             && let Some(journal) = state.journal.as_ref()
             && let Ok(report) = journal.replay()
@@ -410,8 +418,7 @@ impl UploadSession {
         if let Some(state) = self
             .inner
             .chunked
-            .lock()
-            .expect("chunked mutex poisoned")
+            .lock_or_poisoned("sdk::upload_session::chunked")
             .as_mut()
         {
             state.canceled = true;
@@ -419,8 +426,7 @@ impl UploadSession {
         let mut guard = self
             .inner
             .outcome
-            .lock()
-            .expect("upload session outcome mutex poisoned");
+            .lock_or_poisoned("sdk::upload_session::outcome");
         *guard = Some(Err(UploadError::Canceled));
     }
 
@@ -434,8 +440,7 @@ impl UploadSession {
         let mut guard = self
             .inner
             .outcome
-            .lock()
-            .expect("upload session outcome mutex poisoned");
+            .lock_or_poisoned("sdk::upload_session::outcome");
         guard.take().unwrap_or(Err(UploadError::NotStarted))
     }
 
@@ -460,8 +465,7 @@ impl UploadSession {
         *session
             .inner
             .chunked
-            .lock()
-            .expect("chunked mutex poisoned") = Some(ChunkedState {
+            .lock_or_poisoned("sdk::upload_session::chunked") = Some(ChunkedState {
             handle,
             offset: 0,
             total,
@@ -495,7 +499,10 @@ impl UploadSession {
             ));
         }
         let (handle, offset) = {
-            let guard = self.inner.chunked.lock().expect("chunked mutex poisoned");
+            let guard = self
+                .inner
+                .chunked
+                .lock_or_poisoned("sdk::upload_session::chunked");
             let state = guard
                 .as_ref()
                 .ok_or(UploadError::InvalidState("no chunked state"))?;
@@ -508,7 +515,10 @@ impl UploadSession {
 
         // Update in-memory state first, then append journal entry.
         let (chunks_done, journal_ref) = {
-            let mut guard = self.inner.chunked.lock().expect("chunked mutex poisoned");
+            let mut guard = self
+                .inner
+                .chunked
+                .lock_or_poisoned("sdk::upload_session::chunked");
             let state = guard
                 .as_mut()
                 .ok_or(UploadError::InvalidState("no chunked state"))?;
@@ -557,7 +567,10 @@ impl UploadSession {
             ));
         }
         let (handle, offset, total, journal_ref, canceled) = {
-            let guard = self.inner.chunked.lock().expect("chunked mutex poisoned");
+            let guard = self
+                .inner
+                .chunked
+                .lock_or_poisoned("sdk::upload_session::chunked");
             let state = guard
                 .as_ref()
                 .ok_or(UploadError::InvalidState("no chunked state"))?;
@@ -587,8 +600,7 @@ impl UploadSession {
                 let mut guard = self
                     .inner
                     .outcome
-                    .lock()
-                    .expect("upload session outcome mutex poisoned");
+                    .lock_or_poisoned("sdk::upload_session::outcome");
                 // `err` is captured once; can't clone a dyn error, so we
                 // re-encode via a string-carrying helper variant.
                 let reason = err.to_string();
@@ -615,8 +627,7 @@ impl UploadSession {
             *self
                 .inner
                 .outcome
-                .lock()
-                .expect("upload session outcome mutex poisoned") = Some(Err(hm_twin));
+                .lock_or_poisoned("sdk::upload_session::outcome") = Some(Err(hm_twin));
             return Err(hm);
         }
 
@@ -637,8 +648,7 @@ impl UploadSession {
         *self
             .inner
             .outcome
-            .lock()
-            .expect("upload session outcome mutex poisoned") = Some(Ok(meta.clone()));
+            .lock_or_poisoned("sdk::upload_session::outcome") = Some(Ok(meta.clone()));
         Ok(meta)
     }
 
@@ -647,8 +657,7 @@ impl UploadSession {
     pub fn handle(&self) -> Option<UploadHandle> {
         self.inner
             .chunked
-            .lock()
-            .expect("chunked mutex poisoned")
+            .lock_or_poisoned("sdk::upload_session::chunked")
             .as_ref()
             .map(|s| s.handle.clone())
     }
@@ -658,8 +667,7 @@ impl UploadSession {
     pub fn current_offset(&self) -> Option<u64> {
         self.inner
             .chunked
-            .lock()
-            .expect("chunked mutex poisoned")
+            .lock_or_poisoned("sdk::upload_session::chunked")
             .as_ref()
             .map(|s| s.offset)
     }
@@ -682,8 +690,7 @@ pub(crate) fn run_upload(daemon: &mut EmbeddedDaemon, request: UploadRequest) ->
             *session
                 .inner
                 .outcome
-                .lock()
-                .expect("upload session outcome mutex poisoned") = Some(Err(err));
+                .lock_or_poisoned("sdk::upload_session::outcome") = Some(Err(err));
             return session;
         }
     };
@@ -732,8 +739,7 @@ pub(crate) fn run_upload(daemon: &mut EmbeddedDaemon, request: UploadRequest) ->
     *session
         .inner
         .outcome
-        .lock()
-        .expect("upload session outcome mutex poisoned") = Some(outcome);
+        .lock_or_poisoned("sdk::upload_session::outcome") = Some(outcome);
 
     session
 }

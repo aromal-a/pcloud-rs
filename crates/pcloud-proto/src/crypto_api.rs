@@ -39,7 +39,8 @@ use crate::{
     auth_api::{ApiServerHintConsumer, ProtocolTransport},
     methods::crypto::{
         ChangeUserPrivateRequest, CryptoGetFileKeyRequest, CryptoGetFolderKeyRequest,
-        PclsyncSetUserKeysRequest, SendChangeUserPrivateRequest,
+        CryptoGetPubKeyRequest, CryptoPubKeyRecipient, PclsyncSetUserKeysRequest,
+        SendChangeUserPrivateRequest,
     },
     response::HashView,
 };
@@ -202,6 +203,53 @@ where
         })
     }
 
+    /// Fetch a recipient's RSA-4096 `pub_key_ver1` blob for share-invitation
+    /// RSA-OAEP wrapping. Mirrors the C `crypto_getpubkey` endpoint consumed
+    /// by `psync_crypto_share_folder` / `psync_crypto_account_teamshare`
+    /// (`pclsync/psynclib.c:1322` / `:1372`).
+    ///
+    /// The `publickey` field in the server response is delivered as a hex
+    /// string (matching `pssl.c:583..`); this call decodes hex first and
+    /// falls back to base64 if the blob is not valid hex, so both on-wire
+    /// forms observed across server versions decode transparently.
+    ///
+    /// # Errors
+    /// Transport / malformed / non-zero `result` map onto
+    /// [`CryptoApiError`] as usual. A `result=0` response with no
+    /// `"publickey"` field surfaces as [`CryptoApiError::Malformed`].
+    pub fn get_pub_key(
+        &self,
+        auth_token: &str,
+        recipient: CryptoPubKeyRecipient,
+    ) -> Result<Vec<u8>, CryptoApiError<T::Error>> {
+        let request = CryptoGetPubKeyRequest {
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token),
+            recipient,
+        };
+        let encoded = request.encode()?;
+        let response = self
+            .transport
+            .execute(&encoded)
+            .map_err(CryptoApiError::Transport)?;
+        let hash = response
+            .as_hash()
+            .ok_or(CryptoApiError::Malformed(
+                "crypto_getpubkey response was not a hash",
+            ))?;
+        expect_ok_result(hash)?;
+        let key_str = hash.get_string("publickey").ok_or(CryptoApiError::Malformed(
+            "crypto_getpubkey response missing \"publickey\" field",
+        ))?;
+        // Prefer hex (C wire format); fall back to base64 for forward
+        // compatibility with server variants that may emit base64 here.
+        if let Some(bytes) = decode_hex(key_str) {
+            return Ok(bytes);
+        }
+        B64.decode(key_str).map_err(|_| {
+            CryptoApiError::Malformed("crypto_getpubkey \"publickey\" was neither hex nor base64")
+        })
+    }
+
     /// Fetch a file's RSA-OAEP-wrapped `sym_key_ver1` blob plus its
     /// file-version `hash`. Mirrors `download_file_enckey` at
     /// `pcryptofolder.c:862`.
@@ -241,6 +289,32 @@ where
             CryptoApiError::Malformed("crypto_getfilekey \"key\" field was not valid base64")
         })?;
         Ok((file_hash, wrapped))
+    }
+}
+
+/// Decode an ASCII hex string into bytes. Returns `None` on any
+/// non-hex character or on odd length. Lower-case hex only (matches
+/// what `pssl.c` emits via `mbedtls_mpi_write_string(.., 16, ..)`).
+fn decode_hex(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 || s.is_empty() {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(s.len() / 2);
+    for chunk in bytes.chunks_exact(2) {
+        let hi = hex_nibble(chunk[0])?;
+        let lo = hex_nibble(chunk[1])?;
+        out.push((hi << 4) | lo);
+    }
+    Some(out)
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
     }
 }
 
@@ -475,6 +549,92 @@ mod tests {
             }
             other => panic!("unexpected error: {other:?}"),
         }
+    }
+
+    // -----------------------------------------------------------------
+// ncx.89 — crypto_getpubkey (hex / base64 decoding)
+// -----------------------------------------------------------------
+
+    #[test]
+    fn get_pub_key_decodes_hex_payload() {
+        use crate::methods::crypto::CryptoPubKeyRecipient;
+        // "abc\x00\x01\x02" in hex
+        let resp = hash_with(vec![
+            ("result", Value::Number(0)),
+            ("publickey", Value::String("616263000102".to_owned())),
+        ]);
+        let transport = MockTransport::with_responses(vec![resp]);
+        let api = CryptoApi::new(transport);
+        let bytes = api
+            .get_pub_key("tok", CryptoPubKeyRecipient::UserId(1234))
+            .expect("ok");
+        assert_eq!(bytes, b"abc\x00\x01\x02");
+        let captured = api.transport.captured.lock().unwrap().clone();
+        assert_eq!(captured, vec!["crypto_getpubkey".to_owned()]);
+    }
+
+    #[test]
+    fn get_pub_key_falls_back_to_base64_when_not_hex() {
+        use crate::methods::crypto::CryptoPubKeyRecipient;
+        // "abc\x00\x01\x02" in base64 = "YWJjAAEC" (not valid hex — contains
+        // capital letters A..Z which ARE hex for some, but "YWJjAAEC" has 'Y'
+        // which is not a hex digit).
+        let resp = hash_with(vec![
+            ("result", Value::Number(0)),
+            ("publickey", Value::String("YWJjAAEC".to_owned())),
+        ]);
+        let transport = MockTransport::with_responses(vec![resp]);
+        let api = CryptoApi::new(transport);
+        let bytes = api
+            .get_pub_key("tok", CryptoPubKeyRecipient::Mail("a@b".into()))
+            .expect("ok");
+        assert_eq!(bytes, b"abc\x00\x01\x02");
+    }
+
+    #[test]
+    fn get_pub_key_surfaces_server_2009_no_crypto() {
+        use crate::methods::crypto::CryptoPubKeyRecipient;
+        let transport =
+            MockTransport::with_responses(vec![err_hash(2009, "recipient has no crypto")]);
+        let api = CryptoApi::new(transport);
+        let err = api
+            .get_pub_key("tok", CryptoPubKeyRecipient::UserId(1))
+            .expect_err("must fail");
+        match err {
+            CryptoApiError::Result { result, message } => {
+                assert_eq!(result, 2009);
+                assert_eq!(message.as_deref(), Some("recipient has no crypto"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn get_pub_key_malformed_when_publickey_missing() {
+        use crate::methods::crypto::CryptoPubKeyRecipient;
+        let resp = hash_with(vec![("result", Value::Number(0))]);
+        let transport = MockTransport::with_responses(vec![resp]);
+        let api = CryptoApi::new(transport);
+        let err = api
+            .get_pub_key("tok", CryptoPubKeyRecipient::UserId(1))
+            .expect_err("must fail");
+        assert!(matches!(err, CryptoApiError::Malformed(_)));
+    }
+
+    #[test]
+    fn get_pub_key_malformed_when_neither_hex_nor_base64() {
+        use crate::methods::crypto::CryptoPubKeyRecipient;
+        let resp = hash_with(vec![
+            ("result", Value::Number(0)),
+            // Odd-length non-base64 — "!!!" has no valid decoding.
+            ("publickey", Value::String("!!!".to_owned())),
+        ]);
+        let transport = MockTransport::with_responses(vec![resp]);
+        let api = CryptoApi::new(transport);
+        let err = api
+            .get_pub_key("tok", CryptoPubKeyRecipient::UserId(1))
+            .expect_err("must fail");
+        assert!(matches!(err, CryptoApiError::Malformed(_)));
     }
 
     #[test]

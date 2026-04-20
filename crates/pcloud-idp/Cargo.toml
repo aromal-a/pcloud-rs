@@ -19,6 +19,7 @@ oidc-http-exchange = []
 insecure-plaintext-exchange = []
 
 [dependencies]
+pcloud-observability = { path = "../pcloud-observability" }
 pcloud-secret = { path = "../pcloud-secret" }
 thiserror.workspace = true
 serde.workspace = true

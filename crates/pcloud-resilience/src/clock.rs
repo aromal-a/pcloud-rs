@@ -10,6 +10,8 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use pcloud_observability::LockExt;
+
 /// Monotonic clock abstraction.
 ///
 /// Implementations must return instants that never go backwards. The trait
@@ -108,14 +110,18 @@ impl ManualClock {
     /// assert!(c.now() - start >= Duration::from_secs(10));
     /// ```
     pub fn advance(&self, delta: Duration) {
-        let mut guard = self.inner.lock().expect("manual clock mutex poisoned");
+        let mut guard = self
+            .inner
+            .lock_or_poisoned("resilience::clock::ManualClock::advance");
         *guard += delta;
     }
 }
 
 impl Clock for ManualClock {
     fn now(&self) -> Instant {
-        *self.inner.lock().expect("manual clock mutex poisoned")
+        *self
+            .inner
+            .lock_or_poisoned("resilience::clock::ManualClock::now")
     }
 }
 

@@ -9,6 +9,7 @@ description = "Typed configuration loader and validator for the pcloud-rs Rust w
 [dependencies]
 pcloud-error = { path = "../pcloud-error" }
 pcloud-kms = { path = "../pcloud-kms", optional = true }
+pcloud-observability = { path = "../pcloud-observability" }
 pcloud-secret = { path = "../pcloud-secret", optional = true }
 directories.workspace = true
 glob = "0.3"

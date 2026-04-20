@@ -407,6 +407,89 @@ impl CryptoGetFolderKeyResponse {
     }
 }
 
+// ---------------------------------------------------------------------------
+// crypto_getpubkey — fetch a user's / team's raw `pub_key_ver1` blob for
+// share-invitation RSA-OAEP wrapping.
+// ---------------------------------------------------------------------------
+//
+// C reference: the pcloudcc client calls this via `crypto_getpubkey`
+// (addressed by `userid` or `mail`), consumed by
+// `psync_crypto_share_folder` / `psync_crypto_account_teamshare`
+// (`pclsync/psynclib.c:1322` / `:1372`). The server returns a hex-encoded
+// (`publickey`) or base64-encoded blob of the recipient's RSA-4096
+// `pub_key_ver1` structure. This Rust encoder accepts the hex form
+// (matching the C decoder at `pssl.c:583..`); the API layer will decode
+// either hex or base64 transparently.
+
+/// `crypto_getpubkey` — fetch a recipient's RSA-4096 `pub_key_ver1` blob.
+///
+/// One of [`userid`] or [`mail`] must be set; the server looks up the
+/// recipient by whichever is provided. For team-share (account_teamshare)
+/// flows, the C client reuses this same endpoint with `teamid` — the
+/// enum `Recipient::Team(teamid)` variant wires that form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CryptoGetPubKeyRequest {
+    /// Authenticated session token.
+    pub auth_token: RedactedProtoString,
+    /// Recipient selector.
+    pub recipient: CryptoPubKeyRecipient,
+}
+
+/// Recipient selector for [`CryptoGetPubKeyRequest`]. Mirrors the C
+/// client's mutually-exclusive `userid` / `mail` / `teamid` parameters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CryptoPubKeyRecipient {
+    /// Look up by numeric user id.
+    UserId(u64),
+    /// Look up by email address.
+    Mail(String),
+    /// Look up by numeric team id (for account_teamshare flows).
+    TeamId(u64),
+}
+
+impl CryptoGetPubKeyRequest {
+    /// `command_name` — command name.
+    #[must_use]
+    pub fn command_name(&self) -> &'static str {
+        "crypto_getpubkey"
+    }
+
+    /// `params` — typed parameter vector.
+    #[must_use]
+    pub fn params(&self) -> Vec<BinaryParam> {
+        let mut out = Vec::with_capacity(2);
+        out.push(BinaryParam {
+            name: "auth".to_owned(),
+            value: BinaryParamValue::String(self.auth_token.expose_secret().to_owned()),
+        });
+        match &self.recipient {
+            CryptoPubKeyRecipient::UserId(id) => out.push(BinaryParam {
+                name: "userid".to_owned(),
+                value: BinaryParamValue::Number(*id),
+            }),
+            CryptoPubKeyRecipient::Mail(mail) => out.push(BinaryParam {
+                name: "mail".to_owned(),
+                value: BinaryParamValue::String(mail.clone()),
+            }),
+            CryptoPubKeyRecipient::TeamId(id) => out.push(BinaryParam {
+                name: "teamid".to_owned(),
+                value: BinaryParamValue::Number(*id),
+            }),
+        }
+        out
+    }
+}
+
+impl ProtocolMethod for CryptoGetPubKeyRequest {
+    fn command_name(&self) -> &'static str {
+        Self::command_name(self)
+    }
+
+    fn params(&self) -> Vec<BinaryParam> {
+        Self::params(self)
+    }
+}
+
 /// `crypto_getfilekey` — fetch a file's RSA-OAEP-wrapped
 /// `sym_key_ver1`. Mirrors C `download_file_enckey` at
 /// `pcryptofolder.c:862` (command issued at line 879).
@@ -725,6 +808,50 @@ mod tests {
         assert_eq!(parsed.result, 2009);
         assert_eq!(parsed.error.as_deref(), Some("no crypto"));
         assert!(parsed.wrapped_key.is_empty());
+    }
+
+    #[test]
+    fn get_pub_key_encode_userid() {
+        let req = CryptoGetPubKeyRequest {
+            auth_token: "tok".into(),
+            recipient: CryptoPubKeyRecipient::UserId(1234),
+        };
+        let encoded = req.encode().expect("encode");
+        assert_eq!(encoded.frame.command, "crypto_getpubkey");
+        assert_eq!(encoded.frame.parameter_count, 2);
+        let params = req.params();
+        assert_eq!(find_number(&params, "userid"), Some(1234));
+        assert!(find_string(&params, "mail").is_none());
+        assert!(find_number(&params, "teamid").is_none());
+    }
+
+    #[test]
+    fn get_pub_key_encode_mail() {
+        let req = CryptoGetPubKeyRequest {
+            auth_token: "tok".into(),
+            recipient: CryptoPubKeyRecipient::Mail("alice@example.com".into()),
+        };
+        let encoded = req.encode().expect("encode");
+        assert_eq!(encoded.frame.command, "crypto_getpubkey");
+        assert_eq!(encoded.frame.parameter_count, 2);
+        let params = req.params();
+        assert_eq!(
+            find_string(&params, "mail").as_deref(),
+            Some("alice@example.com")
+        );
+        assert!(find_number(&params, "userid").is_none());
+    }
+
+    #[test]
+    fn get_pub_key_encode_teamid() {
+        let req = CryptoGetPubKeyRequest {
+            auth_token: "tok".into(),
+            recipient: CryptoPubKeyRecipient::TeamId(9),
+        };
+        let params = req.params();
+        assert_eq!(find_number(&params, "teamid"), Some(9));
+        assert!(find_number(&params, "userid").is_none());
+        assert!(find_string(&params, "mail").is_none());
     }
 
     #[test]

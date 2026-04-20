@@ -630,10 +630,12 @@ fn existing_or_new_csrf(headers: &HeaderMap) -> String {
 
 fn mint_csrf_token() -> String {
     let mut buf = [0u8; 16];
-    // getrandom panics on EIO from the kernel — which is fine for a
-    // MVP loopback-only surface: we would not be serving a browser
-    // on a system with no RNG anyway.
-    getrandom::getrandom(&mut buf).expect("getrandom");
+    // SAFETY: `getrandom` only fails if the kernel CSPRNG is unavailable
+    // (EIO / /dev/urandom missing). A host in that state cannot serve
+    // a web UI securely anyway, so panic is the correct failure mode
+    // for this MVP loopback-only surface. If this call ever moves
+    // behind a public bind it must be converted to a typed error.
+    getrandom::getrandom(&mut buf).expect("getrandom: kernel RNG unavailable — cannot mint CSRF token");
     let mut s = String::with_capacity(32);
     for b in buf {
         use std::fmt::Write;

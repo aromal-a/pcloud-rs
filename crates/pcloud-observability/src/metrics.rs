@@ -311,7 +311,10 @@ mod families {
     /// live user histogram without any further wiring.
     #[must_use]
     pub fn register_histogram(name: &str, buckets: &[f64]) -> HistogramHandle {
-        let mut guard = user_histograms().lock().expect("user_histograms mutex");
+        let mut guard = crate::LockExt::lock_or_poisoned(
+            user_histograms(),
+            "metrics::MetricFamilies::register_histogram",
+        );
         if let Some(existing) = guard.iter().find(|h| h.name == name) {
             return HistogramHandle {
                 inner: Arc::clone(existing),

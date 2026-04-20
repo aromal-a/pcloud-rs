@@ -377,6 +377,37 @@ mod tests {
     }
 
     #[test]
+    fn wrap_invitation_b64_has_expected_684_char_length() {
+        // ncx.89 backend wiring contract: the base64 string handed to the
+        // `sharefolder` / `account_teamshare` request as the
+        // `sharedfolderkey` / `teamshare_key` parameter MUST be exactly
+        // 684 characters (512 bytes base64-encoded with `=` padding).
+        // Any deviation breaks the C client's decoder at `pssl.c`.
+        let kp = generate_keypair().expect("keygen recipient");
+        let (_recipient_priv, recipient_pub) = kp.into_parts();
+        let sharer_kp = generate_keypair().expect("keygen sharer");
+        let (sharer_priv, _) = sharer_kp.into_parts();
+        let mut harness = PclsyncCompatStateHarness::new(sharer_priv);
+        harness
+            .inner
+            .cache_folder_key(1, test_sym_key(0, 0).duplicate());
+
+        let blob = pub_blob_for(&recipient_pub);
+        let wrapped =
+            wrap_share_invitation_b64(&harness.inner, ShareTarget::Folder(1), &blob).unwrap();
+        assert_eq!(
+            wrapped.len(),
+            684,
+            "RSA-4096-OAEP ciphertext base64 must be exactly 684 chars \
+             (512 bytes + `=` padding); got {} chars",
+            wrapped.len()
+        );
+        // And must decode to exactly 512 bytes.
+        let raw = base64_decode(&wrapped).expect("b64 decode");
+        assert_eq!(raw.len(), PCLSYNC_RSA_BYTES);
+    }
+
+    #[test]
     fn distinct_wraps_produce_distinct_ciphertexts() {
         // RSA-OAEP is randomized: two wraps of the same plaintext
         // against the same pubkey must yield different ciphertexts.

@@ -33,6 +33,7 @@ use std::{
 };
 
 use pcloud_model::ids::{RemoteFolderId, UserId};
+use pcloud_observability::LockExt;
 use pcloud_proto::{
     auth_api::{ApiServerHintConsumer, ProtocolTransport},
     folder_api::{FolderApi, FolderApiError, RemoteFolderEntry, RemoteFolderListing},
@@ -186,7 +187,9 @@ where
     }
 
     fn cache_lookup(&self, fingerprint: &[u8], path: &str) -> Option<CachedEntry> {
-        let mut cache = self.cache.lock().expect("cache mutex poisoned");
+        let mut cache = self
+            .cache
+            .lock_or_poisoned("path_resolver::PublicLinkPathResolver::cache_lookup");
         let key = (fingerprint.to_vec(), path.to_owned());
         match cache.get(&key).cloned() {
             Some(entry) if entry.expires_at > Instant::now() => Some(entry),
@@ -199,7 +202,9 @@ where
     }
 
     fn cache_store(&self, fingerprint: &[u8], path: &str, entry: CachedEntry) {
-        let mut cache = self.cache.lock().expect("cache mutex poisoned");
+        let mut cache = self
+            .cache
+            .lock_or_poisoned("path_resolver::PublicLinkPathResolver::cache_store");
         if cache.len() >= self.capacity
             && let Some(oldest_key) = cache
                 .iter()

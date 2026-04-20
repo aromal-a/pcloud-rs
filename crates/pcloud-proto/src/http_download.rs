@@ -367,7 +367,11 @@ fn hex_encode(bytes: &[u8]) -> String {
     use std::fmt::Write as _;
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        write!(s, "{:02x}", b).unwrap();
+        // SAFETY: `write!` on a `String` uses `fmt::Write for String`, which
+        // is infallible — it only fails for I/O-backed writers. A panic
+        // here would indicate an impossible allocator failure surfaced
+        // as a formatter error.
+        let _ = write!(s, "{:02x}", b);
     }
     s
 }
@@ -451,8 +455,10 @@ where
         // Surface Retry-After delay for 429 / 503 so callers can back off
         // for exactly the server-requested duration instead of using the
         // default exponential schedule.
-        if (status == 429 || status == 503) && headers.retry_after.is_some() {
-            return Err(HttpDownloadError::RetryAfter(headers.retry_after.unwrap()));
+        if let Some(retry_after) = headers.retry_after
+            && (status == 429 || status == 503)
+        {
+            return Err(HttpDownloadError::RetryAfter(retry_after));
         }
         return Err(HttpDownloadError::HttpStatus(status));
     }

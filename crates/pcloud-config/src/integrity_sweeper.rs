@@ -49,6 +49,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use pcloud_observability::LockExt;
 use serde::{Deserialize, Serialize};
 
 /// Configuration block for the background integrity sweeper.
@@ -212,14 +213,18 @@ impl ManualClock {
 
     /// Advance the manual clock by `delta`.
     pub fn advance(&self, delta: Duration) {
-        let mut g = self.inner.lock().expect("manual clock poisoned");
+        let mut g = self
+            .inner
+            .lock_or_poisoned("config::integrity_sweeper::ManualClock::advance");
         *g += delta;
     }
 }
 
 impl Clock for ManualClock {
     fn now(&self) -> Instant {
-        *self.inner.lock().expect("manual clock poisoned")
+        *self
+            .inner
+            .lock_or_poisoned("config::integrity_sweeper::ManualClock::now")
     }
 }
 
@@ -285,7 +290,9 @@ impl RatedTokenBucket {
         if self.tokens_per_minute == 0 {
             return false;
         }
-        let mut state = self.state.lock().expect("token bucket poisoned");
+        let mut state = self
+            .state
+            .lock_or_poisoned("config::integrity_sweeper::RatedTokenBucket::try_acquire_with");
         let now = clock.now();
         let elapsed = now
             .saturating_duration_since(state.last_refill)

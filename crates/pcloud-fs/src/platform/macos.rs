@@ -2067,6 +2067,12 @@ fn build_fuse_args(opts: &MountOptions) -> Vec<CString> {
         raw_volname
     };
     let mut argv: Vec<CString> = Vec::with_capacity(8);
+    // SAFETY: All `CString::new` call sites in this `argv` builder receive
+    // hard-coded ASCII string literals (e.g. "pcloud-rs", "-o", "ro",
+    // "rw", "allow_other", "defer_permissions"). None of these contain
+    // interior NUL bytes, so `CString::new` is infallible here. Any
+    // variable-length inputs (e.g. `volname_opt`) use `if let Ok` and
+    // fall back safely.
     argv.push(CString::new("pcloud-rs").expect("literal has no NUL"));
     // Honour the read_only flag: pass `ro` or `rw` accordingly.
     argv.push(CString::new("-o").expect("literal has no NUL"));

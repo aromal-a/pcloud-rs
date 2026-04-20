@@ -106,6 +106,7 @@ use std::time::{Duration, Instant};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use pcloud_observability::LockExt;
 use pcloud_secret::ExposeSecret;
 use pcloud_secret::secret_bytes::SecretBytes;
 use serde::{Deserialize, Serialize};
@@ -479,7 +480,9 @@ impl RateLimiter {
     }
 
     fn try_admit(&self) -> bool {
-        let mut g = self.last.lock().expect("fleet rate-limiter mutex poisoned");
+        let mut g = self
+            .last
+            .lock_or_poisoned("fleet::RateLimiter::try_admit");
         let now = Instant::now();
         match *g {
             Some(prev) if now.duration_since(prev) < self.min_interval => false,

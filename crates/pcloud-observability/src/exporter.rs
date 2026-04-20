@@ -208,6 +208,9 @@ where
     F: Fn() -> ExporterSnapshot + Send + Sync + 'static,
 {
     // Poll accept with a short timeout so shutdown propagates.
+    // SAFETY: `set_nonblocking(true)` on a freshly-created `TcpListener` only
+    // fails for kernel-level socket misconfiguration. If this panics, the
+    // host socket subsystem is broken and the exporter cannot function.
     listener
         .set_nonblocking(true)
         .expect("set_nonblocking on listener");

@@ -32,6 +32,7 @@ pcloud-daemon = { path = "../pcloud-daemon" }
 pcloud-error = { path = "../pcloud-error" }
 pcloud-ipc = { path = "../pcloud-ipc" }
 pcloud-model = { path = "../pcloud-model" }
+pcloud-observability = { path = "../pcloud-observability" }
 pcloud-plugin-api = { path = "../pcloud-plugin-api" }
 pcloud-proto = { path = "../pcloud-proto" }
 pcloud-secret = { path = "../pcloud-secret" }

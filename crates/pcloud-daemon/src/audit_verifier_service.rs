@@ -52,6 +52,7 @@ use std::time::Duration;
 use chrono::Utc;
 use cron::Schedule;
 use pcloud_config::audit_verifier::AuditVerifierConfig;
+use pcloud_observability::LockExt;
 use pcloud_observability::slo::Slo;
 use serde::{Deserialize, Serialize};
 
@@ -577,7 +578,9 @@ fn wait_until(wake: &Arc<SchedulerWake>, wait: Duration) -> bool {
     // wake protocol is ambiguous (the stopped flag may be half-observed) so
     // propagating the panic here surfaces the real bug instead of silently
     // returning a stale state. Tracked under pcloud-rs-f0r.
-    let stopped = wake.stopped.lock().expect("audit verifier wake poisoned");
+    let stopped = wake
+        .stopped
+        .lock_or_poisoned("audit_verifier_service::wait_until::stopped");
     if *stopped {
         return true;
     }

@@ -29,11 +29,14 @@ pub mod audit;
 #[cfg(feature = "prometheus-exporter")]
 pub mod exporter;
 pub mod health;
+pub mod lock_ext;
 pub mod logging;
 pub mod metrics;
 pub mod slo;
 #[cfg(feature = "tracing-otlp")]
 pub mod tracing;
+
+pub use lock_ext::{LockExt, RwLockExt};
 
 /// Crate name constant, surfaced on health/build responses and log targets.
 ///

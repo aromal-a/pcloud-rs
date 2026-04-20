@@ -18,6 +18,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode, decode_header};
+use pcloud_observability::LockExt;
 use serde::Deserialize;
 
 use crate::IdpError;
@@ -164,7 +165,9 @@ impl JwksCache {
             .and_then(|r| r.error_for_status())
             .and_then(|r| r.json())
             .map_err(|e| IdpError::Discovery(format!("fetch jwks: {e}")))?;
-        let mut state = self.state.lock().expect("jwks cache mutex poisoned");
+        let mut state = self
+            .state
+            .lock_or_poisoned("idp::jwks::JwksCache::refresh");
         state.discovery = Some(disc.clone());
         state.keys = jwks.keys;
         state.fetched_at = Some(Instant::now());
@@ -174,7 +177,9 @@ impl JwksCache {
     /// Return the cached discovery document, refreshing if absent or stale.
     pub(crate) fn discovery(&self) -> Result<DiscoveryDocument, IdpError> {
         {
-            let state = self.state.lock().expect("jwks cache mutex poisoned");
+            let state = self
+                .state
+                .lock_or_poisoned("idp::jwks::JwksCache::discovery");
             if let (Some(d), Some(t)) = (&state.discovery, state.fetched_at)
                 && t.elapsed() < self.ttl
             {
@@ -187,13 +192,17 @@ impl JwksCache {
     /// Look up a JWK by `kid`, forcing a single refresh on miss.
     fn lookup_key(&self, kid: Option<&str>) -> Result<Jwk, IdpError> {
         {
-            let state = self.state.lock().expect("jwks cache mutex poisoned");
+            let state = self
+                .state
+                .lock_or_poisoned("idp::jwks::JwksCache::lookup_key");
             if let Some(k) = pick_key(&state.keys, kid) {
                 return Ok(k.clone());
             }
         }
         self.refresh()?;
-        let state = self.state.lock().expect("jwks cache mutex poisoned");
+        let state = self
+            .state
+            .lock_or_poisoned("idp::jwks::JwksCache::lookup_key");
         pick_key(&state.keys, kid)
             .cloned()
             .ok_or_else(|| IdpError::Validation("no matching JWKS key".into()))

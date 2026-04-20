@@ -155,6 +155,11 @@ impl InodeTable {
     /// number space overflows.
     pub fn insert_with_lookup(&self, path: &str, kind: FsEntryKind) -> Result<(u64, u64), FsError> {
         let (ino, generation) = self.insert_or_get(path, kind)?;
+        // SAFETY: the inner mutex is private to `InodeTable` and every hold
+        // site inside this module is panic-free data-structure work. A
+        // poisoned mutex here would indicate a prior panic in this module
+        // — a real bug we want surfaced immediately rather than masked
+        // with a fabricated `FsError`.
         let mut inner = self
             .inner
             .lock()
@@ -181,6 +186,10 @@ impl InodeTable {
     /// Returns [`FsError::InodeSpaceExhausted`] when the 64-bit inode
     /// number space overflows. This should never occur in practice.
     pub fn insert_or_get(&self, path: &str, kind: FsEntryKind) -> Result<(u64, u64), FsError> {
+        // SAFETY: the inner mutex is private to `InodeTable` and every hold
+        // site inside this module is panic-free data-structure work. A
+        // poisoned mutex here would indicate a prior panic in this module
+        // — a real bug we want surfaced immediately rather than masked.
         let mut inner = self
             .inner
             .lock()

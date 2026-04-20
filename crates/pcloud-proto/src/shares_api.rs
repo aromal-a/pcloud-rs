@@ -193,6 +193,7 @@ where
             private_key: None,
             signature: None,
             strict_mode: false,
+            shared_folder_key: None,
         };
         let response = self
             .transport
@@ -367,6 +368,7 @@ where
             hint,
             private_key: None,
             signature: None,
+            team_share_key: None,
         };
         let response = self
             .transport
@@ -412,6 +414,7 @@ where
             private_key: Some(private_key_b64),
             signature: Some(signature_b64),
             strict_mode: true,
+            shared_folder_key: None,
         };
         let response = self
             .transport
@@ -451,6 +454,98 @@ where
             hint,
             private_key: Some(private_key_b64),
             signature: Some(signature_b64),
+            team_share_key: None,
+        };
+        let response = self
+            .transport
+            .execute(&req.encode()?)
+            .map_err(SharesApiError::Transport)?;
+        let hash = response.as_hash().ok_or(SharesApiError::Malformed(
+            "account_teamshare response was not a hash",
+        ))?;
+        expect_ok_result(hash)?;
+        Ok(ShareMutationResult {
+            share_request_id: hash.get_number("sharerequestid"),
+        })
+    }
+
+    /// `sharefolder` with an RSA-4096-OAEP-wrapped `sym_key_ver1` for
+    /// the recipient (C-interop path). The caller has already fetched
+    /// the recipient's pubkey via `crypto_getpubkey`, borrowed the
+    /// cached folder sym-key from the sharer's unlocked
+    /// `PclsyncCompatState`, and produced the base64 ciphertext via
+    /// [`pcloud_crypto::share_rsa::wrap_share_invitation_b64`]. This
+    /// method simply attaches that blob under the `sharedfolderkey`
+    /// parameter.
+    ///
+    /// Distinct from [`Self::crypto_share_folder`] (which carries a
+    /// temppass-derived `privatekey`/`signature` pair and is the retained
+    /// Rust-native path) — this method is the pclsync-v2 wire-compat
+    /// path the C apps use.
+    #[allow(clippy::too_many_arguments)]
+    pub fn crypto_share_folder_rsa(
+        &self,
+        auth_token: impl Into<String>,
+        folder_id: u64,
+        name: impl Into<String>,
+        mail: impl Into<String>,
+        message: impl Into<String>,
+        permissions: SharePermissions,
+        hint: Option<String>,
+        shared_folder_key_b64: String,
+    ) -> Result<ShareMutationResult, SharesApiError<T::Error>> {
+        let req = ShareFolderRequest {
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
+            folder_id,
+            name: name.into(),
+            mail: mail.into(),
+            message: message.into(),
+            permissions_bits: permissions.to_bits(),
+            hint,
+            private_key: None,
+            signature: None,
+            strict_mode: true,
+            shared_folder_key: Some(shared_folder_key_b64),
+        };
+        let response = self
+            .transport
+            .execute(&req.encode()?)
+            .map_err(SharesApiError::Transport)?;
+        let hash = response.as_hash().ok_or(SharesApiError::Malformed(
+            "sharefolder response was not a hash",
+        ))?;
+        expect_ok_result(hash)?;
+        Ok(ShareMutationResult {
+            share_request_id: hash.get_number("sharerequestid"),
+        })
+    }
+
+    /// `account_teamshare` with an RSA-4096-OAEP-wrapped `sym_key_ver1`
+    /// for the team's shared public key (C-interop path). See
+    /// [`Self::crypto_share_folder_rsa`] for the rationale.
+    #[allow(clippy::too_many_arguments)]
+    pub fn crypto_account_team_share_rsa(
+        &self,
+        auth_token: impl Into<String>,
+        folder_id: u64,
+        name: impl Into<String>,
+        team_id: u64,
+        message: impl Into<String>,
+        permissions: SharePermissions,
+        hint: Option<String>,
+        team_share_key_b64: String,
+    ) -> Result<ShareMutationResult, SharesApiError<T::Error>> {
+        let req = AccountTeamShareRequest {
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
+            folder_id,
+            name: name.into(),
+            team_id,
+            message: message.into(),
+            permissions_bits: permissions.to_bits(),
+            hint,
+            private_key: None,
+            signature: None,
+            team_share_key: Some(team_share_key_b64),
         };
         let response = self
             .transport
