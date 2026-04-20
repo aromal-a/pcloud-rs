@@ -726,7 +726,12 @@ fn install_signal_handler_once() {
         // callers that are not prepared for it.
         unsafe {
             let mut sa: libc::sigaction = std::mem::zeroed();
-            sa.sa_sigaction = signal_trampoline as usize;
+            // Explicit fn-type coercion first to silence
+            // `fn_to_numeric_cast` lint: cast through the concrete fn
+            // pointer type before converting to the platform-sized
+            // integer libc expects in `sa_sigaction`.
+            let handler: extern "C" fn(libc::c_int) = signal_trampoline;
+            sa.sa_sigaction = handler as usize;
             sa.sa_flags = libc::SA_RESTART;
             libc::sigemptyset(&mut sa.sa_mask);
             let _ = libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());

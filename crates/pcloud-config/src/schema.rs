@@ -58,7 +58,18 @@ pub const CONFIG_SCHEMA_JSON: &str = r#"{
             "port": { "type": "integer", "minimum": 0, "maximum": 65535 },
             "server_name": { "type": "string" },
             "connect_timeout_ms": { "type": "integer", "minimum": 0 },
-            "read_timeout_ms":    { "type": "integer", "minimum": 0 }
+            "read_timeout_ms":    { "type": "integer", "minimum": 0 },
+            "tls_revocation_check": {
+              "oneOf": [
+                { "type": "string", "enum": ["Disabled", "StapledPermissive", "StapledStrict"] },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["CrlFile"],
+                  "properties": { "CrlFile": { "type": "string" } }
+                }
+              ]
+            }
           }
         },
         "extensions": {
@@ -406,6 +417,13 @@ static API_NODE: Node = Node::Object {
                 max: None,
             },
         ),
+        // `tls_revocation_check` serializes either as a bare string
+        // (`"Disabled"`, `"StapledPermissive"`, `"StapledStrict"`) or as
+        // `{ "CrlFile": "<path>" }`. The `Node` schema cannot express a
+        // oneOf; delegate shape validation to serde and accept any value
+        // here so unknown-property (additionalProperties=false) rejection
+        // is not triggered for envelopes produced by `ConfigProfile`.
+        ("tls_revocation_check", &Node::Any),
     ],
 };
 

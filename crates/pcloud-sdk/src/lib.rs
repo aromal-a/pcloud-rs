@@ -3478,14 +3478,15 @@ impl EmbeddedDaemon {
     /// # let mut d = EmbeddedDaemon::builder(PathBuf::from("/tmp/x")).build().unwrap();
     /// d.delete_file("/Documents/old.txt").unwrap();
     /// ```
-    pub fn delete_file(&mut self, path: &str) -> Result<(), SdkError> {
+    pub fn delete_file(&mut self, _path: &str) -> Result<(), SdkError> {
         if self.runtime.auth.snapshot().auth_token.is_none() {
             return Err(SdkError::from(FileMutationHelperError::NotAuthenticated));
         }
         // TODO(bd-1du.10): wire to correct IPC variant (DeleteFile) once that Request
-        // variant exists in pcloud-ipc::methods::Request. Currently the IPC
-        // surface has no dedicated DeleteFile variant; this placeholder guards
-        // the error path and error surface shape until bd-1du.10 clears it.
+        // variant exists in pcloud-ipc::methods::Request. `_path` is held
+        // unused until that wiring lands — the guard above preserves the
+        // error surface shape (NotAuthenticated vs DeleteFailed) so callers
+        // can rely on it even while the IPC variant is stubbed.
         Err(SdkError::from(FileMutationHelperError::DeleteFailed(
             "delete_file IPC variant not yet implemented (bd-1du.10)".to_owned(),
         )))
