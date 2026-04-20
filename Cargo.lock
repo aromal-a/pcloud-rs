@@ -3051,6 +3051,7 @@ dependencies = [
 name = "pcloud-backends"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "filetime",
  "libc",
  "log",
@@ -3068,6 +3069,7 @@ dependencies = [
  "pcloud-resilience",
  "pcloud-secret",
  "pcloud-store",
+ "rsa",
  "rusqlite",
  "serde",
  "serde_json",

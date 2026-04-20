@@ -36,6 +36,14 @@ zstd.workspace = true
 
 [dev-dependencies]
 filetime = "0.2"
+# Enable `test-helpers` on pcloud-crypto for integration tests only.
+# Exposes `PclsyncCompatState::for_test` + `SymKeyVer1::duplicate` so the
+# mock-backed RSA share-invitation E2E in tests/crypto_share_rsa_e2e.rs
+# can seed a crypto shell without the full `unlock_profile` flow. Never
+# propagates to production builds — dev-dependency-gated.
+pcloud-crypto = { path = "../pcloud-crypto", features = ["test-helpers"] }
+rsa = { workspace = true }
+base64 = "0.22"
 
 [lints]
 workspace = true

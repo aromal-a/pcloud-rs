@@ -155,7 +155,11 @@ impl TransportFactory {
         match self.decision() {
             WrapDecision::Bare => Ok(None),
             WrapDecision::Wrap => {
-                // SAFETY: production path always has a budget (see `new`).
+                // SAFETY: `WrapDecision::Wrap` is only returned by `decision()`
+                // when `self.budget.is_some()` (production constructor `new`
+                // always installs a `GlobalRetryBudget`; the test constructor
+                // that omits it returns `WrapDecision::Bare` and never reaches
+                // this branch). The `.expect` therefore cannot fire.
                 let budget = self
                     .budget
                     .clone()

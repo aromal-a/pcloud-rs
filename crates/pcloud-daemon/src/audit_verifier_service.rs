@@ -584,10 +584,20 @@ fn wait_until(wake: &Arc<SchedulerWake>, wait: Duration) -> bool {
     if *stopped {
         return true;
     }
-    let (guard, _timeout) = wake
-        .cv
-        .wait_timeout(stopped, wait)
-        .expect("audit verifier wake poisoned");
+    // Condvar poisoning is recoverable — propagate the stop flag rather
+    // than panicking. `LockExt::lock_or_poisoned` is for `Mutex::lock`;
+    // `Condvar::wait_timeout` has no equivalent helper today, so handle
+    // poisoning inline using the same recover-and-log posture.
+    let (guard, _timeout) = match wake.cv.wait_timeout(stopped, wait) {
+        Ok(pair) => pair,
+        Err(poisoned) => {
+            log::error!(
+                "audit_verifier_service: wake condvar poisoned — recovering ({})",
+                "wait_until"
+            );
+            poisoned.into_inner()
+        }
+    };
     *guard
 }
 

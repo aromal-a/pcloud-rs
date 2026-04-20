@@ -35,6 +35,7 @@
 //! **PLATFORM:** all
 //! **GATING:** none (portable).
 
+use pcloud_observability::LockExt;
 use std::sync::Mutex;
 
 /// A single recorded event on one of the mock recorders.
@@ -87,34 +88,29 @@ struct Recorder {
 
 impl Recorder {
     fn push(&self, event: MockEvent) {
-        // `expect` here is acceptable: a poisoned mutex means another
-        // test thread panicked while holding the lock, and surfacing
-        // that panic is the correct behaviour for a deterministic
-        // test helper.
+        // A poisoned mutex means another test thread panicked while
+        // holding the lock; `lock_or_poisoned` surfaces that panic
+        // deterministically with a standard context label.
         self.events
-            .lock()
-            .expect("mock recorder mutex poisoned")
+            .lock_or_poisoned("pcloud-backends::mock::Recorder::push")
             .push(event);
     }
 
     fn snapshot(&self) -> Vec<MockEvent> {
         self.events
-            .lock()
-            .expect("mock recorder mutex poisoned")
+            .lock_or_poisoned("pcloud-backends::mock::Recorder::snapshot")
             .clone()
     }
 
     fn len(&self) -> usize {
         self.events
-            .lock()
-            .expect("mock recorder mutex poisoned")
+            .lock_or_poisoned("pcloud-backends::mock::Recorder::len")
             .len()
     }
 
     fn clear(&self) {
         self.events
-            .lock()
-            .expect("mock recorder mutex poisoned")
+            .lock_or_poisoned("pcloud-backends::mock::Recorder::clear")
             .clear();
     }
 }
@@ -262,8 +258,7 @@ impl MockProto {
     /// may skip this entirely.
     pub fn seed(&self, command: impl Into<String>, response: impl Into<String>) {
         self.canned
-            .lock()
-            .expect("mock proto canned mutex poisoned")
+            .lock_or_poisoned("pcloud-backends::mock::MockProto::seed")
             .push((command.into(), response.into()));
     }
 
@@ -271,8 +266,7 @@ impl MockProto {
     pub fn take_canned(&self) -> Option<(String, String)> {
         let mut guard = self
             .canned
-            .lock()
-            .expect("mock proto canned mutex poisoned");
+            .lock_or_poisoned("pcloud-backends::mock::MockProto::take_canned");
         if guard.is_empty() {
             None
         } else {
@@ -299,8 +293,7 @@ impl MockProto {
     pub fn reset(&self) {
         self.inner.clear();
         self.canned
-            .lock()
-            .expect("mock proto canned mutex poisoned")
+            .lock_or_poisoned("pcloud-backends::mock::MockProto::reset")
             .clear();
     }
 }

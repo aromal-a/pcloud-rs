@@ -838,9 +838,11 @@ impl DynFuseAdapter for PcloudShimAdapter {
         mountpoint: &Path,
         options: MountOptions,
     ) -> Result<MountHandle, MountError> {
-        // INVARIANT: `mount_with` is called exactly once per adapter instance
-        // (enforced by `Box<Self>` ownership); the shim Option is Some until
-        // this take() fires. A second call cannot occur.
+        // SAFETY: `mount_with` consumes `self: Box<Self>`, so it is called
+        // exactly once per adapter instance. The constructor stores `shim`
+        // as `Some(_)`, and this `.take()` is the only code path that can
+        // replace it with `None`. A second call is impossible because the
+        // Box is dropped after the first call returns.
         let shim = self
             .shim
             .take()
@@ -878,9 +880,11 @@ impl DynFuseAdapter for PcloudProtoAdapter {
         mountpoint: &Path,
         options: MountOptions,
     ) -> Result<MountHandle, MountError> {
-        // INVARIANT: `mount_with` is called exactly once per adapter instance
-        // (enforced by `Box<Self>` ownership); the adapter Option is Some until
-        // this take() fires. A second call cannot occur.
+        // SAFETY: `mount_with` consumes `self: Box<Self>`, so it is called
+        // exactly once per adapter instance. The constructor stores
+        // `adapter` as `Some(_)`, and this `.take()` is the only code path
+        // that can replace it with `None`. A second call is impossible
+        // because the Box is dropped after the first call returns.
         let adapter = self
             .adapter
             .take()

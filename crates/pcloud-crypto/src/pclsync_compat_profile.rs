@@ -154,6 +154,9 @@ impl PclsyncCompatProfile {
         if blob.len() < HEADER_LEN {
             return Err(PclsyncCompatError::PrivKeyTruncated);
         }
+        // SAFETY: `blob.len() >= HEADER_LEN` (= 72) is verified above, so the
+        // 4-byte slices `[0..4]` and `[4..8]` are present and `try_into`
+        // into `[u8; 4]` is infallible.
         let typ = u32::from_le_bytes(blob[0..4].try_into().expect("checked len"));
         let flags = u32::from_le_bytes(blob[4..8].try_into().expect("checked len"));
         if typ != PSYNC_CRYPTO_TYPE_RSA4096_64BYTESALT_20000IT {
@@ -185,6 +188,9 @@ impl PclsyncCompatProfile {
         if blob.len() < HEADER_LEN {
             return Err(PclsyncCompatError::PubKeyTruncated);
         }
+        // SAFETY: `blob.len() >= HEADER_LEN` (= 8) is verified above, so the
+        // 4-byte slices `[0..4]` and `[4..8]` are present and `try_into`
+        // into `[u8; 4]` is infallible.
         let typ = u32::from_le_bytes(blob[0..4].try_into().expect("checked len"));
         let flags = u32::from_le_bytes(blob[4..8].try_into().expect("checked len"));
         if typ != PSYNC_CRYPTO_PUB_TYPE_RSA4096 {
@@ -209,6 +215,8 @@ impl PclsyncCompatProfile {
 fn pub_fingerprint(kek_key: &[u8; 32], pub_blob: &[u8]) -> [u8; 32] {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
+    // SAFETY: HMAC-SHA-256 accepts any non-zero key length (RFC 2104); the
+    // fixed 32-byte KEK passed in is never empty.
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(kek_key)
         .expect("HMAC-SHA256 accepts any key length");
     mac.update(pub_blob);
@@ -332,8 +340,12 @@ impl PclsyncCompatState {
     /// to stand up a minimal `PclsyncCompatState` without going
     /// through the full `unlock_profile` flow (which would require a
     /// matching password, priv_key_ver1 blob, and pub fingerprint).
-    /// Gated on `#[cfg(test)]` at the crate level so it never ships.
-    #[cfg(test)]
+    /// Gated on `#[cfg(test)]` OR the opt-in `test-helpers` feature so
+    /// sibling crates' integration tests (e.g.
+    /// `pcloud-backends/tests/crypto_share_rsa_e2e.rs`) can drive the
+    /// share-invitation wire path end-to-end. Never compiled into
+    /// production builds.
+    #[cfg(any(test, feature = "test-helpers"))]
     #[doc(hidden)]
     pub fn for_test(priv_key: rsa::RsaPrivateKey) -> Self {
         Self::new(priv_key)

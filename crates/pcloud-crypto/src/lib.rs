@@ -2254,6 +2254,8 @@ impl CryptoShell {
         let old_kek = pclsync_kdf::derive_kek(&old_password_norm, &old_salt);
 
         // Fresh salt + new KEK.
+        // SAFETY: see keys::KeyManager::default — getrandom is always
+        // available on supported targets (Linux/macOS/Windows).
         let mut new_salt = [0u8; pclsync_compat_profile::PCLSYNC_PBKDF2_SALT_LEN];
         getrandom::getrandom(&mut new_salt)
             .expect("OS randomness for PclsyncCompat salt rotation");
@@ -2283,6 +2285,8 @@ impl CryptoShell {
         let mut new_fpr = [0u8; 32];
         {
             use hmac::{Hmac, Mac};
+            // SAFETY: HMAC-SHA-256 accepts any non-zero key length; the
+            // fixed 32-byte KEK value is never empty.
             let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(&new_kek.key)
                 .expect("HMAC-SHA-256 accepts 32-byte key");
             mac.update(&profile.pub_key_ver1_blob);
@@ -2293,6 +2297,8 @@ impl CryptoShell {
         let new_priv_hex = hex_encode(&new_priv_blob);
         let signature = {
             use hmac::{Hmac, Mac};
+            // SAFETY: HMAC-SHA-256 accepts any non-zero key length; the
+            // fixed 32-byte KEK value is never empty.
             let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(&old_kek.key)
                 .expect("HMAC-SHA-256 accepts 32-byte key");
             mac.update(new_priv_hex.as_bytes());

@@ -156,6 +156,11 @@ pub fn generate_web_token() -> Result<String, String> {
 /// not possible. If you can propagate errors, prefer [`generate_web_token`].
 #[must_use]
 pub fn generate_web_token_or_panic() -> String {
+    // SAFETY: This helper is documented as a panic-on-RNG-failure wrapper
+    // for `Default`-style call sites that cannot propagate errors. A host
+    // whose kernel CSPRNG is unavailable cannot start a web UI securely,
+    // so panic is the correct failure mode here. Callers able to surface
+    // errors should use `generate_web_token` directly.
     generate_web_token().expect("getrandom: kernel RNG unavailable — cannot start web UI")
 }
 

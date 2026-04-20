@@ -49,6 +49,13 @@ default = ["pclsync-v2"]
 # CBC-CS sector cipher, base32 filename encoding). OFF during Wave 1 so the
 # existing Argon2/GCM path keeps building unchanged.
 pclsync-v2 = ["dep:rsa", "dep:pkcs1", "dep:sha1", "dep:static_assertions", "dep:aes", "dep:cbc", "dep:cipher", "dep:rand_core", "dep:ctr"]
+# Opt-in test-only helpers for downstream crates' integration tests.
+# Exposes `PclsyncCompatState::for_test` and `SymKeyVer1::duplicate` as
+# `#[doc(hidden)] pub` so sibling crates (e.g. pcloud-backends) can drive
+# the RSA share-invitation wire path end-to-end under `cargo test`
+# without routing through the full `unlock_profile` flow. This feature
+# MUST NOT be enabled in production builds; it is dev-dependency-gated.
+test-helpers = []
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }

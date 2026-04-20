@@ -253,8 +253,11 @@ pub fn execute_upload_with_chunk_size(
         .unwrap_or(false);
 
     if use_chunked {
-        // INVARIANT: `use_chunked` is only true when `chunk_size.map(...)` evaluates
-        // to Some with a positive value, so chunk_size is guaranteed to be Some here.
+        // SAFETY: `use_chunked` is computed as `chunk_size.map(...).unwrap_or(false)`
+        // (see a few lines above). It can only be `true` when `chunk_size` is
+        // `Some(_)`; the `None` branch in `.map` yields `None.unwrap_or(false) ==
+        // false` and bypasses this block. So `chunk_size.expect(...)` here is
+        // unreachable in well-formed control flow.
         let cs = chunk_size.expect("chunk_size is Some when use_chunked is true");
         let mut tracker = pcloud_engine::transfers::uploads::ChunkedUploadTracker::new(
             session.upload_id,

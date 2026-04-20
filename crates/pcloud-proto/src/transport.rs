@@ -353,6 +353,10 @@ impl BinaryApiTransport {
     /// updates will not be reflected.
     #[must_use]
     pub fn config(&self) -> TransportConfig {
+        // SAFETY: the write-side critical section in `apply_api_server_hint`
+        // only performs infallible field assignments on `TransportConfig`
+        // and cannot panic while holding the lock; therefore the
+        // `RwLock` can never become poisoned on this path.
         self.config
             .read()
             .expect("transport config lock should not be poisoned")
@@ -433,6 +437,9 @@ impl ApiServerHintConsumer for BinaryApiTransport {
             return;
         }
 
+        // SAFETY: the only other holder of this lock is `Self::config`,
+        // which performs an infallible clone. No code path holds the
+        // lock across a panic, so poisoning is unreachable.
         let mut config = self
             .config
             .write()

@@ -169,6 +169,8 @@ pub fn build_auth_tree(
     // auth sector (<= 128 tags). This matches the C loop condition
     // `while (size > 1)` at pfscrypto.c:151-162 where `size` is the number of
     // auth sectors at the current level.
+    // SAFETY: `levels` is seeded with `level0` (pushed above) and only grows
+    // via `levels.push(parent)`; `levels.last()` is therefore always `Some`.
     while level_sector_count(levels.last().expect("non-empty").len()) > 1 {
         if levels.len() >= PCLSYNC_MAX_TREE_LEVELS {
             // Safety cap: C asserts `level <= PSYNC_CRYPTO_MAX_HASH_TREE_LEVEL`
@@ -177,6 +179,7 @@ pub fn build_auth_tree(
             // `compute_master_auth` no longer covers the entire leaf set.
             break;
         }
+        // SAFETY: same invariant — `levels` is non-empty at every iteration.
         let parent = build_parent_level(hmac_key, levels.last().expect("non-empty"));
         levels.push(parent);
     }
@@ -190,6 +193,7 @@ pub fn build_auth_tree(
     // (`needmasterauth = false`, pfscrypto.c:139).
     let needmasterauth = sector_tags.len() > 1;
     if needmasterauth {
+        // SAFETY: `levels` was seeded above and is non-empty throughout.
         let top = levels.last().expect("non-empty");
         let root_tag = hmac_sha512_trunc32(hmac_key, top);
         levels.push(root_tag.to_vec());
@@ -251,6 +255,8 @@ fn hmac_sha512_trunc32(
     key: &[u8; PCLSYNC_HMAC_KEY_LEN],
     data: &[u8],
 ) -> [u8; PCLSYNC_AUTH_TAG_LEN] {
+    // SAFETY: HMAC-SHA-512 accepts any non-zero key length (RFC 2104);
+    // callers pass a fixed 64-byte `[u8; PCLSYNC_HMAC_KEY_LEN]` here.
     let mut mac = HmacSha512::new_from_slice(key).expect("HMAC accepts any key length");
     mac.update(data);
     let full = mac.finalize().into_bytes();

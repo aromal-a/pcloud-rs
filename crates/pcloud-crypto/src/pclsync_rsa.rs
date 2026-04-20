@@ -222,7 +222,10 @@ impl SymKeyVer1 {
     /// `Clone` impl — `pcloud-secret/src/lib.rs:26` forbids `Clone` on
     /// secret-bearing types so every duplication is audit-visible.
     /// Production code must share via `Arc<SymKeyVer1>` instead.
-    #[cfg(test)]
+    /// Gated on `#[cfg(test)]` OR the opt-in `test-helpers` feature so
+    /// downstream crates' integration tests can seed the folder/file
+    /// sym-key cache without re-generating key material.
+    #[cfg(any(test, feature = "test-helpers"))]
     pub fn duplicate(&self) -> Self {
         Self {
             sym_type: self.sym_type,
@@ -319,6 +322,9 @@ pub fn parse_sym_key_ver1(buf: &[u8]) -> Result<SymKeyVer1, PclsyncRsaError> {
             expected: PCLSYNC_SYM_KEY_VER1_SIZE,
         });
     }
+    // SAFETY: `buf.len() == PCLSYNC_SYM_KEY_VER1_SIZE` (168) is verified above,
+    // so the 4-byte slices `[0..4]` and `[4..8]` are always present and
+    // `try_into::<[u8;4]>` is infallible.
     let sym_type = u32::from_le_bytes(buf[0..4].try_into().expect("checked len"));
     let flags = u32::from_le_bytes(buf[4..8].try_into().expect("checked len"));
     if sym_type != PCLSYNC_SYM_TYPE_AES256_1024BIT_HMAC {

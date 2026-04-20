@@ -509,6 +509,10 @@ fn dispatch(req: &ParsedRequest, state: &Arc<Mutex<MockState>>) -> Vec<u8> {
         }
     }
 
+    // SAFETY: `pcloud-mockserver` is a hermetic in-process test harness; the
+    // only writers of `MockState` are the handler routines below, none of
+    // which panic while holding the lock. A poisoned mutex here would
+    // indicate a test-harness bug, not a production runtime condition.
     let mut state = state.lock().expect("mock state poisoned");
     match req.path.as_str() {
         "/healthz" => json_response(200, &json!({"result": 0, "status": "ok"})),
@@ -779,6 +783,11 @@ fn error_body(code: u64, msg: &str) -> Value {
 }
 
 fn json_response(status: u16, body: &Value) -> Vec<u8> {
+    // SAFETY: `body` is always one of the canned `json!(...)` literals
+    // produced by this crate's handlers; `serde_json::to_vec` on a
+    // `serde_json::Value` only fails on I/O writers, not on the in-memory
+    // Vec<u8> sink used here. A failure here would indicate a
+    // serde_json internal invariant break.
     let body_bytes = serde_json::to_vec(body).expect("canned JSON must serialize");
     let reason = match status {
         200 => "OK",

@@ -13,6 +13,7 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
+use pcloud_observability::LockExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -160,10 +161,7 @@ impl InodeTable {
         // poisoned mutex here would indicate a prior panic in this module
         // — a real bug we want surfaced immediately rather than masked
         // with a fabricated `FsError`.
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("inode table mutex must not be poisoned");
+        let mut inner = self.inner.lock_or_poisoned("inode::insert_with_lookup");
         inner.lookup_counts.entry(ino).or_insert(0);
         Ok((ino, generation))
     }
@@ -190,10 +188,7 @@ impl InodeTable {
         // site inside this module is panic-free data-structure work. A
         // poisoned mutex here would indicate a prior panic in this module
         // — a real bug we want surfaced immediately rather than masked.
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("inode table mutex must not be poisoned");
+        let mut inner = self.inner.lock_or_poisoned("inode::insert_or_get");
         if let Some(&ino) = inner.by_path.get(path) {
             if let Some(entry) = inner.by_ino.get_mut(&ino) {
                 entry.kind = kind;
@@ -225,10 +220,7 @@ impl InodeTable {
         if path == "/" {
             return None;
         }
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("inode table mutex must not be poisoned");
+        let mut inner = self.inner.lock_or_poisoned("inode::invalidate_path");
         let ino = inner.by_path.remove(path)?;
         if let Some(entry) = inner.by_ino.remove(&ino) {
             // Re-insert a tombstone generation bump so any future resolve()
@@ -243,10 +235,7 @@ impl InodeTable {
         if ino == ROOT_INODE {
             return None;
         }
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("inode table mutex must not be poisoned");
+        let mut inner = self.inner.lock_or_poisoned("inode::invalidate_ino");
         let entry = inner.by_ino.remove(&ino)?;
         inner.by_path.remove(&entry.path);
         Some(entry.path)
@@ -272,10 +261,7 @@ impl InodeTable {
     /// names `ino` to the FUSE kernel. The kernel will later balance each
     /// such increment with a `forget(ino, nlookup)` message.
     pub fn increment_lookup(&self, ino: u64) {
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("inode table mutex must not be poisoned");
+        let mut inner = self.inner.lock_or_poisoned("inode::increment_lookup");
         *inner.lookup_counts.entry(ino).or_insert(0) += 1;
     }
 
@@ -294,10 +280,7 @@ impl InodeTable {
         if ino == ROOT_INODE {
             return;
         }
-        let mut inner = self
-            .inner
-            .lock()
-            .expect("inode table mutex must not be poisoned");
+        let mut inner = self.inner.lock_or_poisoned("inode::forget");
         match inner.lookup_counts.get_mut(&ino) {
             Some(count) => {
                 *count = count.saturating_sub(nlookup);

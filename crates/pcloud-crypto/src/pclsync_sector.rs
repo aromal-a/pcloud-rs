@@ -158,6 +158,9 @@ pub enum SectorError {
 /// HMAC-SHA-512 over a sequence of byte slices. Mirrors
 /// `psync_hmac_sha512_init/_update/_final` (`pcrypto.c:500–504`).
 fn hmac_sha512(key: &[u8], parts: &[&[u8]]) -> Zeroizing<[u8; 64]> {
+    // SAFETY: HMAC-SHA-512 accepts any non-zero key length (RFC 2104).
+    // All callers pass a fixed-length HMAC key slice derived from the
+    // pclsync key schedule, never zero-length.
     let mut mac = <HmacSha512 as Mac>::new_from_slice(key).expect("HMAC accepts any key length");
     for p in parts {
         mac.update(p);
@@ -368,6 +371,8 @@ pub fn seal_sector_with_rnd(
         &[plaintext, &sector_id_le, rnd.as_ref()],
     );
 
+    // SAFETY: `keys.aes_key` is a fixed-length `&[u8; PCLSYNC_AES_KEY_LEN]`
+    // (32 bytes), which is the required key size for AES-256.
     let aes = Aes256::new_from_slice(keys.aes_key).expect("AES-256 key is 32 bytes");
     let datalen = plaintext.len();
     let mut ciphertext = vec![0u8; datalen];
@@ -440,6 +445,8 @@ pub fn open_sector(
         return Err(SectorError::CiphertextTooLong(ciphertext.len()));
     }
 
+    // SAFETY: `keys.aes_key` is a fixed-length `&[u8; PCLSYNC_AES_KEY_LEN]`
+    // (32 bytes), the required AES-256 key size.
     let aes = Aes256::new_from_slice(keys.aes_key).expect("AES-256 key is 32 bytes");
 
     // pcrypto.c:576–577 — decrypt the auth tag in place.

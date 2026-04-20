@@ -276,8 +276,9 @@ impl SessionRegistry {
             }],
         };
         self.by_id.insert(id, session);
-        // INVARIANT: the session was inserted on the preceding line;
-        // the key is guaranteed to be present in the same-thread call.
+        // SAFETY: the session was inserted on the preceding line in
+        // the same `&mut self` call; no other thread can observe the
+        // map between `insert` and `get`, so the lookup always hits.
         self.by_id.get(&id).expect("just inserted")
     }
 
