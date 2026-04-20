@@ -14,3 +14,4 @@ target/
 # upstream C reference drop — read-only reference, not ours to commit
 C_CODE/
 pcloudcc
+.claude/
