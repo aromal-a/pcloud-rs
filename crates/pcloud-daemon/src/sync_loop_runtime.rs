@@ -631,7 +631,7 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                                 // is still recognised as non-stalled
                                 // via its byte counter.
                                 self.stall_detector
-                                    .observe_bytes(path, written as u64);
+                                    .observe_bytes(path, written);
                                 if self.engine.mark_transfer_completed(path) {
                                     completed += 1;
                                     // P2-b (H2): durable ack — remove

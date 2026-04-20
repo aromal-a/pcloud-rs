@@ -977,8 +977,26 @@ fn allowed_flags_for(command: &Command) -> &'static [&'static str] {
             "--allow-argv-password",
         ],
         // TFA submission accepts `--trust-device` to ask pCloud to
-        // remember this device for future logins.
-        Command::SubmitTwoFactorCode | Command::SubmitRecoveryCode => &["--trust-device", "-r"],
+        // remember this device for future logins. `--allow-argv-password`
+        // is accepted here because the TFA/recovery code is a secret on
+        // argv and the inner `parse_inputs_for_command` guard requires
+        // this explicit acknowledgement; without it the allow-list would
+        // reject a command the guard otherwise accepts.
+        Command::SubmitTwoFactorCode | Command::SubmitRecoveryCode => {
+            &["--trust-device", "-r", "--allow-argv-password"]
+        }
+        // `submit-auth <TOKEN>` passes a secret on argv; `--allow-argv-password`
+        // is required by the inner guard, so it must also appear on the
+        // allow-list or parse_command would reject the command first.
+        Command::SubmitAuthToken => &["--allow-argv-password"],
+        // `crypto start <PASSWORD>` / `unlock-crypto <PASSWORD>` — same
+        // argv-secret guard applies. Also accepts the secure password
+        // sources shared with other credential-reading subcommands.
+        Command::SubmitCryptoPassword => &[
+            "--password-stdin",
+            "--password-env",
+            "--allow-argv-password",
+        ],
         // `sync add` accepts an optional `--type <FLAVOR>` direction
         // selector. Flavor aliases: bilateral|full|both,
         // mirror|download-only|down|remote-to-local,
@@ -3478,10 +3496,15 @@ mod tests {
 
     #[test]
     fn submit_auth_parses_explicit_token() {
+        // `--allow-argv-password` is required: `parse_inputs_for_command` for
+        // SubmitAuthToken enforces the argv-secret guard and calls
+        // `std::process::exit(2)` when the flag is missing, which would
+        // terminate the test harness rather than surface an error.
         let args = vec![
             "pcloud-cli".to_owned(),
             "submit-auth".to_owned(),
             "auth-token-42".to_owned(),
+            "--allow-argv-password".to_owned(),
         ];
 
         let inputs =
@@ -3493,11 +3516,15 @@ mod tests {
 
     #[test]
     fn submit_tfa_parses_explicit_code_and_flag() {
+        // See `submit_auth_parses_explicit_token` — SubmitTwoFactorCode also
+        // enforces the argv-secret guard and will `process::exit(2)` without
+        // `--allow-argv-password`.
         let args = vec![
             "pcloud-cli".to_owned(),
             "submit-tfa".to_owned(),
             "654321".to_owned(),
             "--trust-device".to_owned(),
+            "--allow-argv-password".to_owned(),
         ];
 
         let inputs = parse_inputs_for_command(&Command::SubmitTwoFactorCode, &args)
@@ -3510,10 +3537,14 @@ mod tests {
 
     #[test]
     fn submit_recovery_marks_recovery_code_path() {
+        // See `submit_auth_parses_explicit_token` — the recovery-code branch
+        // shares the TFA guard (`Command::SubmitRecoveryCode`) and will
+        // `process::exit(2)` without `--allow-argv-password`.
         let args = vec![
             "pcloud-cli".to_owned(),
             "submit-recovery".to_owned(),
             "RECOVERY-123".to_owned(),
+            "--allow-argv-password".to_owned(),
         ];
 
         let inputs = parse_inputs_for_command(&Command::SubmitRecoveryCode, &args)
@@ -4548,7 +4579,10 @@ mod tests {
 
     #[test]
     fn two_token_crypto_start_password_shifts_correctly() {
-        let args = argv(&["crypto", "start", "hunter2"]);
+        // `--allow-argv-password` is required because the crypto password
+        // is a secret on argv; the SubmitCryptoPassword inner guard calls
+        // `std::process::exit(2)` without the acknowledgement flag.
+        let args = argv(&["crypto", "start", "hunter2", "--allow-argv-password"]);
         let cmd = parse_command(&args).unwrap();
         assert_eq!(cmd, Command::SubmitCryptoPassword);
         let inputs = parse_inputs_for_command(&cmd, &args).expect("inputs should parse");
@@ -4559,7 +4593,11 @@ mod tests {
 
     #[test]
     fn legacy_tfa_alias_routes_to_submit_tfa() {
-        let args = argv(&["tfa", "123456"]);
+        // `--allow-argv-password` is required because the TFA code is a secret
+        // being passed on argv; without it `parse_inputs_for_command` calls
+        // `std::process::exit(2)` which would terminate the test harness
+        // rather than return an error (mirrors legacy_auth_alias behavior).
+        let args = argv(&["tfa", "123456", "--allow-argv-password"]);
         let cmd = parse_command(&args).unwrap();
         assert_eq!(cmd, Command::SubmitTwoFactorCode);
         let inputs = parse_inputs_for_command(&cmd, &args).expect("inputs should parse");

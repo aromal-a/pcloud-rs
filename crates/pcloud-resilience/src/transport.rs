@@ -249,8 +249,8 @@ pub fn parse_retry_after_from_headers(headers: &str) -> Option<Duration> {
     headers
         .lines()
         .find(|l| l.to_ascii_lowercase().starts_with("retry-after:"))
-        .and_then(|l| l.splitn(2, ':').nth(1))
-        .and_then(|v| parse_retry_after_header(v))
+        .and_then(|l| l.split_once(':').map(|x| x.1))
+        .and_then(parse_retry_after_header)
 }
 
 // ── Error classification ───────────────────────────────────────────────────
@@ -848,8 +848,8 @@ impl ResilientTransport {
             // not consumed because the server forced the wait, not a genuine
             // request failure.  We sleep and then re-run the same attempt
             // index so the global budget is not eroded by server throttling.
-            if response.is_rate_limited() {
-                if let Some(hint) = response.retry_after() {
+            if response.is_rate_limited()
+                && let Some(hint) = response.retry_after() {
                     // Server-dictated wait: does not count against budget.
                     sleep_fn(hint).await;
                     // Decrement attempt so the next loop iteration re-uses the
@@ -861,7 +861,6 @@ impl ResilientTransport {
                     }
                     continue;
                 }
-            }
 
             // Fix 2: Consult MethodRetryPolicy before retrying.
             //

@@ -12,7 +12,6 @@
 #![cfg(unix)]
 
 use std::os::unix::fs::PermissionsExt;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use pcloud_config::auth::VaultBackend;
 use pcloud_daemon::vault::{

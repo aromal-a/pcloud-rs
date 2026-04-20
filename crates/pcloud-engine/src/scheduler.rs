@@ -253,7 +253,7 @@ impl Scheduler {
             .map(|op| op.sync_id())
             .collect();
         let num_roots = distinct_roots.len().max(1);
-        let per_root_cap = ((global_limit + num_roots - 1) / num_roots).max(1);
+        let per_root_cap = global_limit.div_ceil(num_roots).max(1);
         let mut per_root: std::collections::HashMap<SyncId, usize> =
             std::collections::HashMap::new();
         let mut out = Vec::with_capacity(global_limit);
@@ -328,7 +328,7 @@ impl Scheduler {
             .collect();
         let num_roots = distinct_roots.len().max(1);
         // Each root gets at least 1 slot; distribute remaining slots evenly.
-        let per_root_cap = ((global_limit + num_roots - 1) / num_roots).max(1);
+        let per_root_cap = global_limit.div_ceil(num_roots).max(1);
 
         let mut per_root: std::collections::HashMap<SyncId, usize> =
             std::collections::HashMap::new();
@@ -615,7 +615,7 @@ mod tests {
         // embedding runtime would persist to `sync.scheduler.queue`.
         // This mirrors EngineShell::snapshot_scheduler_durable.
         let mut durable: Vec<PlannedOperation> =
-            scheduler.queued_operations.iter().cloned().collect();
+            scheduler.queued_operations.to_vec();
         durable.extend(scheduler.dispatched_operations.iter().cloned());
 
         // Step 4: simulate restart: fresh Scheduler, replace queue from

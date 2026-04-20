@@ -1180,10 +1180,12 @@ pub enum Request {
 /// gate on the enhanced backend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum CryptoBackendIpc {
     /// pcloudcom-compatible crypto profile. Wire format is
     /// bit-identical to the upstream C client so a pCloud account set up
     /// via this backend remains openable by any pcloudcom tool.
+    #[default]
     PclsyncCompat,
     /// Enhanced (non-interop) crypto profile. Callers **must** set
     /// `acknowledge_not_interop = true` on the enclosing request or the
@@ -1192,11 +1194,6 @@ pub enum CryptoBackendIpc {
     Enhanced,
 }
 
-impl Default for CryptoBackendIpc {
-    fn default() -> Self {
-        Self::PclsyncCompat
-    }
-}
 
 /// Wire-level mirror of
 /// `pcloud_backends::upload_sessions::ConflictMode`. Carried on

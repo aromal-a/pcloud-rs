@@ -207,7 +207,7 @@ fn xor_into(dst: &mut [u8], src: &[u8]) {
 
 fn cbc_cs_encrypt(cipher: &Aes256, iv: &[u8; 16], plaintext: &[u8], out: &mut [u8]) {
     let mut len = plaintext.len();
-    let needsteal = if len % BLOCK != 0 {
+    let needsteal = if !len.is_multiple_of(BLOCK) {
         let r = len % BLOCK;
         len -= r + BLOCK;
         r
@@ -261,7 +261,7 @@ fn cbc_cs_encrypt(cipher: &Aes256, iv: &[u8; 16], plaintext: &[u8], out: &mut [u
 
 fn cbc_cs_decrypt(cipher: &Aes256, iv: &[u8; 16], ciphertext: &[u8], out: &mut [u8]) {
     let mut len = ciphertext.len();
-    let needsteal = if len % BLOCK != 0 {
+    let needsteal = if !len.is_multiple_of(BLOCK) {
         let r = len % BLOCK;
         len -= r + BLOCK;
         r

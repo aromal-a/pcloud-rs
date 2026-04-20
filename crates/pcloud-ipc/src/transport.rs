@@ -199,14 +199,13 @@ impl Drop for ConnectionGuard {
 
         // Decrement per-peer counter and remove the entry when it hits zero.
         let mut map_guard = PEER_CONNECTIONS.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(map) = map_guard.as_mut() {
-            if let Some(count) = map.get_mut(&self.peer_uid) {
+        if let Some(map) = map_guard.as_mut()
+            && let Some(count) = map.get_mut(&self.peer_uid) {
                 *count -= 1;
                 if *count == 0 {
                     map.remove(&self.peer_uid);
                 }
             }
-        }
     }
 }
 
@@ -539,7 +538,7 @@ impl BoundIpcServer {
                     eprintln!("pcloud-ipc: connection error: {e}");
                 }
             })
-            .map_err(|e| IpcTransportError::Io(e))?;
+            .map_err(IpcTransportError::Io)?;
 
         Ok(())
     }
@@ -778,11 +777,10 @@ impl IpcServer {
             } else {
                 // Re-chmod existing dirs only if we own them.
                 use std::os::unix::fs::MetadataExt;
-                if let Ok(meta) = fs::metadata(parent) {
-                    if meta.uid() == self.owner_uid() {
+                if let Ok(meta) = fs::metadata(parent)
+                    && meta.uid() == self.owner_uid() {
                         fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
                     }
-                }
             }
         }
 
@@ -1315,7 +1313,7 @@ mod tests {
         {
             let map = PEER_CONNECTIONS.lock().unwrap();
             assert!(
-                map.as_ref().map_or(true, |m| !m.contains_key(&test_uid)),
+                map.as_ref().is_none_or(|m| !m.contains_key(&test_uid)),
                 "per-peer entry should be removed after all connections close"
             );
         }
@@ -1354,7 +1352,7 @@ mod tests {
             );
             let map = PEER_CONNECTIONS.lock().unwrap();
             assert!(
-                map.as_ref().map_or(true, |m| !m.contains_key(&test_uid)),
+                map.as_ref().is_none_or(|m| !m.contains_key(&test_uid)),
                 "round {round}: per-peer entry should be absent after drop"
             );
         }

@@ -32,7 +32,7 @@
 //!      (no padding-oracle leak, no silent success).
 //!
 //! The mock transport implements the exact same [`ProtocolTransport`]
-//! + [`ApiServerHintConsumer`] traits the production `BinaryApiTransport`
+//! and [`ApiServerHintConsumer`] traits the production `BinaryApiTransport`
 //! does — no type-laundering, no fake that bypasses the compiler.
 //!
 //! # Why `SharesApi` rather than `SharesRuntime`

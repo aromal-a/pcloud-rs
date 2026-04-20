@@ -14,7 +14,7 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use pcloud_config::{ConfigProfile, Environment};
 use pcloud_daemon::sync_loop::SyncLoopState;

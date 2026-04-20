@@ -72,6 +72,7 @@ struct CountingUploadBackend {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct SessionState {
     parent: String,
     name: String,

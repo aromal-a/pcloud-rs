@@ -140,11 +140,10 @@ pub fn apply_env_overrides(mut profile: ConfigProfile) -> Result<ConfigProfile, 
     if let Some(v) = optional_env("PCLOUD_MOUNT_METADATA_TTL_SECS") {
         profile.mount.metadata_ttl_secs = parse_u32("PCLOUD_MOUNT_METADATA_TTL_SECS", &v)?;
     }
-    if let Some(v) = optional_env("PCLOUD_AUTO_MOUNT_PATH") {
-        if !v.is_empty() {
+    if let Some(v) = optional_env("PCLOUD_AUTO_MOUNT_PATH")
+        && !v.is_empty() {
             profile.mount.auto_mount_path = Some(std::path::PathBuf::from(v));
         }
-    }
 
     Ok(profile)
 }

@@ -847,12 +847,7 @@ fn render_backend_suffix(
     if !matches!(response.status, pcloud_ipc::ResponseStatus::Ok) {
         return None;
     }
-    match scrape_backend_token(&response.message) {
-        Some(name) => Some(format!("Unlocked (backend: {name})")),
-        // Pre-Wave-2 daemon without `backend=` in the response: keep
-        // the renderer silent rather than surfacing "unknown".
-        None => None,
-    }
+    scrape_backend_token(&response.message).map(|name| format!("Unlocked (backend: {name})"))
 }
 
 fn command_accepts_bare_fields(command: &commands::Command) -> bool {

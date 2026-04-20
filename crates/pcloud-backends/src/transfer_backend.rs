@@ -152,6 +152,7 @@ pub enum TransferBackendError {
     /// Error codes are mapped per `pclsync/pnetlibs.c` taxonomy:
     /// - `2003 / 2005 / 2007 / 2009 / 2029 / 2067 / 5002` → permanent
     ///   (auth failure, quota exceeded, unsupported operation, etc.)
+    ///
     /// All other non-zero codes are classified as transient.
     #[error("upload_write permanent error (result code {result})")]
     PermanentResultCode {

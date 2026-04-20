@@ -375,7 +375,7 @@ impl EngineShell {
             session_manager: session_manager::SessionManagerActor::default(),
             diff_poller: diff_poller::DiffPoller::default(),
             local_scanner: local_scan::LocalScanner::default(),
-            event_ingestor: fs_events::FsEventIngestor::default(),
+            event_ingestor: fs_events::FsEventIngestor,
             planner: planner::Planner::default(),
             scheduler: scheduler::Scheduler::default(),
             recovery: recovery::RecoveryManager::default(),
@@ -903,7 +903,7 @@ impl EngineShell {
     #[must_use]
     pub fn snapshot_scheduler_durable(&self) -> Vec<PlannedOperation> {
         let mut combined: Vec<PlannedOperation> =
-            self.scheduler.queued_operations.iter().cloned().collect();
+            self.scheduler.queued_operations.to_vec();
         combined.extend(self.scheduler.dispatched_operations.iter().cloned());
         combined.sort_by(|a, b| {
             a.sync_id()

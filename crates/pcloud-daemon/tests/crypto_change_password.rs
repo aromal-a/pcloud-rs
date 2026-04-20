@@ -22,7 +22,6 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use pcloud_auth::AuthCommand;
 use pcloud_config::{ConfigProfile, Environment};

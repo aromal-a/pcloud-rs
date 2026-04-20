@@ -296,7 +296,7 @@ where
 /// non-hex character or on odd length. Lower-case hex only (matches
 /// what `pssl.c` emits via `mbedtls_mpi_write_string(.., 16, ..)`).
 fn decode_hex(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 || s.is_empty() {
+    if !s.len().is_multiple_of(2) || s.is_empty() {
         return None;
     }
     let bytes = s.as_bytes();

@@ -14,7 +14,6 @@
 
 use std::path::PathBuf;
 use std::sync::Mutex;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use pcloud_config::{ConfigProfile, Environment};
 use pcloud_daemon::audit_verifier_service::{VerifierOutcome, VerifierRunner};

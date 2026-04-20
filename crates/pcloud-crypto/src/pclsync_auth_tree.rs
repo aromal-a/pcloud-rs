@@ -287,9 +287,7 @@ pub fn verify_path(
 
     // Confirm the claimed leaf matches the tree's stored leaf.
     let leaf_bytes = &tree.levels[0];
-    let offset = sector_index
-        .checked_mul(PCLSYNC_AUTH_TAG_LEN)
-        .unwrap_or(usize::MAX);
+    let offset = sector_index.saturating_mul(PCLSYNC_AUTH_TAG_LEN);
     if offset + PCLSYNC_AUTH_TAG_LEN > leaf_bytes.len() {
         return false;
     }
@@ -349,11 +347,10 @@ pub fn verify_path(
 #[must_use]
 pub fn compute_master_auth(tree: &AuthTree) -> [u8; PCLSYNC_AUTH_TAG_LEN] {
     let mut out = [0u8; PCLSYNC_AUTH_TAG_LEN];
-    if let Some(top) = tree.levels.last() {
-        if top.len() >= PCLSYNC_AUTH_TAG_LEN {
+    if let Some(top) = tree.levels.last()
+        && top.len() >= PCLSYNC_AUTH_TAG_LEN {
             out.copy_from_slice(&top[..PCLSYNC_AUTH_TAG_LEN]);
         }
-    }
     out
 }
 

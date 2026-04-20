@@ -222,7 +222,7 @@ fn migration_is_idempotent_and_user_version_stable() {
 
     for run in 0..3u32 {
         let (profile, _) =
-            bootstrap_profile(&path).expect(&format!("bootstrap run {run} should succeed"));
+            bootstrap_profile(&path).unwrap_or_else(|_| panic!("bootstrap run {run} should succeed"));
         assert_eq!(
             profile.schema_version, SCHEMA_VERSION_V11,
             "run {run}: schema_version must be stable at target version"

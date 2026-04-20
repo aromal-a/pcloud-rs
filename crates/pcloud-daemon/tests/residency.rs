@@ -16,7 +16,6 @@
 // **GATING:** none (portable).
 
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use pcloud_backends::residency::{ACTION_SYNC_ROOT_ADD, ACTION_UPLOAD_CREATE, Region};
 use pcloud_config::{ConfigProfile, Environment};

@@ -25,6 +25,18 @@ unmaintained = "workspace"
 #
 # Current reviewer: @ezechiel203. Next scheduled sweep: 2026-07-15.
 ignore = [
+    # RUSTSEC-2023-0071: `rsa 0.9.10` Marvin Attack — non-constant-time RSA
+    # decrypt leaks private-key bits via timing on a network observer.
+    # No upstream patched release; RustCrypto/RSA#19 tracks the migration
+    # to a constant-time backend. Reachable via pcloud-crypto share_rsa
+    # (crypto share invitation unwrap) and pclsync_rsa (pclsync-compat
+    # private-key decrypt). Operational mitigation: the affected paths do
+    # not loop on attacker-chosen ciphertexts during normal operation
+    # (each invitation is a single decrypt), which bounds the timing
+    # signal. Tracked under bd-ktj; flip to hard-fail as soon as upstream
+    # ships the constant-time release.
+    # review: 2026-07-15
+    "RUSTSEC-2023-0071",
     # RUSTSEC-2021-0119: nix 0.19.1 has an OOB write in `getgrouplist` on
     # platforms with >16 groups. Pulled transitively by `battery v0.7.8`,
     # which we only depend on for `cfg(target_os = "macos")` and

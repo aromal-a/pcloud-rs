@@ -23,7 +23,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier, Mutex, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 /// Integration-test-wide serialization lock. Every scenario mutates
 /// the process-wide `SHUTDOWN_REQUESTED` / `DRAIN_STATE` statics and

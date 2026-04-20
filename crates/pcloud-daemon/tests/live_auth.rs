@@ -11,7 +11,6 @@
 use std::{
     env, fs,
     path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
 };
 
 use pcloud_auth::SessionState;

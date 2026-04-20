@@ -162,10 +162,12 @@ use thiserror::Error;
 /// sealed under one backend, files cannot be decrypted under the other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
+#[derive(Default)]
 pub enum CryptoBackend {
     /// Byte-compatible with the official pCloud C client, desktop,
     /// iOS/Android apps, and web. Uses PBKDF2-HMAC-SHA512 + RSA-4096 +
     /// custom sector AEAD. **Default for new profiles.**
+    #[default]
     PclsyncCompat,
     /// Stricter AEAD (AES-256-GCM) + Argon2id KDF. Opt-in only.
     /// Files encrypted under this backend will NOT decrypt in the
@@ -173,11 +175,6 @@ pub enum CryptoBackend {
     Enhanced,
 }
 
-impl Default for CryptoBackend {
-    fn default() -> Self {
-        Self::PclsyncCompat
-    }
-}
 
 impl std::fmt::Display for CryptoBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -1289,7 +1286,7 @@ impl CryptoShell {
         }
         #[cfg(feature = "pclsync-v2")]
         {
-            return self.pclsync_compat.is_some();
+            self.pclsync_compat.is_some()
         }
         #[cfg(not(feature = "pclsync-v2"))]
         {
@@ -1313,7 +1310,7 @@ impl CryptoShell {
         }
         #[cfg(feature = "pclsync-v2")]
         {
-            return self.pclsync_compat_state.is_some();
+            self.pclsync_compat_state.is_some()
         }
         #[cfg(not(feature = "pclsync-v2"))]
         {
@@ -1677,11 +1674,10 @@ impl CryptoShell {
             // the same daemon session). `Instant::now()` is guaranteed not
             // to go backward within a process, so this cannot be bypassed
             // by clock manipulation without killing the daemon.
-            if let Some(floor) = self.lockout_monotonic_floor {
-                if std::time::Instant::now() < floor {
+            if let Some(floor) = self.lockout_monotonic_floor
+                && std::time::Instant::now() < floor {
                     return Err(CryptoError::BruteForceLockedOut);
                 }
-            }
         }
 
         // Normalize password bytes to Unicode NFC (H-4) so the same
@@ -1772,11 +1768,10 @@ impl CryptoShell {
                 return Err(CryptoError::BruteForceLockedOut);
             }
             // Monotonic check (clock-rewind resistant, same session).
-            if let Some(floor) = self.lockout_monotonic_floor {
-                if std::time::Instant::now() < floor {
+            if let Some(floor) = self.lockout_monotonic_floor
+                && std::time::Instant::now() < floor {
                     return Err(CryptoError::BruteForceLockedOut);
                 }
-            }
         }
 
         let normalized = normalize_password_nfc(&password);
@@ -3620,8 +3615,10 @@ mod tests {
 
     #[test]
     fn profile_roundtrip_preserves_backend() {
-        let mut c = CryptoShell::default();
-        c.backend = Some(CryptoBackend::Enhanced);
+        let mut c = CryptoShell {
+            backend: Some(CryptoBackend::Enhanced),
+            ..CryptoShell::default()
+        };
         let json = serde_json::to_string(&c).unwrap();
         let back: CryptoShell = serde_json::from_str(&json).unwrap();
         assert_eq!(back.backend, Some(CryptoBackend::Enhanced));

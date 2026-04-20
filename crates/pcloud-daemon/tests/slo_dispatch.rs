@@ -13,7 +13,6 @@
 // **GATING:** none (portable).
 
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use pcloud_config::{ConfigProfile, Environment};
 use pcloud_daemon::{bootstrap_with_config, dispatch};

@@ -36,6 +36,10 @@ use pcloud_proto::folder_api::{RemoteFolderEntry, RemoteFolderListing};
 // Mock backends (public-trait impls; no cfg(test) magic).
 // -----------------------------------------------------------------------------
 
+/// Tuple describing a directory entry fed into `MockFolderBackend::insert_dir`:
+/// `(name, is_folder, folder_id, file_id, size)`.
+type MockDirEntry<'a> = (&'a str, bool, Option<u64>, Option<u64>, Option<u64>);
+
 #[derive(Debug, Default)]
 struct MockFolderBackend {
     listings: Mutex<HashMap<String, RemoteFolderListing>>,
@@ -52,7 +56,7 @@ impl MockFolderBackend {
         &self,
         path: &str,
         folder_id: u64,
-        entries: Vec<(&str, bool, Option<u64>, Option<u64>, Option<u64>)>,
+        entries: Vec<MockDirEntry<'_>>,
     ) {
         let listing = RemoteFolderListing {
             folder_id,

@@ -266,7 +266,7 @@ pub fn fusermount_unmount(path: &Path, timeout: Duration) -> io::Result<()> {
                 Err(e) => last_err = Some(e),
             }
         }
-        return Err(last_err.unwrap_or_else(|| io::Error::other("no fusermount binary available")));
+        Err(last_err.unwrap_or_else(|| io::Error::other("no fusermount binary available")))
     }
 
     #[cfg(target_os = "macos")]

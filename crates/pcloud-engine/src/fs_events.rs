@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn normalizes_create_and_remove_events() {
-        let ingestor = FsEventIngestor::default();
+        let ingestor = FsEventIngestor;
         let candidates = ingestor
             .normalize_events(&[
                 FsEvent {
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn coalesces_multiple_events_for_same_path() {
-        let ingestor = FsEventIngestor::default();
+        let ingestor = FsEventIngestor;
         let candidates = ingestor
             .normalize_events(&[
                 FsEvent {
@@ -163,7 +163,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_event_paths() {
-        let ingestor = FsEventIngestor::default();
+        let ingestor = FsEventIngestor;
         let error = ingestor
             .normalize_events(&[FsEvent {
                 sync_id: SyncId::new(1),

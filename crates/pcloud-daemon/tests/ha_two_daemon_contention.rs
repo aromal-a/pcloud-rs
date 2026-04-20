@@ -25,7 +25,6 @@
 //! **PLATFORM:** Linux (the lease relies on `flock(2)` advisory
 //! locking). The daemon is Linux-only; no extra gating is required.
 
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use pcloud_config::ha::{HaContendedMode, HaPolicy};
 use pcloud_config::{ConfigProfile, Environment};
