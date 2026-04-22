@@ -140,7 +140,7 @@ async fn tampered_body_signature_is_rejected() {
     let tmp = TempDir::new().expect("tempdir");
     let ca_path = reference_server::write_ca_bundle(tmp.path());
 
-    use rand::rngs::OsRng;
+    use rand_core::OsRng;
     let sk = SigningKey::generate(&mut OsRng);
     let vk = sk.verifying_key();
     let sid_b64 = B64.encode(vk.to_bytes());
@@ -212,7 +212,7 @@ async fn untrusted_device_sid_is_rejected() {
     let tmp = TempDir::new().expect("tempdir");
     let _mint_sid = mint_identity(tmp.path().to_path_buf()).await;
 
-    use rand::rngs::OsRng;
+    use rand_core::OsRng;
     let other = SigningKey::generate(&mut OsRng);
     let other_sid = B64.encode(other.verifying_key().to_bytes());
     let srv = reference_server::spawn(vec![other_sid])

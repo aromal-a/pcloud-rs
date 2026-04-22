@@ -335,7 +335,7 @@ impl FleetIdentity {
                 device_id: f.device_id,
             })
         } else {
-            use rand::rngs::OsRng;
+            use rand_core::OsRng;
             let sk = SigningKey::generate(&mut OsRng);
             let vk = sk.verifying_key();
             let pk_bytes = vk.to_bytes();
@@ -716,7 +716,7 @@ fn load_ca_bundle(path: &Path) -> Result<rustls::RootCertStore, FleetError> {
 mod tests {
     use super::*;
     use ed25519_dalek::SigningKey;
-    use rand::rngs::OsRng;
+    use rand_core::OsRng;
     use tempfile::TempDir;
 
     fn mk_ca_bundle(dir: &Path) -> PathBuf {

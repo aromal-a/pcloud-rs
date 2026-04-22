@@ -25,13 +25,12 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 rustls-pemfile = "2"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
-# NOTE: pinned to rand 0.8 because ed25519-dalek 2.2 requires rand_core
-# 0.6, which is incompatible with rand 0.9 (rand_core 0.9). This crate
-# uses only `rand::rngs::OsRng` (read from /dev/urandom), not the global
-# thread_rng, so GHSA-cq8v-f236-94qc (unsound with custom log::set_logger
-# calling rand::rng()) has an unreachable sink here. Re-pin to 0.9 once
-# ed25519-dalek publishes a version targeting rand_core 0.9.
-rand = "0.8"
+# rand_core 0.6 directly (transitive via ed25519-dalek's `rand_core`
+# feature). We only need `OsRng`, which does not go through the vulnerable
+# `thread_rng`/`log::set_logger` reentrancy sink of GHSA-cq8v-f236-94qc.
+# Using `rand_core` directly avoids pulling the full `rand 0.8` advisory
+# surface into the lockfile.
+rand_core = { version = "0.6", features = ["getrandom"] }
 base64 = "0.22"
 
 [dev-dependencies]

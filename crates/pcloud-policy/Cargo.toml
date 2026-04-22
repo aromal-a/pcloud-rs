@@ -10,7 +10,7 @@ description = "Policy enforcement layer (OPA/Rego) for the pcloud-rs Rust daemon
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-regorus = "0.3"
+regorus = "0.9"
 
 [dev-dependencies]
 tempfile = "3"

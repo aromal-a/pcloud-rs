@@ -37,24 +37,6 @@ ignore = [
     # ships the constant-time release.
     # review: 2026-07-15
     "RUSTSEC-2023-0071",
-    # RUSTSEC-2021-0119: nix 0.19.1 has an OOB write in `getgrouplist` on
-    # platforms with >16 groups. Pulled transitively by `battery v0.7.8`,
-    # which we only depend on for `cfg(target_os = "macos")` and
-    # `cfg(windows)` in pcloud-daemon (the Linux integrity-sweeper reads
-    # /sys/class/power_supply directly, so `battery` is not compiled on
-    # the Linux release target). `cargo deny`'s `--all-features` graph
-    # walk still resolves the non-Linux path, hence the ignore.
-    # Mitigation: bd-xplat-windows / bd-xplat-macos will replace `battery`
-    # with a platform-native probe before first macOS/Windows release.
-    # review: 2026-07-15
-    "RUSTSEC-2021-0119",
-    # RUSTSEC-2026-0097: rand unsound with custom logger. Pulled via the
-    # reqwest / aws-sdk-kms / rustls transitive stack. No upstream patched
-    # release as of review date — tracked under the enterprise-dep hygiene
-    # milestone (bd-1du.10). Will flip to hard-fail once upstream ships a
-    # patched `rand` major.
-    # review: 2026-07-15
-    "RUSTSEC-2026-0097",
     # RUSTSEC-2025-0134: rustls-pemfile is unmaintained (recommended
     # migration: rustls-pki-types). Direct dep in pcloud-fleet is already
     # on 2.2.0 (the final 2.x); the 1.0.4 copy is pinned by the AWS
@@ -63,17 +45,6 @@ ignore = [
     # enterprise-dep hygiene milestone (bd-1du.10).
     # review: 2026-07-15
     "RUSTSEC-2025-0134",
-    # RUSTSEC-2026-0098: rustls name-constraints for URIs. Upstream is
-    # patching; we are on rustls 0.23.38 (latest 0.23 line). Watch for the
-    # 0.23.x point release that ships the fix.
-    # review: 2026-06-01
-    "RUSTSEC-2026-0098",
-    # RUSTSEC-2026-0099: rustls name-constraints wildcard. Same source as
-    # RUSTSEC-2026-0098 — will flip to hard-fail once the rustls 0.23.x
-    # patch is out. Watched by the nightly `deny-audit` job so a fix ships
-    # within one cron cycle of upstream.
-    # review: 2026-06-01
-    "RUSTSEC-2026-0099",
 ]
 
 [licenses]
