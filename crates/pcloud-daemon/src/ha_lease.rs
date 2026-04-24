@@ -1,35 +1,67 @@
 //! Tier-2 active-passive HA lease for `pcloudd`.
 //!
 //! Two daemons on the same host can coexist — one holds an **exclusive
-//! advisory `flock`** on `<state_dir>/daemon.lease`; the other (when
-//! `[ha].mode = "passive"`) binds its IPC socket and rejects every
-//! request with a helpful `primary is <owner>` message until the
+//! advisory file-range lock** on `<state_dir>/daemon.lease`; the other
+//! (when `[ha].mode = "passive"`) binds its IPC socket and rejects
+//! every request with a helpful `primary is <owner>` message until the
 //! primary releases the lock.
 //!
 //! # Design notes (see `docs/enterprise/ha.md` §4.4 and Tier 2)
 //!
-//! * The lease is a single regular file with mode `0600` under the
-//!   state directory; parent directory is already provisioned `0700`
-//!   by `bootstrap::bootstrap_with_config`.
-//! * `flock(LOCK_EX | LOCK_NB)` is advisory, cooperative, released on
-//!   process exit by the kernel (so a crashed primary is
-//!   automatically recoverable by the secondary on the next poll).
-//! * Lock acquisition is mediated through the safe `fs2` wrapper
-//!   (`FileExt::try_lock_exclusive`) so this module honours
-//!   `#![forbid(unsafe_code)]`.
+//! * The lease is a single regular file under the state directory;
+//!   parent directory is already provisioned `0700` by
+//!   `bootstrap::bootstrap_with_config`.
+//! * On **Unix** the file is created/enforced at mode `0600` and the
+//!   exclusive lock is taken with `flock(LOCK_EX | LOCK_NB)` —
+//!   advisory, cooperative, and released by the kernel on process
+//!   exit (so a crashed primary is automatically recoverable by the
+//!   secondary on the next poll).
+//! * On **Windows** the exclusive lock is taken with
+//!   `LockFileEx(LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY)`
+//!   over a **single reserved byte far past any realistic metadata**
+//!   (offset `LEASE_LOCK_BYTE_OFFSET`, one byte). Windows file-range
+//!   locks are mandatory — other handles' `ReadFile` over a locked
+//!   region fails with `ERROR_LOCK_VIOLATION`. Locking a single
+//!   sentinel byte at a very high offset leaves the JSON metadata
+//!   region at the start of the file fully readable by secondary
+//!   daemons performing `read_lease_metadata`, while still providing
+//!   the "only one holder at a time" guarantee. Windows auto-releases
+//!   the lock when the owning handle closes, giving the same
+//!   crash-recovery guarantee as Unix.
+//! * The `0600` chmod step is skipped on Windows — filesystem ACL
+//!   hardening there is deferred to `bd-xplat-windows`; the state
+//!   directory itself is already protected by the Windows bootstrap
+//!   DACL path.
+//! * Lock acquisition on Unix is mediated through the safe `fs2`
+//!   wrapper (`FileExt::try_lock_exclusive`) so the Unix path stays
+//!   at `forbid(unsafe_code)`. On Windows the single-byte
+//!   `LockFileEx` / `UnlockFileEx` calls require a tiny, tightly
+//!   scoped `unsafe` surface (see `win_lock` below).
 //! * The lease file carries human-readable metadata (hostname, pid,
 //!   start_ts, instance_id, last_heartbeat) re-written on every
 //!   heartbeat. Metadata is **advisory**: the authoritative
-//!   "who-holds" signal is the kernel `flock`, not the file contents.
+//!   "who-holds" signal is the kernel lock, not the file contents.
+//! * Metadata is JSON with no platform-specific fields, so a Windows
+//!   daemon reading a lease file previously written by a Unix daemon
+//!   (or vice versa) works transparently — useful for operators
+//!   debugging mixed-host logs.
 //!
 //! # Threat model
 //!
 //! The lease is **not** a security boundary. It is a co-ordination
-//! primitive between two cooperating daemons running as the same UID.
-//! Cross-UID isolation is enforced by Tier 1 (XDG 0700 dirs,
-//! `SO_PEERCRED` on IPC), unchanged by this module.
+//! primitive between two cooperating daemons running as the same UID
+//! (or same Windows SID). Cross-UID / cross-SID isolation is enforced
+//! by Tier 1 (XDG 0700 dirs on Unix, per-user DACL on Windows,
+//! `SO_PEERCRED` / `GetNamedPipeClientProcessId` on IPC), unchanged
+//! by this module.
 
-#![forbid(unsafe_code)]
+// `forbid(unsafe_code)` on Unix keeps the production path safe-only
+// (the `fs2` flock wrapper encapsulates all unsafe). On Windows the
+// narrow `win_lock` module below needs a tightly scoped `unsafe` block
+// for the `LockFileEx` / `UnlockFileEx` calls, so we downgrade to
+// `deny(unsafe_code)` with a localised `allow` on that one module.
+#![cfg_attr(not(windows), forbid(unsafe_code))]
+#![cfg_attr(windows, deny(unsafe_code))]
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -41,6 +73,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -223,37 +256,18 @@ impl LeaseHolder {
         )
     }
 
-    #[cfg(not(unix))]
-    fn try_acquire_inner(
-        path: &Path,
-        _instance_id: String,
-        _heartbeat_interval: Duration,
-        _spawn_heartbeat: bool,
-    ) -> Result<Self, LeaseError> {
-        // Windows: the Unix `flock(2)` + PermissionsExt path is not
-        // applicable. A production Windows lease would use
-        // `LockFileEx` or a named mutex (bd-xplat-windows). Return
-        // `Unsupported` so callers fail loudly rather than silently
-        // running without HA guarantees.
-        Err(LeaseError::io(
-            path,
-            std::io::Error::new(
-                std::io::ErrorKind::Unsupported,
-                "HA lease (flock+chmod) is Unix-only; Windows support \
-                 via LockFileEx/named-mutex is tracked under \
-                 bd-xplat-windows",
-            ),
-        ))
-    }
-
-    #[cfg(unix)]
     fn try_acquire_inner(
         path: &Path,
         instance_id: String,
         heartbeat_interval: Duration,
         spawn_heartbeat: bool,
     ) -> Result<Self, LeaseError> {
-        // Open (or create) the lease file with owner-only perms.
+        // Open (or create) the lease file. On Unix we request
+        // `mode = 0600` at creation time; on Windows we accept the
+        // platform default (ACL hardening is tracked under
+        // `bd-xplat-windows` — the state directory itself is already
+        // owner-restricted by the bootstrap layer).
+        #[cfg(unix)]
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -262,9 +276,20 @@ impl LeaseHolder {
             .mode(0o600)
             .open(path)
             .map_err(|e| LeaseError::io(path, e))?;
+        #[cfg(not(unix))]
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(path)
+            .map_err(|e| LeaseError::io(path, e))?;
 
         // Defensive: fix the mode in case the file pre-existed with
-        // relaxed perms (tempdir umask, restored backup, etc.).
+        // relaxed perms (tempdir umask, restored backup, etc.). Unix
+        // only — Windows inherits parent ACLs and has no direct
+        // mode-bit analogue; see `bd-xplat-windows`.
+        #[cfg(unix)]
         if let Ok(meta) = file.metadata() {
             let perms = meta.permissions();
             if perms.mode() & 0o777 != 0o600 {
@@ -272,7 +297,16 @@ impl LeaseHolder {
             }
         }
 
-        match FileExt::try_lock_exclusive(&file) {
+        // Cross-platform non-blocking exclusive lock:
+        // * Unix: `flock(LOCK_EX | LOCK_NB)` via fs2 (advisory).
+        // * Windows: `LockFileEx(LOCKFILE_EXCLUSIVE_LOCK |
+        //            LOCKFILE_FAIL_IMMEDIATELY)` over a single reserved
+        //            byte at `win_lock::LEASE_LOCK_BYTE_OFFSET` (past
+        //            any realistic metadata size). Windows locks are
+        //            mandatory — full-file locking would prevent
+        //            observers from reading the JSON metadata, so we
+        //            restrict the lock to one sentinel byte.
+        match try_lock_exclusive_nb(&file) {
             Ok(()) => {
                 // Primary wins. Write fresh metadata.
                 let owner = LeaseOwner {
@@ -376,7 +410,7 @@ impl LeaseHolder {
             let _ = handle.join();
         }
         if let Some(f) = self.file.take() {
-            let _ = FileExt::unlock(&f);
+            let _ = unlock_lease(&f);
         }
     }
 }
@@ -389,13 +423,24 @@ impl Drop for LeaseHolder {
 
 fn write_metadata(file: &File, path: &Path, owner: &LeaseOwner) -> Result<(), LeaseError> {
     let json = serde_json::to_vec_pretty(owner)?;
-    // Truncate + rewrite: the file is owned by the lease holder alone
-    // (advisory lock + 0600 perms) so concurrent writers do not exist.
+    // Rewrite strategy:
+    //   1. seek to 0,
+    //   2. write_all the JSON,
+    //   3. set_len to `json.len()` so no trailing garbage remains
+    //      from a previous, longer write.
+    //
+    // On Windows we hold a single-byte `LockFileEx` far past any
+    // realistic metadata size (see `win_lock::LEASE_LOCK_BYTE_OFFSET`).
+    // Writing low-offset bytes then shrinking the file back to
+    // `json.len()` never crosses the sentinel byte, so the kernel
+    // lock remains unaffected. On Unix the `flock` is whole-file
+    // advisory; the sequence is just truncate-and-rewrite.
     let mut f = file.try_clone().map_err(|e| LeaseError::io(path, e))?;
-    f.set_len(0).map_err(|e| LeaseError::io(path, e))?;
     f.seek(SeekFrom::Start(0))
         .map_err(|e| LeaseError::io(path, e))?;
     f.write_all(&json).map_err(|e| LeaseError::io(path, e))?;
+    f.set_len(json.len() as u64)
+        .map_err(|e| LeaseError::io(path, e))?;
     f.flush().map_err(|e| LeaseError::io(path, e))?;
     Ok(())
 }
@@ -431,6 +476,155 @@ fn heartbeat_loop(
             }
             remaining = interval;
         }
+    }
+}
+
+// ---------------------------------------------------------------------
+// Platform-specific lock primitives
+// ---------------------------------------------------------------------
+//
+// Unix: advisory `flock(2)` via the safe `fs2` wrapper — whole-file
+// lock, released on close or process exit. Reads from other handles
+// are always allowed because flock is advisory.
+//
+// Windows: `LockFileEx` is *mandatory* — if we locked the whole file
+// an observer doing `ReadFile` over any of the locked bytes would
+// fail with `ERROR_LOCK_VIOLATION`, and `read_lease_metadata` would
+// never see the JSON. We therefore lock a single sentinel byte past
+// any realistic metadata size (`win_lock::LEASE_LOCK_BYTE_OFFSET`).
+// `LockFileEx` explicitly permits locking byte ranges beyond EOF,
+// and the phantom lock is just as effective at serialising holders.
+
+/// Try to acquire the exclusive non-blocking lease lock on `file`.
+/// Returns `Ok(())` on success; `Err(_)` on contention or OS failure.
+#[cfg(unix)]
+fn try_lock_exclusive_nb(file: &File) -> std::io::Result<()> {
+    FileExt::try_lock_exclusive(file)
+}
+
+/// Release the exclusive lease lock on `file`.
+#[cfg(unix)]
+fn unlock_lease(file: &File) -> std::io::Result<()> {
+    FileExt::unlock(file)
+}
+
+#[cfg(windows)]
+fn try_lock_exclusive_nb(file: &File) -> std::io::Result<()> {
+    win_lock::try_lock_exclusive_single_byte(file)
+}
+
+#[cfg(windows)]
+fn unlock_lease(file: &File) -> std::io::Result<()> {
+    win_lock::unlock_single_byte(file)
+}
+
+/// Windows `LockFileEx` / `UnlockFileEx` helpers.
+///
+/// The `unsafe` surface is strictly limited to the lock/unlock FFI
+/// invocations and the matching `GetLastError` reads. The `OVERLAPPED`
+/// structure is zero-initialised in safe code (via `Default`) before
+/// being passed by reference.
+///
+/// **SAFETY discipline**:
+/// * `file` is a valid, owned [`File`]; `as_raw_handle()` therefore
+///   returns a live kernel handle for the duration of the FFI call.
+/// * `OVERLAPPED` is zero-initialised, which is a valid representation
+///   per MSDN. `hEvent` stays null; `Offset` / `OffsetHigh` are set to
+///   the sentinel byte. Lifetimes of the mutable borrow passed to
+///   `LockFileEx` / `UnlockFileEx` are bounded by the call itself —
+///   no async completion is possible because we always pass
+///   `LOCKFILE_FAIL_IMMEDIATELY`.
+/// * The same `(offset, length) = (LEASE_LOCK_BYTE_OFFSET, 1)` tuple
+///   is used for lock and unlock; Windows requires byte-for-byte
+///   identity for a clean unlock.
+#[cfg(windows)]
+#[allow(unsafe_code)]
+mod win_lock {
+    use std::fs::File;
+    use std::io;
+    use std::os::windows::io::AsRawHandle;
+
+    use windows::Win32::Foundation::{ERROR_LOCK_VIOLATION, GetLastError, HANDLE};
+    use windows::Win32::Storage::FileSystem::{
+        LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx, UnlockFileEx,
+    };
+    use windows::Win32::System::IO::OVERLAPPED;
+
+    /// Byte offset of the single sentinel byte we lock. Chosen at
+    /// `1 << 62` so it lies far past any realistic lease-metadata
+    /// size (JSON payloads are a few hundred bytes at most) while
+    /// still being representable as `Offset`/`OffsetHigh`
+    /// `u32 + u32 = u64`. Phantom locks past EOF are fully supported
+    /// by `LockFileEx` per MSDN.
+    pub(super) const LEASE_LOCK_BYTE_OFFSET: u64 = 1u64 << 62;
+
+    /// One byte — the minimum useful lock range.
+    const LEASE_LOCK_BYTE_LEN: u64 = 1;
+
+    /// Non-blocking exclusive `LockFileEx` over the sentinel byte.
+    pub(super) fn try_lock_exclusive_single_byte(file: &File) -> io::Result<()> {
+        let handle = HANDLE(file.as_raw_handle() as _);
+        let mut overlapped = OVERLAPPED::default();
+        overlapped.Anonymous.Anonymous.Offset = LEASE_LOCK_BYTE_OFFSET as u32;
+        overlapped.Anonymous.Anonymous.OffsetHigh = (LEASE_LOCK_BYTE_OFFSET >> 32) as u32;
+
+        // SAFETY: `handle` is a live file handle owned by the caller;
+        // `overlapped` is a locally-owned `OVERLAPPED` initialised to
+        // zero except for the intended offset. `LOCKFILE_FAIL_IMMEDIATELY`
+        // guarantees synchronous completion, so the borrow of
+        // `overlapped` does not outlive this call.
+        let ok = unsafe {
+            LockFileEx(
+                handle,
+                LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                0,
+                LEASE_LOCK_BYTE_LEN as u32,
+                (LEASE_LOCK_BYTE_LEN >> 32) as u32,
+                &mut overlapped,
+            )
+        };
+        if ok.is_err() {
+            // SAFETY: `GetLastError` has no preconditions.
+            let code = unsafe { GetLastError() };
+            // Map contention to a stable `ErrorKind` so the caller's
+            // `match Err(_)` behaves like the Unix `EWOULDBLOCK`
+            // return.
+            if code == ERROR_LOCK_VIOLATION {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "lease lock already held",
+                ));
+            }
+            return Err(io::Error::from_raw_os_error(code.0 as i32));
+        }
+        Ok(())
+    }
+
+    /// Release the sentinel-byte lock. The lock tuple matches the
+    /// one passed to `LockFileEx` byte-for-byte, as Windows requires.
+    pub(super) fn unlock_single_byte(file: &File) -> io::Result<()> {
+        let handle = HANDLE(file.as_raw_handle() as _);
+        let mut overlapped = OVERLAPPED::default();
+        overlapped.Anonymous.Anonymous.Offset = LEASE_LOCK_BYTE_OFFSET as u32;
+        overlapped.Anonymous.Anonymous.OffsetHigh = (LEASE_LOCK_BYTE_OFFSET >> 32) as u32;
+
+        // SAFETY: see `try_lock_exclusive_single_byte`. The unlock
+        // tuple matches the lock tuple byte-for-byte.
+        let ok = unsafe {
+            UnlockFileEx(
+                handle,
+                0,
+                LEASE_LOCK_BYTE_LEN as u32,
+                (LEASE_LOCK_BYTE_LEN >> 32) as u32,
+                &mut overlapped,
+            )
+        };
+        if ok.is_err() {
+            // SAFETY: `GetLastError` has no preconditions.
+            let code = unsafe { GetLastError() };
+            return Err(io::Error::from_raw_os_error(code.0 as i32));
+        }
+        Ok(())
     }
 }
 

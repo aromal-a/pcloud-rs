@@ -289,6 +289,78 @@ pub fn serve_until_shutdown_with_flag(
 
     let drain_timeout = Duration::from_secs(u64::from(runtime.config.upgrade.drain_timeout_secs));
     let mut drain_deadline: Option<Instant> = None;
+    // Track whether we've already nudged the listener for the active
+    // shutdown cycle. On Unix this is a no-op (the periodic
+    // `SO_RCVTIMEO` accept timeout keeps the loop honest), but on
+    // Windows an in-loop nudge would be unreachable while accept is
+    // blocked. The shutdown-watcher thread below drives the nudge;
+    // this flag short-circuits any follow-on iterations so we don't
+    // repeatedly call `request_shutdown` (harmless, but noisy).
+    let mut shutdown_nudged = false;
+
+    // Spawn a scoped watcher thread that signals the listener's
+    // cancel event as soon as any shutdown source flips. This is the
+    // only way to cooperatively wake a Windows `ConnectNamedPipe`
+    // that is already parked in `WaitForMultipleObjects`. On Unix
+    // `request_shutdown` is a no-op, so the watcher is harmless
+    // overhead there. The thread exits when `watcher_exit` flips,
+    // which the main loop does right before returning.
+    let watcher_exit = Arc::new(AtomicBool::new(false));
+    let watcher_exit_for_thread = Arc::clone(&watcher_exit);
+    let external_for_watcher: Option<Arc<AtomicBool>> = external.cloned();
+
+    // Use `std::thread::scope` so the watcher's borrow of `bound` is
+    // lifetime-safe and the thread is guaranteed to have exited
+    // before `serve_until_shutdown_with_flag` returns.
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            // Poll every 100 ms; tight enough that shutdown latency is
+            // well under the drain-timeout budget (default 30 s) and
+            // loose enough that the overhead is negligible. The scoped
+            // borrow of `bound` lets us call `request_shutdown`
+            // without needing `Arc<BoundIpcServer>`.
+            while !watcher_exit_for_thread.load(Ordering::SeqCst) {
+                let ext = external_for_watcher
+                    .as_ref()
+                    .map(|f| f.load(Ordering::SeqCst))
+                    .unwrap_or(false);
+                if ext || signals::shutdown_requested() {
+                    bound.request_shutdown();
+                    // Keep polling so late-arriving signals still
+                    // re-arm the event (manual-reset semantics make
+                    // the repeated signal idempotent).
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        });
+
+        let result = serve_loop_body(
+            bound,
+            runtime,
+            external,
+            refresh_enabled,
+            drain_timeout,
+            &mut drain_deadline,
+            &mut shutdown_nudged,
+        );
+
+        // Tell the watcher thread to exit; the scope won't return
+        // until it actually does.
+        watcher_exit.store(true, Ordering::SeqCst);
+        result
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn serve_loop_body(
+    bound: &BoundIpcServer,
+    runtime: &mut RuntimeShell,
+    external: Option<&Arc<AtomicBool>>,
+    refresh_enabled: bool,
+    drain_timeout: Duration,
+    drain_deadline: &mut Option<Instant>,
+    shutdown_nudged: &mut bool,
+) -> Result<(), IpcTransportError> {
     loop {
         let external_flagged = external
             .map(|flag| flag.load(Ordering::SeqCst))
@@ -297,6 +369,16 @@ pub fn serve_until_shutdown_with_flag(
             runtime.control.shutdown_requested || signals::shutdown_requested() || external_flagged;
 
         if shutdown_observed {
+            // Nudge the listener exactly once per shutdown cycle so
+            // Windows' overlapped `ConnectNamedPipe` unblocks. Unix
+            // is a no-op. Idempotent if called a second time, but we
+            // gate for clarity. The watcher thread may also be
+            // signalling concurrently; manual-reset semantics make
+            // concurrent signals safe.
+            if !*shutdown_nudged {
+                bound.request_shutdown();
+                *shutdown_nudged = true;
+            }
             // Make sure the runtime-level flag reflects the signal-driven
             // shutdown so the rest of the codebase (health, metrics, drain
             // logic) sees a single consistent source of truth.
@@ -313,7 +395,7 @@ pub fn serve_until_shutdown_with_flag(
                 // deactivating in the unit state machine.
                 #[cfg(target_os = "linux")]
                 sd_notify("STOPPING=1\n");
-                drain_deadline = Some(Instant::now() + drain_timeout);
+                *drain_deadline = Some(Instant::now() + drain_timeout);
                 // bd-1du.4: quiesce the mount on the *first* transition
                 // into Draining. The kernel mount stays live so
                 // in-flight `read(2)` calls from user processes can
@@ -330,7 +412,7 @@ pub fn serve_until_shutdown_with_flag(
             } else if drain_deadline.is_none() {
                 // Draining was triggered by the SIGTERM handler before
                 // the loop observed it. We still need a deadline.
-                drain_deadline = Some(Instant::now() + drain_timeout);
+                *drain_deadline = Some(Instant::now() + drain_timeout);
             }
 
             // Drain complete or timed out → exit the loop.

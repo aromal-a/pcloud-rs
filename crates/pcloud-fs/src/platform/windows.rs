@@ -319,11 +319,17 @@ pub fn mount_with_winfsp_dyn(
     let mut guard = MountFailureGuard::new(lib.clone(), fs, adapter_raw);
 
     // Attach the boxed adapter as the WinFSP UserContext so every callback
-    // can recover it via `FspFileSystemGetUserContext`.
+    // can recover it via `winfsp_ffi::get_user_context`.
+    //
+    // WinFSP ≥ 1.8 no longer exports `FspFileSystemSetUserContext`, so we
+    // write the struct field directly through our mirrored
+    // `FspFileSystemLayout`. See `winfsp_ffi.rs` for the ABI rationale.
     //
     // SAFETY: `adapter_raw` is a live `Box<Box<dyn FuseAdapter>>` pointer;
     // we transfer ownership to WinFSP here and take it back at unmount.
-    unsafe { (lib.fsp_set_user_context)(fs, adapter_raw) };
+    // `fs` was just returned by `FspFileSystemCreate` and has not yet been
+    // passed to `FspFileSystemDelete`.
+    unsafe { winfsp_ffi::set_user_context(fs, adapter_raw) };
 
     // Set mount point. Drive-letter roots are passed as `"Z:"` (no
     // trailing slash); directories are passed as-is.
@@ -448,19 +454,17 @@ unsafe fn adapter_from_fs<'a>(fs: PFspFileSystem) -> Option<&'a dyn FuseAdapter>
     if fs.is_null() {
         return None;
     }
-    // The shim library is already resolved and cached globally via the
-    // static `WinFspLibrary` the caller holds; callbacks reach it
-    // indirectly via the user-context pointer only.
+    // WinFSP ≥ 1.8 exposes `UserContext` as an inline struct field rather
+    // than a DLL export, so the callback simply reads the field through
+    // our mirrored `FspFileSystemLayout`. No DLL symbol lookup, no global
+    // OnceLock, no Mutex required.
     //
-    // We have no access to the Arc<WinFspLibrary> from inside the callback
-    // (it lives on `MountHandle`), but we do have a function-pointer view
-    // through a thread-local-free re-load. To avoid re-resolving on every
-    // callback we perform a one-shot load on first callback entry.
-    // SAFETY: `fs` is a live WinFSP file-system handle whose dispatcher is
-    // active; `fsp_get_user_context_global` is resolved once at first call
-    // from the loaded `winfsp-x64.dll` and then cached — safe to call on
-    // any dispatcher thread while the file system is active.
-    let ctx_ptr = unsafe { fsp_get_user_context_global(fs) };
+    // SAFETY: `fs` is a live WinFSP file-system handle whose dispatcher
+    // is active — the only way this function is reached is through a
+    // WinFSP callback after `FspFileSystemStartDispatcher` has succeeded,
+    // and WinFSP guarantees the handle remains valid until
+    // `FspFileSystemDelete`.
+    let ctx_ptr = unsafe { winfsp_ffi::get_user_context(fs) };
     if ctx_ptr.is_null() {
         return None;
     }
@@ -470,54 +474,10 @@ unsafe fn adapter_from_fs<'a>(fs: PFspFileSystem) -> Option<&'a dyn FuseAdapter>
     Some(outer.as_ref())
 }
 
-/// Retrieve the WinFSP user-context pointer without needing an
-/// `Arc<WinFspLibrary>`. We re-resolve the export on first use and cache
-/// it in a `OnceLock<Mutex<Option<FnPtr>>>`. If `winfsp-x64.dll` is
-/// already resident (which is always the case inside a callback) this is
-/// just a symbol lookup.
-///
-/// # Why `OnceLock<Mutex<Option<FnPtr>>>`
-///
-/// Rust `extern "system" fn` pointers are already `Send + Sync`, so a
-/// bare `OnceLock<Option<FnPtr>>` is sound in isolation. However, the
-/// auditor requested an explicit lock wrapper to document — and enforce
-/// at the type level — that **no future maintainer may swap the
-/// contents for a non-`Sync` type** (e.g. `Rc`, `Cell<FnPtr>`) without
-/// first removing the mutex. The `Mutex` also gives us a clean hook to
-/// stash any future per-process symbol-resolution state alongside the
-/// function pointer (logging, metrics, version probe) without another
-/// unsafe refactor.
-///
-/// The runtime cost is a single `Mutex::lock` on every callback entry,
-/// which is a handful of nanoseconds and strictly dominated by the
-/// subsequent DLL call.
-///
-/// # Safety
-///
-/// Must only be called from a WinFSP dispatcher callback, i.e. when the
-/// DLL is known to be resident.
-unsafe fn fsp_get_user_context_global(fs: PFspFileSystem) -> *mut c_void {
-    static GETTER: std::sync::OnceLock<
-        std::sync::Mutex<Option<winfsp_ffi::FnFspFileSystemGetUserContext>>,
-    > = std::sync::OnceLock::new();
-    let cell = GETTER.get_or_init(|| {
-        let resolved = match load_winfsp() {
-            Ok(Some(lib)) => Some(lib.fsp_get_user_context),
-            _ => None,
-        };
-        std::sync::Mutex::new(resolved)
-    });
-    let getter = match cell.lock() {
-        Ok(g) => *g,
-        Err(poison) => *poison.into_inner(),
-    };
-    match getter {
-        // SAFETY: `fs` came from WinFSP; the getter signature matches the
-        // WinFSP ABI.
-        Some(f) => unsafe { f(fs) },
-        None => std::ptr::null_mut(),
-    }
-}
+// `fsp_get_user_context_global` removed on 2026-04-19 alongside the WinFSP
+// 1.8 inline-accessor migration. Callbacks now read the user-context slot
+// via `winfsp_ffi::get_user_context`, which goes through the mirrored
+// `FspFileSystemLayout` struct with no DLL symbol lookup at all.
 
 /// Build the callback vtable WinFSP invokes. All slots we have not yet
 /// wired are left as `None`, which WinFSP translates into the appropriate

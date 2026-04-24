@@ -301,12 +301,43 @@ impl BoundIpcServer {
         &self.socket_path
     }
 
+    /// Cooperatively wake any thread currently blocked in `accept`.
+    ///
+    /// **Unix:** no-op. The Unix serve loop relies on
+    /// [`Self::set_accept_timeout`] (via `SO_RCVTIMEO`) for periodic
+    /// wake-ups and observes the caller-owned shutdown flag on the
+    /// next iteration; no explicit cancellation primitive is needed.
+    ///
+    /// **Windows:** signals the listener's manual-reset cancel event.
+    /// A pending `ConnectNamedPipe` cannot be cancelled by closing
+    /// the handle (which would race with concurrent connects); the
+    /// overlapped accept path parks on `WaitForMultipleObjects`
+    /// against that event and, when woken, calls `CancelIoEx` on the
+    /// pending connect and returns `ErrorKind::Interrupted` so the
+    /// serve loop can re-check its shutdown flag.
+    ///
+    /// Safe to call from any thread (the underlying Win32 Event is
+    /// thread-safe) and idempotent thanks to manual-reset semantics —
+    /// repeat calls after the event is already set are no-ops.
+    #[allow(clippy::unused_self)]
+    pub fn request_shutdown(&self) {
+        #[cfg(windows)]
+        {
+            let BoundInner::Windows(listener) = &self.inner;
+            listener.request_shutdown();
+        }
+        #[cfg(unix)]
+        {
+            // No-op on Unix — see method docs.
+        }
+    }
+
     /// Set the accept timeout on the underlying listener.
     ///
     /// Unix: installs `SO_RCVTIMEO` so `accept(2)` wakes periodically.
-    /// Windows: **no-op** because `ConnectNamedPipe` with NULL
-    /// OVERLAPPED cannot be timed out from safe code; tracked under
-    /// `bd-xplat-windows`.
+    /// Windows: **no-op** because the overlapped accept path relies on
+    /// the explicit [`Self::request_shutdown`] cancel event, not on a
+    /// periodic wake-up.
     pub fn set_accept_timeout(&self, timeout: Option<Duration>) -> Result<(), IpcTransportError> {
         #[cfg(unix)]
         {

@@ -26,25 +26,39 @@
 //!   [`IpcTransportError::PeerCredentialsUnavailable`] so the common
 //!   transport layer can reject the client without leaking detail.
 //!
-//! # Accept model (Tier-3 synchronous)
+//! # Accept model (overlapped with cooperative cancellation)
 //!
 //! Each call to [`WindowsListener::accept`] creates a fresh pipe
-//! instance via `CreateNamedPipeW`, blocks in `ConnectNamedPipe` until a
-//! client connects (or returns `ERROR_PIPE_CONNECTED` if the client
-//! beat us to it), authenticates the peer SID, and hands the connected
-//! handle to the transport layer. After the connection is served the
-//! handle is closed and the next `accept` creates a new instance. This
-//! matches the spirit of the Unix `accept(2)` loop and keeps the
-//! synchronous-blocking serve path simple.
+//! instance via `CreateNamedPipeW` (opened with `FILE_FLAG_OVERLAPPED`),
+//! issues `ConnectNamedPipe` against a fresh `OVERLAPPED` whose
+//! `hEvent` is a manual-reset "connect-complete" event, then parks in
+//! `WaitForMultipleObjects` on `[connect_event, cancel_event]`.
+//!
+//! Two wake paths:
+//!
+//! * **Client connected.** `connect_event` fires; we call
+//!   `GetOverlappedResult` to harvest success, authenticate the peer
+//!   SID, and return the stream.
+//! * **Shutdown requested.** The owner calls
+//!   [`WindowsListener::request_shutdown`] (e.g. from the daemon serve
+//!   loop when the external/internal shutdown flag flips). That
+//!   `SetEvent`s the listener's cancel event, the wait wakes, we call
+//!   `CancelIoEx` on the pending `ConnectNamedPipe`, drain the
+//!   cancellation via `GetOverlappedResult`, close the unused pipe
+//!   instance, and return `ErrorKind::Interrupted` so the serve loop
+//!   can re-check the shutdown flag and exit cleanly.
+//!
+//! `ERROR_PIPE_CONNECTED` (client got there first) is still handled
+//! per MSDN as a synchronous success.
 //!
 //! # Windows-specific behaviour vs Unix
 //!
-//! * **No per-accept timeout.** `ConnectNamedPipe` with a NULL OVERLAPPED
-//!   is fully blocking. The daemon's session-refresh tick currently runs
-//!   only when an IPC request wakes the loop on Windows. A future
-//!   hardening pass (tracked under `bd-xplat-windows`) can move this to
-//!   an overlapped-IO wait with `WaitForSingleObject` on a cancellation
-//!   event.
+//! * **Per-accept cancellation.** On Unix `set_accept_timeout` installs
+//!   `SO_RCVTIMEO` so `accept(2)` wakes periodically. On Windows the
+//!   equivalent is `WindowsListener::request_shutdown` +
+//!   `CancelIoEx` — explicit cancellation rather than periodic wakeup.
+//!   `set_accept_timeout` remains a no-op on Windows; the serve loop
+//!   drives shutdown via the cancel-event path instead.
 //! * **No write timeout.** `WriteFile` on a byte-mode pipe blocks on
 //!   back-pressure; the Unix-side `SO_SNDTIMEO` has no direct named-pipe
 //!   analogue. The transport layer still honours the read timeout via
@@ -64,11 +78,12 @@
 use std::io::{Read, Write};
 use std::path::Path;
 use std::ptr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use windows::Win32::Foundation::{
-    BOOL, CloseHandle, ERROR_PIPE_CONNECTED, GENERIC_READ, GENERIC_WRITE, GetLastError, HANDLE,
-    HLOCAL, INVALID_HANDLE_VALUE, LocalFree,
+    BOOL, CloseHandle, ERROR_IO_PENDING, ERROR_PIPE_CONNECTED, GENERIC_READ, GENERIC_WRITE,
+    GetLastError, HANDLE, HLOCAL, INVALID_HANDLE_VALUE, LocalFree, WAIT_FAILED, WAIT_OBJECT_0,
 };
 use windows::Win32::Security::Authorization::{
     ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
@@ -81,12 +96,14 @@ use windows::Win32::Storage::FileSystem::{
     CreateFileW, FILE_FLAG_OVERLAPPED, FILE_SHARE_NONE, FlushFileBuffers, OPEN_EXISTING, ReadFile,
     WriteFile,
 };
+use windows::Win32::System::IO::{CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows::Win32::System::Pipes::{
     ConnectNamedPipe, CreateNamedPipeW, DisconnectNamedPipe, GetNamedPipeClientProcessId,
     PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
 };
 use windows::Win32::System::Threading::{
-    GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+    CreateEventW, GetCurrentProcess, INFINITE, OpenProcess, OpenProcessToken,
+    PROCESS_QUERY_LIMITED_INFORMATION, SetEvent, WaitForMultipleObjects,
 };
 use windows::core::{PCWSTR, PWSTR};
 
@@ -112,6 +129,78 @@ const PIPE_DEFAULT_TIMEOUT_MS: u32 = 0;
 #[derive(Debug, Default, Clone, Copy)]
 pub struct WindowsIpc;
 
+/// Owned, shareable wake-on-shutdown signal for the Windows accept
+/// loop. Wraps a manual-reset Win32 Event. Signalling is thread-safe:
+/// `SetEvent` is documented to be callable concurrently with waiters,
+/// which is exactly the pattern the daemon needs — the serve-loop
+/// shutdown-watcher runs on a dedicated thread while accept blocks on
+/// the main serve thread.
+///
+/// Cloned freely via `Arc<CancelEvent>`; the underlying event is
+/// closed exactly once when the last reference drops.
+#[derive(Debug)]
+pub struct CancelEvent {
+    handle: HANDLE,
+}
+
+impl CancelEvent {
+    /// Create a new manual-reset, initially-unsignalled Event.
+    ///
+    /// Manual-reset semantics are required so that (a) after a
+    /// `request_shutdown` every subsequent `accept()` observes the
+    /// signalled state and short-circuits immediately, and (b) a
+    /// wake-up does not accidentally consume the signal before the
+    /// waiter reacts to it.
+    fn new() -> Result<Self, IpcTransportError> {
+        // SAFETY: all pointer parameters are None; `CreateEventW` with
+        // NULL security attributes, manual-reset=TRUE,
+        // initial-state=FALSE, unnamed returns a valid owned HANDLE or
+        // a Win32 error.
+        let handle = unsafe { CreateEventW(None, true, false, PCWSTR::null()) };
+        match handle {
+            Ok(h) if !h.is_invalid() => Ok(Self { handle: h }),
+            _ => Err(last_os_err()),
+        }
+    }
+
+    /// Signal the event. Safe to call from any thread.
+    pub fn signal(&self) {
+        // SAFETY: `self.handle` was returned by `CreateEventW` and is
+        // owned for the lifetime of `self`. Per MSDN `SetEvent` is
+        // thread-safe. Failure here is diagnostic-only — the worst
+        // case is a missed wake-up, which the outer loop recovers from
+        // on its next iteration.
+        unsafe {
+            let _ = SetEvent(self.handle);
+        }
+    }
+
+    fn raw(&self) -> HANDLE {
+        self.handle
+    }
+}
+
+impl Drop for CancelEvent {
+    fn drop(&mut self) {
+        if !self.handle.is_invalid() {
+            // SAFETY: `handle` was returned by `CreateEventW`, is owned
+            // by us, and has not been closed elsewhere.
+            unsafe {
+                let _ = CloseHandle(self.handle);
+            }
+        }
+    }
+}
+
+// SAFETY: A Win32 Event HANDLE is a kernel object that is documented
+// to be safely accessible from multiple threads simultaneously via
+// `SetEvent`, `ResetEvent`, and `WaitForSingleObject`/`WaitForMultipleObjects`.
+// We never mutate the HANDLE field through a shared reference; the
+// only operation on shared `&CancelEvent` is `SetEvent`, which is
+// inherently thread-safe.
+unsafe impl Send for CancelEvent {}
+unsafe impl Sync for CancelEvent {}
+
 /// Owned, bound named-pipe listener.
 ///
 /// Holds the pipe path and the cached current-user SID string used both
@@ -119,10 +208,16 @@ pub struct WindowsIpc;
 /// accept time. No pre-created handle is cached: each call to
 /// [`Self::accept`] creates a fresh pipe instance so concurrent clients
 /// do not race on a single server-side handle.
+///
+/// Owns a shared [`CancelEvent`] that higher layers can signal via
+/// [`Self::request_shutdown`] (or [`Self::cancel_event`] for indirect
+/// signalling from a watcher thread) to cooperatively wake a pending
+/// `accept()` so the daemon can exit its serve loop cleanly.
 #[derive(Debug)]
 pub struct WindowsListener {
     pipe_path: String,
     owner_sid: String,
+    cancel: Arc<CancelEvent>,
 }
 
 /// RAII wrapper around a connected named-pipe stream.
@@ -194,9 +289,11 @@ impl PlatformIpc for WindowsIpc {
             "\\\\.\\pipe\\pcloud-rs-{}",
             hex_encode(owner_sid.as_bytes())
         );
+        let cancel = Arc::new(CancelEvent::new()?);
         Ok(WindowsListener {
             pipe_path,
             owner_sid,
+            cancel,
         })
     }
 
@@ -226,34 +323,167 @@ impl PlatformIpc for WindowsIpc {
 }
 
 impl WindowsListener {
-    /// Create a fresh pipe instance, wait for the next client, recover
-    /// and authenticate its SID, and return a connected stream.
+    /// Create a fresh pipe instance, wait for the next client (or for a
+    /// shutdown request from the owning serve loop), recover and
+    /// authenticate the client's SID, and return a connected stream.
     ///
     /// This is the Windows-side analogue of `UnixListener::accept`. A
     /// new `CreateNamedPipeW` is issued on every call so concurrent
     /// clients each land on their own server-side handle.
+    ///
+    /// Cancellation: if [`Self::request_shutdown`] (or any other
+    /// `signal()` on the cancel event) fires while a connect is
+    /// pending, the call cancels the pending I/O via `CancelIoEx`,
+    /// closes the unused pipe instance, and returns
+    /// `IpcTransportError::Io(ErrorKind::Interrupted)` so the caller's
+    /// serve loop can re-check its shutdown flag and exit cleanly.
     pub fn accept(&self) -> Result<WindowsStream, IpcTransportError> {
+        // Fast-path: shutdown already requested before we ever create
+        // a pipe instance. Avoid the allocation / kernel object churn.
+        if self.cancel_already_signalled() {
+            return Err(interrupted("accept cancelled before start"));
+        }
+
         let handle = create_pipe_instance(&self.pipe_path, &self.owner_sid)?;
 
-        // SAFETY: `handle` is a live listener returned by
-        // `CreateNamedPipeW`. `ConnectNamedPipe` with a NULL OVERLAPPED
-        // blocks until a client connects or errors; we accept both the
-        // success variant and `ERROR_PIPE_CONNECTED` per MSDN.
-        let connected = unsafe { ConnectNamedPipe(handle, None) };
-        if connected.is_err() {
-            // SAFETY: GetLastError has no preconditions.
-            let code = unsafe { GetLastError() };
-            if code != ERROR_PIPE_CONNECTED {
-                // SAFETY: handle still owned by us.
+        // Per-accept "connect complete" event + OVERLAPPED. Both live
+        // on the stack for the duration of this call; their addresses
+        // are passed to the kernel only while `handle` also remains
+        // live, and we guarantee neither is moved between the
+        // `ConnectNamedPipe` call and its matching
+        // `GetOverlappedResult` / cancel drain.
+        let connect_event = match CancelEvent::new() {
+            Ok(e) => e,
+            Err(err) => {
+                // SAFETY: `handle` returned by `CreateNamedPipeW`.
                 unsafe {
                     let _ = CloseHandle(handle);
                 }
-                return Err(IpcTransportError::Io(std::io::Error::from_raw_os_error(
-                    code.0 as i32,
-                )));
+                return Err(err);
             }
+        };
+
+        let mut overlapped: OVERLAPPED = OVERLAPPED::default();
+        overlapped.hEvent = connect_event.raw();
+
+        // SAFETY: `handle` is a live overlapped-mode pipe, `overlapped`
+        // is a stack-allocated OVERLAPPED that outlives the call, and
+        // its `hEvent` is a valid manual-reset event. Per MSDN
+        // `ConnectNamedPipe` on an overlapped pipe returns FALSE; the
+        // actual completion status is read from `GetLastError`.
+        let connect_ret = unsafe { ConnectNamedPipe(handle, Some(&mut overlapped)) };
+        // On overlapped pipes `ConnectNamedPipe` always returns FALSE:
+        // either pending (`ERROR_IO_PENDING`) or already-connected
+        // (`ERROR_PIPE_CONNECTED`) or a real error.
+        let initial_code = if connect_ret.is_err() {
+            // SAFETY: no preconditions.
+            unsafe { GetLastError() }
+        } else {
+            // TRUE from `ConnectNamedPipe` on an overlapped pipe is
+            // undefined per MSDN but some kernels return it on
+            // instant-connect. Treat as `ERROR_PIPE_CONNECTED`.
+            ERROR_PIPE_CONNECTED
+        };
+
+        if initial_code == ERROR_PIPE_CONNECTED {
+            // Client beat us to it; connection is already usable.
+            return self.authenticate_and_wrap(handle);
+        }
+        if initial_code != ERROR_IO_PENDING {
+            // SAFETY: handle still owned by us.
+            unsafe {
+                let _ = CloseHandle(handle);
+            }
+            return Err(IpcTransportError::Io(std::io::Error::from_raw_os_error(
+                initial_code.0 as i32,
+            )));
         }
 
+        // Wait for either "connect completed" or "shutdown requested".
+        // SAFETY: both HANDLEs are owned and live for the entire wait;
+        // the slice is a contiguous stack array.
+        let wait_handles = [connect_event.raw(), self.cancel.raw()];
+        let wait = unsafe { WaitForMultipleObjects(&wait_handles, false, INFINITE) };
+
+        const WAIT_CONNECT: u32 = 0; // WAIT_OBJECT_0 + 0
+        const WAIT_CANCEL: u32 = 1; // WAIT_OBJECT_0 + 1
+        match wait.0 {
+            x if x == WAIT_OBJECT_0.0 + WAIT_CONNECT => {
+                // Connect completed. Harvest the result.
+                let mut _transferred: u32 = 0;
+                // SAFETY: `handle` and `overlapped` are both live; we
+                // pass `bwait = FALSE` because the event already
+                // signalled completion.
+                let got = unsafe {
+                    GetOverlappedResult(handle, &overlapped, &mut _transferred, false)
+                };
+                if got.is_err() {
+                    // SAFETY: no preconditions.
+                    let code = unsafe { GetLastError() };
+                    // SAFETY: handle still owned by us.
+                    unsafe {
+                        let _ = CloseHandle(handle);
+                    }
+                    return Err(IpcTransportError::Io(std::io::Error::from_raw_os_error(
+                        code.0 as i32,
+                    )));
+                }
+                self.authenticate_and_wrap(handle)
+            }
+            x if x == WAIT_OBJECT_0.0 + WAIT_CANCEL => {
+                // Shutdown requested. Cancel the pending connect,
+                // drain its completion so the OVERLAPPED is no longer
+                // referenced by the kernel, and tear the handle down.
+                cancel_pending_connect(handle, &overlapped);
+                // SAFETY: handle owned by us; cancel path drained the
+                // OVERLAPPED reference before this close.
+                unsafe {
+                    let _ = CloseHandle(handle);
+                }
+                Err(interrupted("accept cancelled"))
+            }
+            x if x == WAIT_FAILED.0 => {
+                // SAFETY: no preconditions.
+                let code = unsafe { GetLastError() };
+                // Best-effort cancel + close so we don't leak the
+                // OVERLAPPED reference.
+                cancel_pending_connect(handle, &overlapped);
+                // SAFETY: handle owned by us.
+                unsafe {
+                    let _ = CloseHandle(handle);
+                }
+                Err(IpcTransportError::Io(std::io::Error::from_raw_os_error(
+                    code.0 as i32,
+                )))
+            }
+            _other => {
+                // Abandoned/timeout on INFINITE wait: shouldn't
+                // happen, but stay safe.
+                cancel_pending_connect(handle, &overlapped);
+                unsafe {
+                    let _ = CloseHandle(handle);
+                }
+                Err(interrupted("accept wait returned unexpected status"))
+            }
+        }
+    }
+
+    /// Cheap, non-blocking predicate: has the cancel event already been
+    /// signalled before this accept started? Avoids allocating a pipe
+    /// instance only to tear it back down in the common shutdown-race
+    /// case.
+    fn cancel_already_signalled(&self) -> bool {
+        // SAFETY: cancel handle is owned and live for `&self`.
+        let wait = unsafe {
+            windows::Win32::System::Threading::WaitForSingleObject(self.cancel.raw(), 0)
+        };
+        wait == WAIT_OBJECT_0
+    }
+
+    /// Authenticate the connected client and wrap the handle. On any
+    /// error the server-side pipe is disconnected + closed before the
+    /// error is returned so the OS can reclaim the instance.
+    fn authenticate_and_wrap(&self, handle: HANDLE) -> Result<WindowsStream, IpcTransportError> {
         let (peer_sid, peer_pid) = match client_sid_and_pid(handle) {
             Ok(v) => v,
             Err(err) => {
@@ -282,6 +512,25 @@ impl WindowsListener {
         })
     }
 
+    /// Wake any currently-blocked [`Self::accept`] caller with an
+    /// `ErrorKind::Interrupted`. Idempotent (manual-reset event
+    /// semantics) and safe to call from any thread.
+    ///
+    /// Counterpart to the Unix [`crate::transport::BoundIpcServer::set_accept_timeout`]
+    /// escape hatch: on Unix the accept loop polls a periodic
+    /// `SO_RCVTIMEO` wake-up; on Windows it parks on
+    /// `WaitForMultipleObjects` and requires explicit cancellation.
+    pub fn request_shutdown(&self) {
+        self.cancel.signal();
+    }
+
+    /// Shareable handle to the cancel event, for embedders that need
+    /// to signal shutdown from a different thread without holding a
+    /// `&WindowsListener`. Every clone observes the same event.
+    pub fn cancel_event(&self) -> Arc<CancelEvent> {
+        Arc::clone(&self.cancel)
+    }
+
     /// Diagnostic accessor — the full pipe path, e.g.
     /// `\\.\pipe\pcloud-rs-<hex-SID>`.
     pub fn pipe_path(&self) -> &str {
@@ -292,6 +541,40 @@ impl WindowsListener {
     pub fn owner_sid(&self) -> &str {
         &self.owner_sid
     }
+}
+
+/// Cancel a pending `ConnectNamedPipe` and drain the completion. Must
+/// be called before `CloseHandle` on the pipe so the kernel no longer
+/// holds a pointer into our stack-allocated `OVERLAPPED`.
+fn cancel_pending_connect(handle: HANDLE, overlapped: &OVERLAPPED) {
+    // SAFETY: `handle` is live and owned here. `CancelIoEx` returns
+    // an error if the operation already completed; that's benign.
+    unsafe {
+        let _ = CancelIoEx(handle, Some(overlapped as *const _));
+    }
+    // Drain the cancelled completion with `bwait = TRUE` so the
+    // kernel releases its reference to `*overlapped` before we return
+    // (and before the caller's stack frame unwinds).
+    let mut _transferred: u32 = 0;
+    // SAFETY: handle live; overlapped valid for the duration of the
+    // call. `GetOverlappedResult` on a cancelled op returns
+    // ERROR_OPERATION_ABORTED (or ERROR_BROKEN_PIPE if the pipe got
+    // torn down concurrently). Either is acceptable — we only need
+    // the drain.
+    unsafe {
+        let _ = GetOverlappedResult(handle, overlapped, &mut _transferred, true);
+        // Swallow GetLastError: expected values are
+        // ERROR_OPERATION_ABORTED (995) on our own cancel or
+        // ERROR_BROKEN_PIPE (109) if the client disconnected while
+        // cancel was in flight. Either is benign here — we only care
+        // that the kernel is done touching `*overlapped`.
+        let _ = GetLastError();
+    }
+}
+
+/// Build an `IpcTransportError::Io(Interrupted)` with a fixed message.
+fn interrupted(msg: &'static str) -> IpcTransportError {
+    IpcTransportError::Io(std::io::Error::new(std::io::ErrorKind::Interrupted, msg))
 }
 
 impl WindowsStream {

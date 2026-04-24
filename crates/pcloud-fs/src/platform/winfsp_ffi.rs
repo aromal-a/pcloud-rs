@@ -177,7 +177,134 @@ pub struct DirInfoHeader {
 // ---------------------------------------------------------------------------
 
 /// Opaque pointer to an `FSP_FILE_SYSTEM`.
+///
+/// We intentionally type this as `*mut c_void` throughout the public
+/// surface because external callers only ever pass it back to WinFSP
+/// unchanged; the [`set_user_context`] / [`get_user_context`] helpers
+/// below cast it to [`FspFileSystemLayout`] for in-process struct-field
+/// access (see the layout block just below for the rationale).
 pub type PFspFileSystem = *mut c_void;
+
+// ---------------------------------------------------------------------------
+//  FSP_FILE_SYSTEM struct prefix (for direct UserContext access)
+// ---------------------------------------------------------------------------
+//
+// WinFSP ≥ 1.8 removed the `FspFileSystemSetUserContext` /
+// `FspFileSystemGetUserContext` DLL exports and replaced them with inline
+// functions that touch `FSP_FILE_SYSTEM::UserContext` directly. `GetProcAddress`
+// therefore returns `NULL` for those names on modern installs (this is what
+// caused `winfsp-x64.dll missing symbol: FspFileSystemSetUserContext` in the
+// WinFSP live-mount test before this patch).
+//
+// Upstream struct definition (from `inc/winfsp/winfsp.h`, WinFSP master):
+// ```c
+// typedef struct _FSP_FILE_SYSTEM
+// {
+//     UINT16 Version;
+//     PVOID UserContext;
+//     WCHAR VolumeName[FSP_FSCTL_VOLUME_NAME_SIZEMAX / sizeof(WCHAR)];
+//     ...
+// } FSP_FILE_SYSTEM;
+// FSP_FSCTL_STATIC_ASSERT(
+//     (4 == sizeof(PVOID) && 660 == sizeof(FSP_FILE_SYSTEM)) ||
+//     (8 == sizeof(PVOID) && 792 == sizeof(FSP_FILE_SYSTEM)),
+//     "sizeof(FSP_FILE_SYSTEM) must be exactly 660 in 32-bit and 792 in 64-bit.");
+// ```
+//
+// The only field we need to reach is `UserContext`, which sits **after a
+// single `UINT16` plus natural `PVOID` alignment padding**. On 64-bit the
+// compiler pads the `UINT16 Version` up to the `PVOID` alignment, so
+// `offsetof(FSP_FILE_SYSTEM, UserContext) == sizeof(PVOID) == 8`. On 32-bit
+// Windows the pad is 2 bytes and the offset is 4. Rust's default `#[repr(C)]`
+// layout applies the same padding/alignment rules, so a struct whose prefix
+// is `{ u16 Version; <pad>; *mut c_void UserContext; }` places `UserContext`
+// at the same offset as the C struct.
+//
+// We deliberately mirror only the prefix we need and pad out the tail to
+// the full documented struct size so that a stray write into `user_context`
+// can never clobber memory belonging to whatever allocation follows. The
+// Windows-only unit test `userctx_roundtrip_on_zeroed_struct` asserts the
+// `UserContext` offset and the total struct size match the WinFSP ABI.
+
+/// Total `sizeof(FSP_FILE_SYSTEM)` as documented by the WinFSP header's
+/// `FSP_FSCTL_STATIC_ASSERT` on 64-bit Windows (8-byte `PVOID`). The
+/// `pcloud-fs` build only targets 64-bit Windows; the 32-bit path is
+/// intentionally unsupported and would need a different constant (660).
+const FSP_FILE_SYSTEM_SIZE_64: usize = 792;
+
+/// Minimal prefix of the WinFSP `FSP_FILE_SYSTEM` struct, sized to match the
+/// full 64-bit layout. Only `version` and `user_context` have defined
+/// positions; `_opaque_tail` is reserved storage that WinFSP owns — we
+/// never read or write it.
+///
+/// # ABI assumption
+///
+/// * 64-bit Windows only. `#[cfg(target_pointer_width = "64")]` is enforced
+///   at the module level via the surrounding `#![cfg(target_os = "windows")]`
+///   combined with the 64-bit-only pcloud-fs build matrix; a guard
+///   `const _: () = assert!(core::mem::size_of::<usize>() == 8, ...);`
+///   inside the Windows test module fails the build if that assumption
+///   ever breaks.
+/// * Rust's `#[repr(C)]` reproduces MSVC's natural alignment rules for
+///   this prefix, i.e. `UserContext` lands at offset 8. The
+///   `userctx_offset_matches_winfsp_abi` test asserts this at runtime.
+#[repr(C)]
+pub struct FspFileSystemLayout {
+    /// `UINT16 Version` — WinFSP interface version. Written by
+    /// `FspFileSystemCreate`; we never mutate it.
+    pub version: u16,
+    /// 6 bytes of alignment padding so `user_context` is PVOID-aligned.
+    /// Named explicitly to keep the layout self-documenting rather than
+    /// letting the compiler insert invisible padding.
+    _pad_after_version: [u8; 6],
+    /// `PVOID UserContext` — the slot we attach our `Box<dyn FuseAdapter>`
+    /// pointer to. WinFSP itself never touches this field; it exists
+    /// purely for the user-mode file system to stash a back-pointer.
+    pub user_context: *mut c_void,
+    /// Reserved storage for the remainder of `FSP_FILE_SYSTEM`. WinFSP
+    /// owns these bytes; Rust code must never touch them.
+    _opaque_tail: [u8; FSP_FILE_SYSTEM_SIZE_64 - 16],
+}
+
+// `FspFileSystemLayout` is strictly a view into a foreign allocation. It
+// is never moved, cloned, or shared by value across threads by us — we
+// only ever operate on `*mut FspFileSystemLayout` that WinFSP hands back.
+// We do not implement `Send`/`Sync` on the view struct itself because
+// callers operate on the raw pointer, which carries no auto-traits.
+
+/// Write the WinFSP user-context pointer. Replaces the removed
+/// `FspFileSystemSetUserContext` DLL export.
+///
+/// # Safety
+///
+/// * `fs` must be a non-null `FSP_FILE_SYSTEM*` returned by
+///   `FspFileSystemCreate` and not yet passed to `FspFileSystemDelete`.
+/// * The caller is responsible for lifetime management of `ctx`; WinFSP
+///   does not free it.
+#[inline]
+pub unsafe fn set_user_context(fs: PFspFileSystem, ctx: *mut c_void) {
+    debug_assert!(!fs.is_null(), "FspFileSystem pointer must be non-null");
+    // SAFETY: contract documented above; `FspFileSystemLayout` mirrors
+    // the prefix of the real WinFSP struct at offset-identical field
+    // positions (verified by `userctx_offset_matches_winfsp_abi`).
+    unsafe { (*(fs as *mut FspFileSystemLayout)).user_context = ctx };
+}
+
+/// Read the WinFSP user-context pointer. Replaces the removed
+/// `FspFileSystemGetUserContext` DLL export.
+///
+/// # Safety
+///
+/// * `fs` must be a non-null `FSP_FILE_SYSTEM*` returned by
+///   `FspFileSystemCreate` and not yet passed to `FspFileSystemDelete`.
+#[inline]
+pub unsafe fn get_user_context(fs: PFspFileSystem) -> *mut c_void {
+    if fs.is_null() {
+        return std::ptr::null_mut();
+    }
+    // SAFETY: same contract as `set_user_context`.
+    unsafe { (*(fs as *const FspFileSystemLayout)).user_context }
+}
 
 /// `FSP_FILE_SYSTEM_INTERFACE` -- function-pointer vtable WinFSP invokes
 /// on each NT I/O request. All callbacks run on WinFSP dispatcher threads.
@@ -389,11 +516,13 @@ pub type FnFspFileSystemStopDispatcher = unsafe extern "system" fn(file_system: 
 
 pub type FnFspFileSystemDelete = unsafe extern "system" fn(file_system: PFspFileSystem);
 
-pub type FnFspFileSystemSetUserContext =
-    unsafe extern "system" fn(file_system: PFspFileSystem, user_context: *mut c_void);
-
-pub type FnFspFileSystemGetUserContext =
-    unsafe extern "system" fn(file_system: PFspFileSystem) -> *mut c_void;
+// NOTE: `FspFileSystemSetUserContext` / `FspFileSystemGetUserContext` are
+// intentionally NOT declared here. WinFSP ≥ 1.8 removed the corresponding
+// DLL exports and inlined them as direct-struct-field accessors in
+// `winfsp.h`. Use [`set_user_context`] / [`get_user_context`] above, which
+// reach into the `UserContext` slot of [`FspFileSystemLayout`] directly.
+// See the block comment preceding `FspFileSystemLayout` for the rationale
+// and ABI invariant.
 
 /// `FspFileSystemAddDirInfo` — WinFSP helper that appends one
 /// variable-length `FSP_FSCTL_DIR_INFO` record (header + UTF-16 name) to
@@ -441,8 +570,11 @@ pub struct WinFspLibrary {
     pub fsp_start_dispatcher: FnFspFileSystemStartDispatcher,
     pub fsp_stop_dispatcher: FnFspFileSystemStopDispatcher,
     pub fsp_delete: FnFspFileSystemDelete,
-    pub fsp_set_user_context: FnFspFileSystemSetUserContext,
-    pub fsp_get_user_context: FnFspFileSystemGetUserContext,
+    // `fsp_set_user_context` / `fsp_get_user_context` removed on 2026-04-19.
+    // WinFSP ≥ 1.8 stopped exporting `FspFileSystemSetUserContext` /
+    // `FspFileSystemGetUserContext` (they are now inline accessors in
+    // `winfsp.h`). Callers use [`set_user_context`] / [`get_user_context`]
+    // above, which go through [`FspFileSystemLayout`] directly.
     /// Optional: present in WinFSP 1.x+. Used by `ReadDirectory` to append
     /// directory entries. Resolved lazily; if missing we fall back to a
     /// manual buffer walk that mirrors the reference implementation.
@@ -559,8 +691,10 @@ pub fn load_winfsp() -> Result<Option<WinFspLibrary>, String> {
             fsp_start_dispatcher: resolve(module, b"FspFileSystemStartDispatcher\0")?,
             fsp_stop_dispatcher: resolve(module, b"FspFileSystemStopDispatcher\0")?,
             fsp_delete: resolve(module, b"FspFileSystemDelete\0")?,
-            fsp_set_user_context: resolve(module, b"FspFileSystemSetUserContext\0")?,
-            fsp_get_user_context: resolve(module, b"FspFileSystemGetUserContext\0")?,
+            // `FspFileSystemSetUserContext` / `FspFileSystemGetUserContext`
+            // are deliberately not resolved — they are no longer DLL
+            // exports in WinFSP ≥ 1.8. See the module-level comment above
+            // [`FspFileSystemLayout`] for the direct-field access path.
             // Optional symbol — resolve best-effort so older DLLs still load.
             fsp_add_dir_info: resolve_optional(module, b"FspFileSystemAddDirInfo\0"),
         }
@@ -620,5 +754,57 @@ mod tests {
     fn filetime_clamps_pre_1601() {
         // Very negative unix nanos (pre-1601) clamp to zero instead of wrapping.
         assert_eq!(unix_nanos_to_filetime(-1_000_000_000_000_000_000_000), 0);
+    }
+
+    // --- WinFSP FSP_FILE_SYSTEM layout checks ---------------------------
+    //
+    // These tests only run on 64-bit Windows, which is also the only
+    // `pcloud-fs` build target that exercises the WinFSP path. The whole
+    // module is gated on `cfg(target_os = "windows")` so a Linux host
+    // skips them entirely.
+
+    /// Compile-time guard: we only support 64-bit `FSP_FILE_SYSTEM` layout.
+    /// 32-bit Windows would need the alternate 660-byte variant.
+    const _: () = assert!(
+        core::mem::size_of::<usize>() == 8,
+        "FspFileSystemLayout assumes 64-bit Windows (PVOID == 8 bytes)"
+    );
+
+    #[test]
+    fn fsp_filesystem_layout_matches_winfsp_abi() {
+        // Matches the WinFSP static assert in `winfsp.h`:
+        //     (8 == sizeof(PVOID) && 792 == sizeof(FSP_FILE_SYSTEM))
+        assert_eq!(
+            core::mem::size_of::<FspFileSystemLayout>(),
+            792,
+            "FspFileSystemLayout must mirror WinFSP 64-bit FSP_FILE_SYSTEM size"
+        );
+        // `UserContext` must land at offset 8 (after UINT16 Version + 6
+        // bytes of natural PVOID alignment padding).
+        let base = core::mem::offset_of!(FspFileSystemLayout, user_context);
+        assert_eq!(base, 8, "user_context offset must be 8 on 64-bit Windows");
+    }
+
+    #[test]
+    fn userctx_roundtrip_on_zeroed_struct() {
+        // Fabricate a zeroed `FSP_FILE_SYSTEM`-shaped buffer, set the
+        // user-context slot via the inline accessor, then read it back.
+        // This exercises exactly the same pointer math the mount path
+        // will perform at runtime, minus WinFSP itself.
+        let mut buf: FspFileSystemLayout = unsafe { core::mem::zeroed() };
+        let fs: PFspFileSystem = (&mut buf as *mut FspFileSystemLayout).cast::<c_void>();
+
+        // Null before any write.
+        assert!(unsafe { get_user_context(fs) }.is_null());
+
+        // A non-null dummy pointer — we only inspect the bit pattern, we
+        // never dereference it.
+        let dummy: *mut c_void = 0xDEAD_BEEF_CAFE_F00D_usize as *mut c_void;
+        unsafe { set_user_context(fs, dummy) };
+        assert_eq!(unsafe { get_user_context(fs) }, dummy);
+
+        // Clearing works too.
+        unsafe { set_user_context(fs, core::ptr::null_mut()) };
+        assert!(unsafe { get_user_context(fs) }.is_null());
     }
 }

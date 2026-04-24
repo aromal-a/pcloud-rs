@@ -91,7 +91,7 @@ security-framework = "2"  # Keychain-backed auth vault
 battery.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_Foundation"] }
+windows = { version = "0.58", features = ["Win32_Security_Cryptography", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO"] }
 # Planned (bd-xplat-windows):
 # windows-service = "0.7"
 battery.workspace = true

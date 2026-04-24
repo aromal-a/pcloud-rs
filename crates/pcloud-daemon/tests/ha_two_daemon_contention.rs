@@ -1,9 +1,4 @@
 #![allow(clippy::pedantic)]
-// The Tier-2 HA lease uses POSIX `flock(2)`; on Windows
-// `LeaseHolder::try_acquire_inner` returns `Unsupported` until the
-// `LockFileEx` / named-mutex port lands (bd-xplat-windows). Gate the
-// whole integration test to Unix until then.
-#![cfg(unix)]
 //! Integration test: Tier-2 HA file-lock contention between two
 //! bootstrap-assembled `RuntimeShell` instances pointing at the same
 //! `state_dir`.
@@ -27,8 +22,12 @@
 //! which is the same entry point `serve::accept_loop` uses per
 //! accepted client.
 //!
-//! **PLATFORM:** Linux (the lease relies on `flock(2)` advisory
-//! locking). The daemon is Linux-only; no extra gating is required.
+//! **PLATFORM:** Linux + Windows. On Unix the lease relies on
+//! `flock(2)` advisory locking; on Windows on `LockFileEx` over a
+//! single reserved sentinel byte at a fixed offset far past any
+//! realistic metadata size (see `ha_lease::win_lock`). Both provide
+//! the same "auto-release on process exit" semantic, so the takeover
+//! test below is cross-platform.
 
 
 use pcloud_config::ha::{HaContendedMode, HaPolicy};
