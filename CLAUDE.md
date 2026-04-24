@@ -476,14 +476,42 @@ Current secure posture:
 - malformed/slow client isolation,
 - audit persistence failures surfaced instead of being silently ignored.
 
-**Windows IPC posture (Tier-3 scaffolded-only):** `WindowsIpc` in
-`crates/pcloud-ipc/src/platform/windows.rs` compiles and the
-`bind_listener` / `peer_uid` / `peer_display` trait methods are
-implemented, but the named-pipe backend is **not** wired through the
-`serve_once_with_peer` accept loop in `transport.rs`. Windows is
-therefore Tier-3 for IPC — compile-tested in CI but not live-verified
-end-to-end. Do not document Windows as a supported IPC platform until
-`bd-xplat-windows` is closed and live-verified.
+**Windows posture (Tier-2 compile + `--lib` tests, 2026-04-24):** A
+17-commit bring-up sweep (`8b1c0fe..24fb5bf`) took Windows from
+Tier-3 scaffolded-only to Tier-2. The workspace now compiles clean on
+Windows MSVC 14.44 + Rust 1.95 + WinFSP 2.1.25156 (0 errors, 0 warnings)
+and `cargo test --workspace --lib` reports **1449 passing / 0 failing /
+2 ignored** across 33 test binaries. Two production-logic bugs were
+surfaced and fixed in-session: a `TcpStream::drop` FIN race in
+`pcloud-daemon::health_server` that truncated HTTP response tails on
+Windows (commit `24fb5bf`, fixed via explicit `shutdown(Write)` before
+drop), and a hardcoded `/` separator in
+`pcloud-backends::mount_discovery::is_ignored_under` that broke nested-
+root classification on Windows canonical `\\?\`-prefixed paths
+(commit `88739da`, fixed to accept both separators). `.gitattributes`
+(commit `e13c890`) locks line endings to `eol=lf` to prevent CRLF-
+munging regressions, and `vendor/msvc_spectre_libs_stub/` patches out
+MSVC Spectre-libs install friction.
+
+Windows is **not** Tier-1. The gating remaining work:
+
+- **Named-pipe IPC accept-loop wiring.** `WindowsIpc` in
+  `crates/pcloud-ipc/src/platform/windows.rs` compiles and the
+  `bind_listener` / `peer_uid` / `peer_display` trait methods are
+  implemented, but the named-pipe backend is **not** wired through the
+  `serve_once_with_peer` accept loop in `transport.rs`.
+  `pcloud_daemon::serve_with_shutdown` on Windows currently returns
+  `Unsupported` (commit `d79004d`); `pcloudd-svc` compiles and starts
+  but runs a no-op stub until this lands. This is the Tier-1 blocker
+  and in-flight as of this writing.
+- **Integration tests.** `cargo test --workspace --tests` has NOT been
+  run on Windows — only `--lib`.
+- **Live WinFSP mount.** WinFSP FFI is compile-clean only; no live
+  mount against a real pCloud account has been exercised.
+
+Tracked under `bd-xplat-windows`. Do not document Windows as a
+production-supported platform until the named-pipe accept loop, live
+WinFSP mount, and the Windows Service serving path are live-verified.
 
 **FreeBSD CI posture (Tier-3 best-effort):** The FreeBSD CI job has
 `continue-on-error: true`. It is informational only; regressions on

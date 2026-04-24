@@ -1,12 +1,15 @@
 #![allow(clippy::pedantic)]
+#![cfg(unix)]
 //! Tests for the per-request IPC frame size cap (P0.8).
 //!
 //! These tests verify that a peer cannot cause unbounded allocation by
 //! sending an inflated length prefix, and that legitimate-size requests
 //! still succeed.
 
-// **PLATFORM:** all
-// **GATING:** none (portable).
+// **PLATFORM:** Unix (uses `std::os::unix::net::UnixStream` directly to
+// hand-craft malformed frames; the size-cap invariant itself is
+// cross-platform and additionally covered by unit tests).
+// **GATING:** `#[cfg(unix)]` at file level.
 
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;

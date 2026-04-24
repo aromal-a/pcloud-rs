@@ -2,7 +2,66 @@
 
 Single source of truth for Rust parity counts.
 
-_Last reviewed: 2026-04-19 (post-audit-06 wave 2)._
+_Last reviewed: 2026-04-24 (post Windows Tier-3 → Tier-2 promotion)._
+
+## 2026-04-24 update — Windows bring-up (Tier-3 → Tier-2)
+
+The first-ever Windows compile + unit-test bring-up landed in a 17-commit
+sweep (`8b1c0fe..24fb5bf`). Windows is promoted from **Tier-3
+(scaffolded-only, compile-tested in CI)** to **Tier-2 (compile + unit
+tests live-verified on a real MSVC host)**. It is **not** promoted to
+Tier-1 — named-pipe IPC, integration tests, live WinFSP mount, and the
+Windows Service serving path are still open.
+
+What landed (toolchain + evidence):
+
+- **Host.** Windows 10/11 x86_64 + MSVC 14.44 + Rust 1.95 +
+  WinFSP 2.1.25156.
+- **Compile.** `cargo check --workspace` on Windows MSVC: 0 errors,
+  0 warnings as of `24fb5bf`.
+- **Unit tests.** `cargo test --workspace --lib`: **1449 passing,
+  0 failing, 2 ignored** across 33 test binaries.
+- **Line-ending hygiene.** `.gitattributes` added with `eol=lf` to
+  prevent CRLF-munging regressions (commit `e13c890`).
+- **MSVC Spectre-libs friction.** Workspace-local stub at
+  `vendor/msvc_spectre_libs_stub/` patches out the install friction
+  (landed under the earlier compile-unblock commits, e.g. `dd8ba71`,
+  `36faaa6`).
+
+Production-logic bugs surfaced by the bring-up and fixed (these are real
+bugs, not Windows-only shims):
+
+- **`pcloud-daemon::health_server` — `TcpStream::drop` FIN race
+  (commit `24fb5bf`).** On Windows the drop-implicit close discarded
+  the HTTP response tail; fixed by calling `shutdown(Write)` before
+  drop so the client sees the full body before FIN.
+- **`pcloud-backends::mount_discovery::is_ignored_under` — hardcoded
+  `/` separator (commit `88739da`).** Broke nested-root classification
+  on Windows canonical `\\?\`-prefixed paths; fixed to accept both
+  `/` and `\` separators.
+
+What is explicitly **still open** on Windows (do not claim fixed):
+
+- **Integration tests.** `cargo test --workspace --tests` has NOT been
+  run on Windows — only `--lib`.
+- **Named-pipe IPC.** `pcloudd-svc` on Windows cannot serve clients
+  yet: `pcloud_daemon::serve_with_shutdown` on Windows returns
+  `Unsupported` because named-pipe IPC is not wired through
+  `BoundIpcServer` (commit `d79004d` landed the compile-clean stub
+  binary; wiring is in flight).
+- **Live WinFSP mount.** A real mount against a real pCloud account
+  has NOT been exercised on Windows; WinFSP FFI is compile-clean only.
+- **Windows Service (`pcloudd-svc`).** Compiles and starts, but runs a
+  no-op stub until named-pipe IPC is wired.
+
+macOS posture is unchanged — still Tier-3 scaffolded-only, unverified on
+hardware.
+
+See [`.audits/followup/windows-tier2-bringup.md`](./.audits/followup/windows-tier2-bringup.md)
+for the commit-level rollup.
+
+No parity-matrix row flipped in this wave. Headline stays
+**153 / 3 / 0 / 30 (186 rows).**
 
 ## 2026-04-19 update — audit-06 wave 2 (ncx.4, ncx.5)
 
@@ -555,9 +614,9 @@ Every other document must link here and avoid hard-coded totals.
 | Workspace crates | **23+** including enterprise crates (`pcloud-idp`, `pcloud-policy`, `pcloud-fleet`, `pcloud-kms`, `pcloud-session`) and first-party plugins. |
 | ADRs landed | **18** | `docs/adr/0001`–`0018` |
 | Open parity beads | **3** | `bd-1du`, `bd-1du.4`, `bd-1du.10` — see "Open Parity Beads" section. Non-parity engineering beads (`bd-1du.4.6.1`, `bd-1du.5`) are listed separately under "Open Engineering Beads". |
-| Tier-1 live platforms | Linux x86_64/aarch64 | macOS and Windows scaffolded + CI-compiled; mounts not hardware-verified |
+| Tier-1 live platforms | Linux x86_64/aarch64 | macOS scaffolded + CI-compiled (Tier-3); Windows compile + unit tests live-verified (Tier-2); neither mount is hardware-verified |
 | FreeBSD CI posture | Tier-3 best-effort | `continue-on-error: true` in CI; job is informational only and regressions do not fail the PR gate. See `.github/workflows/ci.yml` FreeBSD job comment. |
-| Windows IPC posture | Tier-3 scaffolded | Named-pipe `WindowsIpc` compiles and passes unit tests; `serve_once_with_peer` accept loop is **not** wired through the Windows backend. Live IPC on Windows is tracked under `bd-xplat-windows`. |
+| Windows posture | **Tier-2 (compile + `--lib` tests)** | Workspace compiles clean on MSVC 14.44 + Rust 1.95; `cargo test --workspace --lib` reports 1449 / 0 / 2 (pass / fail / ignored) as of commit `24fb5bf` (2026-04-24). Still open: integration tests (`--tests`) not run; named-pipe IPC not wired through `BoundIpcServer` (`serve_with_shutdown` on Windows returns `Unsupported`); live WinFSP mount not exercised; `pcloudd-svc` Service binary is a no-op stub until IPC lands. Tracked under `bd-xplat-windows`. |
 
 Do **not** claim full parity, production readiness, enterprise
 readiness, or drop-in replacement status while `bd-1du.10` remains
@@ -735,7 +794,7 @@ actually wired and live-verified. The tally stays at **152 / 6 / 0 / 28**.
 | Tier | Platforms | Scaffolded | Live-verified |
 |------|-----------|------------|---------------|
 | Tier 1 | Linux x86_64 / aarch64 (glibc) | Yes | Yes (FUSE mount on Debian, Arch, Fedora) |
-| Tier 2 | macOS 13+, Windows 10/11 x86_64 | Yes (16 + 17 FUSE callbacks, Service wrapper) | In progress |
+| Tier 2 | macOS 13+, Windows 10/11 x86_64 | Yes (16 + 17 FUSE callbacks, Service wrapper) | Windows: compile + `--lib` tests (1449/0/2) live-verified on MSVC 14.44 + Rust 1.95 as of `24fb5bf` (2026-04-24); named-pipe IPC, integration tests, and live WinFSP mount still open. macOS: compile-only. |
 | Tier 3 | FreeBSD 14, NetBSD 10, OpenBSD | Yes (compile + packaging + rc.d) | Community best-effort |
 | Tier 4 | Linux x86 (32-bit), other archs | No CI | No |
 | Rejected | iOS, Android, WASM | N/A | N/A |

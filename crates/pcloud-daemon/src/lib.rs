@@ -101,13 +101,12 @@ pub use dispatch::{dispatch, dispatch_with_peer, dispatch_with_peer_creds};
 pub use runtime::RuntimeShell;
 #[cfg(feature = "metrics")]
 pub use runtime::install_panic_metrics_hook;
-// `serve_with_shutdown` is cross-platform (Windows body returns a
-// clean Unsupported error so pcloud-daemon-win's worker thread exits
-// cleanly). The other two entry points are Unix-only pending the
-// named-pipe port.
-pub use serve::serve_with_shutdown;
-#[cfg(unix)]
-pub use serve::{serve_until_shutdown, serve_until_shutdown_with_flag};
+// All three serve entry points are cross-platform. On Unix the
+// transport is a `0600` Unix socket; on Windows it is a per-user-SID
+// named pipe (see `pcloud_ipc::platform::windows`). The serve loop
+// itself dispatches peer-credential recovery through `pcloud_ipc`'s
+// platform module and is otherwise identical across platforms.
+pub use serve::{serve_until_shutdown, serve_until_shutdown_with_flag, serve_with_shutdown};
 
 /// Canonical pidfile location for a given managed `state_dir`.
 ///

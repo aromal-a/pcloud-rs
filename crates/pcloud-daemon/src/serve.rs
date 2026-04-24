@@ -89,11 +89,9 @@ fn sd_notify(_msg: &str) {
 }
 
 use pcloud_ipc::{
-    IpcServer, IpcTransportError, Method, Request, Response, ResponseStatus,
+    BoundIpcServer, IpcServer, IpcTransportError, Method, Request, Response, ResponseStatus,
     current_effective_uid,
 };
-#[cfg(unix)]
-use pcloud_ipc::BoundIpcServer;
 
 use pcloud_session::refresh_loop::{self, TickOutcome};
 
@@ -198,7 +196,6 @@ const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// serializes through the mutex while the accept loop itself stays
 /// non-blocking. The connection cap ([`pcloud_ipc::MAX_IPC_CONNECTIONS`])
 /// bounds worst-case thread count.
-#[cfg(unix)]
 pub fn serve_until_shutdown(
     bound: &BoundIpcServer,
     runtime: &mut RuntimeShell,
@@ -275,7 +272,6 @@ pub(crate) fn dispatch_with_drain_gate(
 /// `true`, the loop returns cleanly just like the internal signal/IPC
 /// shutdown paths, and the runtime-level flag is synchronized so the
 /// rest of the runtime sees a single consistent source of truth.
-#[cfg(unix)]
 pub fn serve_until_shutdown_with_flag(
     bound: &BoundIpcServer,
     runtime: &mut RuntimeShell,
@@ -445,26 +441,13 @@ pub fn serve_until_shutdown_with_flag(
 /// Any bootstrap, bind, or serve error is propagated as `anyhow::Error`
 /// so the caller can log a single cause chain and exit with a non-zero
 /// status.
-/// Windows stub — pcloud-daemon-win spawns this as a worker thread,
-/// but the Unix-socket IPC bind + serve loop isn't implemented here.
-/// Returns an error so the service worker thread exits cleanly and
-/// SCM reports `Stopped`. Named-pipe IPC for Windows is tracked under
-/// bd-xplat-windows; the Service control-dispatcher in
-/// pcloud-daemon-win remains the right home for it.
-#[cfg(not(unix))]
-pub fn serve_with_shutdown(_shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
-    Err(anyhow::anyhow!(
-        "pcloud_daemon::serve_with_shutdown is Unix-only; the Windows \
-         Service host (pcloud-daemon-win) must wire its own named-pipe \
-         IPC serve loop (bd-xplat-windows)."
-    ))
-}
-
-/// Driver for the daemon's Unix-socket IPC + serve loop with a shared
+/// Driver for the daemon's local IPC + serve loop with a shared
 /// cooperative-shutdown flag. Used by the `pcloudd serve` binary on
-/// Unix and by `pcloud-daemon-win`'s worker thread (via the Windows
-/// stub above) on Windows.
-#[cfg(unix)]
+/// Unix and by `pcloud-daemon-win`'s worker thread on Windows.
+///
+/// On Windows the underlying transport is a per-user-SID named pipe
+/// (see `pcloud_ipc::platform::windows`); on Unix it is a `0600` Unix
+/// socket under a `0700` runtime directory.
 pub fn serve_with_shutdown(shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
     // Installing signal handlers is idempotent and async-signal-safe.
     // Doing it here keeps the behavior identical to `pcloudd serve`

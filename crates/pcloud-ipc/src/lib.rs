@@ -91,8 +91,6 @@ pub use protocol::{
 pub use redacted::RedactedString;
 pub use server::{IpcError, IpcServer, MAX_REQUEST_BYTES};
 pub use transport::{
-    IpcTransportError, MAX_IPC_CONNECTIONS, MAX_IPC_CONNECTIONS_PER_PEER, ipc_connection_cap,
-    ipc_connection_cap_per_peer, set_ipc_connection_caps,
+    BoundIpcServer, IpcTransportError, MAX_IPC_CONNECTIONS, MAX_IPC_CONNECTIONS_PER_PEER,
+    ipc_connection_cap, ipc_connection_cap_per_peer, set_ipc_connection_caps,
 };
-#[cfg(unix)]
-pub use transport::BoundIpcServer;

@@ -1,4 +1,5 @@
 #![allow(clippy::pedantic)]
+#![cfg(unix)]
 //! Concurrent IPC stress test: 50 clients × 500 sequential requests each
 //! against a dev-mode owner-only Unix-socket server that loops `serve_once`.
 //!
@@ -8,8 +9,8 @@
 //! cargo test --release -p pcloud-ipc -- --ignored stress
 //! ```
 
-// **PLATFORM:** Linux
-// **GATING:** none (portable; uses Linux-only idioms — see TODO(bd-xplat)).
+// **PLATFORM:** Unix (uses `std::os::unix::net` idioms directly).
+// **GATING:** `#[cfg(unix)]` at file level.
 
 use std::{
     io,

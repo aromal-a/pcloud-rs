@@ -55,6 +55,16 @@ windows = { version = "0.58", features = [
     "Win32_System_LibraryLoader",
     "Win32_Storage_FileSystem",
     "Win32_System_IO",
+    # Required by `platform/windows.rs::build_current_user_security_descriptor`
+    # (SDDL synthesis via ConvertSidToStringSidW +
+    # ConvertStringSecurityDescriptorToSecurityDescriptorW) and by the
+    # Windows reaper's `SetConsoleCtrlHandler` path. Previously these
+    # were only reachable via workspace-level feature unification from
+    # `pcloud-ipc`; cargo check -p pcloud-fs in isolation (e.g. from
+    # `winfsp_mount_live` integration test) fails without them.
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_System_Threading",
 ] }
 
 [dev-dependencies]
