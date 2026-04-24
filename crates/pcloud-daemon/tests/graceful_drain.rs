@@ -42,13 +42,20 @@ use pcloud_ipc::{
 };
 
 fn bootstrap_test_shell() -> pcloud_daemon::RuntimeShell {
-    // Use `/tmp` (not `std::env::temp_dir()`) so the Unix-socket path
-    // stays under SUN_LEN on macOS, where the per-user tempdir
-    // `/var/folders/.../T/` alone eats 49 chars.
+    // Use `/tmp` (not `std::env::temp_dir()`) on Unix so the Unix-socket
+    // path stays under SUN_LEN on macOS, where the per-user tempdir
+    // `/var/folders/.../T/` alone eats 49 chars. On Windows SUN_LEN
+    // doesn't apply (named pipes aren't path-length-bounded) so the
+    // system tempdir is fine and `/tmp` wouldn't satisfy
+    // `path.is_absolute()`.
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
-    let root = std::path::PathBuf::from("/tmp").join(format!(
+    #[cfg(unix)]
+    let root_base = std::path::PathBuf::from("/tmp");
+    #[cfg(not(unix))]
+    let root_base = std::env::temp_dir();
+    let root = root_base.join(format!(
         "pd-drn-{}-{}",
         std::process::id(),
         nonce % 1_000_000_000

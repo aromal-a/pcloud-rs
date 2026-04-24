@@ -1,4 +1,9 @@
 #![allow(clippy::pedantic)]
+// The Tier-2 HA lease uses POSIX `flock(2)`; on Windows
+// `LeaseHolder::try_acquire_inner` returns `Unsupported` until the
+// `LockFileEx` / named-mutex port lands (bd-xplat-windows). Gate the
+// whole integration test to Unix until then.
+#![cfg(unix)]
 //! Integration test: Tier-2 HA file-lock contention between two
 //! bootstrap-assembled `RuntimeShell` instances pointing at the same
 //! `state_dir`.

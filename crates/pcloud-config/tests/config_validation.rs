@@ -16,7 +16,18 @@ use pcloud_config::{
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 fn root() -> PathBuf {
-    PathBuf::from("/tmp/pcloud-config-test")
+    // `validate()` requires absolute paths. Unix `/tmp/...` satisfies that;
+    // Windows absolute paths need a drive letter. Keep the test platform-
+    // correct without depending on real filesystem state (the fixtures
+    // never touch the disk).
+    #[cfg(unix)]
+    {
+        PathBuf::from("/tmp/pcloud-config-test")
+    }
+    #[cfg(windows)]
+    {
+        PathBuf::from(r"C:\pcloud-config-test")
+    }
 }
 
 fn prod_profile() -> ConfigProfile {
