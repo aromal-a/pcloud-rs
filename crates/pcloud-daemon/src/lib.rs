@@ -101,6 +101,7 @@ pub use dispatch::{dispatch, dispatch_with_peer, dispatch_with_peer_creds};
 pub use runtime::RuntimeShell;
 #[cfg(feature = "metrics")]
 pub use runtime::install_panic_metrics_hook;
+#[cfg(unix)]
 pub use serve::{serve_until_shutdown, serve_until_shutdown_with_flag, serve_with_shutdown};
 
 /// Canonical pidfile location for a given managed `state_dir`.
