@@ -63,6 +63,20 @@ impl PeerIdentity {
 /// ```
 #[must_use]
 pub fn current_effective_uid() -> u32 {
-    // SAFETY: geteuid has no preconditions and simply returns the effective uid.
-    unsafe { libc::geteuid() }
+    #[cfg(unix)]
+    {
+        // SAFETY: geteuid has no preconditions and simply returns the
+        // effective uid.
+        unsafe { libc::geteuid() }
+    }
+    #[cfg(windows)]
+    {
+        // Windows has no Unix-style uid. The caller's security principal
+        // is identified by SID, not uid; peer authentication on Windows
+        // goes through `platform::windows::peer_uid` which returns a
+        // stable hash of the TokenUser SID. Returning 0 here is a
+        // placeholder for code paths that haven't yet been refactored
+        // off this function on Windows (tracked under bd-xplat-windows).
+        0
+    }
 }

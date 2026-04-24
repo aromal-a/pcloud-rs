@@ -11,12 +11,14 @@
 use std::{
     fs,
     io::{Read, Write},
-    os::unix::{
-        fs::PermissionsExt,
-        net::{UnixListener, UnixStream},
-    },
     path::{Path, PathBuf},
     time::Duration,
+};
+
+#[cfg(unix)]
+use std::os::unix::{
+    fs::PermissionsExt,
+    net::{UnixListener, UnixStream},
 };
 
 use std::collections::HashMap;
@@ -307,6 +309,7 @@ pub enum IpcTransportError {
 /// §7-sonnet M2). That ADR lists the read/write timeouts and connection
 /// caps that bound worst-case latency today, and the conditions under
 /// which the serve loop may migrate to a channel-based dispatcher.
+#[cfg(unix)]
 #[derive(Debug)]
 pub struct BoundIpcServer {
     listener: UnixListener,
@@ -314,6 +317,7 @@ pub struct BoundIpcServer {
     owner_uid: u32,
 }
 
+#[cfg(unix)]
 impl BoundIpcServer {
     /// Absolute path of the Unix socket file. Useful for CLI callers
     /// and audit logging.
@@ -633,6 +637,7 @@ impl BoundIpcServer {
     }
 }
 
+#[cfg(unix)]
 impl Drop for BoundIpcServer {
     /// Unlink the Unix-domain socket on drop (RAII cleanup).
     ///
@@ -760,6 +765,11 @@ impl IpcServer {
     /// socket at `socket_path` is removed first; the new socket is
     /// `chmod`-ed to `0600` (owner read/write only). The returned
     /// [`BoundIpcServer`] unlinks the socket on [`Drop`].
+    ///
+    /// Unix-only. The Windows path uses named pipes and lives in
+    /// `crate::platform::windows::WindowsIpc` — wiring it through this
+    /// `BoundIpcServer` surface is deferred (bd-xplat-windows).
+    #[cfg(unix)]
     pub fn bind(&self, socket_path: &Path) -> Result<BoundIpcServer, IpcTransportError> {
         if let Some(parent) = socket_path.parent() {
             let parent_missing = !parent.exists();
@@ -812,10 +822,15 @@ impl IpcServer {
     }
 }
 
+#[cfg(unix)]
 impl IpcClient {
     /// Connect to the daemon's Unix socket at `socket_path`, send the
     /// framed `request`, shut down the write half (so the daemon sees
     /// EOF without waiting), and read the framed response to completion.
+    ///
+    /// Unix-only. Windows clients use named pipes through
+    /// `crate::platform::windows::WindowsIpc` — bd-xplat-windows tracks
+    /// unifying both paths behind a single `IpcClient` surface.
     pub fn send(
         &self,
         socket_path: &Path,
@@ -850,6 +865,7 @@ impl IpcClient {
 /// pre-resolved [`PeerIdentity`] (already recovered by `accept_and_spawn`
 /// before the connection slot was acquired).  Used by the thread closure
 /// spawned in [`BoundIpcServer::accept_and_spawn`].
+#[cfg(unix)]
 fn serve_stream_standalone_with_peer<F>(
     mut stream: UnixStream,
     server: &IpcServer,
@@ -891,6 +907,7 @@ where
     Ok(())
 }
 
+#[cfg(unix)]
 fn read_framed_request(stream: &mut UnixStream) -> Result<Vec<u8>, IpcTransportError> {
     let mut header = [0u8; 8];
     stream.read_exact(&mut header)?;
@@ -914,6 +931,7 @@ fn read_framed_request(stream: &mut UnixStream) -> Result<Vec<u8>, IpcTransportE
     Ok(bytes)
 }
 
+#[cfg(unix)]
 fn handle_client_error(
     stream: &mut UnixStream,
     server: &IpcServer,
@@ -953,6 +971,7 @@ fn handle_client_error(
     }
 }
 
+#[cfg(unix)]
 fn write_response(
     stream: &mut UnixStream,
     server: &IpcServer,
@@ -973,6 +992,11 @@ fn write_response(
 /// - On FreeBSD/OpenBSD/NetBSD/macOS this calls `getpeereid(3)`
 ///   (see [`crate::platform::unix`]); pid is not available on these
 ///   platforms and is reported as `0`.
+///
+/// Unix-only. The Windows named-pipe backend recovers the peer SID via
+/// `crate::platform::windows::peer_uid` and does not go through this
+/// function.
+#[cfg(unix)]
 fn peer_identity(stream: &UnixStream) -> Result<PeerIdentity, IpcTransportError> {
     #[cfg(target_os = "linux")]
     let (uid, pid) = crate::platform::linux::peer_ucred(stream)?;
@@ -988,7 +1012,7 @@ fn peer_identity(stream: &UnixStream) -> Result<PeerIdentity, IpcTransportError>
     Ok(PeerIdentity { uid, pid })
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::io::{Read, Write};
     use std::os::unix::net::UnixStream;

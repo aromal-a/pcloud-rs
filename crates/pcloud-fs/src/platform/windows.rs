@@ -821,7 +821,8 @@ extern "system" fn cb_get_security_by_name(
 /// TODO(bd-xplat-windows): add a proper integration test on Windows; the
 /// SDDL path is untested in Linux CI.
 fn build_current_user_security_descriptor() -> Result<Vec<u8>, ()> {
-    use windows::Win32::Foundation::{HLOCAL, LocalFree, PSID};
+    use windows::Win32::Foundation::{HLOCAL, LocalFree};
+    use windows::Win32::Security::PSID;
     use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows::Win32::Security::{
         GetTokenInformation, PSECURITY_DESCRIPTOR, SID_AND_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,

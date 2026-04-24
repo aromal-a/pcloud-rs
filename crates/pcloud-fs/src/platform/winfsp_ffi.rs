@@ -60,7 +60,7 @@ use std::os::raw::{c_int, c_ulong};
 // `windows` crate (feature set already includes Win32 storage/system items
 // per Y3, per CLAUDE.md). This keeps HANDLE/NTSTATUS/BOOLEAN/PWSTR/FILETIME
 // definitions aligned with the rest of the codebase.
-pub use windows::Win32::Foundation::{BOOLEAN, FILETIME, HANDLE, NTSTATUS};
+pub use windows::Win32::Foundation::{BOOLEAN, FILETIME, HANDLE, HMODULE, NTSTATUS};
 pub use windows::core::{PCWSTR, PWSTR};
 
 // ---------------------------------------------------------------------------
@@ -430,7 +430,12 @@ pub type FnFspFileSystemAddDirInfo = unsafe extern "system" fn(
 pub struct WinFspLibrary {
     /// Module handle from `LoadLibraryW`. Stored so the DLL stays resident.
     /// Never used for explicit `FreeLibrary`; see safety note above.
-    pub module: HANDLE,
+    ///
+    /// Note: since `windows` crate 0.52+ `LoadLibraryW` returns a dedicated
+    /// `HMODULE` newtype distinct from `HANDLE` — stored as `HMODULE` to
+    /// preserve that signal. Callers who need a raw `HANDLE` use
+    /// `windows::Win32::Foundation::HANDLE(module.0)`.
+    pub module: HMODULE,
     pub fsp_create: FnFspFileSystemCreate,
     pub fsp_set_mount_point: FnFspFileSystemSetMountPoint,
     pub fsp_start_dispatcher: FnFspFileSystemStartDispatcher,
@@ -513,12 +518,9 @@ pub fn load_winfsp() -> Result<Option<WinFspLibrary>, String> {
     // SAFETY: `GetProcAddress` with a module handle returned by
     // `LoadLibraryW` is defined behavior; the returned pointer lifetime is
     // tied to the module, which we keep resident for process lifetime.
-    unsafe fn resolve<T: Copy>(module: HANDLE, name: &[u8]) -> Result<T, String> {
+    unsafe fn resolve<T: Copy>(module: HMODULE, name: &[u8]) -> Result<T, String> {
         // We rely on `name` being ASCII + NUL-terminated.
-        let p = GetProcAddress(
-            windows::Win32::Foundation::HMODULE(module.0),
-            windows::core::PCSTR(name.as_ptr()),
-        );
+        let p = GetProcAddress(module, windows::core::PCSTR(name.as_ptr()));
         match p {
             Some(f) => {
                 // SAFETY: transmute fn-ptr to the typed signature. Caller
@@ -536,11 +538,8 @@ pub fn load_winfsp() -> Result<Option<WinFspLibrary>, String> {
     //
     // # Safety
     // Same contract as `resolve`; only callable during `load_winfsp`.
-    unsafe fn resolve_optional<T: Copy>(module: HANDLE, name: &[u8]) -> Option<T> {
-        let p = GetProcAddress(
-            windows::Win32::Foundation::HMODULE(module.0),
-            windows::core::PCSTR(name.as_ptr()),
-        );
+    unsafe fn resolve_optional<T: Copy>(module: HMODULE, name: &[u8]) -> Option<T> {
+        let p = GetProcAddress(module, windows::core::PCSTR(name.as_ptr()));
         // SAFETY: transmute fn-ptr; caller guarantees `T` matches the ABI.
         p.map(|f| unsafe { std::mem::transmute_copy::<_, T>(&f) })
     }
