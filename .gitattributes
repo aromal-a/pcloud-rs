@@ -1,0 +1,49 @@
+# Enforce LF line endings workspace-wide, independent of the developer's
+# `git config core.autocrlf` setting. Critical for:
+# - Rust source files: `include_str!` + source-scanning tests (e.g.
+#   pcloud-proto/src/tls.rs `shared_config_rejects_tls_1_2`) assume LF
+#   line endings. Windows checkout with `core.autocrlf=true` will
+#   inject CRLF and break those tests.
+# - KAT fixtures: crypto ciphertext/plaintext pairs must be byte-for-byte
+#   identical across platforms.
+# - SSH keys, test certificates, PEM fixtures: CRLF corrupts them.
+#
+# Binary files (images, archives, compiled artifacts) should be treated
+# as binary so Git never tries to normalize their content.
+
+*                text=auto eol=lf
+
+# Explicit binary file types — belt-and-braces against `text=auto`
+# mis-sniffing.
+*.png            binary
+*.jpg            binary
+*.jpeg           binary
+*.gif            binary
+*.ico            binary
+*.bin            binary
+*.blob           binary
+*.key            binary
+*.pdf            binary
+*.zip            binary
+*.gz             binary
+*.tar            binary
+*.tgz            binary
+*.bz2            binary
+*.xz             binary
+*.7z             binary
+*.so             binary
+*.dylib          binary
+*.dll            binary
+*.exe            binary
+
+# Rust source + test fixtures: force LF (override any OS default).
+*.rs             text eol=lf
+*.toml           text eol=lf
+*.md             text eol=lf
+*.yml            text eol=lf
+*.yaml           text eol=lf
+*.json           text eol=lf
+*.csv            text eol=lf
+*.sh             text eol=lf
+*.ps1            text eol=lf
+*.py             text eol=lf

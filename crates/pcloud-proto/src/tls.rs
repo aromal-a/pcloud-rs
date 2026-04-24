@@ -148,7 +148,10 @@ mod tests {
         // body in the crate source for the exact builder call
         // pattern. If a future refactor changes the list to include
         // 1.2, this test forces the change to be explicit.
-        let src = include_str!("tls.rs");
+        // Normalize CRLF → LF so the `\n}\n` body-end finder works
+        // identically on Windows (git autocrlf) and Linux checkouts.
+        let src_raw = include_str!("tls.rs");
+        let src = src_raw.replace("\r\n", "\n");
         // Look at only the lines in the `build_config` function body
         // to avoid matching our own test / comment lines.
         let start = src
