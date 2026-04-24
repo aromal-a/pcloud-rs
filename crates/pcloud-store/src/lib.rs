@@ -139,6 +139,7 @@ pub mod schema;
 /// `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` transaction boundary helpers.
 pub mod tx;
 
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::{
     fs,
@@ -205,6 +206,11 @@ pub fn bootstrap_profile(db_path: &Path) -> Result<(StoreProfile, IntegrityStatu
     }
 
     let conn = Connection::open(db_path)?;
+    // File-permission tightening is Unix-only (`chmod 0600`). On Windows
+    // the SQLite file inherits the creating user's ACL, which already
+    // restricts access to the daemon account; explicit ACL hardening is
+    // deferred to a Windows-native path (bd-xplat-windows).
+    #[cfg(unix)]
     fs::set_permissions(db_path, fs::Permissions::from_mode(0o600))?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     tune_connection(&conn)?;
