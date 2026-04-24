@@ -730,9 +730,17 @@ extern "system" fn cb_get_volume_info(fs: PFspFileSystem, info: *mut VolumeInfo)
             (*info).total_size = total;
             (*info).free_size = free;
             let label: Vec<u16> = "pCloud".encode_utf16().collect();
-            let cap = (*info).volume_label.len();
-            let n = label.len().min(cap);
-            (*info).volume_label[..n].copy_from_slice(&label[..n]);
+            // Rust 2024 edition's `dangerous_implicit_autorefs` lint
+            // rejects `(*info).volume_label[..n].copy_from_slice(...)`
+            // because the projection through a raw pointer implicitly
+            // creates a `&mut [u16]` reference. Use `&raw mut` to take
+            // the pointer explicitly, then slice-from-raw with the
+            // fixed length (VolumeInfo.volume_label is `[u16; 32]`).
+            const VL_CAP: usize = 32;
+            let vl_base: *mut u16 = (&raw mut (*info).volume_label).cast::<u16>();
+            let vl_slice: &mut [u16] = std::slice::from_raw_parts_mut(vl_base, VL_CAP);
+            let n = label.len().min(VL_CAP);
+            vl_slice[..n].copy_from_slice(&label[..n]);
             // WinFSP expects the length *in bytes*, not UTF-16 units.
             (*info).volume_label_length = (n * 2) as u16;
         }
