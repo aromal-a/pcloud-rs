@@ -520,12 +520,16 @@ pub fn load_winfsp() -> Result<Option<WinFspLibrary>, String> {
     // tied to the module, which we keep resident for process lifetime.
     unsafe fn resolve<T: Copy>(module: HMODULE, name: &[u8]) -> Result<T, String> {
         // We rely on `name` being ASCII + NUL-terminated.
-        let p = GetProcAddress(module, windows::core::PCSTR(name.as_ptr()));
+        // SAFETY (Rust 2024 `unsafe_op_in_unsafe_fn`): the outer `unsafe fn`
+        // signature documents the module-lifetime + ABI-shape contract; the
+        // inner `unsafe { ... }` blocks narrow each call to its specific
+        // precondition.
+        let p = unsafe { GetProcAddress(module, windows::core::PCSTR(name.as_ptr())) };
         match p {
             Some(f) => {
                 // SAFETY: transmute fn-ptr to the typed signature. Caller
                 // guarantees `T` is the correct WinFSP ABI signature.
-                Ok(std::mem::transmute_copy::<_, T>(&f))
+                Ok(unsafe { std::mem::transmute_copy::<_, T>(&f) })
             }
             None => Err(format!(
                 "winfsp-x64.dll missing symbol: {}",
@@ -539,7 +543,9 @@ pub fn load_winfsp() -> Result<Option<WinFspLibrary>, String> {
     // # Safety
     // Same contract as `resolve`; only callable during `load_winfsp`.
     unsafe fn resolve_optional<T: Copy>(module: HMODULE, name: &[u8]) -> Option<T> {
-        let p = GetProcAddress(module, windows::core::PCSTR(name.as_ptr()));
+        // SAFETY: same as `resolve` — narrow the 2024-edition unsafe
+        // block around the specific GetProcAddress call.
+        let p = unsafe { GetProcAddress(module, windows::core::PCSTR(name.as_ptr())) };
         // SAFETY: transmute fn-ptr; caller guarantees `T` matches the ABI.
         p.map(|f| unsafe { std::mem::transmute_copy::<_, T>(&f) })
     }
