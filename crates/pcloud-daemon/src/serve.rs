@@ -89,9 +89,11 @@ fn sd_notify(_msg: &str) {
 }
 
 use pcloud_ipc::{
-    BoundIpcServer, IpcServer, IpcTransportError, Method, Request, Response, ResponseStatus,
+    IpcServer, IpcTransportError, Method, Request, Response, ResponseStatus,
     current_effective_uid,
 };
+#[cfg(unix)]
+use pcloud_ipc::BoundIpcServer;
 
 use pcloud_session::refresh_loop::{self, TickOutcome};
 

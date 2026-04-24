@@ -652,14 +652,44 @@ fn pid_is_alive(pid: i32) -> bool {
     if pid <= 0 {
         return false;
     }
-    // SAFETY: `kill` with `sig=0` performs error checking only and
-    // does not deliver a signal. No memory is read or written by the
-    // syscall beyond the kernel's own task-table walk.
-    let rc = unsafe { libc::kill(pid, 0) };
-    if rc == 0 {
-        return true;
+    #[cfg(unix)]
+    {
+        // SAFETY: `kill` with `sig=0` performs error checking only and
+        // does not deliver a signal. No memory is read or written by the
+        // syscall beyond the kernel's own task-table walk.
+        let rc = unsafe { libc::kill(pid, 0) };
+        if rc == 0 {
+            return true;
+        }
+        std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
-    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    #[cfg(windows)]
+    {
+        // Windows: OpenProcess with PROCESS_QUERY_LIMITED_INFORMATION is
+        // the canonical alive-probe. Returns null (Err) if the pid no
+        // longer exists. Tracked under bd-xplat-windows for fidelity
+        // with the Unix kill(0)/EPERM semantics.
+        use windows::Win32::System::Threading::{
+            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        use windows::Win32::Foundation::CloseHandle;
+        // SAFETY: both FFI calls accept primitive args and an open handle
+        // is closed via CloseHandle before returning.
+        unsafe {
+            match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid as u32) {
+                Ok(h) => {
+                    let _ = CloseHandle(h);
+                    true
+                }
+                Err(_) => false,
+            }
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+        false
+    }
 }
 
 /// Ordered shutdown sequence used by both `Drop` and explicit

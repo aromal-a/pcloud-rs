@@ -11,6 +11,7 @@
 use std::env;
 use std::fs;
 use std::io::Read;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -109,7 +110,13 @@ fn validate_secret_file(path: &Path) -> Result<(), BootstrapError> {
             path.display()
         )));
     }
+    #[cfg(unix)]
     let mode = meta.permissions().mode();
+    #[cfg(not(unix))]
+    let mode: u32 = 0; // Windows permissions are ACL-based; the Unix-mode
+                      // triangle mask below degrades to "always 0 → pass"
+                      // (no rejection). Native ACL inspection is tracked
+                      // under bd-xplat-windows.
     if mode & 0o077 != 0 {
         return Err(BootstrapError::CredentialBootstrap(format!(
             "{} must not grant group/other access (mode=0o{:o})",
@@ -438,12 +445,16 @@ pub fn bootstrap_with_config(config: ConfigProfile) -> Result<RuntimeShell, Boot
         (&config.paths.cache_dir, config.runtime.cache_dir_mode),
     ] {
         fs::create_dir_all(path).map_err(BootstrapError::Provision)?;
+        #[cfg(unix)]
         fs::set_permissions(path, fs::Permissions::from_mode(mode))
             .map_err(BootstrapError::Provision)?;
+        #[cfg(not(unix))]
+        let _ = mode; // ACL-based perms on Windows; bd-xplat-windows.
     }
 
     if config.extensions.plugins_enabled {
         fs::create_dir_all(&config.extensions.plugin_dir).map_err(BootstrapError::Provision)?;
+        #[cfg(unix)]
         fs::set_permissions(
             &config.extensions.plugin_dir,
             fs::Permissions::from_mode(config.runtime.config_dir_mode),

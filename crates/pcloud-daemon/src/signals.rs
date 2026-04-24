@@ -279,6 +279,7 @@ extern "C" fn handle_hup(_sig: libc::c_int) {
     RELOAD_REQUESTED.store(true, Ordering::SeqCst);
 }
 
+#[cfg(unix)]
 fn install_handler(sig: libc::c_int, handler: extern "C" fn(libc::c_int)) -> io::Result<()> {
     // Intentionally do not set SA_RESTART: we WANT blocking syscalls such as
     // accept(2) to return EINTR so the serve loop can observe the shutdown
@@ -309,6 +310,7 @@ fn install_handler(sig: libc::c_int, handler: extern "C" fn(libc::c_int)) -> io:
     Ok(())
 }
 
+#[cfg(unix)]
 fn install_ignore(sig: libc::c_int) -> io::Result<()> {
     // SAFETY: `std::mem::zeroed()` is valid for `libc::sigaction` — same
     // rationale as `install_handler` above. `sa_sigaction` is overwritten
@@ -337,6 +339,12 @@ fn install_ignore(sig: libc::c_int) -> io::Result<()> {
 ///
 /// On success returns `Ok(())`. On failure the OS error is returned and the
 /// daemon should abort rather than continue unprotected.
+///
+/// Unix-only: relies on POSIX `sigaction(2)`. Windows daemon lifecycle
+/// is driven by the Windows Service control-dispatcher in
+/// `pcloud-daemon-win`; this symbol is a no-op there and callers must
+/// gate invocations with `#[cfg(unix)]`.
+#[cfg(unix)]
 pub fn install_default_handlers() -> io::Result<()> {
     let mut first_err: Option<io::Error> = None;
     INSTALL_ONCE.call_once(|| {
@@ -360,6 +368,14 @@ pub fn install_default_handlers() -> io::Result<()> {
             "signal handler installation previously failed",
         ));
     }
+    Ok(())
+}
+
+/// Windows stub. The real Windows process-lifecycle hooks live in
+/// `pcloud-daemon-win` (Service control dispatcher); calling this from
+/// shared code is a no-op.
+#[cfg(not(unix))]
+pub fn install_default_handlers() -> io::Result<()> {
     Ok(())
 }
 

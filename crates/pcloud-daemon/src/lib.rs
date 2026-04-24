@@ -50,6 +50,10 @@ pub use pcloud_backends::account_backend;
 pub use pcloud_backends::auth_backend;
 pub mod audit_verifier_service;
 pub mod auth_vault;
+// Unix-only: uses flock(2) + PermissionsExt for the HA lease file.
+// Windows would need LockFileEx / named mutex — tracked under
+// bd-xplat-windows.
+#[cfg(unix)]
 pub mod ha_lease;
 pub mod health_server;
 pub mod vault;

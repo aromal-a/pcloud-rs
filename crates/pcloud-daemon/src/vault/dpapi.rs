@@ -12,7 +12,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use pcloud_secret::SecretString;
+use pcloud_secret::secret_string::SecretString;
 use windows::Win32::Foundation::LocalFree;
 use windows::Win32::Security::Cryptography::{
     CRYPT_INTEGER_BLOB, CryptProtectData, CryptUnprotectData,
