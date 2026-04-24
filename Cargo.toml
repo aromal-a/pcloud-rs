@@ -244,3 +244,14 @@ manual_string_new = "allow"
 [workspace.metadata]
 workspace-name = "pcloud-rs-rust-dev"
 purpose = "Security-first Rust rewrite foundation for pcloud-rs."
+
+# Workspace-local stub for `msvc_spectre_libs`. Upstream panics its
+# build.rs when the optional MSVC Spectre-mitigated runtime component
+# isn't installed; the pcloud-rs Windows Tier-3 surface is
+# scaffolded-only (per CLAUDE.md — bd-xplat-windows), so requiring
+# operator-level VS-installer modifications just to `cargo check` on
+# Windows is out of scope. See `vendor/msvc_spectre_libs_stub/` for
+# the no-op replacement and rationale for unwiring the patch once
+# Windows promotes to Tier-1.
+[patch.crates-io]
+msvc_spectre_libs = { path = "vendor/msvc_spectre_libs_stub" }

@@ -1,0 +1,18 @@
+[package]
+name = "msvc_spectre_libs"
+version = "0.1.3"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Workspace-local stub for msvc_spectre_libs — skips Spectre-lib validation on systems where the optional MSVC Spectre-mitigated libraries aren't installed. pcloud-rs is Tier-3 on Windows per CLAUDE.md; hardening-to-release happens under bd-xplat-windows."
+
+[lib]
+path = "src/lib.rs"
+
+# Features mirrored from the real msvc_spectre_libs v0.1.3 so consumers
+# (regorus 0.9.x requests `msvc_spectre_libs/error`) resolve without a
+# feature-mismatch error. All variants are no-op here.
+[features]
+default = []
+error = []
+warn = []
+quiet = []

@@ -66,7 +66,11 @@
 
 // Declare the FFI sibling module without requiring changes to
 // `platform/mod.rs` (the caller is not allowed to touch that file).
+// `#[allow(missing_docs)]` — same rationale as the parent windows
+// module: WinFSP FFI structs mirror upstream C headers; per-field docs
+// would duplicate the upstream content. Relaxed until Tier-2 promotion.
 #[path = "winfsp_ffi.rs"]
+#[allow(missing_docs)]
 pub mod winfsp_ffi;
 
 use std::ffi::c_void;

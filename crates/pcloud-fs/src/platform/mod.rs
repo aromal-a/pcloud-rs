@@ -109,7 +109,15 @@ pub mod bsd;
 pub mod linux;
 #[cfg(target_os = "macos")]
 pub mod macos;
+// `#[allow(missing_docs)]`: Windows platform scaffolding (WinFSP FFI +
+// ACL helpers) is Tier-3 per CLAUDE.md — compile-tested only, not yet
+// live-verified. Its FFI structs mirror WinFSP's C headers verbatim;
+// documenting each u32/u64 field one-by-one duplicates the upstream
+// header content. Crate-level `#![deny(missing_docs)]` is relaxed here
+// until bd-xplat-windows promotes the module to Tier-2 and the FFI
+// surface stabilises.
 #[cfg(target_os = "windows")]
+#[allow(missing_docs)]
 pub mod windows;
 
 #[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
