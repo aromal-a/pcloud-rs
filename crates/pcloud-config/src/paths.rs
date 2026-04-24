@@ -341,11 +341,28 @@ mod tests {
 
     #[test]
     fn to_managed_paths_round_trips() {
+        // `validate()` requires each path to be absolute. On Unix `/a/cfg`
+        // satisfies that; on Windows absolute paths need a drive letter
+        // (`C:\a\cfg`) or UNC prefix. Pick the right shape per target.
+        #[cfg(unix)]
+        let (cfg, data, cache, runtime) = (
+            PathBuf::from("/a/cfg"),
+            PathBuf::from("/a/data"),
+            PathBuf::from("/a/cache"),
+            PathBuf::from("/a/run"),
+        );
+        #[cfg(windows)]
+        let (cfg, data, cache, runtime) = (
+            PathBuf::from(r"C:\a\cfg"),
+            PathBuf::from(r"C:\a\data"),
+            PathBuf::from(r"C:\a\cache"),
+            PathBuf::from(r"C:\a\run"),
+        );
         let d = PcloudDirs {
-            config: PathBuf::from("/a/cfg"),
-            data: PathBuf::from("/a/data"),
-            cache: PathBuf::from("/a/cache"),
-            runtime: PathBuf::from("/a/run"),
+            config: cfg,
+            data,
+            cache,
+            runtime,
         };
         let mp = d.to_managed_paths();
         assert_eq!(mp.config_dir, d.config);

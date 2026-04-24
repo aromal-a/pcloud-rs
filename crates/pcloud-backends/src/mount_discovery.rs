@@ -316,10 +316,14 @@ pub fn default_ignore_patterns() -> Vec<String> {
 /// Match `candidate` against an ignore-prefix entry using the same
 /// semantics as the C `psyncer_str_starts_with`: equal, or
 /// `candidate[len]` is a path separator.
+///
+/// Accepts both `/` and `\` as separators so Windows paths (where
+/// `std::fs::canonicalize` returns `\\?\C:\...\name` with backslashes)
+/// match correctly against both Unix-style and Windows-style prefixes.
 #[must_use]
 pub fn is_ignored_under(candidate: &Path, prefix: &str) -> bool {
     let cand = candidate.as_os_str().to_string_lossy();
-    let trimmed = prefix.trim_end_matches('/');
+    let trimmed = prefix.trim_end_matches(|c: char| c == '/' || c == '\\');
     if trimmed.is_empty() {
         return false;
     }
@@ -327,7 +331,7 @@ pub fn is_ignored_under(candidate: &Path, prefix: &str) -> bool {
         return true;
     }
     if let Some(rest) = cand.strip_prefix(trimmed) {
-        rest.starts_with('/')
+        rest.starts_with('/') || rest.starts_with('\\')
     } else {
         false
     }
