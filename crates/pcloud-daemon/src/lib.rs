@@ -119,7 +119,10 @@ pub fn daemon_pid_path(state_dir: &std::path::Path) -> std::path::PathBuf {
     state_dir.join("daemon.pid")
 }
 
-#[cfg(test)]
+// Unit tests exercise Unix-only paths (PermissionsExt::from_mode,
+// IpcServer::bind, serve_until_shutdown). Gated to Unix until the
+// Windows named-pipe IPC path lands (bd-xplat-windows).
+#[cfg(all(test, unix))]
 mod tests {
     use std::fs;
     use std::os::unix::fs::PermissionsExt;

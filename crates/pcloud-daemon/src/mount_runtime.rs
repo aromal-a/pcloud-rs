@@ -1079,7 +1079,8 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
     (factory, drain)
 }
 
-#[cfg(test)]
+// Unix-only tests (PermissionsExt helpers).
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;

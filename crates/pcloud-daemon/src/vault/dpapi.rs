@@ -210,7 +210,7 @@ mod tests {
 
         assert!(vault.load().unwrap().is_none());
 
-        let token = SecretString::from(String::from("hunter2-token-xyz"));
+        let token = SecretString::new(String::from("hunter2-token-xyz"));
         vault.store(&token).unwrap();
         assert!(path.exists());
 

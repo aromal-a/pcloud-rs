@@ -583,7 +583,8 @@ fn run_refresh_tick(runtime: &mut RuntimeShell) {
 // unit test here that pokes the process-wide SIGTERM flag, because that flag
 // is a `static` and would leak into sibling tests running in the same process.
 
-#[cfg(test)]
+// Unix-only tests (IpcServer::bind + serve_until_shutdown helpers).
+#[cfg(all(test, unix))]
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};

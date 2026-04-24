@@ -606,7 +606,8 @@ impl HaRuntime {
     }
 }
 
-#[cfg(test)]
+// Unix-only tests (PermissionsExt + flock helpers).
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::thread;
