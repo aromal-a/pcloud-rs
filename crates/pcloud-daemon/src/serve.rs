@@ -198,6 +198,7 @@ const DRAIN_POLL_INTERVAL: Duration = Duration::from_millis(100);
 /// serializes through the mutex while the accept loop itself stays
 /// non-blocking. The connection cap ([`pcloud_ipc::MAX_IPC_CONNECTIONS`])
 /// bounds worst-case thread count.
+#[cfg(unix)]
 pub fn serve_until_shutdown(
     bound: &BoundIpcServer,
     runtime: &mut RuntimeShell,
@@ -274,6 +275,7 @@ pub(crate) fn dispatch_with_drain_gate(
 /// `true`, the loop returns cleanly just like the internal signal/IPC
 /// shutdown paths, and the runtime-level flag is synchronized so the
 /// rest of the runtime sees a single consistent source of truth.
+#[cfg(unix)]
 pub fn serve_until_shutdown_with_flag(
     bound: &BoundIpcServer,
     runtime: &mut RuntimeShell,
@@ -443,6 +445,7 @@ pub fn serve_until_shutdown_with_flag(
 /// Any bootstrap, bind, or serve error is propagated as `anyhow::Error`
 /// so the caller can log a single cause chain and exit with a non-zero
 /// status.
+#[cfg(unix)]
 pub fn serve_with_shutdown(shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
     // Installing signal handlers is idempotent and async-signal-safe.
     // Doing it here keeps the behavior identical to `pcloudd serve`

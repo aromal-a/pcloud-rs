@@ -33,6 +33,7 @@
 
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -222,6 +223,30 @@ impl LeaseHolder {
         )
     }
 
+    #[cfg(not(unix))]
+    fn try_acquire_inner(
+        path: &Path,
+        _instance_id: String,
+        _heartbeat_interval: Duration,
+        _spawn_heartbeat: bool,
+    ) -> Result<Self, LeaseError> {
+        // Windows: the Unix `flock(2)` + PermissionsExt path is not
+        // applicable. A production Windows lease would use
+        // `LockFileEx` or a named mutex (bd-xplat-windows). Return
+        // `Unsupported` so callers fail loudly rather than silently
+        // running without HA guarantees.
+        Err(LeaseError::io(
+            path,
+            std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "HA lease (flock+chmod) is Unix-only; Windows support \
+                 via LockFileEx/named-mutex is tracked under \
+                 bd-xplat-windows",
+            ),
+        ))
+    }
+
+    #[cfg(unix)]
     fn try_acquire_inner(
         path: &Path,
         instance_id: String,

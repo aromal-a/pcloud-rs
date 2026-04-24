@@ -50,10 +50,11 @@ pub use pcloud_backends::account_backend;
 pub use pcloud_backends::auth_backend;
 pub mod audit_verifier_service;
 pub mod auth_vault;
-// Unix-only: uses flock(2) + PermissionsExt for the HA lease file.
-// Windows would need LockFileEx / named mutex — tracked under
-// bd-xplat-windows.
-#[cfg(unix)]
+// HA lease: types (HaRuntime, LeaseError, LEASE_FILE_NAME) are
+// cross-platform; the `flock(2)`-based `LeaseHolder::try_acquire`
+// implementation is Unix-only (gated inside the module). Windows
+// `LeaseHolder::try_acquire` returns an `Unsupported`-kind error
+// until `LockFileEx`/named-mutex support lands (bd-xplat-windows).
 pub mod ha_lease;
 pub mod health_server;
 pub mod vault;

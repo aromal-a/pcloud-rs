@@ -12,7 +12,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use pcloud_secret::secret_string::SecretString;
+use pcloud_secret::{ExposeSecret, secret_string::SecretString};
 use windows::Win32::Foundation::LocalFree;
 use windows::Win32::Security::Cryptography::{
     CRYPT_INTEGER_BLOB, CryptProtectData, CryptUnprotectData,
@@ -143,7 +143,7 @@ impl PlatformVault for DpapiVault {
 
         let s = String::from_utf8(plain)
             .map_err(|_| VaultError::InsecureMetadata("dpapi plaintext not utf-8"))?;
-        Ok(Some(SecretString::from(s)))
+        Ok(Some(SecretString::new(s)))
     }
 
     fn store(&self, token: &AuthToken) -> VaultResult<()> {
