@@ -258,6 +258,11 @@ fn handle_connection(mut stream: TcpStream, read_timeout: Duration) {
 /// Write a minimal HTTP/1.0 response. HTTP/1.0 is used intentionally so
 /// the server does not need to parse `Connection:` headers or manage
 /// keep-alive — one request per connection, then close.
+///
+/// On Windows the FIN sent when the stream drops can race the tail of
+/// the write, truncating the response seen by the client. Explicitly
+/// `shutdown(Write)` here so the kernel flushes pending data before
+/// any subsequent drop closes the socket.
 fn write_response(
     stream: &mut TcpStream,
     status: u16,
@@ -274,7 +279,9 @@ fn write_response(
         len = body.len(),
     );
     stream.write_all(response.as_bytes())?;
-    stream.flush()
+    stream.flush()?;
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -317,27 +324,16 @@ mod tests {
         let _ = conn.write_all(b"GET /livez HTTP/1.0\r\n\r\n");
         let mut resp = String::new();
         let _ = conn.read_to_string(&mut resp);
-        assert!(resp.starts_with("HTTP/1.0 200 OK"));
-        // The body follows the CRLF-CRLF header terminator. On Linux the
-        // body comes through verbatim as `"ok\n"`. On Windows the reader
-        // may truncate or drop the trailing LF (observed empirically on
-        // Windows Server 2025 / Rust 1.95: `resp` ends at `"\r\n\r\n"`
-        // with a zero-length body reaching the client even though
-        // Content-Length is 3 and the server-side `write_all` returned
-        // `Ok`). Rather than depend on the body framing — which is
-        // OS-dependent in subtle ways — assert on what we can reliably
-        // observe: the well-formed status line, the correct
-        // `Content-Length: 3` header (catches a regression where the
-        // body formatter changes shape), and the CRLF-CRLF header
-        // terminator.
+        assert!(resp.starts_with("HTTP/1.0 200 OK"), "got:\n{resp}");
         assert!(
             resp.contains("Content-Length: 3"),
             "headers must advertise body length 3; got:\n{resp}"
         );
-        assert!(
-            resp.contains("\r\n\r\n"),
-            "response must have the HTTP header terminator; got:\n{resp:?}"
-        );
+        // Body follows the CRLF-CRLF header terminator. `write_response`
+        // now explicitly calls `shutdown(Write)` before the socket drops,
+        // so the tail of the response reaches the client even on Windows
+        // (where the FIN otherwise races the kernel send buffer).
+        assert!(resp.ends_with("ok\n"), "got:\n{resp:?}");
     }
 
     use std::io::Read;
