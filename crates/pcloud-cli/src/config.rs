@@ -14,6 +14,7 @@
 
 use std::fs;
 use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
@@ -129,6 +130,9 @@ impl CliConfig {
     pub fn load_or_init(path: &Path) -> std::io::Result<Self> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
+            // Unix-only 0700 parent chmod; Windows inherits ACLs from the
+            // creating user (bd-xplat-windows tracks native ACL hardening).
+            #[cfg(unix)]
             let _ = fs::set_permissions(parent, fs::Permissions::from_mode(0o700));
         }
         if !path.exists() {
@@ -144,12 +148,12 @@ impl CliConfig {
     /// human-edited file is self-documenting.
     pub fn write_with_comments(&self, path: &Path) -> std::io::Result<()> {
         let body = self.render_toml();
-        let mut f = fs::OpenOptions::new()
-            .create(true)
-            .truncate(true)
-            .write(true)
-            .mode(0o644)
-            .open(path)?;
+        let mut opts = fs::OpenOptions::new();
+        opts.create(true).truncate(true).write(true);
+        // Unix-only 0644 mode; Windows ACL path handled by bd-xplat-windows.
+        #[cfg(unix)]
+        opts.mode(0o644);
+        let mut f = opts.open(path)?;
         f.write_all(body.as_bytes())?;
         f.sync_all()?;
         Ok(())

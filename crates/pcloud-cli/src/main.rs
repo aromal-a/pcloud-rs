@@ -980,6 +980,20 @@ fn render_with_field_selection(
 /// - The daemon log file is created 0600.
 /// - No privileges are acquired or dropped; we run as the caller.
 fn run_daemon_start(flags: &GlobalFlags) -> ExitCode {
+    #[cfg(not(unix))]
+    {
+        let _ = flags;
+        return report_error(
+            Some("Start".into()),
+            flags.output,
+            flags.quiet,
+            ExitCode::GenericError,
+            "`pcloudc start` daemon-detach path is Unix-only; Windows service \
+             start is tracked under bd-xplat-windows.",
+        );
+    }
+    #[cfg(unix)]
+    {
     use pcloud_ipc::{IpcClient, Method, Request};
     use std::io::Write as _;
     use std::os::unix::fs::OpenOptionsExt as _;
@@ -1177,6 +1191,7 @@ fn run_daemon_start(flags: &GlobalFlags) -> ExitCode {
             log_path.display()
         ),
     )
+    }
 }
 
 /// Drive the CLI-side `pcloudc drain` command.
@@ -1191,6 +1206,7 @@ fn run_daemon_start(flags: &GlobalFlags) -> ExitCode {
 /// Honors `--quiet` and `--json`. The JSON envelope on success is
 /// `{kind: "success", command: "drain", status: "Ok", message: "<final
 /// drain payload>", exit_code: 0}`.
+#[cfg(unix)]
 fn run_daemon_drain(flags: &GlobalFlags) -> ExitCode {
     use pcloud_ipc::{Method, Request, ResponseStatus};
     use std::time::{Duration, Instant};
@@ -1396,6 +1412,18 @@ fn run_daemon_reload(flags: &GlobalFlags) -> ExitCode {
         flags.quiet,
         ExitCode::Unavailable,
         "config reload via SIGHUP is only supported on Unix",
+    )
+}
+
+#[cfg(not(unix))]
+fn run_daemon_drain(flags: &GlobalFlags) -> ExitCode {
+    report_error(
+        Some("drain".into()),
+        flags.output,
+        flags.quiet,
+        ExitCode::Unavailable,
+        "`pcloudc drain` (SIGTERM + pidfile poll) is Unix-only; \
+         Windows service-controlled stop is tracked under bd-xplat-windows.",
     )
 }
 
@@ -1989,6 +2017,7 @@ fn run_interactive_login(
                     eprintln!("mountpoint create failed ({}): {e}", target.display());
                     return ExitCode::GenericError;
                 }
+                #[cfg(unix)]
                 let _ = std::fs::set_permissions(
                     &target,
                     std::os::unix::fs::PermissionsExt::from_mode(0o700),
@@ -2194,6 +2223,7 @@ fn run_interactive_login(
                 eprintln!("mountpoint create failed ({}): {e}", target.display());
                 return ExitCode::GenericError;
             }
+            #[cfg(unix)]
             let _ = std::fs::set_permissions(
                 &target,
                 std::os::unix::fs::PermissionsExt::from_mode(0o700),

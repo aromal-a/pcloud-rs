@@ -415,6 +415,11 @@ unsafe impl Sync for MacosMountInner {}
 #[cfg(target_os = "windows")]
 pub(crate) struct WindowsInner {
     pub fs: *mut std::ffi::c_void,
+    // Held for lifetime correctness — WinFSP copies the string internally
+    // but downstream code may still walk it on unmount. Marking as
+    // `#[allow(dead_code)]` keeps the scaffolding field without tripping
+    // pcloud-fs's `warn-as-error` posture on Windows.
+    #[allow(dead_code)]
     pub mount_point: Vec<u16>,
     pub adapter: *mut std::ffi::c_void,
     pub lib: std::sync::Arc<crate::platform::windows::winfsp_ffi::WinFspLibrary>,

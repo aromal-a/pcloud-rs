@@ -822,15 +822,15 @@ impl IpcServer {
     }
 }
 
-#[cfg(unix)]
 impl IpcClient {
     /// Connect to the daemon's Unix socket at `socket_path`, send the
     /// framed `request`, shut down the write half (so the daemon sees
     /// EOF without waiting), and read the framed response to completion.
     ///
-    /// Unix-only. Windows clients use named pipes through
-    /// `crate::platform::windows::WindowsIpc` — bd-xplat-windows tracks
-    /// unifying both paths behind a single `IpcClient` surface.
+    /// On Windows this currently returns `IpcTransportError::Io` with
+    /// kind `Unsupported`. The Windows named-pipe backend lives in
+    /// `crate::platform::windows::WindowsIpc` and is not yet wired
+    /// through this façade (bd-xplat-windows).
     pub fn send(
         &self,
         socket_path: &Path,
@@ -850,14 +850,26 @@ impl IpcClient {
         socket_path: &Path,
         envelope: &RequestEnvelope,
     ) -> Result<Response, IpcTransportError> {
-        let request_bytes = self.prepare_envelope(envelope)?;
-        let mut stream = UnixStream::connect(socket_path)?;
-        stream.write_all(&request_bytes)?;
-        stream.shutdown(std::net::Shutdown::Write)?;
+        #[cfg(unix)]
+        {
+            let request_bytes = self.prepare_envelope(envelope)?;
+            let mut stream = UnixStream::connect(socket_path)?;
+            stream.write_all(&request_bytes)?;
+            stream.shutdown(std::net::Shutdown::Write)?;
 
-        let mut response_bytes = Vec::new();
-        stream.read_to_end(&mut response_bytes)?;
-        Ok(self.parse_response(&response_bytes)?)
+            let mut response_bytes = Vec::new();
+            stream.read_to_end(&mut response_bytes)?;
+            Ok(self.parse_response(&response_bytes)?)
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = (socket_path, envelope);
+            Err(IpcTransportError::Io(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "IpcClient::send is Unix-only on this build; Windows named-pipe \
+                 transport is not yet wired through IpcClient (bd-xplat-windows)",
+            )))
+        }
     }
 }
 
