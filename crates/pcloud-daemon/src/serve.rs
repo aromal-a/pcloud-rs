@@ -445,6 +445,25 @@ pub fn serve_until_shutdown_with_flag(
 /// Any bootstrap, bind, or serve error is propagated as `anyhow::Error`
 /// so the caller can log a single cause chain and exit with a non-zero
 /// status.
+/// Windows stub — pcloud-daemon-win spawns this as a worker thread,
+/// but the Unix-socket IPC bind + serve loop isn't implemented here.
+/// Returns an error so the service worker thread exits cleanly and
+/// SCM reports `Stopped`. Named-pipe IPC for Windows is tracked under
+/// bd-xplat-windows; the Service control-dispatcher in
+/// pcloud-daemon-win remains the right home for it.
+#[cfg(not(unix))]
+pub fn serve_with_shutdown(_shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
+    Err(anyhow::anyhow!(
+        "pcloud_daemon::serve_with_shutdown is Unix-only; the Windows \
+         Service host (pcloud-daemon-win) must wire its own named-pipe \
+         IPC serve loop (bd-xplat-windows)."
+    ))
+}
+
+/// Driver for the daemon's Unix-socket IPC + serve loop with a shared
+/// cooperative-shutdown flag. Used by the `pcloudd serve` binary on
+/// Unix and by `pcloud-daemon-win`'s worker thread (via the Windows
+/// stub above) on Windows.
 #[cfg(unix)]
 pub fn serve_with_shutdown(shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
     // Installing signal handlers is idempotent and async-signal-safe.

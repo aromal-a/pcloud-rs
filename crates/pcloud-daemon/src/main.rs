@@ -79,6 +79,20 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("{}", runtime.summary());
             Ok(())
         }
+        #[cfg(not(unix))]
+        Mode::Serve => {
+            // Unix-socket IPC + flock-lease + setsid-daemonise path.
+            // The Windows Service host lives in `pcloud-daemon-win`
+            // (pcloudd-svc binary); running the Linux-style `pcloudd serve`
+            // on Windows is not supported (bd-xplat-windows tracks
+            // named-pipe IPC + Service-controlled serve loop).
+            return Err(
+                "`pcloudd serve` is Unix-only; on Windows use the `pcloudd-svc` \
+                 Service binary (bd-xplat-windows)."
+                    .to_string(),
+            );
+        }
+        #[cfg(unix)]
         Mode::Serve => {
             // Install signal handlers BEFORE bootstrapping subsystems so
             // even a slow bootstrap can be interrupted by SIGTERM/SIGINT
@@ -250,6 +264,7 @@ fn run(args: &[String]) -> Result<(), String> {
 /// Write the current process id into `path` atomically with `0600`
 /// ownership. The write goes through a temporary sibling followed by
 /// `rename(2)` so an operator never observes a half-written pid.
+#[cfg(unix)]
 fn write_pid_file(path: &std::path::Path) -> std::io::Result<()> {
     use std::io::Write as _;
     use std::os::unix::fs::OpenOptionsExt as _;
