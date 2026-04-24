@@ -2049,8 +2049,9 @@ pub mod reaper {
     /// Declared here so the reaper module compiles without importing the
     /// full `windows` crate (which has a different feature-flag surface
     /// than the parent module).
+    // Rust 2024 edition: extern blocks must be `unsafe extern`.
     #[cfg(target_os = "windows")]
-    extern "system" {
+    unsafe extern "system" {
         fn SetConsoleCtrlHandler(
             handler: Option<unsafe extern "system" fn(u32) -> i32>,
             add: i32,
