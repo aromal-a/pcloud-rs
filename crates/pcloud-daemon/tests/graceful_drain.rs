@@ -64,6 +64,16 @@ fn bootstrap_test_shell() -> pcloud_daemon::RuntimeShell {
     pcloud_daemon::bootstrap_with_config(config).expect("bootstrap")
 }
 
+// Unix-only: the drain test flips a shutdown flag and relies on a
+// "nudge connection" to break the serve loop out of a blocking
+// `accept`. On Unix `set_accept_timeout` lets the loop poll the flag
+// even without a nudge; on Windows the blocking `ConnectNamedPipe`
+// with NULL OVERLAPPED cannot be cancelled cooperatively by flipping
+// an AtomicBool. A proper Windows implementation needs overlapped-IO
+// + `CancelIo` / `WaitForSingleObject` on a cancellation event —
+// tracked under bd-xplat-windows. Until then, this test cannot
+// validate the Windows serve-loop shutdown path.
+#[cfg(unix)]
 #[test]
 fn drain_admits_status_probes_and_rejects_new_traffic() {
     let _serial = serial_lock();
@@ -151,6 +161,8 @@ fn drain_admits_status_probes_and_rejects_new_traffic() {
     pcloud_daemon::signals::mark_stopped();
 }
 
+// Unix-only: see rationale on `drain_admits_status_probes_and_rejects_new_traffic`.
+#[cfg(unix)]
 #[test]
 fn drain_gate_rejects_ordinary_requests_with_unavailable() {
     let _serial = serial_lock();

@@ -403,7 +403,16 @@ impl WindowsStream {
 
 /// Connect from a client process to the per-user named pipe. Matches
 /// the server-side pipe name derived from the current TokenUser SID.
+///
+/// Retries briefly if the pipe doesn't exist yet or all instances are
+/// busy: the server's `WindowsListener::accept()` creates pipe
+/// instances lazily, so between `bind()` returning and the server
+/// thread reaching its first `accept()`, the pipe namespace entry
+/// doesn't exist — `CreateFileW` returns `ERROR_FILE_NOT_FOUND` (code
+/// 2). A short retry loop absorbs that startup race without forcing
+/// every caller to hand-roll it.
 pub fn connect_client() -> Result<WindowsStream, IpcTransportError> {
+    use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_PIPE_BUSY};
     let owner_sid = current_user_sid_string()?;
     let pipe_path = format!(
         "\\\\.\\pipe\\pcloud-rs-{}",
@@ -411,31 +420,47 @@ pub fn connect_client() -> Result<WindowsStream, IpcTransportError> {
     );
     let wide = to_wide(&pipe_path);
 
-    // SAFETY: `wide` is a NUL-terminated UTF-16 buffer alive for the
-    // duration of the call.
-    let handle = unsafe {
-        CreateFileW(
-            PCWSTR(wide.as_ptr()),
-            (GENERIC_READ | GENERIC_WRITE).0,
-            FILE_SHARE_NONE,
-            None,
-            OPEN_EXISTING,
-            Default::default(),
-            None,
-        )
+    // Up to 50 retries × 100 ms = 5 s — matches the daemon-start socket
+    // probe window used by the Unix-side `pcloudc start` wait loop.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        // SAFETY: `wide` is a NUL-terminated UTF-16 buffer alive for the
+        // duration of the call.
+        let open_result = unsafe {
+            CreateFileW(
+                PCWSTR(wide.as_ptr()),
+                (GENERIC_READ | GENERIC_WRITE).0,
+                FILE_SHARE_NONE,
+                None,
+                OPEN_EXISTING,
+                Default::default(),
+                None,
+            )
+        };
+        match open_result {
+            Ok(handle) if !handle.is_invalid() => {
+                return Ok(WindowsStream {
+                    handle,
+                    peer_sid: owner_sid,
+                    peer_pid: 0,
+                    is_server_side: false,
+                });
+            }
+            Ok(_) => return Err(last_os_err()),
+            Err(err) => {
+                let code = err.code();
+                let is_retryable = code == ERROR_FILE_NOT_FOUND.to_hresult()
+                    || code == ERROR_PIPE_BUSY.to_hresult();
+                if is_retryable && std::time::Instant::now() < deadline {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    continue;
+                }
+                return Err(IpcTransportError::Io(std::io::Error::from_raw_os_error(
+                    code.0 as i32,
+                )));
+            }
+        }
     }
-    .map_err(|_| last_os_err())?;
-
-    if handle == INVALID_HANDLE_VALUE {
-        return Err(last_os_err());
-    }
-
-    Ok(WindowsStream {
-        handle,
-        peer_sid: owner_sid,
-        peer_pid: 0, // client side — we are the client; pid is self
-        is_server_side: false,
-    })
 }
 
 // --------------------------------------------------------------------
