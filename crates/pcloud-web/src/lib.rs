@@ -298,6 +298,7 @@ pub(crate) struct AppState {
 /// rest of the daemon (ADR 0005, ADR 0015).
 fn write_web_token_to_runtime_dir(token: &str) -> Result<PathBuf, std::io::Error> {
     use std::io::Write as _;
+    #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt as _;
 
     // Prefer XDG_RUNTIME_DIR (set by PAM/systemd for every login session).
@@ -317,18 +318,20 @@ fn write_web_token_to_runtime_dir(token: &str) -> Result<PathBuf, std::io::Error
 
     // Restrict the directory to the owner only if it was just created.
     // We do this on a best-effort basis; failure is non-fatal.
+    // Unix-only; Windows inherits the creating user's ACL (bd-xplat-windows
+    // tracks native ACL hardening).
+    #[cfg(unix)]
     let _ = std::fs::set_permissions(
         &token_dir,
         std::os::unix::fs::PermissionsExt::from_mode(0o700),
     );
 
     let token_path = token_dir.join("web-token");
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&token_path)?;
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let mut file = opts.open(&token_path)?;
     file.write_all(token.as_bytes())?;
     Ok(token_path)
 }
