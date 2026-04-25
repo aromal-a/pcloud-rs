@@ -1200,6 +1200,13 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
+    // Linux-only: `/proc` is the canonical Linux procfs mountpoint. On
+    // FreeBSD procfs is optional and rarely mounted; on macOS / Windows
+    // there is no `/proc` at all, so the rejection rule has nothing to
+    // match against and the path falls through as "valid candidate".
+    // This test asserts the Linux-specific guard, not a cross-platform
+    // contract.
+    #[cfg(target_os = "linux")]
     #[test]
     fn auto_classify_rejects_proc_when_mounted() {
         use super::{FolderSyncabilityIssue, classify_folder_syncability};

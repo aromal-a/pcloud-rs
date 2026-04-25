@@ -578,6 +578,21 @@ mod tests {
         );
     }
 
+    // The `notify` crate uses inotify on Linux, kqueue on BSD/macOS, and
+    // ReadDirectoryChangesW on Windows. inotify fires synchronously on
+    // file open/write/close; kqueue's `EVFILT_VNODE` only fires on the
+    // tracked vnode, doesn't recurse, and may coalesce or skip create
+    // events for files that didn't exist at watch-registration time
+    // (a pure platform limitation, not a notify-crate bug).
+    //
+    // The filter logic itself (`is_temp_file_path`) is platform-neutral
+    // and gets covered by `temp_file_filter_extension_matches` /
+    // `temp_file_filter_prefix_matches` above. This test exercises the
+    // end-to-end debounced delivery, which only behaves
+    // deterministically on Linux. On BSD/macOS/Windows the same
+    // assertion would race the platform's notification quirks; gate
+    // accordingly.
+    #[cfg(target_os = "linux")]
     #[test]
     fn watcher_filters_temp_files_from_events() {
         let tmp = TempDir::new().unwrap();
