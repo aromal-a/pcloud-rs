@@ -484,6 +484,14 @@ mod tests {
         assert_eq!(b.state(), BreakerState::Closed);
     }
 
+    // Skipped on OpenBSD: the default per-user `proc` and `kern.maxthread`
+    // login-class limits cap a non-root user at ~256 threads, well below the
+    // 1000 spawned here. The test exercises mutex-poison resilience under
+    // high concurrency — which is platform-agnostic correctness already
+    // covered on Linux / macOS / FreeBSD / NetBSD. Raising OpenBSD's limits
+    // requires editing `/etc/login.conf` + reboot, which is out of scope for
+    // a portable test. See `.audits/followup/bsd-bringup-2026-04-26.md`.
+    #[cfg(not(target_os = "openbsd"))]
     #[test]
     fn thousand_threads_all_panic_breaker_recovers_after_cooldown() {
         // Property-style stress test: 1000 threads each acquire the
