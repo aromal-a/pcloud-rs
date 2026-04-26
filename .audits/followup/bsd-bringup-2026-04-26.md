@@ -10,7 +10,7 @@ QEMU + KVM, SSH via the published Vagrant insecure key.
 | BSD | Boot | cargo check | cargo test --workspace --lib | Notes |
 |---|---|---|---|---|
 | **FreeBSD 14.4** | ✓ (cloud-init image, port 2222) | clean (56 s) | **1538 passing / 0 failing** | Validated end-to-end. Commits: f3b3bcb (procfs + fs_watcher fixtures gated to Linux). |
-| **NetBSD 9.3** | ✓ (Vagrant box, port 2223, e1000 NIC) | clean (44 s) | **1469 passing / 0 failing** | Required two compile fixes: `notify 6 → 8` for kqueue ABI (41a51a3), and `bsd.rs` `statvfs` alias for missing `statfs` type (b4bb777). Plus pacer test gated to Linux (a3c2c2e). |
+| **NetBSD 9.3** | ✓ (Vagrant box, port 2223, e1000 NIC) | clean (1m 20s `--all-targets` at a3c2c2e) | **1537 passing / 0 failing / 2 ignored** (33 binaries) | Required two compile fixes: `notify 6 → 8` for kqueue ABI (41a51a3), and `bsd.rs` `statvfs` alias for missing `statfs` type (b4bb777). Plus pacer test gated to Linux (a3c2c2e). Aggregate re-run at HEAD a3c2c2e. |
 | **OpenBSD 7.x** | ✗ | n/a | n/a | Vagrant box (`generic/openbsd7@4.3.12`) boots, port 2224 accepts TCP, but no SSH banner returned. Restart with virtio-net-pci instead of e1000 caused the VM to die without a serial-redirected console to debug. Multiple QEMU/NIC permutations tried; without GUI access to the VNC console (host has no display), root-cause was indeterminate within the session budget. |
 | **DragonFly 6.x** | ✗ | n/a | n/a | Same symptom as OpenBSD — TCP handshake completes but no SSH banner. VM stays alive but `sshd` never serves traffic. Likely needs a libvirt-network-shaped configuration that vanilla QEMU user-mode networking doesn't provide (dhcp release races, fixed-MAC expectations, etc.). |
 
@@ -61,7 +61,7 @@ by pure-function unit tests in the same file.
 | Linux | ✓ | 1557 / 0 | 2217 / 0 |
 | Windows | ✓ | 1449 / 0 | 2052 / 0 |
 | FreeBSD | ✓ | 1538 / 0 | not yet run |
-| NetBSD | ✓ | 1469 / 0 | not yet run |
+| NetBSD | ✓ | 1537 / 0 (2 ignored) | not yet run |
 | OpenBSD | not yet booted | — | — |
 | DragonFly | not yet booted | — | — |
 | macOS | (still Tier-3 scaffolded; no hardware in this session) | — | — |
