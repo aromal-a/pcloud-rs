@@ -2444,6 +2444,7 @@ mod tests {
             allow_other: true,
             fs_name: Some("Test".to_string()),
             read_only: false,
+            ..MountOptions::default()
         });
         // Every option value (not -o itself, not argv[0]) must be preceded by -o
         let mut i = 1;
