@@ -1765,16 +1765,10 @@ fn find_libfuse_install_path(backend: MacFuseBackend) -> Option<&'static str> {
     let probe = |candidates: &[&'static str]| -> Option<&'static str> {
         candidates.iter().copied().find(|p| probe_with_dlopen(p))
     };
-    let probe_one = |p: &'static str| -> Option<&'static str> {
-        if Path::new(p).exists() { Some(p) } else { None }
-    };
     match backend {
-        MacFuseBackend::FuseT => probe(FUSET_CANDIDATES).or_else(|| probe_one(FUSET_BUNDLE)),
-        MacFuseBackend::MacFuse => probe(MACFUSE_CANDIDATES).or_else(|| probe_one(MACFUSE_BUNDLE)),
-        MacFuseBackend::Auto => probe(FUSET_CANDIDATES)
-            .or_else(|| probe_one(FUSET_BUNDLE))
-            .or_else(|| probe(MACFUSE_CANDIDATES))
-            .or_else(|| probe_one(MACFUSE_BUNDLE)),
+        MacFuseBackend::FuseT => probe(FUSET_CANDIDATES),
+        MacFuseBackend::MacFuse => probe(MACFUSE_CANDIDATES),
+        MacFuseBackend::Auto => probe(FUSET_CANDIDATES).or_else(|| probe(MACFUSE_CANDIDATES)),
     }
 }
 
