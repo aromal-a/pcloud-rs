@@ -156,7 +156,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # sweep scheduler in `pcloud_daemon::integrity_sweeper_service`.
 cron = "0.12"
 directories = "5"
-notify = { version = "6", default-features = false, features = ["macos_fsevent"] }
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
 # fuser is Linux-only. This workspace entry is for version centralisation only.
 # The single consumer (pcloud-fs) correctly gates it under
 # [target.'cfg(target_os = "linux")'.dependencies], so it is never compiled on
