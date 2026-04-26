@@ -2805,12 +2805,14 @@ mod tests {
     }
 
     #[test]
-    fn default_options_allow_other_is_true() {
+    fn default_options_allow_other_is_false() {
         let mount = MacosPlatformMount;
         let opts = mount.default_options();
         assert!(
-            opts.allow_other,
-            "default options on macOS must request allow_other"
+            !opts.allow_other,
+            "default options on macOS must NOT request allow_other \
+             (security: enabling it would make the mount world-readable; \
+             see fn default_options for rationale)"
         );
     }
 

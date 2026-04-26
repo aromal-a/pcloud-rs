@@ -1002,13 +1002,24 @@ mod tests {
 
     use super::{BoundInner, IpcClient, IpcServer};
 
+    /// Build a per-test socket path inside a process-private subdir of
+    /// `temp_dir()`. The subdir lets `IpcServer::bind` re-permission the
+    /// socket parent to 0700 — on Linux that's harmless against `/tmp`,
+    /// but on macOS the per-session `/var/folders/.../T/` is DataVault-
+    /// protected and `chmod` returns EPERM. Funneling the socket through
+    /// a test-owned subdir sidesteps that without changing prod behavior.
+    fn test_socket_path(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "pcloud-ipc-tests-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("create test socket dir");
+        dir.join(format!("{name}.sock"))
+    }
+
     #[test]
     fn uds_transport_roundtrip_works() {
-        let socket_path = std::env::temp_dir().join(format!(
-            "pcloud-ipc-test-{}-{}.sock",
-            std::process::id(),
-            "roundtrip"
-        ));
+        let socket_path = test_socket_path("roundtrip");
         let server = IpcServer::new(current_effective_uid());
         let bound = server.bind(&socket_path).expect("socket should bind");
 
@@ -1048,11 +1059,7 @@ mod tests {
 
     #[test]
     fn unauthorized_peer_is_rejected_before_dispatch() {
-        let socket_path = std::env::temp_dir().join(format!(
-            "pcloud-ipc-test-{}-{}.sock",
-            std::process::id(),
-            "unauthorized"
-        ));
+        let socket_path = test_socket_path("unauthorized");
         let server = IpcServer::new(current_effective_uid().saturating_add(1));
         let bound = server.bind(&socket_path).expect("socket should bind");
 
@@ -1084,11 +1091,7 @@ mod tests {
 
     #[test]
     fn server_handles_request_without_waiting_for_client_eof() {
-        let socket_path = std::env::temp_dir().join(format!(
-            "pcloud-ipc-test-{}-{}.sock",
-            std::process::id(),
-            "no-eof"
-        ));
+        let socket_path = test_socket_path("no-eof");
         let server = IpcServer::new(current_effective_uid());
         let bound = server.bind(&socket_path).expect("socket should bind");
 
@@ -1133,11 +1136,7 @@ mod tests {
 
     #[test]
     fn slow_client_timeout_does_not_prevent_followup_request() {
-        let socket_path = std::env::temp_dir().join(format!(
-            "pcloud-ipc-test-{}-{}.sock",
-            std::process::id(),
-            "slow-client"
-        ));
+        let socket_path = test_socket_path("slow-client");
         let server = IpcServer::new(current_effective_uid());
         let bound = server.bind(&socket_path).expect("socket should bind");
 
@@ -1194,11 +1193,7 @@ mod tests {
 
     #[test]
     fn malformed_request_is_rejected_without_killing_followup_request() {
-        let socket_path = std::env::temp_dir().join(format!(
-            "pcloud-ipc-test-{}-{}.sock",
-            std::process::id(),
-            "malformed-request"
-        ));
+        let socket_path = test_socket_path("malformed-request");
         let server = IpcServer::new(current_effective_uid());
         let bound = server.bind(&socket_path).expect("socket should bind");
 
