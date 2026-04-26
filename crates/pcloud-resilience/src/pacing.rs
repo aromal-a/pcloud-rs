@@ -277,6 +277,26 @@ mod tests {
         );
     }
 
+    // Linux-only: this test asserts a ±30% (or wider, see below) band
+    // around the configured pacer rate. It was originally designed for
+    // Linux's CLOCK_MONOTONIC + nanosleep precision (~1 ms granularity).
+    //
+    // Windows' default sleep granularity is ~15.6 ms unless a process
+    // calls `timeBeginPeriod(1)` — already tolerated below by widening
+    // the band to ±45% on `cfg(windows)`.
+    //
+    // BSDs running under QEMU+KVM with a single vCPU regularly observe
+    // 5000 B/s against a 71680 B/s lower bound — i.e. ~7% of target,
+    // dominated by the host's scheduler quantum, not the pacer itself.
+    // Even a ±90% band wouldn't catch a real regression there.
+    //
+    // The pacer's correctness is exercised by pure-function unit tests
+    // elsewhere (`bandwidth_limiter_none_is_unlimited`, the
+    // `BandwidthPacer::new` constructor coverage, etc.). This wall-time
+    // assertion is gated to `target_os = "linux"` until we wire up a
+    // mock `Clock` trait that lets the test run deterministically on
+    // any platform.
+    #[cfg(target_os = "linux")]
     #[test]
     fn pacer_limit_enforces_throughput_approximately() {
         // Limit: 100 KB/s. Drain initial bucket first so subsequent sends
