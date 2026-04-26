@@ -64,10 +64,29 @@ by pure-function unit tests in the same file.
 | NetBSD | ✓ | 1537 / 0 (2 ignored) | not yet run |
 | OpenBSD | not yet booted | — | — |
 | DragonFly | not yet booted | — | — |
-| macOS | (still Tier-3 scaffolded; no hardware in this session) | — | — |
+| macOS 26.3.1 (Tahoe, arm64) | ✓ | 1597 / 0 (3 ignored) | not yet run |
 
-Four out of five released-Tier-1-or-2 platforms validated with passing
+## macOS bring-up — 2026-04-26 same session
+
+Operator-supplied Apple Silicon host (macOS 26.3.1, Rust 1.92.0).
+Three compile/test fixes landed in-session:
+
+| Issue | Fix | Commit |
+|---|---|---|
+| `pcloud-fs::platform::macos` referenced undeclared `FUSET_BUNDLE` / `MACFUSE_BUNDLE` constants — audit-04 (9956a79) refactor carryover | Removed dead `.or_else(|| probe_one(BUNDLE))` fallbacks; CANDIDATES arrays already cover canonical paths via stronger dlopen+symbol probe | 36d390c |
+| `build_fuse_args_every_option_preceded_by_dash_o` test missed three `MountOptions` fields added later (`attr_timeout_secs`, `entry_timeout_secs`, `max_readahead`) | Added `..MountOptions::default()` matching sibling test pattern | eb54a1c |
+| 4 `pcloud-ipc::transport` tests EPERM on UDS bind because `IpcServer::bind` re-perms parent dir to 0700 — fine on Linux `/tmp` (1777-sticky), fails on macOS `/var/folders/.../T/` (DataVault-protected); plus stale `default_options_allow_other_is_true` asserting against the security-hardened `allow_other = false` default | Test helper `test_socket_path(name)` funnels each socket through a process-private subdir; renamed/inverted `default_options_allow_other_is_false` | a315675 |
+
+Final aggregate: **33 binaries, 1597 passed, 0 failed, 3 ignored**
+(`cargo test --workspace --lib --no-fail-fast`). One transient flake
+on `pcloud_plugin_publink_expiry::state_file_round_trip_persists_
+notification_state` (tmpdir nanos collision under workspace
+parallelism) self-resolved on retry; root cause is the test harness's
+nanos-only uniqueness guarantee colliding under high core counts —
+not a production bug. Tracked separately if it recurs.
+
+Five out of five released-Tier-1-or-2 platforms validated with passing
 test suites. The pcloud-rs cross-platform story is now substantively
-honest: the *only* major desktop OS not green is macOS (hardware-gated)
-and the rare BSDs (vagrant-box-shape gated, recoverable per the repro
-above).
+honest: every major desktop OS is green; only the rare BSDs (OpenBSD,
+DragonFly — vagrant-box-shape gated, recoverable per the repro above)
+remain.
