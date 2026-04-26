@@ -11,26 +11,41 @@ QEMU + KVM, SSH via the published Vagrant insecure key.
 |---|---|---|---|---|
 | **FreeBSD 14.4** | ✓ (cloud-init image, port 2222) | clean (56 s) | **1538 passing / 0 failing** | Validated end-to-end. Commits: f3b3bcb (procfs + fs_watcher fixtures gated to Linux). |
 | **NetBSD 9.3** | ✓ (Vagrant box, port 2223, e1000 NIC) | clean (1m 20s `--all-targets` at a3c2c2e) | **1537 passing / 0 failing / 2 ignored** (33 binaries) | Required two compile fixes: `notify 6 → 8` for kqueue ABI (41a51a3), and `bsd.rs` `statvfs` alias for missing `statfs` type (b4bb777). Plus pacer test gated to Linux (a3c2c2e). Aggregate re-run at HEAD a3c2c2e. |
-| **OpenBSD 7.x** | ✗ | n/a | n/a | Vagrant box (`generic/openbsd7@4.3.12`) boots, port 2224 accepts TCP, but no SSH banner returned. Restart with virtio-net-pci instead of e1000 caused the VM to die without a serial-redirected console to debug. Multiple QEMU/NIC permutations tried; without GUI access to the VNC console (host has no display), root-cause was indeterminate within the session budget. |
-| **DragonFly 6.x** | ✗ | n/a | n/a | Same symptom as OpenBSD — TCP handshake completes but no SSH banner. VM stays alive but `sshd` never serves traffic. Likely needs a libvirt-network-shaped configuration that vanilla QEMU user-mode networking doesn't provide (dhcp release races, fixed-MAC expectations, etc.). |
+| **OpenBSD 7.8** | ✓ (vagrant-libvirt, `DefinedNet/openbsd78@1.0.17`) | clean (2m 25s) | **1529 passing / 0 failing / 2 ignored** (32 binaries) | Required redirecting `target/` via `CARGO_TARGET_DIR=/usr/obj/pcloud-rs-target` (default `/home` is 3.5G, too small) plus chowning `/usr/obj` to `vagrant`. Plus circuit-breaker 1000-thread stress test gated for OpenBSD's tighter `kern.maxthread` per-user cap (d688494). Toolchain: rustc 1.90.0, git 2.51.0. |
+| **DragonFly 6.4** | ✓ (vagrant-libvirt, `dragonfly-test`) | **blocked** | **blocked** | Boots cleanly via vagrant-libvirt and gets rust 1.85.1 + git 2.49.0 from dports `Avalon` (LATEST branch). But the codebase uses `let_chains` (stable in Rust 1.88+), so cargo check fails with E0658 on 8 sites in `pcloud-config`. DragonFly's pkg quarterly hasn't bumped past 1.85.1 yet. Resolution: workspace MSRV corrected from 1.85 → 1.88 to match code reality (b02918a); DragonFly Tier-2 unblocks once their `lang/rust` port lands ≥ 1.88. Bonus quirk: cargo links against `libssl.so.12` (openssl 3) but the rust port's manifest declares `openssl-1.1.1v` as a dep — `pkg install -y openssl` (3.x) is required *after* `pkg install -y rust` to satisfy the actual ABI. |
 
 ## Repro for OpenBSD / DragonFly
 
-The Vagrant boxes are downloaded and intact at:
+The original Vagrant boxes shipped libvirt-flavored qcow2 disks; running them
+under vanilla QEMU user-mode networking left them booted-but-unreachable
+(TCP handshakes complete, sshd never serves a banner — root cause is the
+libvirt-shaped DHCP/MAC expectations the boxes encode). Resolution path
+that worked in this session: install **vagrant-libvirt** + **libvirt** +
+**dnsmasq** + **iptables-nft** on the host, then `vagrant up
+--provider=libvirt` against an OpenBSD 7.8 box (`DefinedNet/openbsd78`,
+1.0.17 on Vagrant Cloud — the `generic/openbsd7` box lags at 7.4 and
+its mirror is purged). For DragonFly, the original `dragonfly-test`
+box loads fine under libvirt; the toolchain catch is the rust pkg
+gap noted above.
+
+The historical artefacts were:
 
 ```
-~/vm/bsd/openbsd/box.img       (128 GiB sparse qcow2, 7.x)
+~/vm/bsd/openbsd/box.img       (128 GiB sparse qcow2, 7.x — superseded)
 ~/vm/bsd/dragonfly/box.img     (128 GiB sparse qcow2, 6.x)
-~/vm/bsd/vagrant_insecure_key  (the well-known Vagrant SSH key)
+~/vm/bsd/vagrant_insecure_key  (well-known Vagrant SSH key — auto-rotated by libvirt)
 ```
 
 The cleanest path forward — when an operator picks this up — is one
 of:
 
-1. **Install `vagrant-libvirt`** (Arch: `paru -S vagrant vagrant-libvirt`
-   plus `libvirt` daemon, `dnsmasq`, `iptables-nft`). Then `vagrant
-   up --provider=libvirt` per box. The boxes were built for libvirt
-   and "just work" in that environment.
+1. **Install `vagrant-libvirt`** (Arch: `yay -S vagrant`,
+   `pacman -S libvirt dnsmasq iptables-nft openbsd-netcat`,
+   then `vagrant plugin install vagrant-libvirt`; start `libvirtd`
+   and add user to `libvirt` group). Then `vagrant up
+   --provider=libvirt` per box. The boxes were built for libvirt
+   and "just work" in that environment. **This is the path used to
+   produce the OpenBSD/DragonFly results in the table above.**
 
 2. **Install official ISO + drive sysinst via pexpect**. Both ISOs
    are downloaded already (`~/vm/bsd/openbsd/install78.iso`,
@@ -62,8 +77,8 @@ by pure-function unit tests in the same file.
 | Windows | ✓ | 1449 / 0 | 2052 / 0 |
 | FreeBSD | ✓ | 1538 / 0 | not yet run |
 | NetBSD | ✓ | 1537 / 0 (2 ignored) | not yet run |
-| OpenBSD | not yet booted | — | — |
-| DragonFly | not yet booted | — | — |
+| OpenBSD 7.8 | ✓ | 1529 / 0 (2 ignored) | not yet run |
+| DragonFly 6.4 | toolchain-gated | dports rust 1.85 < workspace MSRV 1.88 | — |
 | macOS 26.3.1 (Tahoe, arm64) | ✓ | 1597 / 0 (3 ignored) | not yet run |
 
 ## macOS bring-up — 2026-04-26 same session
