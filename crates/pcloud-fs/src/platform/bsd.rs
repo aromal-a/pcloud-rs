@@ -24,6 +24,23 @@ use crate::mount_orphan::MountinfoReader;
 use crate::mount_service::{MountError, MountOptions};
 use crate::platform::PlatformMount;
 
+// `getmntinfo(3)` returns a kernel mount-table snapshot whose entry
+// type differs across BSD flavours:
+//
+// * **FreeBSD / OpenBSD / DragonFly** expose the historical BSD
+//   `struct statfs` (with `f_mntonname` + `f_fstypename` arrays).
+// * **NetBSD** dropped `statfs` and exposes only POSIX `struct statvfs`
+//   (also with `f_mntonname` + `f_fstypename` — NetBSD extended POSIX
+//   to keep the BSD field names). Same `getmntinfo` signature, same
+//   field accesses; only the struct name differs.
+//
+// Alias to the right type per target so the rest of this module can
+// access the fields uniformly.
+#[cfg(target_os = "netbsd")]
+type GetmntinfoStat = libc::statvfs;
+#[cfg(not(target_os = "netbsd"))]
+type GetmntinfoStat = libc::statfs;
+
 /// BSD platform-mount implementation (validation-only; no kernel mount).
 ///
 /// TODO(bd-xplat-bsd): on FreeBSD, wire `fuser` (libfuse2) with BSD mount
@@ -163,7 +180,7 @@ fn path_is_current_mount(path: &Path) -> io::Result<bool> {
     // the number of entries it wrote. On success `mntbuf` points at a
     // libc-owned static array (we do not free it). On failure it
     // returns 0 and sets `errno`.
-    let mut mntbuf: *mut libc::statfs = std::ptr::null_mut();
+    let mut mntbuf: *mut GetmntinfoStat = std::ptr::null_mut();
     let count = unsafe { libc::getmntinfo(&mut mntbuf, libc::MNT_NOWAIT) };
     if count <= 0 || mntbuf.is_null() {
         return Err(io::Error::last_os_error());
@@ -218,7 +235,7 @@ pub(crate) fn read_getmntinfo() -> io::Result<String> {
     // libc. On success it returns the number of entries (>0). On failure
     // it returns 0 and sets `errno`. We do not free the returned buffer
     // (libc owns it) and we do not retain the pointer past this call.
-    let mut mntbuf: *mut libc::statfs = std::ptr::null_mut();
+    let mut mntbuf: *mut GetmntinfoStat = std::ptr::null_mut();
     let count = unsafe { libc::getmntinfo(&mut mntbuf, libc::MNT_NOWAIT) };
     if count <= 0 || mntbuf.is_null() {
         return Err(io::Error::last_os_error());
