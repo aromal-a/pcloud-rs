@@ -56,6 +56,7 @@ exclude = [
   "vendor/if-addrs-dfly-fix",
   "vendor/msvc_spectre_libs_stub",
   "vendor/notify-dfly-fix",
+  "vendor/regorus-dfly-fix",
 ]
 resolver = "3"
 
@@ -285,3 +286,10 @@ if-addrs = { path = "vendor/if-addrs-dfly-fix" }
 # kqueue" / "undeclared crate mio". Vendored copy fixes the typo;
 # every other platform compiles byte-identically.
 notify = { path = "vendor/notify-dfly-fix" }
+# `regorus 0.9.1` declares 9 small accessors as `pub const fn` and
+# inside them calls `Vec::{len,is_empty}`, which only became `const`
+# in Rust 1.87. On rust 1.85 (DragonFly's dports `Avalon` LATEST)
+# this trips E0658 "is not yet stable as a const fn". Vendored copy
+# drops the `const` keyword from those 9 functions; behaviour is
+# unchanged at runtime and on every other platform.
+regorus = { path = "vendor/regorus-dfly-fix" }
