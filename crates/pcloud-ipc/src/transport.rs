@@ -55,8 +55,8 @@ use std::os::unix::{
 };
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
 use thiserror::Error;
 
@@ -158,12 +158,12 @@ impl Drop for ConnectionGuard {
         ACTIVE_CONNECTIONS.fetch_sub(1, AtomicOrdering::Release);
 
         let mut map_guard = PEER_CONNECTIONS.lock().unwrap_or_else(|p| p.into_inner());
-        if let Some(map) = map_guard.as_mut()
-            && let Some(count) = map.get_mut(&self.peer_uid)
-        {
-            *count -= 1;
-            if *count == 0 {
-                map.remove(&self.peer_uid);
+        if let Some(map) = map_guard.as_mut() {
+            if let Some(count) = map.get_mut(&self.peer_uid) {
+                *count -= 1;
+                if *count == 0 {
+                    map.remove(&self.peer_uid);
+                }
             }
         }
     }
@@ -342,7 +342,9 @@ impl BoundIpcServer {
         #[cfg(unix)]
         {
             let BoundInner::Unix(listener) = &self.inner;
-            listener.set_nonblocking(false).map_err(IpcTransportError::Io)?;
+            listener
+                .set_nonblocking(false)
+                .map_err(IpcTransportError::Io)?;
             use std::os::unix::io::AsRawFd;
             let fd = listener.as_raw_fd();
             let tv = match timeout {
@@ -1009,10 +1011,7 @@ mod tests {
     /// protected and `chmod` returns EPERM. Funneling the socket through
     /// a test-owned subdir sidesteps that without changing prod behavior.
     fn test_socket_path(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "pcloud-ipc-tests-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("pcloud-ipc-tests-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create test socket dir");
         dir.join(format!("{name}.sock"))
     }
@@ -1318,8 +1317,9 @@ mod tests {
         let baseline = ACTIVE_CONNECTIONS.load(Ordering::Relaxed);
 
         for round in 0..3 {
-            let guard = ConnectionGuard::acquire(test_uid)
-                .unwrap_or_else(|| panic!("round {round}: slot should be available after disconnect"));
+            let guard = ConnectionGuard::acquire(test_uid).unwrap_or_else(|| {
+                panic!("round {round}: slot should be available after disconnect")
+            });
             drop(guard);
 
             assert_eq!(

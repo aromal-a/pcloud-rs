@@ -161,11 +161,12 @@ fn live_create_tree_public_link_from_paths() {
                 deleted_link = true;
             }
         }
-        if !deleted_link
-            && let Some(c) = code.clone() {
+        if !deleted_link {
+            if let Some(c) = code.clone() {
                 let rm = daemon.dispatch(Request::DeletePublicLinkByCode { code: c });
                 assert_no_secret_leak(&rm);
             }
+        }
     }
 
     // Remote folder cleanup is not exposed via IPC today; the scratch

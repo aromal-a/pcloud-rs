@@ -205,13 +205,14 @@ where
         let mut cache = self
             .cache
             .lock_or_poisoned("path_resolver::PublicLinkPathResolver::cache_store");
-        if cache.len() >= self.capacity
-            && let Some(oldest_key) = cache
+        if cache.len() >= self.capacity {
+            if let Some(oldest_key) = cache
                 .iter()
                 .min_by_key(|(_, v)| v.expires_at)
                 .map(|(k, _)| k.clone())
-        {
-            cache.remove(&oldest_key);
+            {
+                cache.remove(&oldest_key);
+            }
         }
         cache.insert((fingerprint.to_vec(), path.to_owned()), entry);
     }

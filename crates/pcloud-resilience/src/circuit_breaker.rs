@@ -276,13 +276,13 @@ impl CircuitBreaker {
     }
 
     fn tick_locked(&self, g: &mut Inner) {
-        if g.state == BreakerState::Open
-            && let Some(opened_at) = g.opened_at
-        {
-            let now = self.clock.now();
-            if now.saturating_duration_since(opened_at) >= self.cfg.reset_timeout {
-                g.state = BreakerState::HalfOpen;
-                g.probe_in_flight = false;
+        if g.state == BreakerState::Open {
+            if let Some(opened_at) = g.opened_at {
+                let now = self.clock.now();
+                if now.saturating_duration_since(opened_at) >= self.cfg.reset_timeout {
+                    g.state = BreakerState::HalfOpen;
+                    g.probe_in_flight = false;
+                }
             }
         }
     }

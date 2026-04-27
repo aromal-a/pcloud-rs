@@ -683,10 +683,10 @@ fn backoff(delay: Duration) {
 
 fn parse_api_server_hint(api_server: &str) -> (String, Option<u16>) {
     let trimmed = api_server.trim();
-    if let Some((host, port)) = trimmed.rsplit_once(':')
-        && let Ok(port) = port.parse::<u16>()
-    {
-        return (host.to_owned(), Some(port));
+    if let Some((host, port)) = trimmed.rsplit_once(':') {
+        if let Ok(port) = port.parse::<u16>() {
+            return (host.to_owned(), Some(port));
+        }
     }
     (trimmed.to_owned(), None)
 }

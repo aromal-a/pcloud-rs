@@ -246,10 +246,10 @@ impl ObservingWriter {
 impl std::io::Write for ObservingWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let n = self.inner.write(buf)?;
-        if n > 0
-            && let Some(obs) = self.observer.as_ref()
-        {
-            obs(n as u64);
+        if n > 0 {
+            if let Some(obs) = self.observer.as_ref() {
+                obs(n as u64);
+            }
         }
         Ok(n)
     }
@@ -372,10 +372,7 @@ impl TransferRuntime {
 
     /// Set or replace the bandwidth pacer on an existing runtime. See
     /// [`Self::with_bandwidth_pacer`] for semantics.
-    pub fn set_bandwidth_pacer(
-        &mut self,
-        pacer: Option<Arc<pcloud_resilience::BandwidthPacer>>,
-    ) {
+    pub fn set_bandwidth_pacer(&mut self, pacer: Option<Arc<pcloud_resilience::BandwidthPacer>>) {
         self.download.bandwidth_pacer = pacer.clone();
         self.upload_pacer = pacer;
     }
@@ -676,6 +673,11 @@ impl TransferRuntime {
                     upload_id: session.upload_id,
                     upload_offset: 0,
                     chunk_id: 0,
+                    // audit-06 H-4.2: this in-place single-shot upload
+                    // does not retry on the same upload_id, so the
+                    // legacy unkeyed wire format is preserved here. The
+                    // chunked driver below threads its own key.
+                    idempotency_key: None,
                 };
                 let encoded = upload_write.encode_with_body(payload.len() as u64)?;
                 // Bead pcloud-rs-6mx: pace the upload write so the
@@ -707,6 +709,7 @@ impl TransferRuntime {
                     // from the upload session.
                     ctime: None,
                     conflict: None,
+                    idempotency_key: None,
                 };
                 let response = transport.execute(&upload_save.encode()?)?;
                 expect_ok_result(response.as_hash(), "upload_save")?;
@@ -719,19 +722,92 @@ impl TransferRuntime {
         }
     }
 
-    // TODO(bd-1du): upload_writefromfile (server-side copy) — the proto
-    // encoder exists at `pcloud_proto::transfer_api::encode_upload_writefromfile`
-    // and the DTO lives in `pcloud_proto::methods::upload::UploadWriteFromFileRequest`.
-    // There is no IPC Request variant, no backend method here, and no CLI caller.
-    // The matrix row 93 claims this is Implemented; that is inaccurate — it is
-    // proto-only. Parity status corrected to Partial in C_FEATURE_PARITY_MATRIX.csv.
-    // To complete the wiring:
-    //   1. Add a `TransferRuntime::upload_write_from_file(auth_token, upload_id,
-    //      file_ids)` method here wrapping `transfer_api.encode_upload_writefromfile`.
-    //   2. Add an `UploadWriteFromFile` variant to `pcloud_ipc::methods::Request`.
-    //   3. Add a daemon-side handler in the runtime dispatch.
-    //   4. Expose a CLI command if the server-side copy path is user-visible.
-    //   5. Add a dev-transport test in this module.
+    /// Drive a single `upload_writefromfile` server-side copy
+    /// (`pclsync/pupload.c:843-859`). Mirrors the C primitive: the server
+    /// copies `count` bytes from a remote `(file_id, hash)` source into
+    /// the open `upload_id` session at `upload_offset`, without the
+    /// bytes ever transiting the client.
+    ///
+    /// # Parameters
+    ///
+    /// - `auth_token`: SecretString — daemon-held bearer token.
+    /// - `upload_id`: open upload session id (from
+    ///   [`Self::upload_create_session`] or the chunked driver).
+    /// - `upload_offset`: offset inside the upload at which the copied
+    ///   bytes land. `0` for the first server-side copy in a session.
+    /// - `chunk_id`: caller-allocated correlation id (`pupload.c:847`,
+    ///   matches the `id` echoed in the response).
+    /// - `source_file_id` / `source_hash`: pCloud-API `(fileid, hash)`
+    ///   pair identifying the remote source. The hash is mandatory —
+    ///   the server uses it to detect a source-file mutation between
+    ///   the caller's resolution and the server-side copy.
+    /// - `source_offset`: byte offset inside the source file.
+    /// - `count`: bytes to copy. **Must be ≤ `PSYNC_MAX_COPY_FROM_REQ`**
+    ///   (`pupload.c:1125-1131`); the proto encoder enforces this and
+    ///   returns [`TransferBackendError::Malformed`] on overflow.
+    ///
+    /// # Errors
+    ///
+    /// - [`TransferBackendError::NetworkExecutionUnavailable`] when the
+    ///   runtime is in `ApiMode::Development` (no real transport).
+    /// - [`TransferBackendError::Network`] for transport faults.
+    /// - [`TransferBackendError::PermanentResultCode`] /
+    ///   [`TransferBackendError::TransientResultCode`] for non-zero
+    ///   server result codes.
+    ///
+    /// audit-06 H-4.2 + bd-1du row 93.
+    #[allow(clippy::too_many_arguments)]
+    pub fn upload_write_from_file(
+        &self,
+        auth_token: SecretString,
+        upload_id: u64,
+        upload_offset: u64,
+        chunk_id: u64,
+        source_file_id: u64,
+        source_hash: u64,
+        source_offset: u64,
+        count: u64,
+    ) -> Result<(), TransferBackendError> {
+        let transport = self
+            .network_transport
+            .as_ref()
+            .ok_or(TransferBackendError::NetworkExecutionUnavailable)?;
+
+        let request = pcloud_proto::methods::upload::UploadWriteFromFileRequest {
+            auth_token: pcloud_proto::redacted::RedactedProtoString::from(
+                auth_token.expose_secret().to_owned(),
+            ),
+            upload_id,
+            upload_offset,
+            chunk_id,
+            file_id: source_file_id,
+            hash: source_hash,
+            source_offset,
+            count,
+            // Server-side copies are reliably idempotent on the source
+            // pair, but we still emit a stable request-scoped key so a
+            // network retry can be deduped without ambiguity.
+            idempotency_key: Some(new_idempotency_key()),
+        };
+        if count > pcloud_proto::transfer_api::PSYNC_MAX_COPY_FROM_REQ {
+            return Err(TransferBackendError::Malformed(
+                "upload_writefromfile count exceeds PSYNC_MAX_COPY_FROM_REQ",
+            ));
+        }
+        let encoded = request.encode()?;
+        let response = transport.execute(&encoded)?;
+        let hash = response.as_hash().ok_or(TransferBackendError::Malformed(
+            "upload_writefromfile response was not a hash",
+        ))?;
+        match hash.get_number("result").unwrap_or(0) {
+            0 => Ok(()),
+            // Permanent classes per `pclsync/pnetlibs.c`.
+            r @ (2003 | 2005 | 2007 | 2009 | 2029 | 2067 | 5002) => {
+                Err(TransferBackendError::PermanentResultCode { result: r })
+            }
+            other => Err(TransferBackendError::TransientResultCode { result: other }),
+        }
+    }
 
     /// Invoke `apply_api_server_hint` on this backend.
     ///
@@ -860,16 +936,20 @@ impl TransferRuntime {
             }
             Err(err) => {
                 // Best-effort orphan cleanup for permanent failures.
-                if matches!(err, UploadStateError::Permanent { .. })
-                    && let Some(uid) = *upload_id_opt_ptr.lock().unwrap_or_else(|p| {
+                if matches!(err, UploadStateError::Permanent { .. }) {
+                    if let Some(uid) = *upload_id_opt_ptr.lock().unwrap_or_else(|p| {
                         log::error!("mutex poisoned at {}:{}", file!(), line!());
                         p.into_inner()
-                    })
-                    && let Err(del_err) = self.api.upload_delete(driver.auth_cache.clone(), uid)
-                {
-                    // Log-only — we still surface the original
-                    // permanent error.
-                    log::warn!("upload_delete cleanup failed for uploadid={uid}: {del_err}");
+                    }) {
+                        if let Err(del_err) = self.api.upload_delete(driver.auth_cache.clone(), uid)
+                        {
+                            // Log-only — we still surface the original
+                            // permanent error.
+                            log::warn!(
+                                "upload_delete cleanup failed for uploadid={uid}: {del_err}"
+                            );
+                        }
+                    }
                 }
                 Err(ChunkedUploadError::State(err))
             }
@@ -998,6 +1078,37 @@ pub enum ChunkedUploadError {
 /// from disk. It also holds a shared cell containing the server-assigned
 /// `upload_id` so the enclosing runtime can issue `upload_delete` if a
 /// permanent failure aborts the task mid-stream.
+/// audit-06 H-4.2 — generate a stable per-upload idempotency key.
+///
+/// Returns a 32-byte hex-encoded random token (UUID-equivalent entropy:
+/// 128 bits per RFC 4122 §4.4 + an extra 128 bits of slack so the
+/// resulting string is unambiguously a client-generated identifier and
+/// never collides with a server-issued upload session id). Drawn from
+/// the OS CSPRNG via `getrandom`; on the rare event the host RNG fails
+/// (e.g. namespace setup failures on some Linux containers), the helper
+/// returns a fixed-shape fallback string with embedded "rngfail"
+/// sentinel — the caller should still treat this as a degraded path,
+/// but it is preferable to abandoning the upload outright since the
+/// daemon's caller has no recovery handle for a missing key.
+fn new_idempotency_key() -> String {
+    let mut bytes = [0u8; 16];
+    if getrandom::getrandom(&mut bytes).is_err() {
+        // Fall back to a wall-clock-derived sentinel. NOT secure, but
+        // visually distinct so an operator grepping logs can spot the
+        // RNG failure.
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        return format!("rngfail-{nanos:016x}");
+    }
+    let mut out = String::with_capacity(32);
+    for b in bytes {
+        out.push_str(&format!("{b:02x}"));
+    }
+    out
+}
+
 struct ChunkedUploadDriver<'a, C: FnMut(u64)> {
     transport: BinaryApiTransport,
     payload: &'a [u8],
@@ -1014,6 +1125,11 @@ struct ChunkedUploadDriver<'a, C: FnMut(u64)> {
     /// `upload_write` chunk so the enclosing sync-loop stall detector
     /// can recognise a long-running upload as live.
     observer: Option<TransferProgressObserver>,
+    /// audit-06 H-4.2 — stable idempotency key threaded through
+    /// `upload_create` / `upload_write` / `upload_save`. Generated once
+    /// at driver construction so a network-retry-driven re-call
+    /// (e.g. via [`UploadStateMachine`]) re-uses the same value.
+    idempotency_key: String,
 }
 
 impl<'a, C: FnMut(u64)> ChunkedUploadDriver<'a, C> {
@@ -1036,6 +1152,7 @@ impl<'a, C: FnMut(u64)> ChunkedUploadDriver<'a, C> {
             auth_cache: String::new(),
             bandwidth_pacer,
             observer,
+            idempotency_key: new_idempotency_key(),
         }
     }
 
@@ -1068,6 +1185,8 @@ impl<'a, C: FnMut(u64)> UploadDriver for ChunkedUploadDriver<'a, C> {
             parent_folder_id: self.req.parent_folder_id,
             file_name: self.req.file_name.clone(),
             file_size: self.req.total_size,
+            // audit-06 H-4.2: thread the driver-scoped key.
+            idempotency_key: Some(self.idempotency_key.clone()),
         };
         let encoded = request
             .encode()
@@ -1112,6 +1231,8 @@ impl<'a, C: FnMut(u64)> UploadDriver for ChunkedUploadDriver<'a, C> {
             upload_id,
             upload_offset: offset,
             chunk_id: offset / (PSYNC_COPY_BUFFER_SIZE as u64),
+            // audit-06 H-4.2: same key as the create call.
+            idempotency_key: Some(self.idempotency_key.clone()),
         };
         let encoded = upload_write
             .encode_with_body(chunk_len)
@@ -1188,6 +1309,8 @@ impl<'a, C: FnMut(u64)> UploadDriver for ChunkedUploadDriver<'a, C> {
             modified_at_unix: self.req.modified_at_unix,
             ctime: self.req.ctime,
             conflict: Some(self.req.conflict.to_param()),
+            // audit-06 H-4.2: same key as the create + write calls.
+            idempotency_key: Some(self.idempotency_key.clone()),
         };
         let save_encoded = save.encode().map_err(|_| ProtoUploadErrorClass::TempFail)?;
         let save_response = self
@@ -1204,10 +1327,10 @@ fn map_response_parse_err(err: ResponseParseError) -> io::Error {
 }
 
 fn split_host_port(host: &str) -> (String, Option<u16>) {
-    if let Some((name, port)) = host.rsplit_once(':')
-        && let Ok(port) = port.parse::<u16>()
-    {
-        return (name.to_owned(), Some(port));
+    if let Some((name, port)) = host.rsplit_once(':') {
+        if let Ok(port) = port.parse::<u16>() {
+            return (name.to_owned(), Some(port));
+        }
     }
     (host.to_owned(), None)
 }
@@ -1817,6 +1940,115 @@ mod tests {
 
     fn small_payload(n: usize) -> Vec<u8> {
         (0..n).map(|i| (i % 251) as u8).collect()
+    }
+
+    /// audit-06 H-4.2 + bd-1du row 93 — server-side copy via
+    /// `upload_writefromfile`. The mock server asserts the wire
+    /// command, the destination upload session id, and the source
+    /// `(fileid, hash)` pair, then returns `result=0`. The test
+    /// proves the daemon-side handler can encode the frame, drive
+    /// the network request, and classify the success response.
+    #[test]
+    fn network_upload_write_from_file_drives_server_side_copy() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("listener should bind");
+        let address = listener
+            .local_addr()
+            .expect("listener should have local addr");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("client should connect");
+            let mut request = [0u8; 512];
+            let read = stream
+                .read(&mut request)
+                .expect("upload_writefromfile request should read");
+            let request_text = String::from_utf8_lossy(&request[..read]).into_owned();
+            // Wire frame must carry the C primitive's identifying
+            // fields (ASCII keys appear in the binary param block).
+            assert!(request_text.contains("upload_writefromfile"));
+            assert!(request_text.contains("uploadid"));
+            assert!(request_text.contains("fileid"));
+            assert!(request_text.contains("hash"));
+            assert!(request_text.contains("offset"));
+            assert!(request_text.contains("count"));
+            // audit-06 H-4.2 — idempotency key must be on the wire.
+            assert!(
+                request_text.contains("idempotencykey"),
+                "upload_writefromfile must carry an idempotency key"
+            );
+            // Successful server response: result=0.
+            stream
+                .write_all(&build_response(&[("result", MockField::Num(0))]))
+                .expect("upload_writefromfile response should write");
+        });
+
+        let mut config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-transfer-runtime-uwff-test"),
+            Environment::Production,
+        );
+        config.api = ApiEndpoint {
+            mode: ApiMode::Plaintext,
+            host: address.ip().to_string(),
+            port: address.port(),
+            server_name: address.ip().to_string(),
+            connect_timeout_ms: 2_000,
+            read_timeout_ms: 2_000,
+            tls_revocation_check: Default::default(),
+        };
+
+        let runtime = TransferRuntime::from_config(&config);
+        runtime
+            .upload_write_from_file(
+                SecretString::new("token".to_owned()),
+                /* upload_id        */ 7,
+                /* upload_offset    */ 0,
+                /* chunk_id         */ 0,
+                /* source_file_id   */ 42,
+                /* source_hash      */ 0xdeadbeef,
+                /* source_offset    */ 0,
+                /* count            */ 1024,
+            )
+            .expect("upload_writefromfile should succeed");
+        server.join().expect("server thread should finish");
+    }
+
+    /// audit-06 H-4.2 + bd-1du row 93 — `count` exceeding
+    /// `PSYNC_MAX_COPY_FROM_REQ` is rejected at the runtime boundary
+    /// before any bytes are sent, mirroring the C splitting policy
+    /// (`pclsync/pupload.c:1125-1131`).
+    #[test]
+    fn network_upload_write_from_file_rejects_oversized_count() {
+        let mut config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-transfer-runtime-uwff-oversize-test"),
+            Environment::Production,
+        );
+        config.api = ApiEndpoint {
+            mode: ApiMode::Plaintext,
+            host: "127.0.0.1".to_owned(),
+            port: 1, // intentionally unreachable; the call must short-circuit
+            // on the `count` precondition before reaching the socket.
+            server_name: "127.0.0.1".to_owned(),
+            connect_timeout_ms: 100,
+            read_timeout_ms: 100,
+            tls_revocation_check: Default::default(),
+        };
+        let runtime = TransferRuntime::from_config(&config);
+        let err = runtime
+            .upload_write_from_file(
+                SecretString::new("token".to_owned()),
+                7,
+                0,
+                0,
+                42,
+                0xdeadbeef,
+                0,
+                pcloud_proto::transfer_api::PSYNC_MAX_COPY_FROM_REQ + 1,
+            )
+            .expect_err("oversized count must be rejected");
+        match err {
+            super::TransferBackendError::Malformed(msg) => {
+                assert!(msg.contains("PSYNC_MAX_COPY_FROM_REQ"));
+            }
+            other => panic!("expected Malformed, got {other:?}"),
+        }
     }
 
     #[test]

@@ -469,10 +469,10 @@ fn heartbeat_loop(
                 Err(poisoned) => poisoned.into_inner().clone(),
             };
             owner.last_heartbeat_unix = now_unix();
-            if write_metadata(&file, &path, &owner).is_ok()
-                && let Ok(mut g) = shared_meta.lock()
-            {
-                *g = owner;
+            if write_metadata(&file, &path, &owner).is_ok() {
+                if let Ok(mut g) = shared_meta.lock() {
+                    *g = owner;
+                }
             }
             remaining = interval;
         }

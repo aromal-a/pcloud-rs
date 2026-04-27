@@ -96,7 +96,9 @@ mod metrics_impl {
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use pcloud_observability::metrics::{DEFAULT_LATENCY_BUCKETS, HistogramHandle, register_histogram};
+    use pcloud_observability::metrics::{
+        DEFAULT_LATENCY_BUCKETS, HistogramHandle, register_histogram,
+    };
 
     use super::{TransportErrorClass, TransportOutcomeLabel};
 
@@ -105,10 +107,7 @@ mod metrics_impl {
     fn latency_histogram() -> &'static HistogramHandle {
         static H: OnceLock<HistogramHandle> = OnceLock::new();
         H.get_or_init(|| {
-            register_histogram(
-                "pcloud_transport_latency_seconds",
-                DEFAULT_LATENCY_BUCKETS,
-            )
+            register_histogram("pcloud_transport_latency_seconds", DEFAULT_LATENCY_BUCKETS)
         })
     }
 
@@ -159,15 +158,29 @@ mod metrics_impl {
     #[allow(dead_code)]
     pub fn error_counts() -> [(TransportErrorClass, u64); 6] {
         [
-            (TransportErrorClass::Connect, COUNTERS[0].load(Ordering::Relaxed)),
-            (TransportErrorClass::Tls, COUNTERS[1].load(Ordering::Relaxed)),
+            (
+                TransportErrorClass::Connect,
+                COUNTERS[0].load(Ordering::Relaxed),
+            ),
+            (
+                TransportErrorClass::Tls,
+                COUNTERS[1].load(Ordering::Relaxed),
+            ),
             (TransportErrorClass::Io, COUNTERS[2].load(Ordering::Relaxed)),
-            (TransportErrorClass::Response, COUNTERS[3].load(Ordering::Relaxed)),
-            (TransportErrorClass::BudgetExhausted, COUNTERS[4].load(Ordering::Relaxed)),
-            (TransportErrorClass::CircuitOpen, COUNTERS[5].load(Ordering::Relaxed)),
+            (
+                TransportErrorClass::Response,
+                COUNTERS[3].load(Ordering::Relaxed),
+            ),
+            (
+                TransportErrorClass::BudgetExhausted,
+                COUNTERS[4].load(Ordering::Relaxed),
+            ),
+            (
+                TransportErrorClass::CircuitOpen,
+                COUNTERS[5].load(Ordering::Relaxed),
+            ),
         ]
     }
-
 }
 
 // ── Public metrics surface ─────────────────────────────────────────────────
@@ -204,12 +217,18 @@ pub fn observe_transport_error(host: &str, class: TransportErrorClass) {
 
 /// Parse a `Retry-After` header value into a [`Duration`].
 ///
-/// Handles both forms allowed by RFC 7231:
-/// - **Integer seconds** (`Retry-After: 30`)
-/// - **Floating-point seconds** (`Retry-After: 1.5`)
+/// Handles **both** forms allowed by RFC 7231 §7.1.3 (audit-06 H-6.2):
+/// - **Delta-seconds** — integer or floating-point seconds
+///   (`Retry-After: 30`, `Retry-After: 1.5`).
+/// - **HTTP-date** — IMF-fixdate form
+///   (`Retry-After: Wed, 21 Oct 2015 07:28:00 GMT`). Only the IMF-fixdate
+///   subset is honoured (the only form RFC 7231 §7.1.1.1 mandates senders
+///   produce); RFC 850 / asctime forms are intentionally not parsed and
+///   return `None` so a misformatted header degrades to the standard
+///   client-computed backoff rather than a wrong wait.
 ///
-/// HTTP-date form (`Retry-After: Wed, 21 Oct 2015 07:28:00 GMT`) is not
-/// supported; if the value is not parseable as a number `None` is returned.
+/// The HTTP-date form is converted to a wait by subtracting the current
+/// system time. Past dates and malformed values yield `None`.
 ///
 /// The returned duration is capped at 300 seconds to prevent indefinite
 /// stalls from a misbehaving or malicious server.
@@ -225,16 +244,122 @@ pub fn observe_transport_error(host: &str, class: TransportErrorClass) {
 /// use pcloud_resilience::transport::parse_retry_after_header;
 /// assert_eq!(parse_retry_after_header("30"), Some(Duration::from_secs(30)));
 /// assert_eq!(parse_retry_after_header("1.5"), Some(Duration::from_millis(1500)));
-/// assert_eq!(parse_retry_after_header("Wed, 21 Oct 2015 07:28:00 GMT"), None);
 /// assert_eq!(parse_retry_after_header("999"), Some(Duration::from_secs(300)));
+/// // HTTP-date in the far past returns None (no wait — the server was already
+/// // ready at that instant). HTTP-date in the future returns Some(_).
+/// assert_eq!(parse_retry_after_header("Wed, 21 Oct 2015 07:28:00 GMT"), None);
+/// assert_eq!(parse_retry_after_header("not a real header"), None);
 /// ```
 pub fn parse_retry_after_header(value: &str) -> Option<Duration> {
-    let secs: f64 = value.trim().parse().ok()?;
-    if secs < 0.0 || !secs.is_finite() {
+    let trimmed = value.trim();
+    // Delta-seconds path. `parse::<f64>` rejects header text that has
+    // any non-numeric tail, so "Wed, ..." falls through to the date
+    // parser below.
+    if let Ok(secs) = trimmed.parse::<f64>() {
+        if secs < 0.0 || !secs.is_finite() {
+            return None;
+        }
+        let capped = secs.min(300.0);
+        return Some(Duration::from_millis((capped * 1000.0) as u64));
+    }
+    // HTTP-date (IMF-fixdate) path.
+    let target = parse_imf_fixdate_unix(trimmed)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs() as i64;
+    let delta = target.saturating_sub(now);
+    if delta <= 0 {
         return None;
     }
-    let capped = secs.min(300.0);
-    Some(Duration::from_millis((capped * 1000.0) as u64))
+    let capped = delta.min(300) as u64;
+    Some(Duration::from_secs(capped))
+}
+
+/// Parse an IMF-fixdate string (`"Wed, 21 Oct 2015 07:28:00 GMT"`) into a
+/// Unix timestamp (seconds since the epoch). Returns `None` if the input
+/// does not match the strict IMF-fixdate shape.
+///
+/// This is intentionally a small dependency-free parser: the workspace
+/// avoids pulling `chrono` / `time` into the resilience layer, and the
+/// wider parser surface is unnecessary for the single shape RFC 7231
+/// requires senders to produce.
+fn parse_imf_fixdate_unix(s: &str) -> Option<i64> {
+    // Expected: "Day, DD Mon YYYY HH:MM:SS GMT"
+    // Length is exactly 29; we tolerate trailing whitespace upstream
+    // (callers `trim()` first).
+    if s.len() != 29 {
+        return None;
+    }
+    let bytes = s.as_bytes();
+    // Static positional check — bail early if punctuation is wrong.
+    if bytes[3] != b',' || bytes[4] != b' ' || !s.ends_with(" GMT") {
+        return None;
+    }
+    // Day-of-month, month, year.
+    let day: u32 = s.get(5..7)?.parse().ok()?;
+    let month_str = s.get(8..11)?;
+    let year: i32 = s.get(12..16)?.parse().ok()?;
+    let hour: u32 = s.get(17..19)?.parse().ok()?;
+    let minute: u32 = s.get(20..22)?.parse().ok()?;
+    let second: u32 = s.get(23..25)?.parse().ok()?;
+    if !(0..24).contains(&hour) || !(0..60).contains(&minute) || !(0..60).contains(&second) {
+        return None;
+    }
+    let month = match month_str {
+        "Jan" => 1,
+        "Feb" => 2,
+        "Mar" => 3,
+        "Apr" => 4,
+        "May" => 5,
+        "Jun" => 6,
+        "Jul" => 7,
+        "Aug" => 8,
+        "Sep" => 9,
+        "Oct" => 10,
+        "Nov" => 11,
+        "Dec" => 12,
+        _ => return None,
+    };
+    if day == 0 || day > days_in_month(year, month) {
+        return None;
+    }
+    Some(unix_timestamp(year, month, day, hour, minute, second))
+}
+
+/// Return the number of days in the given Gregorian month.
+fn days_in_month(year: i32, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_leap_year(year) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => 0,
+    }
+}
+
+fn is_leap_year(y: i32) -> bool {
+    (y % 4 == 0 && y % 100 != 0) || y % 400 == 0
+}
+
+/// Convert (Y, M, D, h, m, s) (Gregorian, UTC) to a Unix timestamp.
+///
+/// This is a pure-arithmetic implementation that avoids `chrono`. It uses
+/// Howard Hinnant's "days_from_civil" algorithm.
+fn unix_timestamp(year: i32, month: u32, day: u32, hour: u32, minute: u32, second: u32) -> i64 {
+    // Howard Hinnant, "chrono-Compatible Low-Level Date Algorithms".
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = (y - era * 400) as u32; // [0, 399]
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    let days = (era as i64) * 146_097 + (doe as i64) - 719_468;
+    days * 86_400 + (hour as i64) * 3_600 + (minute as i64) * 60 + (second as i64)
 }
 
 /// Parse a `Retry-After` header out of a raw HTTP response header block.
@@ -848,8 +973,8 @@ impl ResilientTransport {
             // not consumed because the server forced the wait, not a genuine
             // request failure.  We sleep and then re-run the same attempt
             // index so the global budget is not eroded by server throttling.
-            if response.is_rate_limited()
-                && let Some(hint) = response.retry_after() {
+            if response.is_rate_limited() {
+                if let Some(hint) = response.retry_after() {
                     // Server-dictated wait: does not count against budget.
                     sleep_fn(hint).await;
                     // Decrement attempt so the next loop iteration re-uses the
@@ -861,6 +986,7 @@ impl ResilientTransport {
                     }
                     continue;
                 }
+            }
 
             // Fix 2: Consult MethodRetryPolicy before retrying.
             //
@@ -1114,7 +1240,10 @@ mod tests {
         // unknown conditions.
         assert_eq!(classify_error("some unknown error"), ErrorKind::Terminal);
         assert_eq!(classify_error(""), ErrorKind::Terminal);
-        assert_eq!(classify_error("connection reset by peer"), ErrorKind::Terminal);
+        assert_eq!(
+            classify_error("connection reset by peer"),
+            ErrorKind::Terminal
+        );
     }
 
     #[tokio::test]
@@ -1225,6 +1354,115 @@ mod tests {
     fn retry_after_missing_returns_none() {
         let resp = TransportResponse::ok(429);
         assert_eq!(resp.retry_after(), None);
+    }
+
+    // ── audit-06 H-6.2: Retry-After IMF-fixdate (HTTP-date) form ─────────
+
+    #[test]
+    fn retry_after_imf_fixdate_in_past_returns_none() {
+        // 2015 is comfortably in the past for any plausible test wall
+        // clock; the parser must not return a non-positive wait.
+        assert_eq!(
+            parse_retry_after_header("Wed, 21 Oct 2015 07:28:00 GMT"),
+            None
+        );
+    }
+
+    #[test]
+    fn retry_after_imf_fixdate_in_future_returns_capped_wait() {
+        // Build an IMF-fixdate ~10 seconds in the future. The parser
+        // must return a non-zero wait, capped at 300s.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let future = now + 30;
+        let header = format_imf_fixdate(future);
+        let parsed = parse_retry_after_header(&header).expect("future date should parse");
+        assert!(parsed >= Duration::from_secs(20));
+        assert!(parsed <= Duration::from_secs(300));
+    }
+
+    #[test]
+    fn retry_after_imf_fixdate_far_future_capped_at_300s() {
+        // 1_000_000 seconds in the future must be clamped to 300s, not
+        // returned verbatim.
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs() as i64;
+        let far_future = now + 1_000_000;
+        let header = format_imf_fixdate(far_future);
+        assert_eq!(
+            parse_retry_after_header(&header),
+            Some(Duration::from_secs(300))
+        );
+    }
+
+    #[test]
+    fn retry_after_malformed_returns_none() {
+        assert_eq!(parse_retry_after_header(""), None);
+        assert_eq!(parse_retry_after_header("not a date"), None);
+        assert_eq!(
+            parse_retry_after_header("Wed, 99 Foo 2015 25:99:99 ZZZ"),
+            None
+        );
+        assert_eq!(parse_retry_after_header("-5"), None);
+        assert_eq!(parse_retry_after_header("inf"), None);
+        assert_eq!(parse_retry_after_header("NaN"), None);
+    }
+
+    /// Test helper: format a unix timestamp as an IMF-fixdate. Used
+    /// only by the tests above; production code never produces these.
+    fn format_imf_fixdate(unix_secs: i64) -> String {
+        // Decompose the timestamp using the inverse of `unix_timestamp`
+        // (Howard Hinnant's "civil_from_days").
+        let days = unix_secs.div_euclid(86_400);
+        let secs_of_day = unix_secs.rem_euclid(86_400);
+        let hour = (secs_of_day / 3600) as u32;
+        let minute = ((secs_of_day / 60) % 60) as u32;
+        let second = (secs_of_day % 60) as u32;
+
+        let z = days + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = (z - era * 146_097) as u64;
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let y = (yoe as i64) + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+        let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
+        let year = if m <= 2 { y + 1 } else { y } as i32;
+        // Day-of-week computation (Zeller-equivalent via days-from-civil
+        // anchor: 1970-01-01 was a Thursday).
+        let dow = ((days % 7 + 7) % 7) as usize; // 0 = Thursday
+        let day_names = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+        let month_names = [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ];
+        format!(
+            "{}, {:02} {} {:04} {:02}:{:02}:{:02} GMT",
+            day_names[dow],
+            d,
+            month_names[(m - 1) as usize],
+            year,
+            hour,
+            minute,
+            second,
+        )
+    }
+
+    #[test]
+    fn imf_fixdate_roundtrip_smoke() {
+        // Internal sanity: the test helper must round-trip a known
+        // timestamp through both directions of the parser.
+        // 2015-10-21 07:28:00 UTC == 1_445_412_480
+        let formatted = format_imf_fixdate(1_445_412_480);
+        // The known string must match — this guards both directions.
+        assert!(
+            formatted.starts_with("Wed, 21 Oct 2015 07:28:00 GMT"),
+            "format_imf_fixdate produced unexpected string: {formatted}"
+        );
     }
 
     #[tokio::test]

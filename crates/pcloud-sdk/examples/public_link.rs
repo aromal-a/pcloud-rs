@@ -92,14 +92,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .find(|(k, _)| *k == "link_id" || *k == "id")
             .and_then(|(_, v)| v.trim_start_matches(':').trim().split([',', '}']).next())
             .map(|v| v.trim().to_owned())
-    }
-        && let Ok(link_id) = id_str.parse::<u64>() {
+    } {
+        if let Ok(link_id) = id_str.parse::<u64>() {
             let del_resp = daemon.dispatch(Request::DeletePublicLink { link_id });
             println!(
                 "delete-link({link_id}): {:?} — {}",
                 del_resp.status, del_resp.message
             );
         }
+    }
 
     let _ = std::fs::remove_dir_all(&root);
     Ok(())

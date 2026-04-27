@@ -171,16 +171,16 @@ fn live_field_selector_probes() {
     // If the shape is a JSON object with a `links` array, the first
     // element's id/code field (when present) should be a string or
     // number — catches accidental secret projection via field lookup.
-    if let Some(links_val) = select(&links.message, "links")
-        && let Some(arr) = links_val.as_array()
-    {
-        for item in arr.iter().take(3) {
-            for key in ["link_id", "id", "code", "short"] {
-                if let Some(v) = item.get(key) {
-                    assert!(
-                        v.is_string() || v.is_number(),
-                        "list-links field {key} must be scalar, not {v:?}"
-                    );
+    if let Some(links_val) = select(&links.message, "links") {
+        if let Some(arr) = links_val.as_array() {
+            for item in arr.iter().take(3) {
+                for key in ["link_id", "id", "code", "short"] {
+                    if let Some(v) = item.get(key) {
+                        assert!(
+                            v.is_string() || v.is_number(),
+                            "list-links field {key} must be scalar, not {v:?}"
+                        );
+                    }
                 }
             }
         }

@@ -233,10 +233,10 @@ pub fn parse_message_to_json(msg: &str) -> Value {
     // (letters / digits / `_` / `-`) followed by `: `. Otherwise the
     // whole thing is treated as a single bare string.
     let body = strip_legacy_prefix(trimmed);
-    if looks_like_flat_kv(body)
-        && let Some(obj) = parse_flat_kv(body)
-    {
-        return Value::Object(obj);
+    if looks_like_flat_kv(body) {
+        if let Some(obj) = parse_flat_kv(body) {
+            return Value::Object(obj);
+        }
     }
 
     // Shape 3: verbatim.
@@ -369,16 +369,16 @@ fn parse_flat_value(v: &str) -> Value {
         let mut out = String::with_capacity(inner.len());
         let mut chars = inner.chars();
         while let Some(c) = chars.next() {
-            if c == '\\'
-                && let Some(next) = chars.next()
-            {
-                match next {
-                    'n' => out.push('\n'),
-                    't' => out.push('\t'),
-                    'r' => out.push('\r'),
-                    other => out.push(other),
+            if c == '\\' {
+                if let Some(next) = chars.next() {
+                    match next {
+                        'n' => out.push('\n'),
+                        't' => out.push('\t'),
+                        'r' => out.push('\r'),
+                        other => out.push(other),
+                    }
+                    continue;
                 }
-                continue;
             }
             out.push(c);
         }
@@ -391,11 +391,12 @@ fn parse_flat_value(v: &str) -> Value {
     if let Ok(n) = v.parse::<u64>() {
         return Value::from(n);
     }
-    if let Ok(n) = v.parse::<f64>()
-        && n.is_finite()
-        && let Some(num) = serde_json::Number::from_f64(n)
-    {
-        return Value::Number(num);
+    if let Ok(n) = v.parse::<f64>() {
+        if n.is_finite() {
+            if let Some(num) = serde_json::Number::from_f64(n) {
+                return Value::Number(num);
+            }
+        }
     }
     // Bare string.
     Value::String(v.to_owned())

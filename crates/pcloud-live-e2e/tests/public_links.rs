@@ -227,9 +227,11 @@ fn live_public_link_lifecycle() {
             deleted = true;
         }
     }
-    if !deleted && let Some(c) = code {
-        let resp = sdk.dispatch(Request::DeletePublicLinkByCode { code: c });
-        assert_no_secret_leak(&resp);
+    if !deleted {
+        if let Some(c) = code {
+            let resp = sdk.dispatch(Request::DeletePublicLinkByCode { code: c });
+            assert_no_secret_leak(&resp);
+        }
     }
 
     let _ = std::fs::remove_dir_all(&root);

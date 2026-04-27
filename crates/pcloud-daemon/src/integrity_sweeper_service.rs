@@ -727,13 +727,13 @@ impl IntegritySweeperShell {
         // schedule is re-parsed inside `start_schedule`; we deliberately
         // do not cache it on the struct because `Schedule` is not `Sync`
         // in all `cron` versions and re-parsing is cheap.
-        if let Some(expr) = cfg.schedule_cron.as_deref()
-            && let Err(source) = Schedule::from_str(expr)
-        {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                format!("invalid schedule_cron {expr:?}: {source}"),
-            ));
+        if let Some(expr) = cfg.schedule_cron.as_deref() {
+            if let Err(source) = Schedule::from_str(expr) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("invalid schedule_cron {expr:?}: {source}"),
+                ));
+            }
         }
         Ok(Self {
             config: cfg,
@@ -1325,17 +1325,18 @@ fn run_sweep_cycle_with_ndjson(
                 let remote_path_for_record = remote_prefix.clone();
                 if let Some(record) =
                     ndjson_record_from_fs_event(&fs_event, &remote_path_for_record)
-                    && let Err(e) = write_ndjson_record(*sink, &record)
                 {
-                    log::warn!(
-                        r#"{{"event":"integrity_sweeper.ndjson_write_failed","detail":"{e}"}}"#
-                    );
+                    if let Err(e) = write_ndjson_record(*sink, &record) {
+                        log::warn!(
+                            r#"{{"event":"integrity_sweeper.ndjson_write_failed","detail":"{e}"}}"#
+                        );
+                    }
                 }
             }
-            if let Some(daemon_tx) = sender
-                && let Some(daemon_event) = translate_fs_event(&fs_event, &root.local_path)
-            {
-                let _ = daemon_tx.send(daemon_event);
+            if let Some(daemon_tx) = sender {
+                if let Some(daemon_event) = translate_fs_event(&fs_event, &root.local_path) {
+                    let _ = daemon_tx.send(daemon_event);
+                }
             }
         }
 

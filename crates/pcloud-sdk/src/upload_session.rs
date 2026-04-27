@@ -383,15 +383,23 @@ impl UploadSession {
             .chunked
             .lock_or_poisoned("sdk::upload_session::chunked")
             .as_mut()
-            && let Some(journal) = state.journal.as_ref()
-            && let Ok(report) = journal.replay()
         {
-            // Find the latest journal entry for this upload id.
-            let last = report
-                .entries
-                .iter()
-                .rfind(|e| e.upload_id == state.handle.upload_id)
-                .cloned();
+            // Read out the latest journal entry without holding a borrow on
+            // `state.journal` past the inner block, so the mutating writes
+            // below to `state.offset` / `state.chunks_done` are unambiguous
+            // for the borrow checker on Rust 1.85 (no let_chains).
+            let upload_id = state.handle.upload_id;
+            let last = state
+                .journal
+                .as_ref()
+                .and_then(|j| j.replay().ok())
+                .and_then(|report| {
+                    report
+                        .entries
+                        .iter()
+                        .rfind(|e| e.upload_id == upload_id)
+                        .cloned()
+                });
             if let Some(entry) = last {
                 state.offset = entry.bytes;
                 state.chunks_done = entry.chunks_done;
@@ -632,13 +640,13 @@ impl UploadSession {
         }
 
         // Clear journal on successful commit.
-        if let Some(journal) = journal_ref
-            && let Err(err) = journal.clear()
-        {
-            eprintln!(
-                "upload_session: journal clear failed for uploadid={}: {err}",
-                handle.upload_id
-            );
+        if let Some(journal) = journal_ref {
+            if let Err(err) = journal.clear() {
+                eprintln!(
+                    "upload_session: journal clear failed for uploadid={}: {err}",
+                    handle.upload_id
+                );
+            }
         }
 
         self.inner.progress_tx.send_modify(|p| {

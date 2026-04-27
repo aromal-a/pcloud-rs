@@ -446,19 +446,19 @@ fn check_vault_perms_unix(vault_path: &Path) -> DoctorCheck {
             format!("vault mode {:o} != 0600 ({})", mode, vault_path.display()),
         );
     }
-    if let Some(parent) = vault_path.parent()
-        && let Ok(pmd) = fs::metadata(parent)
-    {
-        let pmode = pmd.permissions().mode() & 0o777;
-        if pmode != 0o700 {
-            return DoctorCheck::fail(
-                "vault_perms",
-                format!(
-                    "vault parent mode {:o} != 0700 ({})",
-                    pmode,
-                    parent.display()
-                ),
-            );
+    if let Some(parent) = vault_path.parent() {
+        if let Ok(pmd) = fs::metadata(parent) {
+            let pmode = pmd.permissions().mode() & 0o777;
+            if pmode != 0o700 {
+                return DoctorCheck::fail(
+                    "vault_perms",
+                    format!(
+                        "vault parent mode {:o} != 0700 ({})",
+                        pmode,
+                        parent.display()
+                    ),
+                );
+            }
         }
     }
     DoctorCheck::ok(

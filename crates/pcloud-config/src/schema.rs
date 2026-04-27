@@ -1013,15 +1013,15 @@ fn validate_node(node: &Node, value: &Value, pointer: String, out: &mut Vec<Sche
                 });
                 return;
             };
-            if let Some(allowed) = enum_values
-                && !allowed.contains(&s)
-            {
-                out.push(SchemaViolation {
-                    pointer,
-                    reason: format!("value '{}' not in enum {:?}", s, allowed),
-                    line: None,
-                    column: None,
-                });
+            if let Some(allowed) = enum_values {
+                if !allowed.contains(&s) {
+                    out.push(SchemaViolation {
+                        pointer,
+                        reason: format!("value '{}' not in enum {:?}", s, allowed),
+                        line: None,
+                        column: None,
+                    });
+                }
             }
         }
         Node::Array { items } => {
@@ -1075,25 +1075,25 @@ fn validate_node(node: &Node, value: &Value, pointer: String, out: &mut Vec<Sche
                 // Allow u64 large ints.
                 if let Some(n) = value.as_u64() {
                     let nn = n as i128;
-                    if let Some(min) = min
-                        && nn < *min
-                    {
-                        out.push(SchemaViolation {
-                            pointer: pointer.clone(),
-                            reason: format!("value {} below minimum {}", nn, min),
-                            line: None,
-                            column: None,
-                        });
+                    if let Some(min) = min {
+                        if nn < *min {
+                            out.push(SchemaViolation {
+                                pointer: pointer.clone(),
+                                reason: format!("value {} below minimum {}", nn, min),
+                                line: None,
+                                column: None,
+                            });
+                        }
                     }
-                    if let Some(max) = max
-                        && nn > *max
-                    {
-                        out.push(SchemaViolation {
-                            pointer,
-                            reason: format!("value {} above maximum {}", nn, max),
-                            line: None,
-                            column: None,
-                        });
+                    if let Some(max) = max {
+                        if nn > *max {
+                            out.push(SchemaViolation {
+                                pointer,
+                                reason: format!("value {} above maximum {}", nn, max),
+                                line: None,
+                                column: None,
+                            });
+                        }
                     }
                     return;
                 }
@@ -1106,25 +1106,25 @@ fn validate_node(node: &Node, value: &Value, pointer: String, out: &mut Vec<Sche
                 return;
             };
             let nn = n as i128;
-            if let Some(min) = min
-                && nn < *min
-            {
-                out.push(SchemaViolation {
-                    pointer: pointer.clone(),
-                    reason: format!("value {} below minimum {}", nn, min),
-                    line: None,
-                    column: None,
-                });
+            if let Some(min) = min {
+                if nn < *min {
+                    out.push(SchemaViolation {
+                        pointer: pointer.clone(),
+                        reason: format!("value {} below minimum {}", nn, min),
+                        line: None,
+                        column: None,
+                    });
+                }
             }
-            if let Some(max) = max
-                && nn > *max
-            {
-                out.push(SchemaViolation {
-                    pointer,
-                    reason: format!("value {} above maximum {}", nn, max),
-                    line: None,
-                    column: None,
-                });
+            if let Some(max) = max {
+                if nn > *max {
+                    out.push(SchemaViolation {
+                        pointer,
+                        reason: format!("value {} above maximum {}", nn, max),
+                        line: None,
+                        column: None,
+                    });
+                }
             }
         }
     }

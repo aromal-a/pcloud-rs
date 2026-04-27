@@ -430,37 +430,37 @@ fn serve_loop_body(
         }
 
         // SIGHUP → hot-reload config from disk.
-        if signals::take_reload_request()
-            && let Some(ref config_path) = runtime.config_path
-        {
-            use crate::config_reload::{
-                ReloadOutcome, format_reload_failed_event, format_reloaded_event, try_reload,
-            };
-            // Notify systemd that a reload is in progress. The READY=1
-            // suffix re-arms the watchdog once the reload completes.
-            #[cfg(target_os = "linux")]
-            sd_notify("RELOADING=1\n");
-            let (outcome, new_profile) = try_reload(config_path, &runtime.config);
-            match outcome {
-                ReloadOutcome::Applied { changed_keys } => {
-                    let msg = format_reloaded_event(&changed_keys);
-                    log::info!("pcloud-rs: {msg}");
-                    if let Some(profile) = new_profile {
-                        runtime.apply_hot_reload(profile);
+        if signals::take_reload_request() {
+            if let Some(ref config_path) = runtime.config_path {
+                use crate::config_reload::{
+                    ReloadOutcome, format_reload_failed_event, format_reloaded_event, try_reload,
+                };
+                // Notify systemd that a reload is in progress. The READY=1
+                // suffix re-arms the watchdog once the reload completes.
+                #[cfg(target_os = "linux")]
+                sd_notify("RELOADING=1\n");
+                let (outcome, new_profile) = try_reload(config_path, &runtime.config);
+                match outcome {
+                    ReloadOutcome::Applied { changed_keys } => {
+                        let msg = format_reloaded_event(&changed_keys);
+                        log::info!("pcloud-rs: {msg}");
+                        if let Some(profile) = new_profile {
+                            runtime.apply_hot_reload(profile);
+                        }
+                    }
+                    ReloadOutcome::NoChange => {
+                        // Config re-read but nothing changed. No audit event.
+                    }
+                    ReloadOutcome::Failed { error } => {
+                        let msg = format_reload_failed_event(&error);
+                        log::error!("pcloud-rs: {msg}");
                     }
                 }
-                ReloadOutcome::NoChange => {
-                    // Config re-read but nothing changed. No audit event.
-                }
-                ReloadOutcome::Failed { error } => {
-                    let msg = format_reload_failed_event(&error);
-                    log::error!("pcloud-rs: {msg}");
-                }
+                // Re-assert READY=1 to signal that the reload phase is
+                // complete and the daemon is accepting connections again.
+                #[cfg(target_os = "linux")]
+                sd_notify("READY=1\n");
             }
-            // Re-assert READY=1 to signal that the reload phase is
-            // complete and the daemon is accepting connections again.
-            #[cfg(target_os = "linux")]
-            sd_notify("READY=1\n");
         }
         match bound.serve_once_with_peer(|peer, request| {
             dispatch_with_drain_gate(runtime, peer.uid, peer.pid, request)

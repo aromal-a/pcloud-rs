@@ -1170,26 +1170,27 @@ impl RuntimeShell {
 
         // Try local metadata cache first.
         let db_path = &self.store.db_path;
-        if let Ok(conn) = rusqlite::Connection::open(db_path)
-            && let Ok(Some(record)) =
+        if let Ok(conn) = rusqlite::Connection::open(db_path) {
+            if let Ok(Some(record)) =
                 pcloud_store::FileMetadataRepository::resolve_path(&conn, &path)
-        {
-            let payload = pcloud_ipc::StatPathPayload {
-                file_id: record.file_id,
-                parent_folder_id: record.parent_folder_id,
-                name: record.name,
-                size: record.size,
-                hash: record.hash,
-                modified: record.modified,
-                created: record.created,
-                is_folder: record.is_folder,
-                source: "cache".to_owned(),
-            };
-            return self.audited_response(
-                "fs.stat_path",
-                Some(format!("path={path} source=cache")),
-                serde_json::to_string(&payload).unwrap_or_default(),
-            );
+            {
+                let payload = pcloud_ipc::StatPathPayload {
+                    file_id: record.file_id,
+                    parent_folder_id: record.parent_folder_id,
+                    name: record.name,
+                    size: record.size,
+                    hash: record.hash,
+                    modified: record.modified,
+                    created: record.created,
+                    is_folder: record.is_folder,
+                    source: "cache".to_owned(),
+                };
+                return self.audited_response(
+                    "fs.stat_path",
+                    Some(format!("path={path} source=cache")),
+                    serde_json::to_string(&payload).unwrap_or_default(),
+                );
+            }
         }
 
         // Fall back to API: resolve folder id via the path resolver.
@@ -2539,10 +2540,8 @@ impl RuntimeShell {
         ) {
             Ok(created) => {
                 let device_folder_id = created.parent_folder_id.unwrap_or(created.folder_id);
-                self.store
-                    .repositories
-                    .preferences
-                    .backup_device_folder_id = Some(device_folder_id);
+                self.store.repositories.preferences.backup_device_folder_id =
+                    Some(device_folder_id);
                 if let Err(err) = persist_profile(&self.store) {
                     // Persistence failed: surface clearly, but the backend
                     // already created the backup. Report both facts.
@@ -2613,15 +2612,8 @@ impl RuntimeShell {
     /// `psync_delete_backup_device`. Local-only: does not talk to the
     /// backend.
     fn delete_backup_device_ipc(&mut self) -> Response {
-        let previous = self
-            .store
-            .repositories
-            .preferences
-            .backup_device_folder_id;
-        self.store
-            .repositories
-            .preferences
-            .backup_device_folder_id = None;
+        let previous = self.store.repositories.preferences.backup_device_folder_id;
+        self.store.repositories.preferences.backup_device_folder_id = None;
         match persist_profile(&self.store) {
             Ok(()) => self.audited_response(
                 "backup.delete_device",
@@ -2640,10 +2632,7 @@ impl RuntimeShell {
             ),
             Err(err) => {
                 // Roll back so in-memory state matches on-disk state.
-                self.store
-                    .repositories
-                    .preferences
-                    .backup_device_folder_id = previous;
+                self.store.repositories.preferences.backup_device_folder_id = previous;
                 Response {
                     status: ResponseStatus::InternalError,
                     message: format!("delete_backup_device: persist failed: {err}"),
@@ -2710,31 +2699,70 @@ impl RuntimeShell {
         }
     }
 
-    /// `UploadWriteFromFile` IPC handler — stub.
+    /// `UploadWriteFromFile` IPC handler — server-side copy.
     ///
-    /// The C `upload_writefromfile` primitive is a **server-side copy**
-    /// from a remote pCloud `fileid` into an in-progress upload session
+    /// The C `upload_writefromfile` primitive copies bytes from a remote
+    /// pCloud `(fileid, hash)` source into an in-progress upload session
     /// (`pcloud_proto::methods::upload::UploadWriteFromFileRequest`,
     /// params: `uploadid` / `fileid` / `hash` / `uploadoffset` /
     /// `offset` / `count` — cited: `pclsync/pupload.c:843-859`).
     ///
-    /// The IPC variant schema has been rewired to match the C primitive
-    /// shape (audit-05). The daemon handler remains a stub pending
-    /// `TransferRuntime::upload_write_from_file` wiring (`bd-1du`).
-    #[allow(clippy::unused_self)]
+    /// audit-06 H-4.2 + bd-1du row 93: routes the IPC call to
+    /// `TransferRuntime::upload_write_from_file`, which encodes the
+    /// frame, executes it on the live `BinaryApiTransport`, and
+    /// classifies the server result code.
     fn upload_write_from_file_ipc(
         &mut self,
-        _upload_session_id: u64,
-        _source_fileid: u64,
-        _source_hash: u64,
-        _offset: u64,
-        _count: u64,
+        upload_session_id: u64,
+        source_fileid: u64,
+        source_hash: u64,
+        offset: u64,
+        count: u64,
     ) -> Response {
-        Response {
-            status: ResponseStatus::Unavailable,
-            message: "upload_writefromfile (server-side copy) is not yet implemented; \
-                TransferRuntime::upload_write_from_file wiring is pending (bd-1du row 93)"
-                .to_owned(),
+        let auth_token = match self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        {
+            Some(token) => token,
+            None => {
+                return Response {
+                    status: ResponseStatus::Unauthorized,
+                    message: "upload_writefromfile requires an authenticated session".to_owned(),
+                };
+            }
+        };
+        // Stable correlation id derived from the destination offset —
+        // the server only requires uniqueness within a single upload
+        // session, and offsets are guaranteed monotone per chunk.
+        let chunk_id = offset / (pcloud_proto::transfer_api::PSYNC_COPY_BUFFER_SIZE as u64);
+        match self.transfer_runtime.upload_write_from_file(
+            auth_token,
+            upload_session_id,
+            offset,
+            chunk_id,
+            source_fileid,
+            source_hash,
+            // Source offset mirrors the upload offset for the simple
+            // 1:1 copy carried by this IPC variant. The full C calling
+            // convention allows independent values; the IPC variant
+            // carries only one `offset` field today (matching the
+            // common case in the upstream code).
+            offset,
+            count,
+        ) {
+            Ok(()) => Response {
+                status: ResponseStatus::Ok,
+                message: format!(
+                    "upload_writefromfile ok: {count} bytes from fileid {source_fileid} into upload {upload_session_id} at offset {offset}"
+                ),
+            },
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!("upload_writefromfile failed: {err}"),
+            },
         }
     }
 
@@ -3083,9 +3111,11 @@ impl RuntimeShell {
                 self.setup_crypto_v2_pclsync_compat(password, hint)
             }
             pcloud_crypto::CryptoBackend::Enhanced => {
-                let result = self
-                    .crypto
-                    .setup_with_backend(password, hint, pcloud_crypto::CryptoBackend::Enhanced);
+                let result = self.crypto.setup_with_backend(
+                    password,
+                    hint,
+                    pcloud_crypto::CryptoBackend::Enhanced,
+                );
                 self.metric_sync_crypto_state();
                 match result {
                     Ok(()) => self.audited_response(
@@ -3195,64 +3225,59 @@ impl RuntimeShell {
     /// server, RSA-OAEP-unwrap it locally, and cache it against
     /// `folder_id`.
     fn crypto_get_folder_key(&mut self, folder_id: u64) -> Response {
-            if !matches!(
-                self.crypto.effective_backend(),
-                pcloud_crypto::CryptoBackend::PclsyncCompat
-            ) {
+        if !matches!(
+            self.crypto.effective_backend(),
+            pcloud_crypto::CryptoBackend::PclsyncCompat
+        ) {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "crypto_getfolderkey is only valid on a PclsyncCompat shell".to_owned(),
+            };
+        }
+        if !self.crypto.is_started() {
+            return Response {
+                status: ResponseStatus::Unauthorized,
+                message: "crypto must be unlocked to fetch a folder key".to_owned(),
+            };
+        }
+        let auth_token = match self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        {
+            Some(token) => token,
+            None => {
                 return Response {
-                    status: ResponseStatus::InvalidRequest,
-                    message:
-                        "crypto_getfolderkey is only valid on a PclsyncCompat shell"
-                            .to_owned(),
+                    status: ResponseStatus::Conflict,
+                    message: "crypto_getfolderkey requires an authenticated session".to_owned(),
                 };
             }
-            if !self.crypto.is_started() {
+        };
+        let wrapped = match self
+            .crypto_runtime
+            .get_folder_key(auth_token.expose_secret(), folder_id)
+        {
+            Ok(bytes) => bytes,
+            Err(err) => {
                 return Response {
-                    status: ResponseStatus::Unauthorized,
-                    message: "crypto must be unlocked to fetch a folder key".to_owned(),
-                };
-            }
-            let auth_token = match self
-                .auth
-                .snapshot()
-                .auth_token
-                .as_ref()
-                .map(SecretString::clone_secret)
-            {
-                Some(token) => token,
-                None => {
-                    return Response {
-                        status: ResponseStatus::Conflict,
-                        message: "crypto_getfolderkey requires an authenticated session"
-                            .to_owned(),
-                    };
-                }
-            };
-            let wrapped = match self
-                .crypto_runtime
-                .get_folder_key(auth_token.expose_secret(), folder_id)
-            {
-                Ok(bytes) => bytes,
-                Err(err) => {
-                    return Response {
-                        status: ResponseStatus::InternalError,
-                        message: format!("crypto_getfolderkey failed: {err}"),
-                    };
-                }
-            };
-            match self.crypto.unwrap_and_cache_folder_key(folder_id, &wrapped) {
-                Ok(()) => self.audited_response(
-                    "crypto.folder_key.cached",
-                    Some(format!("folder_id={folder_id}")),
-                    format!("folder key cached: folder_id={folder_id}"),
-                ),
-                Err(err) => Response {
                     status: ResponseStatus::InternalError,
-                    message: format!(
-                        "failed to unwrap folder key (folder_id={folder_id}): {err}"
-                    ),
-                },
+                    message: format!("crypto_getfolderkey failed: {err}"),
+                };
             }
+        };
+        match self.crypto.unwrap_and_cache_folder_key(folder_id, &wrapped) {
+            Ok(()) => self.audited_response(
+                "crypto.folder_key.cached",
+                Some(format!("folder_id={folder_id}")),
+                format!("folder key cached: folder_id={folder_id}"),
+            ),
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!("failed to unwrap folder key (folder_id={folder_id}): {err}"),
+            },
+        }
     }
 
     /// Dispatch [`Request::CryptoGetFileKey`]: same shape as
@@ -3260,67 +3285,62 @@ impl RuntimeShell {
     /// server-reported file-version `hash` is threaded into the cache so
     /// a follow-up can gate on stale entries.
     fn crypto_get_file_key(&mut self, file_id: u64) -> Response {
-            if !matches!(
-                self.crypto.effective_backend(),
-                pcloud_crypto::CryptoBackend::PclsyncCompat
-            ) {
+        if !matches!(
+            self.crypto.effective_backend(),
+            pcloud_crypto::CryptoBackend::PclsyncCompat
+        ) {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "crypto_getfilekey is only valid on a PclsyncCompat shell".to_owned(),
+            };
+        }
+        if !self.crypto.is_started() {
+            return Response {
+                status: ResponseStatus::Unauthorized,
+                message: "crypto must be unlocked to fetch a file key".to_owned(),
+            };
+        }
+        let auth_token = match self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        {
+            Some(token) => token,
+            None => {
                 return Response {
-                    status: ResponseStatus::InvalidRequest,
-                    message:
-                        "crypto_getfilekey is only valid on a PclsyncCompat shell"
-                            .to_owned(),
+                    status: ResponseStatus::Conflict,
+                    message: "crypto_getfilekey requires an authenticated session".to_owned(),
                 };
             }
-            if !self.crypto.is_started() {
+        };
+        let (hash, wrapped) = match self
+            .crypto_runtime
+            .get_file_key(auth_token.expose_secret(), file_id)
+        {
+            Ok(pair) => pair,
+            Err(err) => {
                 return Response {
-                    status: ResponseStatus::Unauthorized,
-                    message: "crypto must be unlocked to fetch a file key".to_owned(),
-                };
-            }
-            let auth_token = match self
-                .auth
-                .snapshot()
-                .auth_token
-                .as_ref()
-                .map(SecretString::clone_secret)
-            {
-                Some(token) => token,
-                None => {
-                    return Response {
-                        status: ResponseStatus::Conflict,
-                        message: "crypto_getfilekey requires an authenticated session"
-                            .to_owned(),
-                    };
-                }
-            };
-            let (hash, wrapped) = match self
-                .crypto_runtime
-                .get_file_key(auth_token.expose_secret(), file_id)
-            {
-                Ok(pair) => pair,
-                Err(err) => {
-                    return Response {
-                        status: ResponseStatus::InternalError,
-                        message: format!("crypto_getfilekey failed: {err}"),
-                    };
-                }
-            };
-            match self
-                .crypto
-                .unwrap_and_cache_file_key(file_id, hash, &wrapped)
-            {
-                Ok(()) => self.audited_response(
-                    "crypto.file_key.cached",
-                    Some(format!("file_id={file_id}")),
-                    format!("file key cached: file_id={file_id}"),
-                ),
-                Err(err) => Response {
                     status: ResponseStatus::InternalError,
-                    message: format!(
-                        "failed to unwrap file key (file_id={file_id}): {err}"
-                    ),
-                },
+                    message: format!("crypto_getfilekey failed: {err}"),
+                };
             }
+        };
+        match self
+            .crypto
+            .unwrap_and_cache_file_key(file_id, hash, &wrapped)
+        {
+            Ok(()) => self.audited_response(
+                "crypto.file_key.cached",
+                Some(format!("file_id={file_id}")),
+                format!("file key cached: file_id={file_id}"),
+            ),
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!("failed to unwrap file key (file_id={file_id}): {err}"),
+            },
+        }
     }
 
     /// Auto-fetch retry wrapper around

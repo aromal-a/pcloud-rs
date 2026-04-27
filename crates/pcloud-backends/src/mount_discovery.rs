@@ -249,11 +249,12 @@ impl MountDiscovery {
     #[must_use]
     pub fn current_mounts(&self) -> Vec<MountEntry> {
         let now = Instant::now();
-        if let Ok(guard) = self.cache.lock()
-            && let Some(ref cached) = *guard
-            && now.duration_since(cached.fetched_at) < self.ttl
-        {
-            return cached.entries.clone();
+        if let Ok(guard) = self.cache.lock() {
+            if let Some(ref cached) = *guard {
+                if now.duration_since(cached.fetched_at) < self.ttl {
+                    return cached.entries.clone();
+                }
+            }
         }
         let entries = read_mountinfo().unwrap_or_default();
         if let Ok(mut guard) = self.cache.lock() {

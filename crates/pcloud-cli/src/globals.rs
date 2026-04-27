@@ -368,11 +368,12 @@ impl GlobalFlags {
         // `TRACEPARENT` environment variable. Malformed values are
         // dropped silently per the documented contract (see
         // [`GlobalFlags::traceparent`]).
-        if flags.traceparent.is_none()
-            && let Ok(raw) = std::env::var("TRACEPARENT")
-            && is_well_formed_traceparent(&raw)
-        {
-            flags.traceparent = Some(raw);
+        if flags.traceparent.is_none() {
+            if let Ok(raw) = std::env::var("TRACEPARENT") {
+                if is_well_formed_traceparent(&raw) {
+                    flags.traceparent = Some(raw);
+                }
+            }
         }
 
         Ok((flags, out))

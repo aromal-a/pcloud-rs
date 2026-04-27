@@ -105,12 +105,12 @@ impl CliConfig {
                 // migrated: read from the old location so `pcloudc` does
                 // not suddenly "forget" the existing config. New writes
                 // still land at `xdg` once the file is re-saved.
-                if !xdg.exists()
-                    && let Some(legacy) = pcloud_config::paths::PcloudDirs::legacy_linux_home()
-                {
-                    let legacy_file = legacy.join("config.toml");
-                    if legacy_file.exists() {
-                        return legacy_file;
+                if !xdg.exists() {
+                    if let Some(legacy) = pcloud_config::paths::PcloudDirs::legacy_linux_home() {
+                        let legacy_file = legacy.join("config.toml");
+                        if legacy_file.exists() {
+                            return legacy_file;
+                        }
                     }
                 }
                 xdg

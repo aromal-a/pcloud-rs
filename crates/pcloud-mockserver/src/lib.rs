@@ -472,10 +472,10 @@ fn auth_token_from(req: &ParsedRequest) -> Option<String> {
         return Some(t.clone());
     }
     // Also accept Authorization: Bearer ...
-    if let Some(h) = req.headers.get("authorization")
-        && let Some(rest) = h.strip_prefix("Bearer ")
-    {
-        return Some(rest.to_owned());
+    if let Some(h) = req.headers.get("authorization") {
+        if let Some(rest) = h.strip_prefix("Bearer ") {
+            return Some(rest.to_owned());
+        }
     }
     None
 }

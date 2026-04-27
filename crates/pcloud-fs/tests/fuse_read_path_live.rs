@@ -98,18 +98,18 @@ impl MountGuard {
 
 impl Drop for MountGuard {
     fn drop(&mut self) {
-        if let Some(h) = self.handle.take()
-            && let Err(e) = h.unmount()
-        {
-            eprintln!("[fuse_read_path_live] RAII unmount failed: {e}");
-            let _ = std::process::Command::new("fusermount3")
-                .arg("-u")
-                .arg(&self.path)
-                .status();
-            let _ = std::process::Command::new("fusermount")
-                .arg("-u")
-                .arg(&self.path)
-                .status();
+        if let Some(h) = self.handle.take() {
+            if let Err(e) = h.unmount() {
+                eprintln!("[fuse_read_path_live] RAII unmount failed: {e}");
+                let _ = std::process::Command::new("fusermount3")
+                    .arg("-u")
+                    .arg(&self.path)
+                    .status();
+                let _ = std::process::Command::new("fusermount")
+                    .arg("-u")
+                    .arg(&self.path)
+                    .status();
+            }
         }
     }
 }

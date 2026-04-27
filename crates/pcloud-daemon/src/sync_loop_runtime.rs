@@ -352,11 +352,9 @@ impl RealSyncLoopRuntime {
         }
         match serde_json::to_string(&snapshot) {
             Ok(serialized) => {
-                if let Err(err) = ValuesRepository::set_string(
-                    &self.store_conn,
-                    SCHEDULER_QUEUE_KEY,
-                    &serialized,
-                ) {
+                if let Err(err) =
+                    ValuesRepository::set_string(&self.store_conn, SCHEDULER_QUEUE_KEY, &serialized)
+                {
                     log::warn!(
                         "sync loop: failed to persist {} scheduler ops: {err}",
                         snapshot.len()
@@ -609,8 +607,7 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                                             let cache_key = format!("download:{path}");
                                             self.cache.cache_page(cache_key, bytes.clone());
                                             self.cache.stage_file(path.clone(), bytes.clone());
-                                            self.filesystem
-                                                .seed_staged_file(path.clone(), bytes);
+                                            self.filesystem.seed_staged_file(path.clone(), bytes);
                                         }
                                         Err(err) => {
                                             log::warn!(
@@ -630,8 +627,7 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                                 // exceeds the wall-clock stall window
                                 // is still recognised as non-stalled
                                 // via its byte counter.
-                                self.stall_detector
-                                    .observe_bytes(path, written);
+                                self.stall_detector.observe_bytes(path, written);
                                 if self.engine.mark_transfer_completed(path) {
                                     completed += 1;
                                     // P2-b (H2): durable ack — remove
@@ -643,10 +639,8 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                                     // owning sync root so a cross-root
                                     // path collision cannot evict a
                                     // sibling root's un-acked entry.
-                                    self.engine.ack_dispatched_path(
-                                        task.operation.sync_id(),
-                                        path,
-                                    );
+                                    self.engine
+                                        .ack_dispatched_path(task.operation.sync_id(), path);
                                     // P2-d (H4): bytes transferred
                                     // count as progress; reset the
                                     // stall timer.
@@ -667,8 +661,7 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                                     &task.operation,
                                     pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
                                 );
-                                let message =
-                                    format!("{err}; recovery={:?}", decision.disposition);
+                                let message = format!("{err}; recovery={:?}", decision.disposition);
                                 if !self.engine.mark_transfer_failed(path, message) {
                                     log::warn!(
                                         "audit: mark_transfer_failed dropped for untracked transfer path={path:?}"
@@ -817,10 +810,8 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                                     // §4-sonnet M-04-S04: scope to
                                     // owning sync root to avoid
                                     // cross-root path collisions.
-                                    self.engine.ack_dispatched_path(
-                                        task.operation.sync_id(),
-                                        path,
-                                    );
+                                    self.engine
+                                        .ack_dispatched_path(task.operation.sync_id(), path);
                                     // P2-d (H4): bytes transferred →
                                     // stall timer reset on completion.
                                     self.stall_detector.mark_progress();
@@ -970,10 +961,10 @@ pub fn spawn_daemon_sync_loop(
     let token = shared_auth_token();
 
     // Seed the shared auth token with any existing auth state.
-    if let Some(existing) = auth.snapshot().auth_token.as_ref()
-        && let Ok(mut guard) = token.lock()
-    {
-        *guard = Some(existing.clone_secret());
+    if let Some(existing) = auth.snapshot().auth_token.as_ref() {
+        if let Ok(mut guard) = token.lock() {
+            *guard = Some(existing.clone_secret());
+        }
     }
 
     let runtime = RealSyncLoopRuntime::new(Arc::clone(&token), config, &db_path).map_err(|e| {
@@ -1469,8 +1460,8 @@ mod tests {
         // Borrow returns a zero-copy reference to the exact staging
         // buffer — proven by pointer identity. A `Vec` clone would
         // have a different backing address.
-        let borrowed = borrow_upload_payload(&fs, &cache, "big.bin")
-            .expect("staged payload should borrow");
+        let borrowed =
+            borrow_upload_payload(&fs, &cache, "big.bin").expect("staged payload should borrow");
         assert_eq!(borrowed.len(), FIFTY_MIB);
         let staging_ptr = fs.staged_bytes("big.bin").unwrap().as_ptr();
         assert!(
@@ -1523,17 +1514,15 @@ mod tests {
             resolve_upload_payload_len(&fs, &cache, "cache-only.bin"),
             Some(SIZE)
         );
-        let borrowed =
-            borrow_upload_payload(&fs, &cache, "cache-only.bin").expect("cache borrow");
+        let borrowed = borrow_upload_payload(&fs, &cache, "cache-only.bin").expect("cache borrow");
         assert_eq!(borrowed.len(), SIZE);
 
         let cache_ptr = cache.staging.get("cache-only.bin").unwrap().as_ptr();
         assert!(std::ptr::eq(borrowed.as_ptr(), cache_ptr));
 
-        let chunks: Vec<&[u8]> =
-            read_upload_payload_chunks(&fs, &cache, "cache-only.bin", CHUNK)
-                .unwrap()
-                .collect();
+        let chunks: Vec<&[u8]> = read_upload_payload_chunks(&fs, &cache, "cache-only.bin", CHUNK)
+            .unwrap()
+            .collect();
         // 10 MiB / 4 MiB = 2 full + 1 remainder of 2 MiB.
         assert_eq!(chunks.len(), 3);
         assert!(chunks.iter().all(|c| c.len() <= CHUNK));

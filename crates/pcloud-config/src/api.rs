@@ -264,6 +264,15 @@ impl ApiEndpoint {
                         "read_timeout_ms must be non-zero",
                     ));
                 }
+                // audit-06 H-6.1: per-endpoint composition rule.
+                // `connect_timeout` must not exceed `read_timeout` —
+                // otherwise the connect deadline would dwarf the
+                // per-frame read deadline, defeating the slowloris guard.
+                validate_timeout_composition(
+                    std::time::Duration::from_millis(self.connect_timeout_ms),
+                    std::time::Duration::from_millis(self.read_timeout_ms),
+                    None,
+                )?;
                 Ok(())
             }
         }
@@ -298,6 +307,70 @@ impl ApiEndpoint {
     }
 }
 
+/// Validate the composition `connect ≤ read ≤ total` for a transport
+/// timeout triple.
+///
+/// audit-06 H-6.1 — a misordered triple (e.g. `total_timeout < read_timeout`)
+/// causes the per-syscall read deadline to fire before the total deadline can
+/// arm, producing spurious timeout errors. Rejecting at config-load time with
+/// [`ConfigError::InvalidTimeoutComposition`] keeps the failure visible at the
+/// boundary where the operator can correct it instead of inside the hot path.
+///
+/// `total` is optional: if a config layer does not (yet) carry a total-request
+/// timeout, the composition is enforced only on the `connect ≤ read` pair.
+/// Both `connect` and `read` are still rejected if zero — that case is the
+/// caller's `validate()` responsibility for the surrounding struct.
+///
+/// # Errors
+///
+/// - `connect > read` — slowloris guard inversion.
+/// - `read > total` (when `total` is supplied) — read loop fires before
+///   the total deadline can arm.
+///
+/// # Example
+///
+/// ```
+/// use std::time::Duration;
+/// use pcloud_config::api::validate_timeout_composition;
+///
+/// // OK: 5s connect, 15s read, 60s total.
+/// validate_timeout_composition(
+///     Duration::from_secs(5),
+///     Duration::from_secs(15),
+///     Some(Duration::from_secs(60)),
+/// )
+/// .expect("well-ordered triple");
+///
+/// // Rejected: read deadline exceeds total.
+/// assert!(
+///     validate_timeout_composition(
+///         Duration::from_secs(5),
+///         Duration::from_secs(120),
+///         Some(Duration::from_secs(60)),
+///     )
+///     .is_err()
+/// );
+/// ```
+pub fn validate_timeout_composition(
+    connect: std::time::Duration,
+    read: std::time::Duration,
+    total: Option<std::time::Duration>,
+) -> Result<(), ConfigError> {
+    if connect > read {
+        return Err(ConfigError::InvalidTimeoutComposition(
+            "connect_timeout must not exceed read_timeout",
+        ));
+    }
+    if let Some(total) = total
+        && read > total
+    {
+        return Err(ConfigError::InvalidTimeoutComposition(
+            "read_timeout must not exceed total_request_timeout",
+        ));
+    }
+    Ok(())
+}
+
 /// Returns `true` when `host` is within a known-safe pCloud domain.
 ///
 /// Only `.pcloud.com` and `.pcloud.link` subdomains are trusted as API
@@ -324,10 +397,10 @@ impl ApiMode {
 
 fn parse_api_server_hint(api_server: &str) -> (String, Option<u16>) {
     let trimmed = api_server.trim();
-    if let Some((host, port)) = trimmed.rsplit_once(':')
-        && let Ok(port) = port.parse::<u16>()
-    {
-        return (host.to_owned(), Some(port));
+    if let Some((host, port)) = trimmed.rsplit_once(':') {
+        if let Ok(port) = port.parse::<u16>() {
+            return (host.to_owned(), Some(port));
+        }
     }
     (trimmed.to_owned(), None)
 }
@@ -430,5 +503,80 @@ mod tests {
         endpoint
             .validate(Environment::Production)
             .expect("tls must be permitted in production");
+    }
+
+    // ── audit-06 H-6.1: timeout composition validation ───────────────────
+
+    #[test]
+    fn timeout_composition_accepts_well_ordered_triple() {
+        use std::time::Duration;
+        super::validate_timeout_composition(
+            Duration::from_secs(5),
+            Duration::from_secs(15),
+            Some(Duration::from_secs(60)),
+        )
+        .expect("connect <= read <= total must pass");
+    }
+
+    #[test]
+    fn timeout_composition_accepts_equal_pairs() {
+        use std::time::Duration;
+        super::validate_timeout_composition(
+            Duration::from_secs(15),
+            Duration::from_secs(15),
+            Some(Duration::from_secs(15)),
+        )
+        .expect("equality is allowed");
+    }
+
+    #[test]
+    fn timeout_composition_rejects_connect_gt_read() {
+        use std::time::Duration;
+        let err = super::validate_timeout_composition(
+            Duration::from_secs(30),
+            Duration::from_secs(15),
+            None,
+        )
+        .expect_err("connect > read must be rejected");
+        assert!(matches!(
+            err,
+            ConfigError::InvalidTimeoutComposition(msg) if msg.contains("connect_timeout")
+        ));
+    }
+
+    #[test]
+    fn timeout_composition_rejects_read_gt_total() {
+        use std::time::Duration;
+        let err = super::validate_timeout_composition(
+            Duration::from_secs(5),
+            Duration::from_secs(120),
+            Some(Duration::from_secs(60)),
+        )
+        .expect_err("read > total must be rejected");
+        assert!(matches!(
+            err,
+            ConfigError::InvalidTimeoutComposition(msg) if msg.contains("read_timeout")
+        ));
+    }
+
+    #[test]
+    fn timeout_composition_total_optional_skips_upper_check() {
+        use std::time::Duration;
+        // No total => only connect <= read is enforced.
+        super::validate_timeout_composition(Duration::from_secs(5), Duration::from_secs(120), None)
+            .expect("missing total must skip the read<=total check");
+    }
+
+    #[test]
+    fn validate_endpoint_rejects_inverted_connect_read_pair() {
+        // Building a misconfigured endpoint via the public surface and
+        // validating it must surface the typed composition error.
+        let mut endpoint = ApiEndpoint::secure_defaults(Environment::Production);
+        endpoint.connect_timeout_ms = 30_000; // 30s connect
+        endpoint.read_timeout_ms = 5_000; //  5s read   (inverted)
+        let err = endpoint
+            .validate(Environment::Production)
+            .expect_err("inverted timeout pair must be rejected at validate()");
+        assert!(matches!(err, ConfigError::InvalidTimeoutComposition(_)));
     }
 }
