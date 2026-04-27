@@ -301,7 +301,11 @@ impl IncrementalScanTracker {
 /// Returns the first I/O error encountered while reading directory entries.
 /// Entries that cannot be `stat(2)`'d individually are skipped with a
 /// `log::warn!` rather than aborting the walk.
-pub fn walk_local_tree<F>(root: &std::path::Path, max_depth: usize, visitor: &mut F) -> std::io::Result<()>
+pub fn walk_local_tree<F>(
+    root: &std::path::Path,
+    max_depth: usize,
+    visitor: &mut F,
+) -> std::io::Result<()>
 where
     F: FnMut(&std::path::Path, bool /* is_dir */),
 {
@@ -352,7 +356,11 @@ where
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {
-                        log::warn!("walk_local_tree: readdir entry error in {}: {}", path.display(), e);
+                        log::warn!(
+                            "walk_local_tree: readdir entry error in {}: {}",
+                            path.display(),
+                            e
+                        );
                         continue;
                     }
                 };
@@ -378,7 +386,11 @@ where
                 let entry = match entry {
                     Ok(e) => e,
                     Err(e) => {
-                        log::warn!("walk_local_tree: readdir entry error in {}: {}", path.display(), e);
+                        log::warn!(
+                            "walk_local_tree: readdir entry error in {}: {}",
+                            path.display(),
+                            e
+                        );
                         continue;
                     }
                 };

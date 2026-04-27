@@ -92,8 +92,7 @@ fn mount_appears_in_getmntinfo(path: &Path) -> bool {
     let needle = canonical.to_string_lossy();
     // The payload uses escape_mountinfo encoding; check both the raw and
     // escaped forms to be tolerant of spaces in temp dir names.
-    payload.contains(needle.as_ref())
-        || payload.contains(&needle.replace(' ', "\\040"))
+    payload.contains(needle.as_ref()) || payload.contains(&needle.replace(' ', "\\040"))
 }
 
 fn should_skip_mount_error(err: &str) -> bool {
@@ -130,8 +129,8 @@ impl FileUploadBackend for RecordingUploadBackend {
         name: &str,
         staging_file: &Path,
     ) -> Result<(), WritePathError> {
-        let bytes = std::fs::read(staging_file)
-            .map_err(|e| WritePathError::Upload(e.to_string()))?;
+        let bytes =
+            std::fs::read(staging_file).map_err(|e| WritePathError::Upload(e.to_string()))?;
         self.uploads
             .lock()
             .unwrap()
@@ -183,7 +182,10 @@ fn readdir_root_via_fuset() {
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: true, ..MountOptions::default() },
+        MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -236,11 +238,7 @@ fn readdir_nested_via_fuset() {
     let _fuse_lock = fuse_serial_lock();
 
     let folder = Arc::new(MockFolderBackend::new());
-    folder.insert_dir(
-        "/",
-        1,
-        vec![("Projects", true, Some(2), None)],
-    );
+    folder.insert_dir("/", 1, vec![("Projects", true, Some(2), None)]);
     folder.insert_dir(
         "/Projects",
         2,
@@ -249,7 +247,11 @@ fn readdir_nested_via_fuset() {
             ("readme.md", false, None, Some(50)),
         ],
     );
-    folder.insert_dir("/Projects/alpha", 3, vec![("main.rs", false, None, Some(51))]);
+    folder.insert_dir(
+        "/Projects/alpha",
+        3,
+        vec![("main.rs", false, None, Some(51))],
+    );
 
     let adapter = ProtoFuseAdapter::new(Arc::clone(&folder), AdapterOptions::default());
     let mnt = tempfile::tempdir().expect("mount tempdir");
@@ -258,7 +260,10 @@ fn readdir_nested_via_fuset() {
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: true, ..MountOptions::default() },
+        MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -327,15 +332,21 @@ fn read_small_file_via_fuset() {
     let expected = b"hello from pcloud-rs fuse-t test";
     files.insert_file(42, expected.to_vec());
 
-    let adapter =
-        ProtoFuseAdapter::with_file_backend(Arc::clone(&folder), Arc::clone(&files), AdapterOptions::default());
+    let adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    );
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let svc = MountService::new();
 
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: true, ..MountOptions::default() },
+        MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -380,15 +391,21 @@ fn read_large_file_via_fuset() {
     let expected: Vec<u8> = (0u8..=255).cycle().take(256 * 1024).collect();
     files.insert_file(99, expected.clone());
 
-    let adapter =
-        ProtoFuseAdapter::with_file_backend(Arc::clone(&folder), Arc::clone(&files), AdapterOptions::default());
+    let adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    );
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let svc = MountService::new();
 
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: true, ..MountOptions::default() },
+        MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -440,15 +457,21 @@ fn getattr_via_fuset() {
     let files = Arc::new(MockFileBackend::new());
     files.insert_file(77, b"content".to_vec());
 
-    let adapter =
-        ProtoFuseAdapter::with_file_backend(Arc::clone(&folder), Arc::clone(&files), AdapterOptions::default());
+    let adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    );
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let svc = MountService::new();
 
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: true, ..MountOptions::default() },
+        MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -519,9 +542,12 @@ fn write_create_fsync_via_fuset() {
         },
     ));
 
-    let adapter =
-        ProtoFuseAdapter::with_file_backend(Arc::clone(&folder), Arc::clone(&files), AdapterOptions::default())
-            .with_write_path(Arc::clone(&writer));
+    let adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    )
+    .with_write_path(Arc::clone(&writer));
 
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let svc = MountService::new();
@@ -529,7 +555,10 @@ fn write_create_fsync_via_fuset() {
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: false, ..MountOptions::default() },
+        MountOptions {
+            read_only: false,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -623,9 +652,12 @@ fn unlink_via_fuset() {
         },
     ));
 
-    let adapter =
-        ProtoFuseAdapter::with_file_backend(Arc::clone(&folder), Arc::clone(&files), AdapterOptions::default())
-            .with_write_path(Arc::clone(&writer));
+    let adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    )
+    .with_write_path(Arc::clone(&writer));
 
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let svc = MountService::new();
@@ -633,7 +665,10 @@ fn unlink_via_fuset() {
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: false, ..MountOptions::default() },
+        MountOptions {
+            read_only: false,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -697,9 +732,12 @@ fn rename_via_fuset() {
         },
     ));
 
-    let adapter =
-        ProtoFuseAdapter::with_file_backend(Arc::clone(&folder), Arc::clone(&files), AdapterOptions::default())
-            .with_write_path(Arc::clone(&writer));
+    let adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    )
+    .with_write_path(Arc::clone(&writer));
 
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let svc = MountService::new();
@@ -707,7 +745,10 @@ fn rename_via_fuset() {
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: false, ..MountOptions::default() },
+        MountOptions {
+            read_only: false,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -732,7 +773,9 @@ fn rename_via_fuset() {
     // The rename must be recorded.
     let renames = upload_backend.renames.lock().unwrap();
     assert!(
-        renames.iter().any(|(from, to)| from.contains("alpha") && to.contains("beta")),
+        renames
+            .iter()
+            .any(|(from, to)| from.contains("alpha") && to.contains("beta")),
         "rename must be recorded in upload backend, got: {renames:?}"
     );
     drop(renames);
@@ -756,8 +799,11 @@ fn mkdir_rmdir_via_fuset() {
     folder.insert_dir("/", 1, vec![]);
     let files = Arc::new(MockFileBackend::new());
 
-    let adapter =
-        ProtoFuseAdapter::with_file_backend(Arc::clone(&folder), Arc::clone(&files), AdapterOptions::default());
+    let adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    );
 
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let svc = MountService::new();
@@ -765,7 +811,10 @@ fn mkdir_rmdir_via_fuset() {
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: false, ..MountOptions::default() },
+        MountOptions {
+            read_only: false,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -825,7 +874,10 @@ fn statfs_via_fuset() {
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: true, ..MountOptions::default() },
+        MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -847,13 +899,28 @@ fn statfs_via_fuset() {
     };
 
     if let Some(st) = result {
-        assert!(st.f_bsize > 0, "block size must be positive, got {}", st.f_bsize);
-        assert!(st.f_blocks > 0, "total blocks must be positive, got {}", st.f_blocks);
-        assert!(st.f_namemax > 0, "namemax must be positive, got {}", st.f_namemax);
+        assert!(
+            st.f_bsize > 0,
+            "block size must be positive, got {}",
+            st.f_bsize
+        );
+        assert!(
+            st.f_blocks > 0,
+            "total blocks must be positive, got {}",
+            st.f_blocks
+        );
+        assert!(
+            st.f_namemax > 0,
+            "namemax must be positive, got {}",
+            st.f_namemax
+        );
         // The thunk reports 1 TiB total, 512 GiB free.
         let expected_total_blocks = (1u64 << 40) / 4096;
         let expected_free_blocks = (512u64 << 30) / 4096;
-        assert_eq!(st.f_blocks as u64, expected_total_blocks.min(u32::MAX as u64));
+        assert_eq!(
+            st.f_blocks as u64,
+            expected_total_blocks.min(u32::MAX as u64)
+        );
         assert_eq!(st.f_bfree as u64, expected_free_blocks.min(u32::MAX as u64));
     }
 
@@ -877,8 +944,11 @@ fn xattr_returns_enoattr_not_crash() {
     let files = Arc::new(MockFileBackend::new());
     files.insert_file(1, b"data".to_vec());
 
-    let adapter =
-        ProtoFuseAdapter::with_file_backend(Arc::clone(&folder), Arc::clone(&files), AdapterOptions::default());
+    let adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    );
 
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let svc = MountService::new();
@@ -886,7 +956,10 @@ fn xattr_returns_enoattr_not_crash() {
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: true, ..MountOptions::default() },
+        MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -915,11 +988,19 @@ fn xattr_returns_enoattr_not_crash() {
             0,
         )
     };
-    assert!(rc < 0, "getxattr for non-existent xattr must return < 0, got {rc}");
+    assert!(
+        rc < 0,
+        "getxattr for non-existent xattr must return < 0, got {rc}"
+    );
 
     // listxattr must return 0 (empty list), not crash.
     let list_rc = unsafe {
-        libc::listxattr(path_cstr.as_ptr(), buf.as_mut_ptr() as *mut libc::c_char, buf.len(), 0)
+        libc::listxattr(
+            path_cstr.as_ptr(),
+            buf.as_mut_ptr() as *mut libc::c_char,
+            buf.len(),
+            0,
+        )
     };
     assert!(
         list_rc >= 0,
@@ -954,7 +1035,10 @@ fn backend_env_macfuse_probe() {
     match mount.probe_supported() {
         Ok(()) => {}
         Err(MountError::Unsupported(hint)) => {
-            assert!(hint.contains("macFUSE"), "hint must mention macFUSE: {hint}");
+            assert!(
+                hint.contains("macFUSE"),
+                "hint must mention macFUSE: {hint}"
+            );
         }
         Err(other) => panic!("unexpected error: {other:?}"),
     }
@@ -975,13 +1059,7 @@ fn remount_cycle_preserves_adapter_state() {
     let _fuse_lock = fuse_serial_lock();
 
     let folder = Arc::new(MockFolderBackend::new());
-    folder.insert_dir(
-        "/",
-        1,
-        vec![
-            ("persistent.txt", false, None, Some(77)),
-        ],
-    );
+    folder.insert_dir("/", 1, vec![("persistent.txt", false, None, Some(77))]);
     let files = Arc::new(MockFileBackend::new());
     files.insert_file(77, b"persisted across remount".to_vec());
 
@@ -989,13 +1067,19 @@ fn remount_cycle_preserves_adapter_state() {
 
     // First mount.
     let mnt1 = tempfile::tempdir().expect("mount tempdir 1");
-    let adapter1 =
-        ProtoFuseAdapter::with_file_backend(Arc::clone(&folder), Arc::clone(&files), AdapterOptions::default());
+    let adapter1 = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    );
 
     let handle1 = match svc.mount(
         mnt1.path(),
         adapter1,
-        MountOptions { read_only: true, ..MountOptions::default() },
+        MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -1020,13 +1104,19 @@ fn remount_cycle_preserves_adapter_state() {
 
     // Second mount — same backends, different tempdir.
     let mnt2 = tempfile::tempdir().expect("mount tempdir 2");
-    let adapter2 =
-        ProtoFuseAdapter::with_file_backend(Arc::clone(&folder), Arc::clone(&files), AdapterOptions::default());
+    let adapter2 = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    );
 
     let handle2 = match svc.mount(
         mnt2.path(),
         adapter2,
-        MountOptions { read_only: true, ..MountOptions::default() },
+        MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -1049,7 +1139,10 @@ fn remount_cycle_preserves_adapter_state() {
     };
     handle2.unmount().expect("unmount second mount");
 
-    assert_eq!(got1, b"persisted across remount", "first read must match expected");
+    assert_eq!(
+        got1, b"persisted across remount",
+        "first read must match expected"
+    );
     assert_eq!(got1, got2, "both remounts must return identical content");
 }
 
@@ -1075,7 +1168,10 @@ fn orphan_detection_finds_active_fuset_mount() {
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: true, ..MountOptions::default() },
+        MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -1094,10 +1190,9 @@ fn orphan_detection_finds_active_fuset_mount() {
     let orphans = detect_orphans(&reader, &[]).expect("detect_orphans must not error");
 
     let mnt_canonical = mnt.path().canonicalize().ok();
-    let found = orphans.iter().any(|o| {
-        Some(&o.mount_point) == mnt_canonical.as_ref()
-            || o.mount_point == mnt.path()
-    });
+    let found = orphans
+        .iter()
+        .any(|o| Some(&o.mount_point) == mnt_canonical.as_ref() || o.mount_point == mnt.path());
     assert!(
         found,
         "the active fuse-t mount must appear as an orphan when daemon knows no mounts; \
@@ -1130,12 +1225,25 @@ fn concurrent_readers_via_fuset() {
     for i in 0..FILE_COUNT {
         let name = format!("file{i}.txt");
         dir_entries.push((name.clone(), false, None, Some((100 + i) as u64)));
-        files.insert_file((100 + i) as u64, format!("content of file {i}").into_bytes());
+        files.insert_file(
+            (100 + i) as u64,
+            format!("content of file {i}").into_bytes(),
+        );
     }
-    folder.insert_dir("/", 1, dir_entries.iter().map(|(n, d, c, s)| (n.as_str(), *d, *c, *s)).collect());
+    folder.insert_dir(
+        "/",
+        1,
+        dir_entries
+            .iter()
+            .map(|(n, d, c, s)| (n.as_str(), *d, *c, *s))
+            .collect(),
+    );
 
-    let adapter =
-        ProtoFuseAdapter::with_file_backend(Arc::clone(&folder), Arc::clone(&files), AdapterOptions::default());
+    let adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    );
 
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let svc = MountService::new();
@@ -1143,7 +1251,10 @@ fn concurrent_readers_via_fuset() {
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: true, ..MountOptions::default() },
+        MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -1231,9 +1342,12 @@ fn full_lifecycle_via_fuset() {
         },
     ));
 
-    let adapter =
-        ProtoFuseAdapter::with_file_backend(Arc::clone(&folder), Arc::clone(&files), AdapterOptions::default())
-            .with_write_path(Arc::clone(&writer));
+    let adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    )
+    .with_write_path(Arc::clone(&writer));
 
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let svc = MountService::new();
@@ -1242,7 +1356,10 @@ fn full_lifecycle_via_fuset() {
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: false, ..MountOptions::default() },
+        MountOptions {
+            read_only: false,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -1272,8 +1389,14 @@ fn full_lifecycle_via_fuset() {
     let root_entries: Vec<String> = skip_on_io!(std::fs::read_dir(mnt.path()))
         .filter_map(|e| e.ok().map(|d| d.file_name().to_string_lossy().into_owned()))
         .collect();
-    assert!(root_entries.iter().any(|e| e == "docs"), "root must have docs");
-    assert!(root_entries.iter().any(|e| e == "readme.txt"), "root must have readme.txt");
+    assert!(
+        root_entries.iter().any(|e| e == "docs"),
+        "root must have docs"
+    );
+    assert!(
+        root_entries.iter().any(|e| e == "readme.txt"),
+        "root must have readme.txt"
+    );
 
     // Step 3: read file.
     let readme = skip_on_io!(std::fs::read(mnt.path().join("readme.txt")));
@@ -1289,7 +1412,11 @@ fn full_lifecycle_via_fuset() {
     // Step 6: fsync.
     {
         use std::io::Write;
-        let mut f = skip_on_io!(std::fs::OpenOptions::new().write(true).open(mnt.path().join("new.txt")));
+        let mut f = skip_on_io!(
+            std::fs::OpenOptions::new()
+                .write(true)
+                .open(mnt.path().join("new.txt"))
+        );
         skip_on_io!(f.flush());
         skip_on_io!(f.sync_all());
     }
@@ -1309,7 +1436,9 @@ fn full_lifecycle_via_fuset() {
     // Post-conditions on the upload backend.
     let uploads = upload_backend.uploads.lock().unwrap();
     assert!(
-        uploads.iter().any(|(_, name, b)| name == "new.txt" && b == b"new content"),
+        uploads
+            .iter()
+            .any(|(_, name, b)| name == "new.txt" && b == b"new content"),
         "write+fsync must produce an upload record, got: {uploads:?}"
     );
 }
@@ -1347,7 +1476,10 @@ fn teardown_does_not_race_reaper_audit06() {
     let handle = match svc.mount(
         mnt.path(),
         adapter,
-        MountOptions { read_only: false, ..MountOptions::default() },
+        MountOptions {
+            read_only: false,
+            ..MountOptions::default()
+        },
     ) {
         Ok(h) => h,
         Err(err) if should_skip_mount_error(&err.to_string()) => return,
@@ -1356,5 +1488,7 @@ fn teardown_does_not_race_reaper_audit06() {
 
     // Immediate unmount exercises the teardown path which calls
     // deregister_active_session before fuse_session_destroy.
-    handle.unmount().expect("unmount must succeed without segfault");
+    handle
+        .unmount()
+        .expect("unmount must succeed without segfault");
 }

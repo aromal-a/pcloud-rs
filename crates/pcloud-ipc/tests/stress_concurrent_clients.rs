@@ -128,10 +128,13 @@ fn stress_concurrent_ipc_clients_do_not_leak_or_panic() {
                 let response = match client.send(&sp, &req) {
                     Err(e) if e.to_string().contains("os error 57") => {
                         std::thread::sleep(Duration::from_millis(2));
-                        client.send(&sp, &req)
-                            .map_err(|e2| format!("client {client_idx} req {req_idx} (retry): {e2}"))?
+                        client.send(&sp, &req).map_err(|e2| {
+                            format!("client {client_idx} req {req_idx} (retry): {e2}")
+                        })?
                     }
-                    result => result.map_err(|e| format!("client {client_idx} req {req_idx}: {e}"))?,
+                    result => {
+                        result.map_err(|e| format!("client {client_idx} req {req_idx}: {e}"))?
+                    }
                 };
                 if response.status != ResponseStatus::Ok {
                     return Err(format!(

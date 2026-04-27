@@ -1163,12 +1163,7 @@ mod tests {
         let module_path = "/nonexistent/pkcs11/module-for-pcloud-kms-tests.so";
         #[cfg(target_os = "macos")]
         let module_path = "/nonexistent/pkcs11/module-for-pcloud-kms-tests.dylib";
-        let res = Pkcs11Hsm::new_from_module(
-            module_path,
-            0,
-            SecretString::new("0000"),
-            "kek",
-        );
+        let res = Pkcs11Hsm::new_from_module(module_path, 0, SecretString::new("0000"), "kek");
         match res {
             Err(KmsError::Unreachable(_))
             | Err(KmsError::Other(_))

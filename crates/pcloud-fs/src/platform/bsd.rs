@@ -346,7 +346,10 @@ fn escape_mountinfo(input: &str) -> String {
 // ---------------------------------------------------------------------------
 
 #[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
-mod reaper {
+pub mod reaper {
+    use std::collections::BTreeSet;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
     use std::sync::OnceLock;
     use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -354,21 +357,112 @@ mod reaper {
     static SIGNAL_HANDLER_INSTALLED: OnceLock<()> = OnceLock::new();
     static REAPER_INSTALLED: OnceLock<()> = OnceLock::new();
 
+    /// Process-wide registry of BSD mountpoints that the daemon currently
+    /// owns. Mirrors the Linux `ACTIVE_MOUNTS` set
+    /// (`platform/linux.rs::registry`); the reaper drains this set on
+    /// SIGTERM/SIGINT and issues `libc::unmount(path, MNT_FORCE)` per
+    /// entry so a process abort or service stop does not leave a stale
+    /// kernel mount that the operator must clean up by hand.
+    ///
+    /// Audit-06 stream E (bd-xplat-bsd, CLAUDE.md "Signal-driven mount
+    /// cleanup posture"): until a real FreeBSD libfuse2 mount path
+    /// lands the registry stays empty in production, but the wiring
+    /// is now in place so the moment the mount path lands, register
+    /// + reap come for free without a second audit pass.
+    static ACTIVE_MOUNTS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
+
+    fn registry() -> &'static Mutex<BTreeSet<PathBuf>> {
+        ACTIVE_MOUNTS.get_or_init(|| Mutex::new(BTreeSet::new()))
+    }
+
+    /// Canonicalise a mount path to a stable key. Mirrors the Linux
+    /// `canonical_key` derivation so register/unregister round-trip
+    /// even when the path no longer exists (mid-teardown).
+    fn canonical_key(path: &Path) -> PathBuf {
+        if let Ok(c) = std::fs::canonicalize(path) {
+            return c;
+        }
+        let abs = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or_else(|_| path.to_path_buf())
+        };
+        let mut normalised = PathBuf::new();
+        for comp in abs.components() {
+            normalised.push(comp.as_os_str());
+        }
+        normalised
+    }
+
+    /// Register `path` in the BSD active-mount set. Idempotent on the
+    /// canonical key; a double-register logs `error!` (lifecycle bug).
+    pub fn register_mount(path: &Path) {
+        let key = canonical_key(path);
+        if let Ok(mut guard) = registry().lock() {
+            if !guard.insert(key) {
+                log::error!(
+                    "ACTIVE_MOUNTS (BSD) double-register: {path:?}; \
+                     this indicates a mount lifecycle bug"
+                );
+            }
+        }
+    }
+
+    /// Remove `path` from the active-mount set. Logs `error!` on miss.
+    pub fn unregister_mount(path: &Path) {
+        let key = canonical_key(path);
+        if let Ok(mut guard) = registry().lock() {
+            if !guard.remove(&key) {
+                log::error!(
+                    "ACTIVE_MOUNTS (BSD) unregister miss: {path:?} (key={key:?}); \
+                     unbalanced mount/unmount lifecycle bug"
+                );
+            }
+        }
+    }
+
+    /// Snapshot the current registry. Test-only helper that lets unit
+    /// tests assert pre/post state around the reaper without exposing
+    /// the `Mutex<BTreeSet<_>>` directly.
+    #[cfg(test)]
+    pub(super) fn snapshot_registry() -> Vec<PathBuf> {
+        registry()
+            .lock()
+            .map(|g| g.iter().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// Returns `true` when SIGTERM or SIGINT has been received.
     #[allow(dead_code)]
     pub fn shutdown_requested() -> bool {
         SHUTDOWN_REQUESTED.load(Ordering::Relaxed)
     }
 
+    /// Test-only: simulate a SIGTERM by flipping the shutdown flag and
+    /// invoking the reap routine inline so unit tests can assert that
+    /// the registry is drained without spawning a thread or sending a
+    /// real signal.
+    #[cfg(test)]
+    pub(super) fn force_reap_for_tests() {
+        SHUTDOWN_REQUESTED.store(true, Ordering::Release);
+        reap_all_mounts();
+    }
+
     extern "C" fn signal_trampoline(_sig: libc::c_int) {
         SHUTDOWN_REQUESTED.store(true, Ordering::Relaxed);
     }
 
-    /// Install BSD signal handler and reaper thread stubs.
+    /// Install BSD signal handler and reaper thread.
     ///
-    /// Unlike Linux, BSD has no kernel (un)mount wired yet; the reaper
-    /// here only logs a warning on signal arrival so operators see the
-    /// event. Full unmount cleanup is tracked under `bd-xplat-bsd`.
+    /// Audit-06 stream E (bd-xplat-bsd): the reaper now drains a
+    /// process-wide [`ACTIVE_MOUNTS`] registry and issues
+    /// `libc::unmount(path, MNT_FORCE)` per entry, mirroring the Linux
+    /// `umount2(MNT_DETACH)` reaper. Production effect is gated on
+    /// the registry being populated by a real BSD mount path
+    /// (`bd-xplat-bsd`); the wiring is in place so it activates the
+    /// moment that lands.
     ///
     /// M-5.1.
     pub fn install_bsd_signal_reaper() {
@@ -404,21 +498,64 @@ mod reaper {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(200));
             if SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
-                // TIER-3 (pcloud-rs-ncx.29): BSD mount cleanup is
-                // scaffolded-only. When `bd-xplat-bsd` lands a real
-                // FreeBSD kernel mount, this body must drain
-                // ACTIVE_MOUNTS and issue `libc::unmount(path,
-                // libc::MNT_FORCE)` per-entry, mirroring the Linux
-                // `umount2(MNT_DETACH)` reaper in `platform/linux.rs`.
-                // Until then we only log so operators can observe the
-                // signal arrival — behaviourally a no-op on the
-                // mount registry (none exists on BSD yet).
-                log::warn!(
-                    "pcloud-fs (BSD): shutdown signal received; \
-                     BSD kernel mount cleanup not yet implemented (bd-xplat-bsd, \
-                     Tier-3 per CLAUDE.md)"
-                );
+                reap_all_mounts();
                 return;
+            }
+        }
+    }
+
+    /// Drain the active-mount registry and issue
+    /// `libc::unmount(path, MNT_FORCE)` per entry. Logs at `warn!` on
+    /// each individual `unmount` failure so an operator can act, but
+    /// continues draining so a single hung mount cannot hold up the
+    /// rest of the process exit.
+    ///
+    /// Note: live-verified `unmount(2)` semantics on real BSD hardware
+    /// are out of scope (hardware-bound, tracked under bd-xplat-bsd).
+    /// The unit test in this module simulates a registered mount and
+    /// asserts the registry empties after `force_reap_for_tests`; the
+    /// `unmount(2)` syscall itself returns `ENOENT` for the simulated
+    /// path and we tolerate that error by design (the test does not
+    /// assert any kernel side-effect).
+    fn reap_all_mounts() {
+        let paths: Vec<PathBuf> = registry()
+            .lock()
+            .map(|g| g.iter().cloned().collect())
+            .unwrap_or_default();
+        if paths.is_empty() {
+            log::warn!(
+                "pcloud-fs (BSD): shutdown signal received; \
+                 ACTIVE_MOUNTS is empty (no live mounts to reap)"
+            );
+            return;
+        }
+        log::warn!(
+            "pcloud-fs (BSD): shutdown signal received; \
+             reaping {} active mount(s) via libc::unmount(MNT_FORCE)",
+            paths.len()
+        );
+        for path in paths {
+            if let Ok(c) = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()) {
+                // SAFETY: `unmount(2)` is a direct syscall taking a
+                // NUL-terminated path and a flags integer. `c` owns the
+                // path bytes for the duration of the call. `MNT_FORCE`
+                // requests the kernel to detach even if there are
+                // open file references (matches the Linux
+                // `MNT_DETACH` semantics). The flag value is
+                // architecture-stable across the BSD targets we
+                // gate on.
+                let rc = unsafe { libc::unmount(c.as_ptr(), libc::MNT_FORCE) };
+                if rc != 0 {
+                    let e = std::io::Error::last_os_error();
+                    log::warn!(
+                        "pcloud-fs (BSD) reaper: unmount({}) failed: {}",
+                        path.display(),
+                        e
+                    );
+                }
+            }
+            if let Ok(mut guard) = registry().lock() {
+                guard.remove(&path);
             }
         }
     }
@@ -448,5 +585,46 @@ mod tests {
 
         // probe_supported is platform-policy; we only assert it returns.
         let _ = plat.probe_supported();
+    }
+
+    /// Audit-06 stream E (bd-xplat-bsd, CLAUDE.md "Signal-driven mount
+    /// cleanup posture"): simulate a registered mount, invoke the
+    /// reaper inline, and assert that the registry is drained. Live
+    /// `unmount(2)` against real BSD hardware is out of scope (the
+    /// reaper internally tolerates a non-zero return for the simulated
+    /// path); the contract this test enforces is the in-process
+    /// registry drain.
+    #[test]
+    fn reaper_drains_registry_on_simulated_signal() {
+        let path = std::path::PathBuf::from("/tmp/__pcloud_bsd_reaper_smoke__");
+        // The file does not need to exist for register_mount to
+        // accept it: canonical_key falls back to component
+        // normalisation when canonicalize fails.
+        super::reaper::register_mount(&path);
+
+        // Confirm the registry now contains the path. We look for any
+        // suffix match because canonical_key may have rewritten the
+        // path through CWD / canonicalize.
+        let before = super::reaper::snapshot_registry();
+        assert!(
+            before
+                .iter()
+                .any(|p| p.ends_with("__pcloud_bsd_reaper_smoke__")),
+            "expected registered mount in BSD ACTIVE_MOUNTS, got {before:?}"
+        );
+
+        // Simulate SIGTERM. The reaper internally calls
+        // `libc::unmount(MNT_FORCE)` — this returns ENOENT for the
+        // simulated path; we tolerate that and assert only the
+        // registry is empty afterwards.
+        super::reaper::force_reap_for_tests();
+
+        let after = super::reaper::snapshot_registry();
+        assert!(
+            !after
+                .iter()
+                .any(|p| p.ends_with("__pcloud_bsd_reaper_smoke__")),
+            "expected registry drained after reap, got {after:?}"
+        );
     }
 }

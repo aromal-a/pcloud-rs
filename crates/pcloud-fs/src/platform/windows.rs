@@ -794,8 +794,8 @@ extern "system" fn cb_get_security_by_name(
 /// SDDL path is untested in Linux CI.
 fn build_current_user_security_descriptor() -> Result<Vec<u8>, ()> {
     use windows::Win32::Foundation::{HLOCAL, LocalFree};
-    use windows::Win32::Security::PSID;
     use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
+    use windows::Win32::Security::PSID;
     use windows::Win32::Security::{
         GetTokenInformation, PSECURITY_DESCRIPTOR, SID_AND_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
         TokenUser,
@@ -1929,8 +1929,11 @@ fn errno_to_status(errno: i32) -> NTSTATUS {
 /// The reaper here ensures we do not silently swallow termination events
 /// on Windows the way we do on Linux.
 pub mod reaper {
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::Mutex;
     use std::sync::OnceLock;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
     /// Set to `true` by the Ctrl-C handler; polled by [`windows_reaper_main`].
     static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -1940,6 +1943,97 @@ pub mod reaper {
 
     /// Ensures the reaper thread is spawned at most once per process.
     static REAPER_INSTALLED: OnceLock<()> = OnceLock::new();
+
+    /// Monotonic registration id, used so that two mounts at the same
+    /// path (sequential remount, or a hand-edited path collision) cannot
+    /// stomp each other in the registry.
+    static NEXT_REGISTRATION_ID: AtomicU64 = AtomicU64::new(1);
+
+    /// Action invoked by the reaper for a registered mount. Wraps the
+    /// `FspFileSystemStopDispatcher` + `FspFileSystemDelete` sequence
+    /// behind a `Send + 'static` boxed closure so the registry does not
+    /// expose raw `*mut c_void` WinFSP pointers as part of its public
+    /// surface. `FnMut` so the reaper can run it once per drain pass and
+    /// the closure can null its captured pointer to make a second drain
+    /// idempotent.
+    pub type StopDispatcher = Box<dyn FnMut() + Send + 'static>;
+
+    struct RegistryEntry {
+        path: PathBuf,
+        stop: StopDispatcher,
+    }
+
+    /// Process-wide registry of WinFSP mounts owned by this daemon.
+    /// Keyed by a monotonic registration id (not by path) so two mounts
+    /// at the same path cannot stomp each other.
+    ///
+    /// Audit-06 stream E (bd-xplat-windows, CLAUDE.md "Signal-driven
+    /// mount cleanup posture"): the reaper drains this on Ctrl-C /
+    /// service-stop and invokes the stored stop-dispatcher closure per
+    /// entry, mirroring the Linux `umount2(MNT_DETACH)` reaper. Live
+    /// verification on real Windows hardware is hardware-bound and
+    /// tracked under bd-xplat-windows; the in-process drain contract is
+    /// covered by unit test below.
+    static ACTIVE_MOUNTS: OnceLock<Mutex<HashMap<u64, RegistryEntry>>> = OnceLock::new();
+
+    fn registry() -> &'static Mutex<HashMap<u64, RegistryEntry>> {
+        ACTIVE_MOUNTS.get_or_init(|| Mutex::new(HashMap::new()))
+    }
+
+    /// Register a WinFSP mount. Returns a registration id that the
+    /// caller MUST pass to [`unregister_mount`] in `MountHandle::Drop`
+    /// so the registry does not retain stop-dispatcher closures past
+    /// the lifetime of the mount they wrap. The registry takes
+    /// ownership of `stop`.
+    pub fn register_mount(path: &Path, stop: StopDispatcher) -> u64 {
+        let id = NEXT_REGISTRATION_ID.fetch_add(1, Ordering::AcqRel);
+        if let Ok(mut guard) = registry().lock() {
+            guard.insert(
+                id,
+                RegistryEntry {
+                    path: path.to_path_buf(),
+                    stop,
+                },
+            );
+        }
+        id
+    }
+
+    /// Remove a registration previously installed by [`register_mount`].
+    /// Idempotent on a missing id (returns `false`); logs at `error!`
+    /// when called against an id that was never registered.
+    pub fn unregister_mount(id: u64) -> bool {
+        let removed = registry()
+            .lock()
+            .map(|mut g| g.remove(&id).is_some())
+            .unwrap_or(false);
+        if !removed {
+            log::error!(
+                "ACTIVE_MOUNTS (windows) unregister miss for id={id}; \
+                 unbalanced mount/unmount lifecycle bug"
+            );
+        }
+        removed
+    }
+
+    /// Snapshot the registry path set. Test-only helper.
+    #[cfg(test)]
+    pub(super) fn snapshot_paths() -> Vec<PathBuf> {
+        registry()
+            .lock()
+            .map(|g| g.values().map(|e| e.path.clone()).collect())
+            .unwrap_or_default()
+    }
+
+    /// Test-only: simulate a Ctrl-C by flipping the shutdown flag and
+    /// invoking the reap routine inline. Lets unit tests assert that
+    /// the registry drains and stop-dispatcher closures run without
+    /// raising a real console control event.
+    #[cfg(test)]
+    pub(super) fn force_reap_for_tests() {
+        SHUTDOWN_REQUESTED.store(true, Ordering::Release);
+        reap_all_mounts();
+    }
 
     /// Install the Windows Ctrl-C signal reaper.
     ///
@@ -1990,29 +2084,56 @@ pub mod reaper {
         }
     }
 
-    /// Reaper thread body. Polls [`SHUTDOWN_REQUESTED`] and emits a warning
-    /// when shutdown is requested. Actual WinFSP unmount is a TODO tracked
-    /// under `bd-xplat-windows`.
+    /// Reaper thread body. Polls [`SHUTDOWN_REQUESTED`] and on shutdown
+    /// drains the [`ACTIVE_MOUNTS`] registry, invoking the stored stop-
+    /// dispatcher closure (`FspFileSystemStopDispatcher` +
+    /// `FspFileSystemDelete`) per entry.
     ///
-    /// TIER-3 (pcloud-rs-ncx.29): this body must be upgraded to call
-    /// `FspFileSystemStopDispatcher` + `FspFileSystemRemoveMountPoint`
-    /// per active mount when `bd-xplat-windows` wires WinFSP through the
-    /// accept loop. Currently there is no ACTIVE_MOUNTS registry to drain
-    /// (none exists on Windows yet), so the reaper only logs.
+    /// Audit-06 stream E (bd-xplat-windows, CLAUDE.md "Signal-driven
+    /// mount cleanup posture"): the registry is now wired and the
+    /// reaper drains it; live verification on real Windows hardware is
+    /// hardware-bound (out of AI scope) and is tracked under
+    /// `bd-xplat-windows`.
     fn windows_reaper_main() {
         use std::time::Duration;
         loop {
             std::thread::sleep(Duration::from_millis(250));
             if SHUTDOWN_REQUESTED.load(Ordering::Acquire) {
-                log::warn!(
-                    "pcloud-fs[windows]: shutdown requested — \
-                     active pCloud mounts should be unmounted before process exits. \
-                     Automatic WinFSP teardown tracked under bd-xplat-windows \
-                     (Tier-3 per CLAUDE.md)."
-                );
+                reap_all_mounts();
                 // Exit reaper; the process is unwinding.
                 break;
             }
+        }
+    }
+
+    /// Drain the active-mount registry and run each stored stop-
+    /// dispatcher closure. The registry is consumed under the lock so
+    /// no two reaper invocations can double-free the same closure.
+    /// Each closure is tolerated to log/swallow its own failures —
+    /// the reaper does not let a single hung mount block the rest.
+    fn reap_all_mounts() {
+        let mut entries: Vec<(u64, RegistryEntry)> = Vec::new();
+        if let Ok(mut guard) = registry().lock() {
+            entries.extend(guard.drain());
+        }
+        if entries.is_empty() {
+            log::warn!(
+                "pcloud-fs[windows]: shutdown requested — \
+                 ACTIVE_MOUNTS is empty (no live mounts to reap)."
+            );
+            return;
+        }
+        log::warn!(
+            "pcloud-fs[windows]: shutdown requested — \
+             draining {} active mount(s) via FspFileSystemStopDispatcher",
+            entries.len()
+        );
+        for (id, mut entry) in entries {
+            log::warn!(
+                "pcloud-fs[windows] reaper: stopping mount id={id} at {}",
+                entry.path.display()
+            );
+            (entry.stop)();
         }
     }
 
@@ -2137,6 +2258,91 @@ mod tests {
         assert_eq!(
             vp.max_component_length, 255,
             "max filename length must be 255"
+        );
+    }
+
+    /// Audit-06 stream E (bd-xplat-windows, CLAUDE.md "Signal-driven
+    /// mount cleanup posture"): simulate two registered mounts,
+    /// invoke the reaper inline, and assert that the registry is
+    /// drained AND each stop-dispatcher closure ran exactly once.
+    /// Live `FspFileSystemStopDispatcher` against real WinFSP is out
+    /// of scope (hardware-bound, tracked under bd-xplat-windows); the
+    /// contract this test enforces is the in-process drain + closure
+    /// invocation.
+    #[test]
+    fn reaper_drains_registry_and_runs_stop_closures() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let mount_a = std::path::PathBuf::from("Z:");
+        let mount_b = std::path::PathBuf::from("Y:");
+
+        let c1 = Arc::clone(&counter);
+        let id_a = super::reaper::register_mount(
+            &mount_a,
+            Box::new(move || {
+                c1.fetch_add(1, Ordering::AcqRel);
+            }),
+        );
+        let c2 = Arc::clone(&counter);
+        let id_b = super::reaper::register_mount(
+            &mount_b,
+            Box::new(move || {
+                c2.fetch_add(1, Ordering::AcqRel);
+            }),
+        );
+        assert_ne!(id_a, id_b, "registration ids must be unique");
+
+        let before = super::reaper::snapshot_paths();
+        assert!(before.iter().any(|p| p == &mount_a));
+        assert!(before.iter().any(|p| p == &mount_b));
+
+        // Simulate Ctrl-C / service-stop.
+        super::reaper::force_reap_for_tests();
+
+        let after = super::reaper::snapshot_paths();
+        assert!(
+            after.is_empty(),
+            "expected registry drained after reap, got {after:?}"
+        );
+        assert_eq!(
+            counter.load(Ordering::Acquire),
+            2,
+            "each stop-dispatcher closure must run exactly once"
+        );
+    }
+
+    /// Explicit `unregister_mount` (the normal `MountHandle::Drop`
+    /// path) must remove the entry so the reaper does NOT re-invoke
+    /// the closure after the mount has already been torn down by its
+    /// owner.
+    #[test]
+    fn explicit_unregister_prevents_double_stop() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let counter = Arc::new(AtomicUsize::new(0));
+        let path = std::path::PathBuf::from("X:");
+        let c = Arc::clone(&counter);
+        let id = super::reaper::register_mount(
+            &path,
+            Box::new(move || {
+                c.fetch_add(1, Ordering::AcqRel);
+            }),
+        );
+
+        assert!(super::reaper::unregister_mount(id), "first unregister hits");
+        assert!(
+            !super::reaper::unregister_mount(id),
+            "second unregister must miss (idempotent)"
+        );
+
+        super::reaper::force_reap_for_tests();
+        assert_eq!(
+            counter.load(Ordering::Acquire),
+            0,
+            "explicitly unregistered mount must NOT have its stop closure run"
         );
     }
 }

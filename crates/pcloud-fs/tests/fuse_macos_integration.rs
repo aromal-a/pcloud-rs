@@ -14,8 +14,8 @@ use std::time::Duration;
 use pcloud_fs::fuse_adapter::NullFuseAdapter;
 use pcloud_fs::mount_orphan::MountinfoReader;
 use pcloud_fs::mount_service::{MountOptions, MountService};
-use pcloud_fs::platform::macos::{MacosMountinfoReader, MacosPlatformMount};
 use pcloud_fs::platform::PlatformMount;
+use pcloud_fs::platform::macos::{MacosMountinfoReader, MacosPlatformMount};
 
 fn fuse_test_enabled() -> bool {
     std::env::var("PCLOUD_FUSE_TEST")
@@ -86,7 +86,10 @@ fn macos_mountinfo_reader_returns_string() {
     // so an empty result is expected when no FUSE mounts are active.
     let reader = MacosMountinfoReader;
     let payload = reader.read().expect("getmntinfo syscall must not fail");
-    println!("FUSE mountinfo payload ({} bytes):\n{payload}", payload.len());
+    println!(
+        "FUSE mountinfo payload ({} bytes):\n{payload}",
+        payload.len()
+    );
     // No assertion on content: empty is valid when no FUSE mounts are active.
 }
 

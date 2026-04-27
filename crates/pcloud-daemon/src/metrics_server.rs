@@ -378,9 +378,9 @@ mod tests {
         let own_logger = !lines.is_empty();
         if own_logger {
             let expected_uid = format!("from uid={}", current_effective_uid());
-            let found = lines
-                .iter()
-                .any(|l| l.contains("privileged IPC request: Shutdown") && l.contains(&expected_uid));
+            let found = lines.iter().any(|l| {
+                l.contains("privileged IPC request: Shutdown") && l.contains(&expected_uid)
+            });
             assert!(
                 found,
                 "expected privileged IPC audit line with peer uid; captured: {:?}",

@@ -22,7 +22,6 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
-
 use pcloud_auth::AuthCommand;
 use pcloud_config::{ConfigProfile, Environment};
 use pcloud_daemon::{bootstrap_with_config, dispatch};

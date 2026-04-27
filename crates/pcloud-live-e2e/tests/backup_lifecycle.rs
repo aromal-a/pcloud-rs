@@ -169,7 +169,9 @@ fn live_backup_create_delete() {
         // account-type restriction, not an IPC or implementation bug.
         // We skip rather than fail so the test can be re-run on a provisioned
         // account without code changes.
-        if create_resp.message.contains("1017") || create_resp.message.contains("Invalid 'folderid'") {
+        if create_resp.message.contains("1017")
+            || create_resp.message.contains("Invalid 'folderid'")
+        {
             eprintln!(
                 "[live-e2e] skipping backup_create_delete: account not provisioned for backup \
                 (folderid rejected): {}",
@@ -267,7 +269,9 @@ fn live_stop_device() {
         remove_local_dir(&local);
         // pCloud error 1017 on any folderid indicates the account is not
         // provisioned for backup. Skip gracefully instead of panicking.
-        if create_resp.message.contains("1017") || create_resp.message.contains("Invalid 'folderid'") {
+        if create_resp.message.contains("1017")
+            || create_resp.message.contains("Invalid 'folderid'")
+        {
             eprintln!(
                 "[live-e2e] skipping stop_device: account not provisioned for backup \
                 (folderid rejected): {}",

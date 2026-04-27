@@ -217,8 +217,8 @@ fn pub_fingerprint(kek_key: &[u8; 32], pub_blob: &[u8]) -> [u8; 32] {
     use sha2::Sha256;
     // SAFETY: HMAC-SHA-256 accepts any non-zero key length (RFC 2104); the
     // fixed 32-byte KEK passed in is never empty.
-    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(kek_key)
-        .expect("HMAC-SHA256 accepts any key length");
+    let mut mac =
+        <Hmac<Sha256> as Mac>::new_from_slice(kek_key).expect("HMAC-SHA256 accepts any key length");
     mac.update(pub_blob);
     mac.finalize().into_bytes().into()
 }
@@ -251,12 +251,7 @@ pub fn generate_profile(
     // 5. Wrap priv DER with AES-256-CTR (counter starts at 0 — see
     //    `pcryptofolder.c:1845` and `:1867` where the C client calls
     //    `pcrypto_ctr_encdec_decode(..., 0)`).
-    pclsync_modes::aes256_ctr_pclsync_xor_inplace(
-        &kek.key,
-        &kek.iv,
-        0,
-        &mut priv_der,
-    );
+    pclsync_modes::aes256_ctr_pclsync_xor_inplace(&kek.key, &kek.iv, 0, &mut priv_der);
 
     // 6. Build pub_key_ver1 + priv_key_ver1 blobs (flags = 0 for fresh profile).
     let flags: u32 = 0;
@@ -265,7 +260,7 @@ pub fn generate_profile(
     priv_der.zeroize();
 
     // 7. Compute non-secret pub fingerprint for wrong-password rejection.
-    let fpr = pub_fingerprint(&kek.key,&pub_blob);
+    let fpr = pub_fingerprint(&kek.key, &pub_blob);
 
     Ok(PclsyncCompatProfile {
         priv_key_ver1_blob: priv_blob,
@@ -292,7 +287,7 @@ pub fn unlock_profile(
 
     // 3. Constant-time pub fingerprint check — reject wrong password
     //    BEFORE exposing the unwrapped priv key.
-    let expected = pub_fingerprint(&kek.key,&profile.pub_key_ver1_blob);
+    let expected = pub_fingerprint(&kek.key, &profile.pub_key_ver1_blob);
     let fp_ok: bool = expected.ct_eq(&profile.pub_fingerprint).into();
     if !fp_ok {
         ct_der.zeroize();
@@ -302,12 +297,7 @@ pub fn unlock_profile(
     }
 
     // 4. Unwrap priv DER (counter = 0, same as setup).
-    pclsync_modes::aes256_ctr_pclsync_xor_inplace(
-        &kek.key,
-        &kek.iv,
-        0,
-        &mut ct_der,
-    );
+    pclsync_modes::aes256_ctr_pclsync_xor_inplace(&kek.key, &kek.iv, 0, &mut ct_der);
 
     // 5. Parse the RSA priv key.
     let priv_key = pclsync_rsa::parse_priv_key_der(&ct_der).inspect_err(|_| {
@@ -386,8 +376,14 @@ impl core::fmt::Debug for PclsyncCompatState {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("PclsyncCompatState")
             .field("priv_key", &"<redacted rsa-4096>")
-            .field("folder_keys", &format_args!("{} entries", self.folder_keys.len()))
-            .field("file_keys", &format_args!("{} entries", self.file_keys.len()))
+            .field(
+                "folder_keys",
+                &format_args!("{} entries", self.folder_keys.len()),
+            )
+            .field(
+                "file_keys",
+                &format_args!("{} entries", self.file_keys.len()),
+            )
             .finish()
     }
 }
@@ -425,8 +421,7 @@ mod tests {
         let salt = [0x42u8; PCLSYNC_PBKDF2_SALT_LEN];
         let ct = vec![0xAAu8; 2048];
         let blob = PclsyncCompatProfile::build_priv_blob(7, &salt, &ct);
-        let (typ, flags, salt2, ct2) =
-            PclsyncCompatProfile::parse_priv_blob(&blob).expect("parse");
+        let (typ, flags, salt2, ct2) = PclsyncCompatProfile::parse_priv_blob(&blob).expect("parse");
         assert_eq!(typ, PSYNC_CRYPTO_TYPE_RSA4096_64BYTESALT_20000IT);
         assert_eq!(flags, 7);
         assert_eq!(salt2, salt);
@@ -437,8 +432,7 @@ mod tests {
     fn pub_blob_round_trip() {
         let der = vec![0xBBu8; 550];
         let blob = PclsyncCompatProfile::build_pub_blob(3, &der);
-        let (typ, flags, der2) =
-            PclsyncCompatProfile::parse_pub_blob(&blob).expect("parse");
+        let (typ, flags, der2) = PclsyncCompatProfile::parse_pub_blob(&blob).expect("parse");
         assert_eq!(typ, PSYNC_CRYPTO_PUB_TYPE_RSA4096);
         assert_eq!(flags, 3);
         assert_eq!(der2, der);
@@ -507,10 +501,7 @@ mod tests {
         for window in magic_priv.windows(4) {
             // 4-byte consecutive decimal pattern is vanishingly unlikely to
             // appear by coincidence in a length/flags-only output.
-            let decimal_pat = format!(
-                "{}, {}, {}, {}",
-                window[0], window[1], window[2], window[3]
-            );
+            let decimal_pat = format!("{}, {}, {}, {}", window[0], window[1], window[2], window[3]);
             assert!(
                 !debug_output.contains(&decimal_pat),
                 "Debug output leaked priv_key_ver1_blob decimal bytes: {decimal_pat}\nfull debug: {debug_output}",
@@ -519,10 +510,7 @@ mod tests {
 
         // (3) Fingerprint bytes must not appear as a decimal sequence either.
         for window in magic_fp.windows(4) {
-            let decimal_pat = format!(
-                "{}, {}, {}, {}",
-                window[0], window[1], window[2], window[3]
-            );
+            let decimal_pat = format!("{}, {}, {}, {}", window[0], window[1], window[2], window[3]);
             assert!(
                 !debug_output.contains(&decimal_pat),
                 "Debug output leaked pub_fingerprint decimal bytes: {decimal_pat}\nfull debug: {debug_output}",
@@ -545,7 +533,9 @@ mod tests {
         );
         // 0xABCD == 43981 decimal.
         assert!(
-            debug_output.contains("43981") || debug_output.contains("ABCD") || debug_output.contains("abcd"),
+            debug_output.contains("43981")
+                || debug_output.contains("ABCD")
+                || debug_output.contains("abcd"),
             "expected flags value in Debug: {debug_output}"
         );
     }

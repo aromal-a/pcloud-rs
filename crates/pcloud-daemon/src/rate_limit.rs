@@ -312,9 +312,9 @@ pub fn categorize(request: &Request) -> RateCategory {
         // `Expensive` to share a bucket with other mutating lifecycle
         // operations and to dampen abusive retries against the real
         // backup endpoints.
-        Request::CreateBackup { .. }
-        | Request::StopDevice { .. }
-        | Request::DeleteBackupDevice => RateCategory::Expensive,
+        Request::CreateBackup { .. } | Request::StopDevice { .. } | Request::DeleteBackupDevice => {
+            RateCategory::Expensive
+        }
         // Server-side copy from a remote fileid drives an upload_create
         // + multi-chunk upload_write sequence and is bulk/heavy once
         // the real wiring lands (bd-1du). Classify now so the stub and

@@ -19,6 +19,10 @@ pub mod diff_events;
 /// Remote-side diff polling loop that converts diff batches into sync
 /// candidates.
 pub mod diff_poller;
+/// Periodic divergence sweeper that snapshots the engine state and
+/// quarantines rows that drift between the local DB view and the
+/// remote tree (audit-06 M-4.2). Opt-in.
+pub mod divergence_sweeper;
 /// Local filesystem event ingestion (notify/inotify abstraction).
 pub mod fs_events;
 /// Local filesystem scanner that enumerates sync-root trees.
@@ -26,6 +30,10 @@ pub mod local_scan;
 /// Turns sync candidates into executable [`pcloud_model::sync::PlannedOperation`]
 /// work items.
 pub mod planner;
+/// Power-source awareness for the sync loop. Lets the daemon-side sync
+/// loop skip cycles while the host is running on battery (audit-06
+/// M-4.1). Opt-in via `SyncLoopConfig::pause_on_battery`.
+pub mod power;
 /// Reconciliation worker that joins local and remote state into a unified
 /// set of planned operations.
 pub mod reconcile_worker;
@@ -902,8 +910,7 @@ impl EngineShell {
     /// is retried.
     #[must_use]
     pub fn snapshot_scheduler_durable(&self) -> Vec<PlannedOperation> {
-        let mut combined: Vec<PlannedOperation> =
-            self.scheduler.queued_operations.to_vec();
+        let mut combined: Vec<PlannedOperation> = self.scheduler.queued_operations.to_vec();
         combined.extend(self.scheduler.dispatched_operations.iter().cloned());
         combined.sort_by(|a, b| {
             a.sync_id()
@@ -965,6 +972,41 @@ impl EngineShell {
     #[must_use]
     pub fn is_sync_root_paused(&self, sync_id: SyncId) -> bool {
         self.paused_sync_roots.contains(&sync_id)
+    }
+
+    /// Return the set of paused sync roots as a sorted `Vec`. Used by
+    /// the divergence sweeper to build a read-only snapshot of engine
+    /// state.
+    #[must_use]
+    pub fn paused_sync_root_ids(&self) -> Vec<SyncId> {
+        self.paused_sync_roots.iter().copied().collect()
+    }
+
+    /// Return the unique set of `SyncId`s referenced by entries in the
+    /// planner overflow buffer (audit-06 M-4.2 — divergence sweeper
+    /// snapshot helper).
+    #[must_use]
+    pub fn overflow_sync_root_ids(&self) -> Vec<SyncId> {
+        let mut ids: Vec<SyncId> = self.planner_overflow.iter().map(|c| c.sync_id).collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
+    /// Return the unique set of `SyncId`s referenced by operations in
+    /// the scheduler queue (audit-06 M-4.2 — divergence sweeper
+    /// snapshot helper).
+    #[must_use]
+    pub fn scheduler_sync_root_ids(&self) -> Vec<SyncId> {
+        let mut ids: Vec<SyncId> = self
+            .scheduler
+            .queued_operations
+            .iter()
+            .map(|op| op.sync_id())
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
     }
 }
 

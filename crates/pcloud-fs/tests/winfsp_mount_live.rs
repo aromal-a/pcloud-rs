@@ -74,9 +74,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
 
-use pcloud_fs::fuse_adapter::{
-    DirEntry, EntryAttr, FileHandleId, FsEntryKind, FuseAdapter, Ino,
-};
+use pcloud_fs::fuse_adapter::{DirEntry, EntryAttr, FileHandleId, FsEntryKind, FuseAdapter, Ino};
 use pcloud_fs::inode::ROOT_INODE;
 use pcloud_fs::mount_service::{MountHandle, MountOptions};
 use pcloud_fs::platform::windows::mount_with_winfsp;
@@ -410,11 +408,7 @@ impl FuseAdapter for MemFuseAdapter {
         Err(ENOSYS)
     }
 
-    fn setattr(
-        &self,
-        ino: Ino,
-        _attr: pcloud_fs::fuse_adapter::SetAttr,
-    ) -> Result<EntryAttr, i32> {
+    fn setattr(&self, ino: Ino, _attr: pcloud_fs::fuse_adapter::SetAttr) -> Result<EntryAttr, i32> {
         // Best-effort: just return current attrs. Windows create() only
         // checks the `Ok(_)` arm to propagate mode bits back to the
         // backend, and any failure is ignored.
@@ -467,9 +461,7 @@ fn pick_free_drive_letter() -> Option<String> {
 #[ignore = "requires PCLOUD_WINFSP_TEST=1 (or PCLOUD_LIVE_E2E=1), WinFSP 2.x installed, and a free drive letter"]
 fn winfsp_mount_readdir_read_write_unmount() {
     if !e2e_gate_enabled() {
-        eprintln!(
-            "[winfsp_mount_live] skip: set PCLOUD_WINFSP_TEST=1 or PCLOUD_LIVE_E2E=1 to run"
-        );
+        eprintln!("[winfsp_mount_live] skip: set PCLOUD_WINFSP_TEST=1 or PCLOUD_LIVE_E2E=1 to run");
         return;
     }
 
@@ -550,11 +542,7 @@ fn winfsp_mount_readdir_read_write_unmount() {
         fn statfs(&self) -> Result<(u64, u64), i32> {
             self.0.statfs()
         }
-        fn setattr(
-            &self,
-            ino: Ino,
-            a: pcloud_fs::fuse_adapter::SetAttr,
-        ) -> Result<EntryAttr, i32> {
+        fn setattr(&self, ino: Ino, a: pcloud_fs::fuse_adapter::SetAttr) -> Result<EntryAttr, i32> {
             self.0.setattr(ino, a)
         }
         fn set_basic_info(
@@ -655,7 +643,10 @@ fn winfsp_mount_readdir_read_write_unmount() {
             panic!("std::fs::write {new_path} failed: {err}");
         }
     }
-    eprintln!("[winfsp_mount_live] wrote {} bytes to {new_path}", payload.len());
+    eprintln!(
+        "[winfsp_mount_live] wrote {} bytes to {new_path}",
+        payload.len()
+    );
 
     // Cross-check: the in-memory btree saw the write.
     {
@@ -672,7 +663,8 @@ fn winfsp_mount_readdir_read_write_unmount() {
             panic!("newfile.txt inode is not a regular file");
         };
         assert_eq!(
-            data, &payload,
+            data,
+            &payload,
             "in-memory bytes differ from payload (got {} bytes)",
             data.len()
         );
@@ -704,7 +696,8 @@ fn winfsp_mount_readdir_read_write_unmount() {
             panic!("file1.txt ino not a file");
         };
         assert_eq!(
-            data, &over_payload,
+            data,
+            &over_payload,
             "overwrite did not truncate file1.txt: got {} bytes",
             data.len()
         );

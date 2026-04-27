@@ -211,13 +211,13 @@ pub fn wrap_share_invitation_b64(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::crypto_util::base64_decode;
     use crate::pclsync_compat_profile::PclsyncCompatProfile;
     use crate::pclsync_rsa::{
         PCLSYNC_AES_KEY_LEN, PCLSYNC_HMAC_KEY_LEN, PCLSYNC_RSA_BYTES,
         PCLSYNC_SYM_TYPE_AES256_1024BIT_HMAC, SymKeyVer1, generate_keypair, oaep_unwrap,
         serialize_pub_key_der,
     };
-    use crate::crypto_util::base64_decode;
     use rsa::RsaPublicKey;
 
     /// Build a deterministic test `SymKeyVer1` so unwrap can be
@@ -320,7 +320,9 @@ mod tests {
 
         let original = test_sym_key(0x11, 0x77);
         let folder_id: u64 = 42;
-        harness.inner.cache_folder_key(folder_id, original.duplicate());
+        harness
+            .inner
+            .cache_folder_key(folder_id, original.duplicate());
 
         let recipient_blob = pub_blob_for(&recipient_pub);
         let wrapped_b64 = wrap_share_invitation_b64(
@@ -362,12 +364,9 @@ mod tests {
         harness.inner.cache_file_key(file_id, original.duplicate());
 
         let recipient_blob = pub_blob_for(&recipient_pub);
-        let wrapped_b64 = wrap_share_invitation_b64(
-            &harness.inner,
-            ShareTarget::File(file_id),
-            &recipient_blob,
-        )
-        .expect("wrap");
+        let wrapped_b64 =
+            wrap_share_invitation_b64(&harness.inner, ShareTarget::File(file_id), &recipient_blob)
+                .expect("wrap");
 
         let wrapped_bytes = base64_decode(&wrapped_b64).expect("b64 decode");
         assert_eq!(wrapped_bytes.len(), PCLSYNC_RSA_BYTES);
@@ -416,7 +415,9 @@ mod tests {
         let sharer_kp = generate_keypair().expect("keygen sharer");
         let (sharer_priv, _) = sharer_kp.into_parts();
         let mut harness = PclsyncCompatStateHarness::new(sharer_priv);
-        harness.inner.cache_folder_key(1, test_sym_key(0, 0).duplicate());
+        harness
+            .inner
+            .cache_folder_key(1, test_sym_key(0, 0).duplicate());
 
         let blob = pub_blob_for(&recipient_pub);
         let a = wrap_share_invitation_b64(&harness.inner, ShareTarget::Folder(1), &blob).unwrap();
@@ -429,7 +430,9 @@ mod tests {
         let sharer_kp = generate_keypair().expect("keygen sharer");
         let (sharer_priv, _) = sharer_kp.into_parts();
         let mut harness = PclsyncCompatStateHarness::new(sharer_priv);
-        harness.inner.cache_folder_key(1, test_sym_key(0, 0).duplicate());
+        harness
+            .inner
+            .cache_folder_key(1, test_sym_key(0, 0).duplicate());
         // Truncated pubkey blob.
         let err = wrap_share_invitation_b64(&harness.inner, ShareTarget::Folder(1), &[0u8; 4])
             .unwrap_err();

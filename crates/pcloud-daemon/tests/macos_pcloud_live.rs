@@ -59,8 +59,11 @@ fn live_config() -> ConfigProfile {
         std::process::id(),
         unique_nonce()
     ));
-    apply_env_overrides(ConfigProfile::secure_defaults(root, Environment::Production))
-        .expect("live config env overrides must parse")
+    apply_env_overrides(ConfigProfile::secure_defaults(
+        root,
+        Environment::Production,
+    ))
+    .expect("live config env overrides must parse")
 }
 
 fn cleanup_config_root(config: &ConfigProfile) {
@@ -84,12 +87,14 @@ fn setup_live_runtime() -> Option<(RuntimeShell, PathBuf, ConfigProfile)> {
     };
 
     let config = live_config();
-    let mut runtime = bootstrap_with_config(config.clone())
-        .expect("daemon runtime bootstrap must succeed");
+    let mut runtime =
+        bootstrap_with_config(config.clone()).expect("daemon runtime bootstrap must succeed");
 
     let auth_resp = dispatch(
         &mut runtime,
-        Request::AuthTokenSubmission { value: token.into() },
+        Request::AuthTokenSubmission {
+            value: token.into(),
+        },
     );
     if auth_resp.status != ResponseStatus::Ok {
         // Do not print the token value — log only the status message.
@@ -122,7 +127,12 @@ fn setup_live_runtime() -> Option<(RuntimeShell, PathBuf, ConfigProfile)> {
 /// Mount and wait for the VFS to settle (≈300 ms). Returns `false` if the
 /// mount IPC call fails so the caller can skip gracefully.
 fn mount_live(runtime: &mut RuntimeShell, mountpoint: &Path) -> bool {
-    let resp = dispatch(runtime, Request::Mount { path: mountpoint.to_path_buf() });
+    let resp = dispatch(
+        runtime,
+        Request::Mount {
+            path: mountpoint.to_path_buf(),
+        },
+    );
     if resp.status != ResponseStatus::Ok {
         eprintln!("mount failed: {}", resp.message);
         return false;
@@ -148,7 +158,9 @@ fn unmount_live(runtime: &mut RuntimeShell) {
 #[ignore = "requires PCLOUD_LIVE_AUTH_TOKEN and fuse-t"]
 fn live_readdir_root_returns_entries() {
     let _lock = LIVE_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((mut rt, mp, cfg)) = setup_live_runtime() else { return; };
+    let Some((mut rt, mp, cfg)) = setup_live_runtime() else {
+        return;
+    };
     if !mount_live(&mut rt, &mp) {
         cleanup_config_root(&cfg);
         let _ = fs::remove_dir_all(&mp);
@@ -159,7 +171,10 @@ fn live_readdir_root_returns_entries() {
         .expect("read_dir on live pCloud root must succeed")
         .filter_map(|e| e.ok())
         .collect();
-    assert!(!entries.is_empty(), "pCloud root must have at least one entry");
+    assert!(
+        !entries.is_empty(),
+        "pCloud root must have at least one entry"
+    );
 
     if env::var("PCLOUD_TEST_VERBOSE").is_ok() {
         for e in &entries {
@@ -177,7 +192,9 @@ fn live_readdir_root_returns_entries() {
 #[ignore = "requires PCLOUD_LIVE_AUTH_TOKEN and fuse-t"]
 fn live_getattr_root_is_directory() {
     let _lock = LIVE_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((mut rt, mp, cfg)) = setup_live_runtime() else { return; };
+    let Some((mut rt, mp, cfg)) = setup_live_runtime() else {
+        return;
+    };
     if !mount_live(&mut rt, &mp) {
         cleanup_config_root(&cfg);
         let _ = fs::remove_dir_all(&mp);
@@ -197,14 +214,18 @@ fn live_getattr_root_is_directory() {
 #[ignore = "requires PCLOUD_LIVE_AUTH_TOKEN and fuse-t"]
 fn live_mount_appears_in_getmntinfo() {
     let _lock = LIVE_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((mut rt, mp, cfg)) = setup_live_runtime() else { return; };
+    let Some((mut rt, mp, cfg)) = setup_live_runtime() else {
+        return;
+    };
     if !mount_live(&mut rt, &mp) {
         cleanup_config_root(&cfg);
         let _ = fs::remove_dir_all(&mp);
         return;
     }
 
-    use pcloud_fs::mount_orphan::{MountinfoReader, StaticMountinfoReader, mountpoint_is_already_mounted};
+    use pcloud_fs::mount_orphan::{
+        MountinfoReader, StaticMountinfoReader, mountpoint_is_already_mounted,
+    };
     use pcloud_fs::platform::macos::MacosMountinfoReader;
 
     let visible = match MacosMountinfoReader.read() {
@@ -228,7 +249,9 @@ fn live_mount_appears_in_getmntinfo() {
 #[ignore = "requires PCLOUD_LIVE_AUTH_TOKEN and fuse-t"]
 fn live_unmount_removes_from_getmntinfo() {
     let _lock = LIVE_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((mut rt, mp, cfg)) = setup_live_runtime() else { return; };
+    let Some((mut rt, mp, cfg)) = setup_live_runtime() else {
+        return;
+    };
     if !mount_live(&mut rt, &mp) {
         cleanup_config_root(&cfg);
         let _ = fs::remove_dir_all(&mp);
@@ -237,12 +260,18 @@ fn live_unmount_removes_from_getmntinfo() {
 
     unmount_live(&mut rt);
 
-    use pcloud_fs::mount_orphan::{MountinfoReader, StaticMountinfoReader, mountpoint_is_already_mounted};
+    use pcloud_fs::mount_orphan::{
+        MountinfoReader, StaticMountinfoReader, mountpoint_is_already_mounted,
+    };
     use pcloud_fs::platform::macos::MacosMountinfoReader;
 
     if let Ok(payload) = MacosMountinfoReader.read() {
         let still = mountpoint_is_already_mounted(&StaticMountinfoReader::new(&payload), &mp);
-        assert!(still.is_none(), "mount at {:?} must not appear after unmount", mp);
+        assert!(
+            still.is_none(),
+            "mount at {:?} must not appear after unmount",
+            mp
+        );
     }
 
     cleanup_config_root(&cfg);
@@ -255,7 +284,9 @@ fn live_unmount_removes_from_getmntinfo() {
 #[ignore = "requires PCLOUD_LIVE_AUTH_TOKEN and fuse-t"]
 fn live_concurrent_readers_root() {
     let _lock = LIVE_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((mut rt, mp, cfg)) = setup_live_runtime() else { return; };
+    let Some((mut rt, mp, cfg)) = setup_live_runtime() else {
+        return;
+    };
     if !mount_live(&mut rt, &mp) {
         cleanup_config_root(&cfg);
         let _ = fs::remove_dir_all(&mp);
@@ -293,7 +324,9 @@ fn live_concurrent_readers_root() {
 #[ignore = "requires PCLOUD_LIVE_AUTH_TOKEN and fuse-t"]
 fn live_mount_remount_cycle() {
     let _lock = LIVE_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((mut rt, mp, cfg)) = setup_live_runtime() else { return; };
+    let Some((mut rt, mp, cfg)) = setup_live_runtime() else {
+        return;
+    };
 
     for cycle in 0..2 {
         if !mount_live(&mut rt, &mp) {
@@ -319,7 +352,9 @@ fn live_mount_remount_cycle() {
 #[ignore = "requires PCLOUD_LIVE_AUTH_TOKEN, fuse-t, and PCLOUD_LIVE_TEST_FOLDER"]
 fn live_write_read_delete_roundtrip() {
     let _lock = LIVE_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((mut rt, mp, cfg)) = setup_live_runtime() else { return; };
+    let Some((mut rt, mp, cfg)) = setup_live_runtime() else {
+        return;
+    };
 
     let test_folder = match optional_env("PCLOUD_LIVE_TEST_FOLDER") {
         Some(f) => f,
@@ -370,7 +405,9 @@ fn live_write_read_delete_roundtrip() {
 #[ignore = "requires PCLOUD_LIVE_AUTH_TOKEN, fuse-t, and PCLOUD_LIVE_TEST_FOLDER"]
 fn live_rename_via_fuse() {
     let _lock = LIVE_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((mut rt, mp, cfg)) = setup_live_runtime() else { return; };
+    let Some((mut rt, mp, cfg)) = setup_live_runtime() else {
+        return;
+    };
 
     let test_folder = match optional_env("PCLOUD_LIVE_TEST_FOLDER") {
         Some(f) => f,
@@ -402,7 +439,10 @@ fn live_rename_via_fuse() {
     std::thread::sleep(Duration::from_millis(300));
 
     assert!(!src.exists(), "src must not exist after rename");
-    assert_eq!(fs::read(&dst).expect("dst must be readable"), b"rename-test");
+    assert_eq!(
+        fs::read(&dst).expect("dst must be readable"),
+        b"rename-test"
+    );
 
     let _ = fs::remove_dir_all(&scratch);
     unmount_live(&mut rt);
@@ -415,7 +455,9 @@ fn live_rename_via_fuse() {
 #[ignore = "requires PCLOUD_LIVE_AUTH_TOKEN, fuse-t, and PCLOUD_LIVE_TEST_FOLDER"]
 fn live_mkdir_appears_in_readdir() {
     let _lock = LIVE_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
-    let Some((mut rt, mp, cfg)) = setup_live_runtime() else { return; };
+    let Some((mut rt, mp, cfg)) = setup_live_runtime() else {
+        return;
+    };
 
     let test_folder = match optional_env("PCLOUD_LIVE_TEST_FOLDER") {
         Some(f) => f,

@@ -52,12 +52,7 @@ impl MockFolderBackend {
         Self::default()
     }
 
-    fn insert_dir(
-        &self,
-        path: &str,
-        folder_id: u64,
-        entries: Vec<MockDirEntry<'_>>,
-    ) {
+    fn insert_dir(&self, path: &str, folder_id: u64, entries: Vec<MockDirEntry<'_>>) {
         let listing = RemoteFolderListing {
             folder_id,
             path: path.to_owned(),

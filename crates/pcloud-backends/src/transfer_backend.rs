@@ -541,12 +541,13 @@ impl TransferRuntime {
         // Ensure parent exists — caller is responsible for choosing a
         // sensible staging directory, but we refuse to silently create
         // nested trees that weren't intended.
-        if let Some(parent) = dest_path.parent()
-            && !parent.as_os_str().is_empty()
-            && !parent.exists()
-        {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| TransferBackendError::Download(HttpDownloadError::Io(e)))?;
+        if let Some(parent) = dest_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                if !parent.exists() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| TransferBackendError::Download(HttpDownloadError::Io(e)))?;
+                }
+            }
         }
 
         let file = std::fs::OpenOptions::new()

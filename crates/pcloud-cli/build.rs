@@ -28,11 +28,11 @@ fn main() {
     println!("cargo:rerun-if-env-changed=GIT_HASH");
 
     // Allow overriding via env (CI / reproducible builds).
-    if let Ok(h) = std::env::var("GIT_HASH")
-        && !h.is_empty()
-    {
-        println!("cargo:rustc-env=GIT_HASH={h}");
-        return;
+    if let Ok(h) = std::env::var("GIT_HASH") {
+        if !h.is_empty() {
+            println!("cargo:rustc-env=GIT_HASH={h}");
+            return;
+        }
     }
 
     let output = Command::new("git")

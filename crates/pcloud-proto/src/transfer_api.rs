@@ -253,11 +253,35 @@ where
         file_name: impl Into<String>,
         file_size: u64,
     ) -> Result<UploadSession, TransferApiError<T::Error>> {
+        self.upload_create_idempotent(auth_token, parent_folder_id, file_name, file_size, None)
+    }
+
+    /// `upload_create_idempotent` — audit-06 H-4.2 entry point.
+    ///
+    /// Identical to [`Self::upload_create`] but also threads a caller-
+    /// supplied idempotency key into the wire request. On a network
+    /// retry the daemon re-uses the same key on the retried call so the
+    /// server can dedupe the new session against the original. The key
+    /// must remain stable across the whole `upload_create` →
+    /// `upload_write` → `upload_save` sequence.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed error on transport failure or malformed response.
+    pub fn upload_create_idempotent(
+        &self,
+        auth_token: impl Into<String>,
+        parent_folder_id: u64,
+        file_name: impl Into<String>,
+        file_size: u64,
+        idempotency_key: Option<String>,
+    ) -> Result<UploadSession, TransferApiError<T::Error>> {
         let request = UploadCreateRequest {
             auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
             parent_folder_id,
             file_name: file_name.into(),
             file_size,
+            idempotency_key,
         };
         let encoded = request.encode()?;
         let response = self
@@ -503,6 +527,48 @@ where
             hash,
             source_offset,
             count,
+            idempotency_key: None,
+        };
+        Ok(request.encode()?)
+    }
+
+    /// audit-06 H-4.2 — idempotent variant of [`Self::encode_upload_write_from_file`].
+    /// The caller passes the same `idempotency_key` issued at
+    /// [`Self::upload_create_idempotent`] time.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TransferApiError::Malformed`] when `count` exceeds
+    /// `PSYNC_MAX_COPY_FROM_REQ`, otherwise transport errors are
+    /// surfaced as-is.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode_upload_write_from_file_idempotent(
+        &self,
+        auth_token: impl Into<String>,
+        upload_id: u64,
+        upload_offset: u64,
+        chunk_id: u64,
+        file_id: u64,
+        hash: u64,
+        source_offset: u64,
+        count: u64,
+        idempotency_key: Option<String>,
+    ) -> Result<crate::EncodedRequest, TransferApiError<T::Error>> {
+        if count > PSYNC_MAX_COPY_FROM_REQ {
+            return Err(TransferApiError::Malformed(
+                "upload_writefromfile count exceeds PSYNC_MAX_COPY_FROM_REQ",
+            ));
+        }
+        let request = UploadWriteFromFileRequest {
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token.into()),
+            upload_id,
+            upload_offset,
+            chunk_id,
+            file_id,
+            hash,
+            source_offset,
+            count,
+            idempotency_key,
         };
         Ok(request.encode()?)
     }

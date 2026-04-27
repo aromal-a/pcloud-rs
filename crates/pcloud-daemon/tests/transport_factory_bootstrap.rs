@@ -24,7 +24,6 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
-
 use pcloud_config::{ConfigProfile, Environment};
 use pcloud_daemon::bootstrap_with_config;
 use pcloud_daemon::transport_factory::WrapDecision;

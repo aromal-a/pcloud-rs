@@ -614,8 +614,7 @@ mod tests {
         // Step 3: build the combined "durable snapshot" — what the
         // embedding runtime would persist to `sync.scheduler.queue`.
         // This mirrors EngineShell::snapshot_scheduler_durable.
-        let mut durable: Vec<PlannedOperation> =
-            scheduler.queued_operations.to_vec();
+        let mut durable: Vec<PlannedOperation> = scheduler.queued_operations.to_vec();
         durable.extend(scheduler.dispatched_operations.iter().cloned());
 
         // Step 4: simulate restart: fresh Scheduler, replace queue from

@@ -618,25 +618,25 @@ impl UploadSession {
         };
 
         // Optional hash verification.
-        if let (Some(expected), Some(actual)) = (expected_hash, meta.server_hash.as_deref())
-            && expected != actual
-        {
-            self.inner
-                .progress_tx
-                .send_modify(|p| p.state = UploadState::Failed);
-            let hm = UploadError::HashMismatch {
-                expected: expected.to_owned(),
-                actual: actual.to_owned(),
-            };
-            let hm_twin = UploadError::HashMismatch {
-                expected: expected.to_owned(),
-                actual: actual.to_owned(),
-            };
-            *self
-                .inner
-                .outcome
-                .lock_or_poisoned("sdk::upload_session::outcome") = Some(Err(hm_twin));
-            return Err(hm);
+        if let (Some(expected), Some(actual)) = (expected_hash, meta.server_hash.as_deref()) {
+            if expected != actual {
+                self.inner
+                    .progress_tx
+                    .send_modify(|p| p.state = UploadState::Failed);
+                let hm = UploadError::HashMismatch {
+                    expected: expected.to_owned(),
+                    actual: actual.to_owned(),
+                };
+                let hm_twin = UploadError::HashMismatch {
+                    expected: expected.to_owned(),
+                    actual: actual.to_owned(),
+                };
+                *self
+                    .inner
+                    .outcome
+                    .lock_or_poisoned("sdk::upload_session::outcome") = Some(Err(hm_twin));
+                return Err(hm);
+            }
         }
 
         // Clear journal on successful commit.

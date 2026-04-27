@@ -158,10 +158,7 @@ mod tests {
             .find("fn build_config()")
             .expect("build_config fn not found");
         let body = &src[start..];
-        let end = body
-            .find("\n}\n")
-            .map(|i| i + start)
-            .unwrap_or(src.len());
+        let end = body.find("\n}\n").map(|i| i + start).unwrap_or(src.len());
         let body = &src[start..end];
         assert!(
             body.contains("builder_with_protocol_versions"),

@@ -324,7 +324,7 @@ pub fn default_ignore_patterns() -> Vec<String> {
 #[must_use]
 pub fn is_ignored_under(candidate: &Path, prefix: &str) -> bool {
     let cand = candidate.as_os_str().to_string_lossy();
-    let trimmed = prefix.trim_end_matches(|c: char| c == '/' || c == '\\');
+    let trimmed = prefix.trim_end_matches(['/', '\\']);
     if trimmed.is_empty() {
         return false;
     }

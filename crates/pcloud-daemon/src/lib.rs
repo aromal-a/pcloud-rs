@@ -144,10 +144,8 @@ mod tests {
         use std::sync::atomic::{AtomicU64, Ordering};
         static SEQ: AtomicU64 = AtomicU64::new(0);
         let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
-        let root = std::path::PathBuf::from("/tmp").join(format!(
-            "pd-lib-{}-{nonce}",
-            std::process::id(),
-        ));
+        let root = std::path::PathBuf::from("/tmp")
+            .join(format!("pd-lib-{}-{nonce}", std::process::id(),));
         let config = ConfigProfile::secure_defaults(root, Environment::Development);
         bootstrap_with_config(config).expect("runtime bootstrap should succeed")
     }

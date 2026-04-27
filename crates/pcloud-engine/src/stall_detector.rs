@@ -142,12 +142,10 @@ impl StallDetector {
                 poisoned.into_inner()
             }
         };
-        let entry = guard
-            .entry(transfer_id.to_owned())
-            .or_insert(ByteProgress {
-                total_bytes: 0,
-                last_progress: now,
-            });
+        let entry = guard.entry(transfer_id.to_owned()).or_insert(ByteProgress {
+            total_bytes: 0,
+            last_progress: now,
+        });
         entry.total_bytes = entry.total_bytes.saturating_add(bytes_delta);
         entry.last_progress = now;
     }
@@ -249,8 +247,11 @@ impl StallDetector {
         let stall_timeout = stall_timeout.max(MIN_STALL_TIMEOUT);
         // Cap the pre-consumed budget so `last_progress` stays in the past
         // but not so far that the check would immediately fire.
-        let budget_consumed = already_elapsed.min(stall_timeout.saturating_sub(Duration::from_millis(1)));
-        let last_progress = Instant::now().checked_sub(budget_consumed).unwrap_or_else(Instant::now);
+        let budget_consumed =
+            already_elapsed.min(stall_timeout.saturating_sub(Duration::from_millis(1)));
+        let last_progress = Instant::now()
+            .checked_sub(budget_consumed)
+            .unwrap_or_else(Instant::now);
         Self {
             stall_timeout,
             last_progress,

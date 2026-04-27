@@ -623,8 +623,14 @@ fn arb_request() -> impl Strategy<Value = Request> {
         // UploadWriteFromFile (bd-1du row 93) — C primitive shape:
         // upload_session_id / source_fileid / source_hash / offset / count
         // (matches pclsync/pupload.c:843-859 field set).
-        (any::<u64>(), any::<u64>(), any::<u64>(), any::<u64>(), any::<u64>()).prop_map(
-            |(session_id, source_fileid, source_hash, offset, count)| {
+        (
+            any::<u64>(),
+            any::<u64>(),
+            any::<u64>(),
+            any::<u64>(),
+            any::<u64>()
+        )
+            .prop_map(|(session_id, source_fileid, source_hash, offset, count)| {
                 Request::UploadWriteFromFile {
                     upload_session_id: session_id,
                     source_fileid,
@@ -632,8 +638,7 @@ fn arb_request() -> impl Strategy<Value = Request> {
                     offset,
                     count,
                 }
-            },
-        ),
+            },),
         // CreateTreePublicLinkFromPaths (bd-1du row 149)
         (
             "[a-z]{1,20}",
@@ -657,14 +662,14 @@ fn arb_request() -> impl Strategy<Value = Request> {
             ".{0,64}",
             proptest::option::of(".{0,64}"),
         )
-            .prop_map(
-                |(backend, acknowledge_not_interop, password, hint)| Request::CryptoSetupV2 {
+            .prop_map(|(backend, acknowledge_not_interop, password, hint)| {
+                Request::CryptoSetupV2 {
                     backend,
                     acknowledge_not_interop,
                     password: password.into(),
                     hint,
-                },
-            ),
+                }
+            },),
         // CryptoGetFolderKey (Stage 4b — hot-path wrapped sym-key fetch).
         any::<u64>().prop_map(|folder_id| Request::CryptoGetFolderKey { folder_id }),
         // CryptoGetFileKey (Stage 4b — hot-path wrapped sym-key fetch).

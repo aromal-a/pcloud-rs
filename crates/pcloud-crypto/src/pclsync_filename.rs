@@ -225,10 +225,7 @@ fn hmac_sha512_tweak(hmac_key: &[u8; HMAC_KEY_LEN], msg: &[u8]) -> [u8; AES_BLOC
 
 /// Encode a plaintext filename to its pclsync wire form (base32 of
 /// HMAC-tweaked-AES ciphertext).
-pub fn encode_filename(
-    keys: FilenameKeys<'_>,
-    plaintext: &str,
-) -> Result<String, FilenameError> {
+pub fn encode_filename(keys: FilenameKeys<'_>, plaintext: &str) -> Result<String, FilenameError> {
     let txt = plaintext.as_bytes();
     if txt.is_empty() {
         return Err(FilenameError::Empty);
@@ -288,10 +285,7 @@ pub fn encode_filename(
 
 /// Decode a pclsync filename ciphertext (base32 wire form) back to its
 /// UTF-8 plaintext.
-pub fn decode_filename(
-    keys: FilenameKeys<'_>,
-    encoded: &str,
-) -> Result<String, FilenameError> {
+pub fn decode_filename(keys: FilenameKeys<'_>, encoded: &str) -> Result<String, FilenameError> {
     if encoded.is_empty() {
         return Err(FilenameError::Empty);
     }
@@ -552,7 +546,10 @@ mod tests {
         let tampered = String::from_utf8(bytes).unwrap();
         let err = decode_filename(keys_a(&h), &tampered);
         assert!(
-            matches!(err, Err(FilenameError::InvalidPlaintext) | Err(FilenameError::InvalidUtf8)),
+            matches!(
+                err,
+                Err(FilenameError::InvalidPlaintext) | Err(FilenameError::InvalidUtf8)
+            ),
             "expected tamper rejection, got {err:?}"
         );
     }
@@ -568,7 +565,10 @@ mod tests {
         };
         let err = decode_filename(wrong, &enc);
         assert!(
-            matches!(err, Err(FilenameError::InvalidPlaintext) | Err(FilenameError::InvalidUtf8)),
+            matches!(
+                err,
+                Err(FilenameError::InvalidPlaintext) | Err(FilenameError::InvalidUtf8)
+            ),
             "expected wrong-key rejection, got {err:?}"
         );
     }
@@ -593,7 +593,15 @@ mod tests {
         assert_eq!(base32_encode(b"foobar"), "MZXW6YTBOI");
 
         // Round-trip sanity against the decoder.
-        for input in [b"".as_slice(), b"f", b"fo", b"foo", b"foob", b"fooba", b"foobar"] {
+        for input in [
+            b"".as_slice(),
+            b"f",
+            b"fo",
+            b"foo",
+            b"foob",
+            b"fooba",
+            b"foobar",
+        ] {
             let enc = base32_encode(input);
             let dec = base32_decode(&enc).unwrap();
             assert_eq!(dec, input);
@@ -604,7 +612,9 @@ mod tests {
     fn base32_decode_rejects_lowercase_and_padding() {
         // C decoder only accepts A..Z and 2..7. Lower-case, '=', '0',
         // '1', '8', '9' all fail (putil.c:253..260).
-        for bad in ["a", "mzxw6", "MZXW6=", "MZXW60", "MZXW61", "MZXW68", "MZXW69"] {
+        for bad in [
+            "a", "mzxw6", "MZXW6=", "MZXW60", "MZXW61", "MZXW68", "MZXW69",
+        ] {
             assert!(
                 matches!(base32_decode(bad), Err(FilenameError::Base32Decode)),
                 "expected base32 rejection for {bad:?}"
@@ -620,7 +630,14 @@ mod tests {
         //   N=1..16  → padded=16 → 26 chars
         //   N=17..32 → padded=32 → 52 chars
         //   N=33..48 → padded=48 → 77 chars
-        let cases = [(1usize, 26usize), (9, 26), (16, 26), (17, 52), (32, 52), (33, 77)];
+        let cases = [
+            (1usize, 26usize),
+            (9, 26),
+            (16, 26),
+            (17, 52),
+            (32, 52),
+            (33, 77),
+        ];
         for (n, expected) in cases {
             let name = "x".repeat(n);
             let enc = encode_filename(keys_a(&h), &name).unwrap();

@@ -439,14 +439,14 @@ fn handle_request_traced(runtime: &mut RuntimeShell, request: Request) -> pcloud
 
     // Wire inbound W3C traceparent (if any) as the parent span context.
     let parent_traceparent = CURRENT_TRACEPARENT.with(|cell| cell.borrow_mut().take());
-    if let Some(tp) = parent_traceparent.as_deref()
-        && parse_traceparent(tp).is_some()
-    {
-        // Use the global text-map propagator to extract a `Context`.
-        let extractor = TraceparentExtractor::new(tp);
-        let parent_ctx =
-            opentelemetry::global::get_text_map_propagator(|prop| prop.extract(&extractor));
-        dispatch_span.set_parent(parent_ctx);
+    if let Some(tp) = parent_traceparent.as_deref() {
+        if parse_traceparent(tp).is_some() {
+            // Use the global text-map propagator to extract a `Context`.
+            let extractor = TraceparentExtractor::new(tp);
+            let parent_ctx =
+                opentelemetry::global::get_text_map_propagator(|prop| prop.extract(&extractor));
+            dispatch_span.set_parent(parent_ctx);
+        }
     }
 
     let _enter = dispatch_span.enter();

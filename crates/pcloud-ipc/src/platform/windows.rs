@@ -414,9 +414,8 @@ impl WindowsListener {
                 // SAFETY: `handle` and `overlapped` are both live; we
                 // pass `bwait = FALSE` because the event already
                 // signalled completion.
-                let got = unsafe {
-                    GetOverlappedResult(handle, &overlapped, &mut _transferred, false)
-                };
+                let got =
+                    unsafe { GetOverlappedResult(handle, &overlapped, &mut _transferred, false) };
                 if got.is_err() {
                     // SAFETY: no preconditions.
                     let code = unsafe { GetLastError() };
@@ -474,9 +473,8 @@ impl WindowsListener {
     /// case.
     fn cancel_already_signalled(&self) -> bool {
         // SAFETY: cancel handle is owned and live for `&self`.
-        let wait = unsafe {
-            windows::Win32::System::Threading::WaitForSingleObject(self.cancel.raw(), 0)
-        };
+        let wait =
+            unsafe { windows::Win32::System::Threading::WaitForSingleObject(self.cancel.raw(), 0) };
         wait == WAIT_OBJECT_0
     }
 

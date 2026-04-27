@@ -289,9 +289,7 @@ impl PclsyncSetUserKeysResponse {
     }
 
     fn from_value(value: &Value) -> Result<Self, ResponseParseError> {
-        let hash = value
-            .as_hash()
-            .ok_or(ResponseParseError::UnexpectedEof)?;
+        let hash = value.as_hash().ok_or(ResponseParseError::UnexpectedEof)?;
         let result = hash
             .get_number("result")
             .ok_or(ResponseParseError::UnexpectedEof)?;
@@ -382,9 +380,7 @@ impl CryptoGetFolderKeyResponse {
     }
 
     fn from_value(value: &Value) -> Result<Self, ResponseParseError> {
-        let hash = value
-            .as_hash()
-            .ok_or(ResponseParseError::UnexpectedEof)?;
+        let hash = value.as_hash().ok_or(ResponseParseError::UnexpectedEof)?;
         let result = hash
             .get_number("result")
             .ok_or(ResponseParseError::UnexpectedEof)?;
@@ -568,9 +564,7 @@ impl CryptoGetFileKeyResponse {
     }
 
     fn from_value(value: &Value) -> Result<Self, ResponseParseError> {
-        let hash = value
-            .as_hash()
-            .ok_or(ResponseParseError::UnexpectedEof)?;
+        let hash = value.as_hash().ok_or(ResponseParseError::UnexpectedEof)?;
         let result = hash
             .get_number("result")
             .ok_or(ResponseParseError::UnexpectedEof)?;
@@ -662,25 +656,31 @@ mod tests {
     // -----------------------------------------------------------------
 
     fn find_string(params: &[BinaryParam], name: &str) -> Option<String> {
-        params.iter().find(|p| p.name == name).and_then(|p| match &p.value {
-            BinaryParamValue::String(s) => Some(s.clone()),
-            _ => None,
-        })
+        params
+            .iter()
+            .find(|p| p.name == name)
+            .and_then(|p| match &p.value {
+                BinaryParamValue::String(s) => Some(s.clone()),
+                _ => None,
+            })
     }
 
     fn find_number(params: &[BinaryParam], name: &str) -> Option<u64> {
-        params.iter().find(|p| p.name == name).and_then(|p| match &p.value {
-            BinaryParamValue::Number(n) => Some(*n),
-            _ => None,
-        })
+        params
+            .iter()
+            .find(|p| p.name == name)
+            .and_then(|p| match &p.value {
+                BinaryParamValue::Number(n) => Some(*n),
+                _ => None,
+            })
     }
 
     #[test]
     fn pclsync_set_user_keys_encode_has_privatekey_and_publickey() {
         let req = PclsyncSetUserKeysRequest {
             auth_token: "tok".into(),
-            priv_key_ver1_b64: "cHJpdg==".to_owned(),      // base64 "priv"
-            pub_key_ver1_b64: "cHViYmxpYw==".to_owned(),   // base64 "pubblic"
+            priv_key_ver1_b64: "cHJpdg==".to_owned(), // base64 "priv"
+            pub_key_ver1_b64: "cHViYmxpYw==".to_owned(), // base64 "pubblic"
             hint: Some("remember-me".to_owned()),
         };
         let encoded = req.encode().expect("encode");
@@ -705,7 +705,10 @@ mod tests {
             Some("cHViYmxpYw==")
         );
         assert_eq!(find_string(&params, "hint").as_deref(), Some("remember-me"));
-        assert_eq!(find_string(&params, "timeformat").as_deref(), Some("timestamp"));
+        assert_eq!(
+            find_string(&params, "timeformat").as_deref(),
+            Some("timestamp")
+        );
 
         // Sanity-check that the claimed base64 values decode cleanly,
         // so an accidental field mix-up would surface here.
@@ -767,8 +770,7 @@ mod tests {
             ("result".to_owned(), Value::Number(0)),
             ("cryptoexpires".to_owned(), Value::Number(1_717_000_000)),
         ]);
-        let parsed =
-            PclsyncSetUserKeysResponse::from_value(&ok).expect("ok decode");
+        let parsed = PclsyncSetUserKeysResponse::from_value(&ok).expect("ok decode");
         assert_eq!(parsed.result, 0);
         assert_eq!(parsed.error, None);
         assert_eq!(parsed.cryptoexpires, Some(1_717_000_000));
@@ -776,7 +778,10 @@ mod tests {
         // Error shape — result=2110 (ALREADY_SETUP per pcryptofolder.c:193).
         let err = Value::Hash(vec![
             ("result".to_owned(), Value::Number(2110)),
-            ("error".to_owned(), Value::String("already setup".to_owned())),
+            (
+                "error".to_owned(),
+                Value::String("already setup".to_owned()),
+            ),
         ]);
         let parsed = PclsyncSetUserKeysResponse::from_value(&err).expect("err decode");
         assert_eq!(parsed.result, 2110);
@@ -792,8 +797,7 @@ mod tests {
             ("result".to_owned(), Value::Number(0)),
             ("key".to_owned(), Value::String(key_b64)),
         ]);
-        let parsed =
-            CryptoGetFolderKeyResponse::from_value(&ok).expect("ok decode");
+        let parsed = CryptoGetFolderKeyResponse::from_value(&ok).expect("ok decode");
         assert_eq!(parsed.result, 0);
         assert_eq!(parsed.error, None);
         assert_eq!(parsed.wrapped_key, wrapped);
@@ -803,8 +807,7 @@ mod tests {
             ("result".to_owned(), Value::Number(2009)),
             ("error".to_owned(), Value::String("no crypto".to_owned())),
         ]);
-        let parsed =
-            CryptoGetFolderKeyResponse::from_value(&err).expect("err decode");
+        let parsed = CryptoGetFolderKeyResponse::from_value(&err).expect("err decode");
         assert_eq!(parsed.result, 2009);
         assert_eq!(parsed.error.as_deref(), Some("no crypto"));
         assert!(parsed.wrapped_key.is_empty());

@@ -1400,9 +1400,7 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
                 let handle = match open_res {
                     Ok(h) => h,
                     Err(e) => {
-                        log::debug!(
-                            "open ino={ino} file_id={file_id} backend.open FAILED: {e:?}"
-                        );
+                        log::debug!("open ino={ino} file_id={file_id} backend.open FAILED: {e:?}");
                         return Err(e.to_errno());
                     }
                 };

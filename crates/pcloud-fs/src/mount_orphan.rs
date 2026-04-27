@@ -74,9 +74,9 @@
 
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 #[cfg(target_os = "linux")]
 use std::process::Command;
+use std::time::Duration;
 #[cfg(target_os = "linux")]
 use std::time::Instant;
 

@@ -394,10 +394,13 @@ mod tests {
     use super::*;
 
     fn find_string<'a>(params: &'a [BinaryParam], name: &str) -> Option<&'a str> {
-        params.iter().find(|p| p.name == name).and_then(|p| match &p.value {
-            BinaryParamValue::String(s) => Some(s.as_str()),
-            _ => None,
-        })
+        params
+            .iter()
+            .find(|p| p.name == name)
+            .and_then(|p| match &p.value {
+                BinaryParamValue::String(s) => Some(s.as_str()),
+                _ => None,
+            })
     }
 
     #[test]
@@ -420,10 +423,11 @@ mod tests {
         assert!(find_string(&params, "privatekey").is_none());
         assert!(find_string(&params, "signature").is_none());
         // strictmode present as number 1.
-        assert!(params
-            .iter()
-            .any(|p| p.name == "strictmode"
-                && matches!(p.value, BinaryParamValue::Number(1))));
+        assert!(
+            params
+                .iter()
+                .any(|p| p.name == "strictmode" && matches!(p.value, BinaryParamValue::Number(1)))
+        );
     }
 
     #[test]

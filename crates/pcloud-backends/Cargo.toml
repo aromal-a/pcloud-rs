@@ -21,6 +21,7 @@ pcloud-proto = { path = "../pcloud-proto" }
 pcloud-resilience = { path = "../pcloud-resilience" }
 pcloud-secret = { path = "../pcloud-secret" }
 pcloud-store = { path = "../pcloud-store" }
+getrandom.workspace = true
 libc.workspace = true
 log.workspace = true
 rusqlite = { version = "0.37", features = ["bundled", "backup"] }

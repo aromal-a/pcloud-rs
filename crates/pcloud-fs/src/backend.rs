@@ -579,6 +579,11 @@ where
             parent_folder_id: parent.folder_id,
             file_name: name.to_owned(),
             file_size: bytes.len() as u64,
+            // audit-06 H-4.2 idempotency hook: legacy whole-file path
+            // does not retry, so no client-generated key is required.
+            // The chunked path (chunked_flush) is the retry-aware
+            // surface and supplies a key on its own future hookup.
+            idempotency_key: None,
         };
         let encoded = create
             .encode()
@@ -600,6 +605,7 @@ where
             upload_id,
             upload_offset: 0,
             chunk_id: 0,
+            idempotency_key: None,
         };
         let encoded_write = write_req
             .encode_with_body(bytes.len() as u64)
@@ -610,12 +616,12 @@ where
         let hw = resp_w
             .as_hash()
             .ok_or_else(|| WritePathError::Upload("upload_write: not a hash".to_owned()))?;
-        if let Some(v) = hw.get_number("result")
-            && v != 0
-        {
-            // ncx.48: classify transient vs permanent so chunked_flush
-            // retries the right way.
-            return Err(upload_result_to_error("upload_write", v));
+        if let Some(v) = hw.get_number("result") {
+            if v != 0 {
+                // ncx.48: classify transient vs permanent so chunked_flush
+                // retries the right way.
+                return Err(upload_result_to_error("upload_write", v));
+            }
         }
 
         // upload_save
@@ -632,6 +638,7 @@ where
                 .as_secs(),
             ctime: None,
             conflict: None,
+            idempotency_key: None,
         };
         let encoded_save = save
             .encode()
@@ -641,10 +648,10 @@ where
         let hs = resp_s
             .as_hash()
             .ok_or_else(|| WritePathError::Upload("upload_save: not a hash".to_owned()))?;
-        if let Some(v) = hs.get_number("result")
-            && v != 0
-        {
-            return Err(upload_result_to_error("upload_save", v));
+        if let Some(v) = hs.get_number("result") {
+            if v != 0 {
+                return Err(upload_result_to_error("upload_save", v));
+            }
         }
         Ok(())
     }
@@ -745,6 +752,11 @@ where
             parent_folder_id: parent.folder_id,
             file_name: name.to_owned(),
             file_size: 0,
+            // audit-06 H-4.2 idempotency hook: chunked path retry
+            // discipline lives in `WritePathService::chunked_flush` which
+            // generates the key on its own future hookup. Default
+            // `None` preserves the pre-audit wire format.
+            idempotency_key: None,
         };
         let encoded = create
             .encode()
@@ -799,23 +811,23 @@ where
             upload_id,
             upload_offset: offset,
             chunk_id,
+            idempotency_key: None,
         };
         let encoded = write_req
             .encode_with_body(chunk.len() as u64)
             .map_err(|e| WritePathError::Upload(format!("encode upload_write: {e}")))?;
-        let response =
-            <T as UploadTransport>::execute_with_body(&self.transport, &encoded, chunk)
-                .map_err(|e| WritePathError::Upload(format!("upload_write: {e}")))?;
+        let response = <T as UploadTransport>::execute_with_body(&self.transport, &encoded, chunk)
+            .map_err(|e| WritePathError::Upload(format!("upload_write: {e}")))?;
         let hash = response
             .as_hash()
             .ok_or_else(|| WritePathError::Upload("upload_write: not a hash".to_owned()))?;
-        if let Some(v) = hash.get_number("result")
-            && v != 0
-        {
-            // ncx.48: transient/permanent classification so the outer
-            // retry loop can pick the right strategy (bounded backoff
-            // vs single session restart).
-            return Err(upload_result_to_error("upload_write", v));
+        if let Some(v) = hash.get_number("result") {
+            if v != 0 {
+                // ncx.48: transient/permanent classification so the outer
+                // retry loop can pick the right strategy (bounded backoff
+                // vs single session restart).
+                return Err(upload_result_to_error("upload_write", v));
+            }
         }
         Ok(())
     }
@@ -840,9 +852,7 @@ where
                 let folder_api = FolderApi::new(self.transport.clone());
                 folder_api
                     .list_folder_by_path(self.auth_token.expose_secret(), parent_path)
-                    .map_err(|e| {
-                        WritePathError::Upload(format!("resolve parent for save: {e}"))
-                    })?
+                    .map_err(|e| WritePathError::Upload(format!("resolve parent for save: {e}")))?
                     .folder_id
             }
         };
@@ -860,6 +870,7 @@ where
                 .as_secs(),
             ctime: None,
             conflict: None,
+            idempotency_key: None,
         };
         let encoded = save
             .encode()
@@ -869,10 +880,10 @@ where
         let hash = response
             .as_hash()
             .ok_or_else(|| WritePathError::Upload("upload_save: not a hash".to_owned()))?;
-        if let Some(v) = hash.get_number("result")
-            && v != 0
-        {
-            return Err(upload_result_to_error("upload_save", v));
+        if let Some(v) = hash.get_number("result") {
+            if v != 0 {
+                return Err(upload_result_to_error("upload_save", v));
+            }
         }
 
         // Drop the session sidecar now that the commit succeeded.
@@ -1166,9 +1177,7 @@ pub mod mock {
 
 #[cfg(test)]
 mod upload_classifier_tests {
-    use super::{
-        UploadResultClass, classify_upload_result, upload_result_to_error,
-    };
+    use super::{UploadResultClass, classify_upload_result, upload_result_to_error};
     use crate::write_path::WritePathError;
 
     #[test]
@@ -1179,64 +1188,43 @@ mod upload_classifier_tests {
     #[test]
     fn log_in_required_is_permanent() {
         // 2000 LOG_IN_REQUIRED — retrying won't recover a dead session.
-        assert_eq!(
-            classify_upload_result(2000),
-            UploadResultClass::Permanent
-        );
+        assert_eq!(classify_upload_result(2000), UploadResultClass::Permanent);
     }
 
     #[test]
     fn access_denied_is_permanent() {
         // 2003 ACCESS_DENIED.
-        assert_eq!(
-            classify_upload_result(2003),
-            UploadResultClass::Permanent
-        );
+        assert_eq!(classify_upload_result(2003), UploadResultClass::Permanent);
     }
 
     #[test]
     fn not_found_is_permanent() {
         // 2005 NOT_FOUND.
-        assert_eq!(
-            classify_upload_result(2005),
-            UploadResultClass::Permanent
-        );
+        assert_eq!(classify_upload_result(2005), UploadResultClass::Permanent);
     }
 
     #[test]
     fn quota_exceeded_is_permanent() {
         // 2008 QUOTA_EXCEEDED.
-        assert_eq!(
-            classify_upload_result(2008),
-            UploadResultClass::Permanent
-        );
+        assert_eq!(classify_upload_result(2008), UploadResultClass::Permanent);
     }
 
     #[test]
     fn name_too_long_is_permanent() {
         // 2010 NAME_TOO_LONG.
-        assert_eq!(
-            classify_upload_result(2010),
-            UploadResultClass::Permanent
-        );
+        assert_eq!(classify_upload_result(2010), UploadResultClass::Permanent);
     }
 
     #[test]
     fn upload_gc_is_permanent() {
         // 2069 — upload session GC'd; chunked_flush restarts once.
-        assert_eq!(
-            classify_upload_result(2069),
-            UploadResultClass::Permanent
-        );
+        assert_eq!(classify_upload_result(2069), UploadResultClass::Permanent);
     }
 
     #[test]
     fn rate_limit_is_transient() {
         // 4000 — rate limiting / login-flood; retry with backoff.
-        assert_eq!(
-            classify_upload_result(4000),
-            UploadResultClass::Transient
-        );
+        assert_eq!(classify_upload_result(4000), UploadResultClass::Transient);
     }
 
     #[test]
@@ -1276,14 +1264,8 @@ mod upload_classifier_tests {
     #[test]
     fn unknown_code_defaults_to_transient() {
         // Safer to retry than to discard local state on an unmapped code.
-        assert_eq!(
-            classify_upload_result(9999),
-            UploadResultClass::Transient
-        );
-        assert_eq!(
-            classify_upload_result(3500),
-            UploadResultClass::Transient
-        );
+        assert_eq!(classify_upload_result(9999), UploadResultClass::Transient);
+        assert_eq!(classify_upload_result(3500), UploadResultClass::Transient);
     }
 
     #[test]

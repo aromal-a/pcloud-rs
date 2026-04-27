@@ -167,30 +167,30 @@ fn emit_dispatch_span(inbound_traceparent: Option<&str>) {
         error_category = tracing::field::Empty,
     );
 
-    if let Some(tp) = inbound_traceparent
-        && parse_traceparent(tp).is_some()
-    {
-        use opentelemetry::propagation::{Extractor, TextMapPropagator};
-        use opentelemetry_sdk::propagation::TraceContextPropagator;
+    if let Some(tp) = inbound_traceparent {
+        if parse_traceparent(tp).is_some() {
+            use opentelemetry::propagation::{Extractor, TextMapPropagator};
+            use opentelemetry_sdk::propagation::TraceContextPropagator;
 
-        struct Once<'a> {
-            tp: &'a str,
-        }
-        impl<'a> Extractor for Once<'a> {
-            fn get(&self, key: &str) -> Option<&str> {
-                if key.eq_ignore_ascii_case("traceparent") {
-                    Some(self.tp)
-                } else {
-                    None
+            struct Once<'a> {
+                tp: &'a str,
+            }
+            impl<'a> Extractor for Once<'a> {
+                fn get(&self, key: &str) -> Option<&str> {
+                    if key.eq_ignore_ascii_case("traceparent") {
+                        Some(self.tp)
+                    } else {
+                        None
+                    }
+                }
+                fn keys(&self) -> Vec<&str> {
+                    vec!["traceparent"]
                 }
             }
-            fn keys(&self) -> Vec<&str> {
-                vec!["traceparent"]
-            }
+            let propagator = TraceContextPropagator::new();
+            let parent_ctx = propagator.extract(&Once { tp });
+            dispatch_span.set_parent(parent_ctx);
         }
-        let propagator = TraceContextPropagator::new();
-        let parent_ctx = propagator.extract(&Once { tp });
-        dispatch_span.set_parent(parent_ctx);
     }
 
     let _enter = dispatch_span.enter();

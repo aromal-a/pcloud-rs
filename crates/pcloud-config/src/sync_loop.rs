@@ -100,6 +100,18 @@ pub struct SyncLoopConfig {
     /// `upload_write` round-trips. Default: 10 MiB.
     #[serde(default = "default_upload_chunk_size")]
     pub upload_chunk_size: usize,
+    /// **audit-06 M-4.1 (opt-in).** When `true`, the daemon's sync loop
+    /// consults the platform power-source reader at the start of each
+    /// cycle and skips the cycle while the host reports running on
+    /// battery. Default: `false` so existing deployments observe no
+    /// behavioural change. Linux uses `/sys/class/power_supply` (no
+    /// extra deps); other platforms currently treat the state as
+    /// `Unknown` (i.e. "do not pause") because the engine crate
+    /// intentionally does not pull `battery`/`starship-battery` —
+    /// platform-specific delegation can be wired by the daemon if
+    /// required. See [`pcloud_engine::power`] for the reader trait.
+    #[serde(default)]
+    pub pause_on_battery: bool,
 }
 
 impl Default for SyncLoopConfig {
@@ -113,6 +125,7 @@ impl Default for SyncLoopConfig {
             full_scan_interval_secs: default_full_scan_interval(),
             conflict_policy: default_conflict_policy(),
             upload_chunk_size: default_upload_chunk_size(),
+            pause_on_battery: false,
         }
     }
 }
@@ -278,5 +291,23 @@ mod tests {
     fn missing_section_deserializes_to_default() {
         let back: SyncLoopConfig = serde_json::from_str("{}").unwrap();
         assert_eq!(back, SyncLoopConfig::default());
+    }
+
+    #[test]
+    fn pause_on_battery_default_is_false() {
+        let cfg = SyncLoopConfig::default();
+        assert!(!cfg.pause_on_battery);
+    }
+
+    #[test]
+    fn pause_on_battery_roundtrips() {
+        let cfg = SyncLoopConfig {
+            pause_on_battery: true,
+            ..SyncLoopConfig::default()
+        };
+        cfg.validate().unwrap();
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: SyncLoopConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.pause_on_battery);
     }
 }

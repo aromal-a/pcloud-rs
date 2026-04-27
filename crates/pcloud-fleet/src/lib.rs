@@ -480,9 +480,7 @@ impl RateLimiter {
     }
 
     fn try_admit(&self) -> bool {
-        let mut g = self
-            .last
-            .lock_or_poisoned("fleet::RateLimiter::try_admit");
+        let mut g = self.last.lock_or_poisoned("fleet::RateLimiter::try_admit");
         let now = Instant::now();
         match *g {
             Some(prev) if now.duration_since(prev) < self.min_interval => false,

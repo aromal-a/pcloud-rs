@@ -305,7 +305,8 @@ pub const CONFIG_SCHEMA_JSON: &str = r#"{
             "propagate_deletes": { "type": "boolean" },
             "full_scan_interval_secs": { "type": "integer" },
             "conflict_policy": { "type": "string" },
-            "upload_chunk_size": { "type": "integer" }
+            "upload_chunk_size": { "type": "integer" },
+            "pause_on_battery": { "type": "boolean" }
           }
         }
       }
@@ -842,6 +843,7 @@ static SYNC_LOOP_NODE: Node = Node::Object {
                 max: None,
             },
         ),
+        ("pause_on_battery", &Node::Bool),
     ],
 };
 

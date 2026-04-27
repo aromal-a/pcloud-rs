@@ -26,7 +26,7 @@
 
 use std::path::PathBuf;
 
-use pcloud_ipc::{redacted::RedactedString, Request, ResponseStatus};
+use pcloud_ipc::{Request, ResponseStatus, redacted::RedactedString};
 use pcloud_sdk::EmbeddedDaemon;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

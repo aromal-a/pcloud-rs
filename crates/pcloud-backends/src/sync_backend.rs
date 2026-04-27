@@ -817,13 +817,13 @@ impl DiffWorker {
     ) -> Result<DiffTickOutcome, DiffWorkerError> {
         // Honor the negotiated wait between calls.
         let now = self.clock.now();
-        if let Some(last) = self.last_attempt
-            && now.duration_since(last) < self.next_wait
-        {
-            return Ok(DiffTickOutcome::Idle {
-                diffid: self.cursor,
-                next_wait: self.next_wait,
-            });
+        if let Some(last) = self.last_attempt {
+            if now.duration_since(last) < self.next_wait {
+                return Ok(DiffTickOutcome::Idle {
+                    diffid: self.cursor,
+                    next_wait: self.next_wait,
+                });
+            }
         }
         self.last_attempt = Some(now);
 

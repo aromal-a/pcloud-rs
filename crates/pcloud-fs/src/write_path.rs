@@ -742,6 +742,12 @@ impl<B: FileUploadBackend> WritePathService<B> {
     /// One `upload_create`-to-`upload_save` session attempt. Factored out
     /// of [`Self::chunked_flush`] so the permanent-failure outer loop can
     /// restart a clean session without duplicating the streaming body.
+    ///
+    /// Each acknowledged `upload_write` is journalled as a discrete
+    /// [`JournalOp::ChunkAck`] record with `(offset, len, upload_id)`
+    /// metadata so a post-crash replay can reconstruct progress
+    /// independent of the per-inode upload-progress sidecar (audit-06
+    /// stream E, bd-1du.4.6).
     fn run_chunked_session(
         &self,
         _ino: u64,
@@ -751,6 +757,7 @@ impl<B: FileUploadBackend> WritePathService<B> {
         progress_path: &std::path::Path,
         total_size: u64,
     ) -> Result<(), WritePathError> {
+        let logical_path = join_path(parent, name);
         // Load an in-progress upload (if any) or begin a new one. The
         // progress sidecar ((ino, upload_id, last_acked_offset)) is fsynced
         // after each successful `upload_write` ack so a crash mid-flush
@@ -832,6 +839,17 @@ impl<B: FileUploadBackend> WritePathService<B> {
                     Err(e) => return Err(e),
                 }
             }
+            // Per-chunk discrete journal record (bd-1du.4.6 audit-06): a
+            // post-crash inspector can replay these records to reconstruct
+            // exactly which `(upload_id, offset, len)` triples the server
+            // acknowledged, independent of the per-inode upload-progress
+            // sidecar.
+            self.journal_append(JournalOp::ChunkAck {
+                path: logical_path.clone(),
+                upload_id,
+                offset,
+                len: want as u64,
+            })?;
             offset += want as u64;
             // Persist progress *after* the ack so the journal only records
             // what the server has acknowledged. fsync inside save().

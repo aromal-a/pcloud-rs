@@ -40,10 +40,10 @@ impl<T: Clone> TtlCache<T> {
     fn get_or_fetch<F: FnOnce() -> T>(&self, fetch: F) -> T {
         let now = self.clock.now();
         let mut guard = self.state.lock().expect("ttl cache mutex");
-        if let Some((val, inserted_at)) = guard.as_ref()
-            && now.saturating_duration_since(*inserted_at) < self.ttl
-        {
-            return val.clone();
+        if let Some((val, inserted_at)) = guard.as_ref() {
+            if now.saturating_duration_since(*inserted_at) < self.ttl {
+                return val.clone();
+            }
         }
         let v = fetch();
         *guard = Some((v.clone(), now));

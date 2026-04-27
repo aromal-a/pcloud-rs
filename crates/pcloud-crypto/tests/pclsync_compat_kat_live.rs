@@ -88,7 +88,10 @@ fn normalize_candidates(raw: &[u8]) -> Vec<(String, Vec<u8>)> {
         let pad = RSA_BLOCK - raw.len();
         let mut lp = vec![0u8; RSA_BLOCK];
         lp[pad..].copy_from_slice(raw);
-        out.push(("left-pad zeros to 512 (big-int leading-zero recovery)".into(), lp));
+        out.push((
+            "left-pad zeros to 512 (big-int leading-zero recovery)".into(),
+            lp,
+        ));
         // (b) Right-pad with zeros to 512 (unlikely but cheap to try).
         let mut rp = vec![0u8; RSA_BLOCK];
         rp[..raw.len()].copy_from_slice(raw);
@@ -176,8 +179,8 @@ fn pclsync_compat_decrypts_official_pcloud_ciphertext() {
     // 2. Parse priv_key_ver1 header: [type u32 LE][flags u32 LE][salt 64][ct DER].
     //    Cited: C_CODE/pclsync/pcryptofolder.c:72-77.
     // -------------------------------------------------------------------
-    let (_typ, _flags, salt, mut ct_der) = PclsyncCompatProfile::parse_priv_blob(&priv_blob)
-        .expect("parse priv_key_ver1 blob");
+    let (_typ, _flags, salt, mut ct_der) =
+        PclsyncCompatProfile::parse_priv_blob(&priv_blob).expect("parse priv_key_ver1 blob");
     eprintln!(
         "[pclsync-compat-kat] priv blob: {} B, ct DER = {} B, salt[0..4]={:02x?}",
         priv_blob.len(),
@@ -223,9 +226,9 @@ fn pclsync_compat_decrypts_official_pcloud_ciphertext() {
             "[pclsync-compat-kat]   folder sym_key_ver1 OK (type={}, flags={:#x})",
             fsym.sym_type, fsym.flags
         ),
-        Err(e) => eprintln!(
-            "[pclsync-compat-kat]   WARNING: folder OAEP unwrap also failed: {e:?}"
-        ),
+        Err(e) => {
+            eprintln!("[pclsync-compat-kat]   WARNING: folder OAEP unwrap also failed: {e:?}")
+        }
     }
 
     // -------------------------------------------------------------------

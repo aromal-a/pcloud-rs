@@ -143,9 +143,7 @@ impl ResiliencePolicy {
         // Include a stack-address bit to diverge seeds for multiple
         // daemons started in the same nanosecond window.
         let addr = (&nanos as *const u64 as usize) as u64;
-        let mixed = nanos
-            .wrapping_mul(0x9E37_79B9_7F4A_7C15)
-            .rotate_left(17)
+        let mixed = nanos.wrapping_mul(0x9E37_79B9_7F4A_7C15).rotate_left(17)
             ^ addr.wrapping_mul(0xBF58_476D_1CE4_E5B9);
         self.retry_jitter_seed = if mixed == 0 { 1 } else { mixed };
     }

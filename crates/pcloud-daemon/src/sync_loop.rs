@@ -323,8 +323,37 @@ fn sync_one_root(
 
 /// Run one full sync cycle across all active roots.
 pub fn run_cycle(runtime: &mut dyn SyncLoopRuntime, config: &SyncLoopConfig) -> CycleResult {
+    run_cycle_with_power(runtime, config, &*default_power_source_for_cycle())
+}
+
+/// Build the default platform power source. Hoisted so tests can swap
+/// it out by calling [`run_cycle_with_power`] directly.
+fn default_power_source_for_cycle() -> Box<dyn pcloud_engine::power::PowerSource> {
+    pcloud_engine::power::default_power_source()
+}
+
+/// Variant of [`run_cycle`] that takes an injectable power source so
+/// the audit-06 M-4.1 `pause_on_battery` gate can be unit-tested
+/// without depending on the host's actual battery state.
+///
+/// When `config.pause_on_battery == true` and `power.read()` reports
+/// `OnBattery`, the cycle is skipped: the cycle returns with zero
+/// counters and a non-zero `duration` (the wall time spent doing
+/// nothing). When the flag is `false` or the host is on AC / Unknown,
+/// behaviour is identical to pre-audit-06 `run_cycle`.
+pub fn run_cycle_with_power(
+    runtime: &mut dyn SyncLoopRuntime,
+    config: &SyncLoopConfig,
+    power: &dyn pcloud_engine::power::PowerSource,
+) -> CycleResult {
     let started = Instant::now();
     let mut cycle = CycleResult::default();
+
+    // audit-06 M-4.1: skip the cycle entirely when configured and on battery.
+    if pcloud_engine::power::should_pause(power, config.pause_on_battery) {
+        cycle.duration = started.elapsed();
+        return cycle;
+    }
 
     let auth_token = match runtime.auth_token() {
         Some(token) => token,
@@ -694,6 +723,68 @@ mod tests {
             paused,
             sync_type,
         }
+    }
+
+    /// Stub battery reader for the audit-06 M-4.1 gate test.
+    struct StubPower(pcloud_engine::power::PowerState);
+    impl pcloud_engine::power::PowerSource for StubPower {
+        fn read(&self) -> pcloud_engine::power::PowerState {
+            self.0
+        }
+    }
+
+    #[test]
+    fn pause_on_battery_disabled_runs_cycle_normally() {
+        let roots = vec![make_root(1, false, SyncType::Full)];
+        let mut runtime = MockRuntime::new(roots);
+        // Default config has pause_on_battery = false; even with a
+        // OnBattery stub, the cycle should run.
+        let config = SyncLoopConfig::default();
+        let power = StubPower(pcloud_engine::power::PowerState::OnBattery);
+        let result = run_cycle_with_power(&mut runtime, &config, &power);
+        assert_eq!(result.roots_processed, 1);
+    }
+
+    #[test]
+    fn pause_on_battery_enabled_skips_cycle_when_on_battery() {
+        let roots = vec![make_root(1, false, SyncType::Full)];
+        let mut runtime = MockRuntime::new(roots);
+        let config = SyncLoopConfig {
+            pause_on_battery: true,
+            ..SyncLoopConfig::default()
+        };
+        let power = StubPower(pcloud_engine::power::PowerState::OnBattery);
+        let result = run_cycle_with_power(&mut runtime, &config, &power);
+        assert_eq!(result.roots_processed, 0);
+        assert_eq!(runtime.poll_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn pause_on_battery_enabled_runs_cycle_when_on_ac() {
+        let roots = vec![make_root(1, false, SyncType::Full)];
+        let mut runtime = MockRuntime::new(roots);
+        let config = SyncLoopConfig {
+            pause_on_battery: true,
+            ..SyncLoopConfig::default()
+        };
+        let power = StubPower(pcloud_engine::power::PowerState::OnAc);
+        let result = run_cycle_with_power(&mut runtime, &config, &power);
+        assert_eq!(result.roots_processed, 1);
+    }
+
+    #[test]
+    fn pause_on_battery_unknown_state_does_not_pause() {
+        // Headless servers / VMs without a battery facade must not
+        // freeze the sync loop.
+        let roots = vec![make_root(1, false, SyncType::Full)];
+        let mut runtime = MockRuntime::new(roots);
+        let config = SyncLoopConfig {
+            pause_on_battery: true,
+            ..SyncLoopConfig::default()
+        };
+        let power = StubPower(pcloud_engine::power::PowerState::Unknown);
+        let result = run_cycle_with_power(&mut runtime, &config, &power);
+        assert_eq!(result.roots_processed, 1);
     }
 
     #[test]

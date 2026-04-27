@@ -114,9 +114,9 @@ fn validate_secret_file(path: &Path) -> Result<(), BootstrapError> {
     let mode = meta.permissions().mode();
     #[cfg(not(unix))]
     let mode: u32 = 0; // Windows permissions are ACL-based; the Unix-mode
-                      // triangle mask below degrades to "always 0 → pass"
-                      // (no rejection). Native ACL inspection is tracked
-                      // under bd-xplat-windows.
+    // triangle mask below degrades to "always 0 → pass"
+    // (no rejection). Native ACL inspection is tracked
+    // under bd-xplat-windows.
     if mode & 0o077 != 0 {
         return Err(BootstrapError::CredentialBootstrap(format!(
             "{} must not grant group/other access (mode=0o{:o})",

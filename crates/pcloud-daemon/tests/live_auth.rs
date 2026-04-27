@@ -8,10 +8,7 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
-use std::{
-    env, fs,
-    path::PathBuf,
-};
+use std::{env, fs, path::PathBuf};
 
 use pcloud_auth::SessionState;
 use pcloud_config::{ConfigProfile, Environment, env::apply_env_overrides};

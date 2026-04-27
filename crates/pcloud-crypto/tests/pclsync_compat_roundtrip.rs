@@ -22,9 +22,7 @@
 
 use pcloud_crypto::pclsync_filename::FilenameKeys;
 use pcloud_crypto::pclsync_rsa::SymKeyVer1;
-use pcloud_crypto::{
-    CryptoBackend, CryptoError, CryptoShell, SectorContext,
-};
+use pcloud_crypto::{CryptoBackend, CryptoError, CryptoShell, SectorContext};
 use pcloud_secret::secret_string::SecretString;
 
 fn pw(s: &str) -> SecretString {
@@ -96,7 +94,9 @@ fn wrong_password_is_rejected() {
         .setup_with_backend(pw("correct"), None, CryptoBackend::PclsyncCompat)
         .expect("setup");
 
-    let err = shell.start(pw("wrong")).expect_err("wrong password must fail");
+    let err = shell
+        .start(pw("wrong"))
+        .expect_err("wrong password must fail");
     assert_eq!(
         err,
         CryptoError::WrongPassword,
@@ -140,7 +140,10 @@ fn seal_open_sector_roundtrip_via_shell() {
         .expect("seal_sector_with_context");
 
     // PclsyncCompat emits a detached auth tag.
-    assert!(sealed.auth_tag.is_some(), "PclsyncCompat must produce a detached auth_tag");
+    assert!(
+        sealed.auth_tag.is_some(),
+        "PclsyncCompat must produce a detached auth_tag"
+    );
     // Ciphertext length equals plaintext length (AES-CTR, no expansion).
     assert_eq!(
         sealed.ciphertext.len(),
@@ -203,16 +206,25 @@ fn mkdir_then_reuse_sym_key() {
     // Encode a filename under that folder, then decode it.
     let cache_sym = synth_sym_key(); // independent key for encode/decode KAT
     let encoded = pcloud_crypto::pclsync_filename::encode_filename(
-        FilenameKeys { aes_key: &cache_sym.aes_key, hmac_key: &cache_sym.hmac_key },
+        FilenameKeys {
+            aes_key: &cache_sym.aes_key,
+            hmac_key: &cache_sym.hmac_key,
+        },
         "secret.pdf",
     )
     .expect("encode_filename");
     let decoded = pcloud_crypto::pclsync_filename::decode_filename(
-        FilenameKeys { aes_key: &cache_sym.aes_key, hmac_key: &cache_sym.hmac_key },
+        FilenameKeys {
+            aes_key: &cache_sym.aes_key,
+            hmac_key: &cache_sym.hmac_key,
+        },
         &encoded,
     )
     .expect("decode_filename");
-    assert_eq!(decoded, "secret.pdf", "filename decode/encode must roundtrip");
+    assert_eq!(
+        decoded, "secret.pdf",
+        "filename decode/encode must roundtrip"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +248,9 @@ fn cross_backend_unlock_is_rejected() {
             CryptoBackend::Enhanced,
             "historical Enhanced profile must infer Enhanced backend"
         );
-        shell2.start(pw("enhancedpw")).expect("unlock Enhanced after reload");
+        shell2
+            .start(pw("enhancedpw"))
+            .expect("unlock Enhanced after reload");
         assert!(shell2.is_started());
     }
 
@@ -382,12 +396,16 @@ fn change_password_rewraps_priv_key_ver1() {
     let mut shell2: CryptoShell = serde_json::from_str(&json).expect("deserialise");
 
     // New password must unlock.
-    shell2.start(pw("new")).expect("unlock with new password after rotation");
+    shell2
+        .start(pw("new"))
+        .expect("unlock with new password after rotation");
     assert!(shell2.is_started());
 
     // Old password must NOT unlock.
     shell2.stop();
-    let err = shell2.start(pw("old")).expect_err("old password must be rejected after rotation");
+    let err = shell2
+        .start(pw("old"))
+        .expect_err("old password must be rejected after rotation");
     assert_eq!(
         err,
         CryptoError::WrongPassword,
@@ -453,7 +471,10 @@ fn enhanced_path_still_works_unchanged() {
     let opened = shell
         .open_sector(&seed, 3, &sealed)
         .expect("open_sector (Enhanced)");
-    assert_eq!(opened, plaintext, "Enhanced sector round-trip must produce original plaintext");
+    assert_eq!(
+        opened, plaintext,
+        "Enhanced sector round-trip must produce original plaintext"
+    );
 }
 
 // ---------------------------------------------------------------------------

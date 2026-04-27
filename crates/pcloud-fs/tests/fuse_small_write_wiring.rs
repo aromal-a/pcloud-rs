@@ -261,10 +261,10 @@ fn small_file_below_threshold_roundtrip_records_journal() {
     // --- best-effort readback (mock folder backend does not auto-publish
     // post-create entries; readback miss is tolerated, upload byte-equality
     // below is the authoritative signal for the wiring assertion). -------
-    if let Ok(got) = std::fs::read(&file_path)
-        && got.len() == payload.len()
-    {
-        assert_eq!(got, payload, "readback mismatch for small file");
+    if let Ok(got) = std::fs::read(&file_path) {
+        if got.len() == payload.len() {
+            assert_eq!(got, payload, "readback mismatch for small file");
+        }
     }
 
     // --- assert upload finalize hit the backend --------------------------

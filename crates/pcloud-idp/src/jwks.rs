@@ -165,9 +165,7 @@ impl JwksCache {
             .and_then(|r| r.error_for_status())
             .and_then(|r| r.json())
             .map_err(|e| IdpError::Discovery(format!("fetch jwks: {e}")))?;
-        let mut state = self
-            .state
-            .lock_or_poisoned("idp::jwks::JwksCache::refresh");
+        let mut state = self.state.lock_or_poisoned("idp::jwks::JwksCache::refresh");
         state.discovery = Some(disc.clone());
         state.keys = jwks.keys;
         state.fetched_at = Some(Instant::now());
@@ -180,10 +178,10 @@ impl JwksCache {
             let state = self
                 .state
                 .lock_or_poisoned("idp::jwks::JwksCache::discovery");
-            if let (Some(d), Some(t)) = (&state.discovery, state.fetched_at)
-                && t.elapsed() < self.ttl
-            {
-                return Ok(d.clone());
+            if let (Some(d), Some(t)) = (&state.discovery, state.fetched_at) {
+                if t.elapsed() < self.ttl {
+                    return Ok(d.clone());
+                }
             }
         }
         self.refresh()

@@ -43,7 +43,7 @@ rand_core = { version = "0.6", optional = true }
 legacy-c-compat = []
 # Default feature set: activates pclsync-v2 so the PclsyncCompat backend
 # dispatch is compiled into the default build (Wave 2 Stage 2).
-default = ["pclsync-v2"]
+default = ["pclsync-v2", "crypto-provider-rustcrypto"]
 # Wave 1 pclsync-v2 rewrite gate. Enables primitives that mirror the legacy
 # pclsync C wire format (PBKDF2-HMAC-SHA512 KEK derivation, RSA-OAEP wrapping,
 # CBC-CS sector cipher, base32 filename encoding). OFF during Wave 1 so the
@@ -56,6 +56,29 @@ pclsync-v2 = ["dep:rsa", "dep:pkcs1", "dep:sha1", "dep:static_assertions", "dep:
 # without routing through the full `unlock_profile` flow. This feature
 # MUST NOT be enabled in production builds; it is dev-dependency-gated.
 test-helpers = []
+
+# ── Crypto provider seam (Stream G — forward-compat scaffolding) ─────────
+#
+# `crypto-provider-rustcrypto` selects the audited pure-Rust primitive
+# stack (RustCrypto: aes-gcm, sha2, hmac, pbkdf2, argon2). This is the
+# only provider currently wired and is what every test exercises. It is
+# pulled in by the `default` feature set above so the existing build is
+# unchanged.
+#
+# `crypto-provider-aws-lc-fips` is a FORWARD-COMPAT SEAM ONLY. It does
+# NOT provide a FIPS-validated build today. Enabling it triggers a
+# compile-time `compile_error!` (see `crates/pcloud-crypto/src/lib.rs`)
+# that points at `docs/fips.md`, which documents the swap procedure
+# (replace primitive crates, rebuild against an externally-validated
+# module, re-vendor, gate runtime policy via `CryptoPolicy::fips_mode`).
+# The feature exists so downstream operators have a stable cargo flag to
+# wire CI against, and so a future PR can land the provider switch
+# without breaking existing build invocations.
+#
+# Both features are mutually exclusive at compile time. Do not flip the
+# default without a validated replacement and a CI gate.
+crypto-provider-rustcrypto = []
+crypto-provider-aws-lc-fips = []
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }

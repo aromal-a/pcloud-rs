@@ -146,12 +146,13 @@ pub fn observe_flush(bytes: u64, elapsed: Duration) {
     #[allow(clippy::cast_precision_loss)]
     let bytes_f = bytes as f64;
     flush_bytes_histogram().observe(bytes_f);
-    if let Some(slo) = SLO_REGISTRY.get()
-        && bytes > 0
-        && secs > 0.0
-    {
-        let mbps = (bytes_f / 1_000_000.0) / secs;
-        slo.observe_upload_throughput_mbps(mbps);
+    if let Some(slo) = SLO_REGISTRY.get() {
+        if bytes > 0 {
+            if secs > 0.0 {
+                let mbps = (bytes_f / 1_000_000.0) / secs;
+                slo.observe_upload_throughput_mbps(mbps);
+            }
+        }
     }
 }
 

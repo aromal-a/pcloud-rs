@@ -534,6 +534,13 @@ pub enum Command {
     /// `pcloudc upload list` — enumerate every upload session known
     /// to the running daemon. Daemon handler: `Request::UploadList`.
     UploadList,
+    /// `pcloudc upload write-from-file <UPLOAD_ID> <SOURCE_FILEID>
+    /// <SOURCE_HASH> <OFFSET> <COUNT>` — drive a server-side copy of
+    /// `<COUNT>` bytes from `(SOURCE_FILEID, SOURCE_HASH)` into the
+    /// open upload session `<UPLOAD_ID>` at offset `<OFFSET>`. Daemon
+    /// handler: `Request::UploadWriteFromFile`. audit-06 H-4.2 +
+    /// bd-1du row 93.
+    UploadWriteFromFile,
     /// `pcloudc conflict list` — list unresolved sync conflicts queued
     /// in the engine scheduler. Daemon handler:
     /// [`pcloud_ipc::Method::ListConflicts`].
@@ -804,6 +811,17 @@ pub struct SecretInputs {
     pub upload_conflict_mode: Option<pcloud_ipc::UploadConflictMode>,
     /// Session id for upload pause/resume/cancel.
     pub upload_session_id: u64,
+    /// Upload session id for `Command::UploadWriteFromFile` (audit-06
+    /// H-4.2 + bd-1du row 93).
+    pub upload_write_from_file_session_id: u64,
+    /// Source `(file_id, hash)` pair for the server-side copy.
+    pub upload_write_from_file_source_fileid: u64,
+    /// Source content hash for the server-side copy.
+    pub upload_write_from_file_source_hash: u64,
+    /// Destination offset inside the upload session.
+    pub upload_write_from_file_offset: u64,
+    /// Bytes to copy (must be ≤ `PSYNC_MAX_COPY_FROM_REQ`).
+    pub upload_write_from_file_count: u64,
     /// Path for `Command::ConflictResolve`.
     pub conflict_path: String,
     /// Policy for `Command::ConflictResolve`.
@@ -1296,6 +1314,13 @@ impl Command {
                 session_id: inputs.upload_session_id,
             },
             Self::UploadList => Request::UploadList,
+            Self::UploadWriteFromFile => Request::UploadWriteFromFile {
+                upload_session_id: inputs.upload_write_from_file_session_id,
+                source_fileid: inputs.upload_write_from_file_source_fileid,
+                source_hash: inputs.upload_write_from_file_source_hash,
+                offset: inputs.upload_write_from_file_offset,
+                count: inputs.upload_write_from_file_count,
+            },
             Self::ConflictList => Request::ConflictList,
             Self::ConflictResolve => Request::ConflictResolve {
                 path: inputs.conflict_path.clone(),
@@ -1536,6 +1561,11 @@ mod tests {
             upload_total_bytes: 0,
             upload_conflict_mode: None,
             upload_session_id: 0,
+            upload_write_from_file_session_id: 0,
+            upload_write_from_file_source_fileid: 0,
+            upload_write_from_file_source_hash: 0,
+            upload_write_from_file_offset: 0,
+            upload_write_from_file_count: 0,
             conflict_path: String::new(),
             conflict_resolve_policy: String::new(),
             stat_remote_path: String::new(),

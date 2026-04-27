@@ -29,7 +29,6 @@
 //! the same "auto-release on process exit" semantic, so the takeover
 //! test below is cross-platform.
 
-
 use pcloud_config::ha::{HaContendedMode, HaPolicy};
 use pcloud_config::{ConfigProfile, Environment};
 use pcloud_daemon::bootstrap_with_config;

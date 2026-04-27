@@ -196,10 +196,10 @@ impl NotificationState {
     /// Persist state atomically. Creates parent directories if missing.
     /// On Unix the file is created with mode `0600`.
     pub fn save(&self, path: &Path) -> Result<(), PublinkExpiryError> {
-        if let Some(parent) = path.parent()
-            && !parent.as_os_str().is_empty()
-        {
-            std::fs::create_dir_all(parent)?;
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent)?;
+            }
         }
         let bytes = serde_json::to_vec_pretty(self)?;
         let tmp = path.with_extension("json.tmp");

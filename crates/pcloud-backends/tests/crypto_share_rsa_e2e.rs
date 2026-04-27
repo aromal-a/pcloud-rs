@@ -226,12 +226,9 @@ fn folder_share_rsa_two_account_roundtrip() {
     let b_pub_blob = pub_blob_for(&b_pub);
 
     // --- Step 1 (exercises the exact primitive SharesRuntime calls). ---
-    let wrapped_b64 = share_rsa::wrap_share_invitation_b64(
-        &a_state,
-        ShareTarget::Folder(42),
-        &b_pub_blob,
-    )
-    .expect("wrap succeeds");
+    let wrapped_b64 =
+        share_rsa::wrap_share_invitation_b64(&a_state, ShareTarget::Folder(42), &b_pub_blob)
+            .expect("wrap succeeds");
 
     // Wire shape sanity — the base64 must be 684 chars for RSA-4096.
     assert_eq!(wrapped_b64.len(), 684, "RSA-4096 OAEP b64 length contract");
@@ -305,12 +302,9 @@ fn account_team_share_rsa_two_account_roundtrip() {
     a_state.cache_folder_key(7, original.duplicate());
     let team_pub_blob = pub_blob_for(&team_pub);
 
-    let wrapped_b64 = share_rsa::wrap_share_invitation_b64(
-        &a_state,
-        ShareTarget::Folder(7),
-        &team_pub_blob,
-    )
-    .expect("wrap team succeeds");
+    let wrapped_b64 =
+        share_rsa::wrap_share_invitation_b64(&a_state, ShareTarget::Folder(7), &team_pub_blob)
+            .expect("wrap team succeeds");
 
     let mock = MockTransport::default();
     let api = SharesApi::new(mock.clone());
@@ -339,13 +333,12 @@ fn account_team_share_rsa_two_account_roundtrip() {
         string_param(req, "sharedfolderkey").is_none(),
         "team-share path must not emit sharedfolderkey"
     );
-    let tsk = string_param(req, "teamshare_key")
-        .expect("teamshare_key parameter present on the wire");
+    let tsk =
+        string_param(req, "teamshare_key").expect("teamshare_key parameter present on the wire");
     assert_eq!(tsk, wrapped_b64);
 
     // Team unwraps with their private key.
-    let recovered =
-        oaep_unwrap(&team_priv, &decode_b64(tsk)).expect("team unwraps with team priv");
+    let recovered = oaep_unwrap(&team_priv, &decode_b64(tsk)).expect("team unwraps with team priv");
     assert!(bool::from(recovered.ct_eq(&original)));
     assert_eq!(recovered.aes_key, original.aes_key);
     assert_eq!(recovered.hmac_key, original.hmac_key);
@@ -374,12 +367,9 @@ fn wrong_private_key_cannot_unwrap_share_invitation() {
     a_state.cache_folder_key(100, original.duplicate());
     let b_pub_blob = pub_blob_for(&b_pub);
 
-    let wrapped_b64 = share_rsa::wrap_share_invitation_b64(
-        &a_state,
-        ShareTarget::Folder(100),
-        &b_pub_blob,
-    )
-    .expect("wrap against B's pubkey succeeds");
+    let wrapped_b64 =
+        share_rsa::wrap_share_invitation_b64(&a_state, ShareTarget::Folder(100), &b_pub_blob)
+            .expect("wrap against B's pubkey succeeds");
 
     // Drive through the API to match the exact wire path.
     let mock = MockTransport::default();
@@ -404,8 +394,7 @@ fn wrong_private_key_cannot_unwrap_share_invitation() {
     // Account C tries to unwrap. MUST fail — OAEP is randomized and
     // tied to the modulus; a wrong priv key cannot produce a valid
     // `sym_key_ver1` plaintext.
-    let err =
-        oaep_unwrap(&c_priv, &ct).expect_err("wrong priv key must not unwrap invitation");
+    let err = oaep_unwrap(&c_priv, &ct).expect_err("wrong priv key must not unwrap invitation");
     // Error variant is deliberately opaque (no padding-oracle leak) —
     // the exact variant is either `Oaep` or `WrongSymKeyLen` depending
     // on whether the random-looking plaintext happens to pass the

@@ -118,3 +118,121 @@ harness = false
 
 [lints]
 workspace = true
+
+# ── Distribution packaging metadata ───────────────────────────────────────
+#
+# These blocks are consumed by `cargo-deb` and `cargo-generate-rpm` to
+# produce platform-native packages from a release build. They are wired
+# into `.github/workflows/release-packaging.yml`, which runs on `v*.*.*`
+# tag pushes (Stream G — packaging CI). The historical `nfpm.yaml` /
+# `cargo-deb.toml` snippets under `packaging/debian/` remain in tree as
+# alternative recipes; the canonical CI path is the metadata blocks below.
+#
+# Both blocks ship the daemon (`pcloudd`) AND the CLI (`pcloudc`) because
+# end users need the CLI to drive the daemon (see release.yml comments
+# under pcloud-rs-ncx.26 / audit-06 P2-12). The CLI binary is produced
+# from the `pcloud-cli` crate; package builders must build that crate
+# alongside the daemon (`cargo build --release -p pcloud-daemon -p pcloud-cli`).
+
+[package.metadata.deb]
+name = "pcloud-rs"
+maintainer = "pcloud-rs maintainers <ezechiel203@gmail.com>"
+copyright = "2026, pcloud-rs contributors"
+license-file = ["../../LICENSE-MIT", "4"]
+extended-description = """\
+pCloud command-line client and user-space daemon (Rust rewrite). \
+Provides the `pcloudc` CLI and the `pcloudd` background daemon for \
+syncing, mounting, and managing pCloud accounts. This is the Rust \
+rewrite of the historical C/C++ pcloudcc client; it ships hardened \
+systemd integration, opt-in FUSE mount support, and an owner-only \
+local IPC surface."""
+section = "net"
+priority = "optional"
+# Mirror the dependency closure from packaging/debian/nfpm.yaml. `$auto`
+# adds shared-library dependencies discovered via `dpkg-shlibdeps`. The
+# explicit additions cover SQLite, TLS, FUSE3, and CA roots.
+depends = "$auto, libc6, libssl3 | libssl1.1, libsqlite3-0, libfuse3-3, fuse3"
+recommends = "ca-certificates"
+assets = [
+    ["target/release/pcloudd", "usr/bin/", "755"],
+    ["target/release/pcloudc", "usr/bin/", "755"],
+    ["../../packaging/systemd/pcloudd.service", "lib/systemd/system/", "644"],
+    ["../../packaging/systemd/pcloudd.socket", "lib/systemd/system/", "644"],
+    ["../../packaging/init/common/pcloudd.env.example", "etc/pcloud-rs/pcloudd.env.example", "644"],
+    ["../../packaging/debian/pcloud-rs.logrotate", "etc/logrotate.d/pcloud-rs", "644"],
+    ["../../LICENSE-MIT", "usr/share/doc/pcloud-rs/LICENSE-MIT", "644"],
+    ["../../LICENSE-APACHE", "usr/share/doc/pcloud-rs/LICENSE-APACHE", "644"],
+    ["../../README.md", "usr/share/doc/pcloud-rs/README.md", "644"],
+]
+conf-files = [
+    "/etc/pcloud-rs/pcloudd.env.example",
+    "/etc/logrotate.d/pcloud-rs",
+]
+maintainer-scripts = "../../packaging/debian"
+
+[package.metadata.generate-rpm]
+name = "pcloud-rs"
+summary = "pCloud command-line client and user-space daemon (Rust rewrite)"
+license = "MIT OR Apache-2.0"
+url = "https://github.com/ezechiel203/pcloud-rs"
+# `cargo-generate-rpm` resolves Requires automatically from the staged
+# binaries' dynamic-linker view via `--auto-req auto`. The explicit list
+# below documents the expected runtime surface for distros without
+# `find-requires`.
+post_install_script = "../../packaging/debian/postinst"
+post_uninstall_script = "../../packaging/debian/postrm"
+
+[package.metadata.generate-rpm.requires]
+sqlite-libs = "*"
+openssl-libs = "*"
+fuse3-libs = "*"
+
+[[package.metadata.generate-rpm.assets]]
+source = "target/release/pcloudd"
+dest = "/usr/bin/pcloudd"
+mode = "0755"
+
+[[package.metadata.generate-rpm.assets]]
+source = "target/release/pcloudc"
+dest = "/usr/bin/pcloudc"
+mode = "0755"
+
+[[package.metadata.generate-rpm.assets]]
+source = "packaging/systemd/pcloudd.service"
+dest = "/lib/systemd/system/pcloudd.service"
+mode = "0644"
+
+[[package.metadata.generate-rpm.assets]]
+source = "packaging/systemd/pcloudd.socket"
+dest = "/lib/systemd/system/pcloudd.socket"
+mode = "0644"
+
+[[package.metadata.generate-rpm.assets]]
+source = "packaging/init/common/pcloudd.env.example"
+dest = "/etc/pcloud-rs/pcloudd.env.example"
+mode = "0644"
+config = true
+
+[[package.metadata.generate-rpm.assets]]
+source = "packaging/debian/pcloud-rs.logrotate"
+dest = "/etc/logrotate.d/pcloud-rs"
+mode = "0644"
+config = true
+
+[[package.metadata.generate-rpm.assets]]
+source = "LICENSE-MIT"
+dest = "/usr/share/doc/pcloud-rs/LICENSE-MIT"
+mode = "0644"
+doc = true
+
+[[package.metadata.generate-rpm.assets]]
+source = "LICENSE-APACHE"
+dest = "/usr/share/doc/pcloud-rs/LICENSE-APACHE"
+mode = "0644"
+doc = true
+
+[[package.metadata.generate-rpm.assets]]
+source = "README.md"
+dest = "/usr/share/doc/pcloud-rs/README.md"
+mode = "0644"
+doc = true

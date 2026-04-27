@@ -620,10 +620,10 @@ fn ipc_plain_response(ipc: Result<IpcResponse, String>) -> Response {
 /// Read the caller's existing CSRF cookie (if valid) or mint a fresh
 /// one. Tokens are 128 bits of OS randomness hex-encoded.
 fn existing_or_new_csrf(headers: &HeaderMap) -> String {
-    if let Some(t) = read_csrf_cookie(headers)
-        && is_valid_token(&t)
-    {
-        return t;
+    if let Some(t) = read_csrf_cookie(headers) {
+        if is_valid_token(&t) {
+            return t;
+        }
     }
     mint_csrf_token()
 }
@@ -635,7 +635,8 @@ fn mint_csrf_token() -> String {
     // a web UI securely anyway, so panic is the correct failure mode
     // for this MVP loopback-only surface. If this call ever moves
     // behind a public bind it must be converted to a typed error.
-    getrandom::getrandom(&mut buf).expect("getrandom: kernel RNG unavailable — cannot mint CSRF token");
+    getrandom::getrandom(&mut buf)
+        .expect("getrandom: kernel RNG unavailable — cannot mint CSRF token");
     let mut s = String::with_capacity(32);
     for b in buf {
         use std::fmt::Write;

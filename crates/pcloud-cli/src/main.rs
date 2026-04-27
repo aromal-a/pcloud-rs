@@ -24,8 +24,8 @@ mod app;
 #[allow(unsafe_code)]
 mod commands;
 mod completion;
-mod crypto_setup_picker;
 mod config;
+mod crypto_setup_picker;
 #[allow(unsafe_code)]
 mod doctor;
 mod exit_code;
@@ -443,10 +443,10 @@ fn run(argv: &[String]) -> ExitCode {
     // it to stderr exactly once (before the command result) so the
     // operator can paste it into a support ticket. `--quiet` keeps
     // stderr silent too.
-    if let Some(tp) = flags.traceparent.as_deref()
-        && !flags.quiet
-    {
-        eprintln!("[trace: {tp}]");
+    if let Some(tp) = flags.traceparent.as_deref() {
+        if !flags.quiet {
+            eprintln!("[trace: {tp}]");
+        }
     }
 
     // Attach the resolved traceparent (if any) to the outgoing
@@ -510,10 +510,8 @@ fn run(argv: &[String]) -> ExitCode {
                                     | commands::Command::CryptoGetFolderKey
                                     | commands::Command::CryptoGetFileKey
                                     | commands::Command::CryptoStatus
-                            ) && !matches!(
-                                response.status,
-                                pcloud_ipc::ResponseStatus::Ok
-                            ) {
+                            ) && !matches!(response.status, pcloud_ipc::ResponseStatus::Ok)
+                            {
                                 translate_server_result_code(&response.message)
                             } else {
                                 response.message.clone()
@@ -546,15 +544,11 @@ fn run(argv: &[String]) -> ExitCode {
                             // what it can from the response message and
                             // otherwise emits an honest 'unknown' marker
                             // rather than silently skipping the line.
-                            if let Some(prefix) =
-                                render_backend_prefix(&command, &response)
-                            {
+                            if let Some(prefix) = render_backend_prefix(&command, &response) {
                                 println!("{prefix}");
                             }
                             println!("{}", rendered.title);
-                            if let Some(suffix) =
-                                render_backend_suffix(&command, &response)
-                            {
+                            if let Some(suffix) = render_backend_suffix(&command, &response) {
                                 println!("{suffix}");
                             }
                         }
@@ -994,203 +988,203 @@ fn run_daemon_start(flags: &GlobalFlags) -> ExitCode {
     }
     #[cfg(unix)]
     {
-    use pcloud_ipc::{IpcClient, Method, Request};
-    use std::io::Write as _;
-    use std::os::unix::fs::OpenOptionsExt as _;
-    use std::os::unix::process::CommandExt as _;
-    use std::process::{Command, Stdio};
-    use std::time::{Duration, Instant};
+        use pcloud_ipc::{IpcClient, Method, Request};
+        use std::io::Write as _;
+        use std::os::unix::fs::OpenOptionsExt as _;
+        use std::os::unix::process::CommandExt as _;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
 
-    let socket_path = match socket_path_for_defaults() {
-        Ok(p) => p,
-        Err(err) => {
+        let socket_path = match socket_path_for_defaults() {
+            Ok(p) => p,
+            Err(err) => {
+                return report_error(
+                    Some("Start".into()),
+                    flags.output,
+                    flags.quiet,
+                    ExitCode::GenericError,
+                    &format!("socket resolution failed: {err}"),
+                );
+            }
+        };
+
+        // Fast path: daemon is already running?
+        let client = IpcClient;
+        let probe = Request::Plain {
+            method: Method::GetHealth,
+        };
+        if client.send(&socket_path, &probe).is_ok() {
+            if !flags.quiet {
+                println!(
+                    "pcloudd already running (socket {} is live)",
+                    socket_path.display()
+                );
+            }
+            return ExitCode::Ok;
+        }
+
+        // Resolve daemon binary path. Prefer sibling of the running CLI so
+        // a local build works without $PATH manipulation; then PATH.
+        let daemon_path: std::path::PathBuf = match std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("pcloudd")))
+            .filter(|p| p.is_file())
+        {
+            Some(p) => p,
+            None => std::path::PathBuf::from("pcloudd"),
+        };
+
+        // Prepare the log directory and file (0600). Under the same
+        // ~/.pcloud/ root the daemon itself uses so operators have a single
+        // location to tail.
+        let root = socket_path
+            .parent() // runtime/
+            .and_then(|p| p.parent()) // root
+            .unwrap_or(std::path::Path::new("."))
+            .to_path_buf();
+        let log_dir = root.join("state");
+        if let Err(err) = std::fs::create_dir_all(&log_dir) {
             return report_error(
                 Some("Start".into()),
                 flags.output,
                 flags.quiet,
                 ExitCode::GenericError,
-                &format!("socket resolution failed: {err}"),
+                &format!("log dir create failed: {err}"),
             );
         }
-    };
+        let log_path = log_dir.join("daemon.log");
+        let log_file = match std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(&log_path)
+        {
+            Ok(f) => f,
+            Err(err) => {
+                return report_error(
+                    Some("Start".into()),
+                    flags.output,
+                    flags.quiet,
+                    ExitCode::GenericError,
+                    &format!("log open failed ({}): {err}", log_path.display()),
+                );
+            }
+        };
+        let log_stderr = match log_file.try_clone() {
+            Ok(f) => f,
+            Err(err) => {
+                return report_error(
+                    Some("Start".into()),
+                    flags.output,
+                    flags.quiet,
+                    ExitCode::GenericError,
+                    &format!("log clone failed: {err}"),
+                );
+            }
+        };
 
-    // Fast path: daemon is already running?
-    let client = IpcClient;
-    let probe = Request::Plain {
-        method: Method::GetHealth,
-    };
-    if client.send(&socket_path, &probe).is_ok() {
-        if !flags.quiet {
-            println!(
-                "pcloudd already running (socket {} is live)",
-                socket_path.display()
-            );
+        // Read the user's config and project the relevant non-secret
+        // settings into env vars the daemon honours at bootstrap. CLI is
+        // the orchestrator of the daemon's startup environment per the
+        // user's requirement (the daemon never reads the TOML directly).
+        let cfg = config::CliConfig::load_or_init(&config::CliConfig::default_path(None))
+            .unwrap_or_default();
+
+        // Spawn with setsid so the child becomes a session leader and is
+        // not killed when this CLI exits.
+        let mut cmd = Command::new(&daemon_path);
+        cmd.arg("serve")
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log_file))
+            .stderr(Stdio::from(log_stderr));
+        if let Some(gb) = cfg.cache_size_gb {
+            cmd.env("PCLOUD_CACHE_SIZE_GB", gb.to_string());
         }
-        return ExitCode::Ok;
-    }
+        if let Some(p) = cfg.mountpoint.as_ref() {
+            cmd.env("PCLOUD_DEFAULT_MOUNTPOINT", p);
+        }
+        if let Some(p) = cfg.log_path.as_ref() {
+            cmd.env("PCLOUD_LOG_PATH", p);
+        }
+        if let Some(p) = cfg.fs_event_log.as_ref() {
+            cmd.env("PCLOUD_FS_EVENT_LOG", p);
+        }
+        if let Some(lvl) = cfg.log_level.as_deref() {
+            cmd.env("PCLOUD_LOG_LEVEL", lvl);
+        }
+        if let Some(opts) = cfg.fuse_opts.as_deref() {
+            cmd.env("PCLOUD_FUSE_OPTS", opts);
+        }
+        // SAFETY: `pre_exec` closure runs in the child process after `fork()`
+        // and before `exec()`, where only async-signal-safe functions may be
+        // called. `setsid(2)` is explicitly async-signal-safe per POSIX and
+        // is the standard way to detach a daemon from its controlling terminal.
+        unsafe {
+            cmd.pre_exec(|| {
+                // SAFETY: setsid(2) is async-signal-safe per POSIX.
+                // Errors here (already session leader, EPERM) are
+                // surfaced as spawn failures via errno.
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
 
-    // Resolve daemon binary path. Prefer sibling of the running CLI so
-    // a local build works without $PATH manipulation; then PATH.
-    let daemon_path: std::path::PathBuf = match std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("pcloudd")))
-        .filter(|p| p.is_file())
-    {
-        Some(p) => p,
-        None => std::path::PathBuf::from("pcloudd"),
-    };
+        let child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(err) => {
+                return report_error(
+                    Some("Start".into()),
+                    flags.output,
+                    flags.quiet,
+                    ExitCode::GenericError,
+                    &format!(
+                        "failed to spawn pcloudd ({}): {err}. Ensure pcloudd is on PATH or \
+                     in the same directory as pcloudc.",
+                        daemon_path.display()
+                    ),
+                );
+            }
+        };
+        let pid = child.id();
+        // We intentionally drop `child` without waiting: the daemon is
+        // now a detached session leader. Leaking `Child` is correct here.
+        std::mem::forget(child);
 
-    // Prepare the log directory and file (0600). Under the same
-    // ~/.pcloud/ root the daemon itself uses so operators have a single
-    // location to tail.
-    let root = socket_path
-        .parent() // runtime/
-        .and_then(|p| p.parent()) // root
-        .unwrap_or(std::path::Path::new("."))
-        .to_path_buf();
-    let log_dir = root.join("state");
-    if let Err(err) = std::fs::create_dir_all(&log_dir) {
-        return report_error(
+        // Poll the socket until `GetHealth` responds or we time out.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut last_err = String::from("no response within timeout");
+        while Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(100));
+            match client.send(&socket_path, &probe) {
+                Ok(_) => {
+                    if !flags.quiet {
+                        // Also print the log path for convenience.
+                        let _ = writeln!(
+                            std::io::stdout(),
+                            "pcloudd started (pid={pid}, socket={}, log={})",
+                            socket_path.display(),
+                            log_path.display()
+                        );
+                    }
+                    return ExitCode::Ok;
+                }
+                Err(e) => last_err = e.to_string(),
+            }
+        }
+
+        report_error(
             Some("Start".into()),
             flags.output,
             flags.quiet,
-            ExitCode::GenericError,
-            &format!("log dir create failed: {err}"),
-        );
-    }
-    let log_path = log_dir.join("daemon.log");
-    let log_file = match std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .mode(0o600)
-        .open(&log_path)
-    {
-        Ok(f) => f,
-        Err(err) => {
-            return report_error(
-                Some("Start".into()),
-                flags.output,
-                flags.quiet,
-                ExitCode::GenericError,
-                &format!("log open failed ({}): {err}", log_path.display()),
-            );
-        }
-    };
-    let log_stderr = match log_file.try_clone() {
-        Ok(f) => f,
-        Err(err) => {
-            return report_error(
-                Some("Start".into()),
-                flags.output,
-                flags.quiet,
-                ExitCode::GenericError,
-                &format!("log clone failed: {err}"),
-            );
-        }
-    };
-
-    // Read the user's config and project the relevant non-secret
-    // settings into env vars the daemon honours at bootstrap. CLI is
-    // the orchestrator of the daemon's startup environment per the
-    // user's requirement (the daemon never reads the TOML directly).
-    let cfg =
-        config::CliConfig::load_or_init(&config::CliConfig::default_path(None)).unwrap_or_default();
-
-    // Spawn with setsid so the child becomes a session leader and is
-    // not killed when this CLI exits.
-    let mut cmd = Command::new(&daemon_path);
-    cmd.arg("serve")
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log_file))
-        .stderr(Stdio::from(log_stderr));
-    if let Some(gb) = cfg.cache_size_gb {
-        cmd.env("PCLOUD_CACHE_SIZE_GB", gb.to_string());
-    }
-    if let Some(p) = cfg.mountpoint.as_ref() {
-        cmd.env("PCLOUD_DEFAULT_MOUNTPOINT", p);
-    }
-    if let Some(p) = cfg.log_path.as_ref() {
-        cmd.env("PCLOUD_LOG_PATH", p);
-    }
-    if let Some(p) = cfg.fs_event_log.as_ref() {
-        cmd.env("PCLOUD_FS_EVENT_LOG", p);
-    }
-    if let Some(lvl) = cfg.log_level.as_deref() {
-        cmd.env("PCLOUD_LOG_LEVEL", lvl);
-    }
-    if let Some(opts) = cfg.fuse_opts.as_deref() {
-        cmd.env("PCLOUD_FUSE_OPTS", opts);
-    }
-    // SAFETY: `pre_exec` closure runs in the child process after `fork()`
-    // and before `exec()`, where only async-signal-safe functions may be
-    // called. `setsid(2)` is explicitly async-signal-safe per POSIX and
-    // is the standard way to detach a daemon from its controlling terminal.
-    unsafe {
-        cmd.pre_exec(|| {
-            // SAFETY: setsid(2) is async-signal-safe per POSIX.
-            // Errors here (already session leader, EPERM) are
-            // surfaced as spawn failures via errno.
-            if libc::setsid() == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
-
-    let child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(err) => {
-            return report_error(
-                Some("Start".into()),
-                flags.output,
-                flags.quiet,
-                ExitCode::GenericError,
-                &format!(
-                    "failed to spawn pcloudd ({}): {err}. Ensure pcloudd is on PATH or \
-                     in the same directory as pcloudc.",
-                    daemon_path.display()
-                ),
-            );
-        }
-    };
-    let pid = child.id();
-    // We intentionally drop `child` without waiting: the daemon is
-    // now a detached session leader. Leaking `Child` is correct here.
-    std::mem::forget(child);
-
-    // Poll the socket until `GetHealth` responds or we time out.
-    let deadline = Instant::now() + Duration::from_secs(5);
-    let mut last_err = String::from("no response within timeout");
-    while Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(100));
-        match client.send(&socket_path, &probe) {
-            Ok(_) => {
-                if !flags.quiet {
-                    // Also print the log path for convenience.
-                    let _ = writeln!(
-                        std::io::stdout(),
-                        "pcloudd started (pid={pid}, socket={}, log={})",
-                        socket_path.display(),
-                        log_path.display()
-                    );
-                }
-                return ExitCode::Ok;
-            }
-            Err(e) => last_err = e.to_string(),
-        }
-    }
-
-    report_error(
-        Some("Start".into()),
-        flags.output,
-        flags.quiet,
-        ExitCode::Unavailable,
-        &format!(
-            "pcloudd was spawned (pid={pid}) but its socket did not come up within 5s: \
+            ExitCode::Unavailable,
+            &format!(
+                "pcloudd was spawned (pid={pid}) but its socket did not come up within 5s: \
              {last_err}. Check {}",
-            log_path.display()
-        ),
-    )
+                log_path.display()
+            ),
+        )
     }
 }
 
@@ -2037,10 +2031,10 @@ fn run_interactive_login(
             let info_req = Request::Plain {
                 method: Method::GetUserInfo,
             };
-            if let Ok(info) = client.send(&socket_path, &info_req)
-                && !flags.quiet
-            {
-                println!("{}", info.message);
+            if let Ok(info) = client.send(&socket_path, &info_req) {
+                if !flags.quiet {
+                    println!("{}", info.message);
+                }
             }
             return ExitCode::Ok;
         }
@@ -2134,7 +2128,9 @@ fn run_interactive_login(
                 // that avoids the mutation entirely.
                 #[allow(unsafe_code)]
                 // SAFETY: see comment above — single-threaded pre-runtime.
-                unsafe { std::env::remove_var(var) };
+                unsafe {
+                    std::env::remove_var(var)
+                };
                 SecretString::new(v)
             }
             Err(_) => {
@@ -2245,10 +2241,10 @@ fn run_interactive_login(
         let info_req = Request::Plain {
             method: Method::GetUserInfo,
         };
-        if let Ok(info) = client.send(&socket_path, &info_req)
-            && !flags.quiet
-        {
-            println!("{}", info.message);
+        if let Ok(info) = client.send(&socket_path, &info_req) {
+            if !flags.quiet {
+                println!("{}", info.message);
+            }
         }
         ExitCode::Ok
     };
@@ -2292,20 +2288,20 @@ fn run_interactive_login(
                 let sms_req = Request::Plain {
                     method: Method::SendTwoFactorSms,
                 };
-                if let Ok(resp) = client.send(&socket_path, &sms_req)
-                    && flags.verbosity > 0
-                {
-                    eprintln!("{}", resp.message);
+                if let Ok(resp) = client.send(&socket_path, &sms_req) {
+                    if flags.verbosity > 0 {
+                        eprintln!("{}", resp.message);
+                    }
                 }
             }
             if want_push {
                 let push_req = Request::Plain {
                     method: Method::SendTwoFactorNotification,
                 };
-                if let Ok(resp) = client.send(&socket_path, &push_req)
-                    && flags.verbosity > 0
-                {
-                    eprintln!("{}", resp.message);
+                if let Ok(resp) = client.send(&socket_path, &push_req) {
+                    if flags.verbosity > 0 {
+                        eprintln!("{}", resp.message);
+                    }
                 }
             }
         }
@@ -2402,10 +2398,10 @@ fn run_interactive_login(
                     let req = Request::Plain {
                         method: Method::SendTwoFactorSms,
                     };
-                    if let Ok(resp) = client.send(&socket_path, &req)
-                        && !flags.quiet
-                    {
-                        eprintln!("{}", resp.message);
+                    if let Ok(resp) = client.send(&socket_path, &req) {
+                        if !flags.quiet {
+                            eprintln!("{}", resp.message);
+                        }
                     }
                     continue;
                 }
@@ -2413,10 +2409,10 @@ fn run_interactive_login(
                     let req = Request::Plain {
                         method: Method::SendTwoFactorNotification,
                     };
-                    if let Ok(resp) = client.send(&socket_path, &req)
-                        && !flags.quiet
-                    {
-                        eprintln!("{}", resp.message);
+                    if let Ok(resp) = client.send(&socket_path, &req) {
+                        if !flags.quiet {
+                            eprintln!("{}", resp.message);
+                        }
                     }
                     continue;
                 }

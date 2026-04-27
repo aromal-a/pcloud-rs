@@ -62,9 +62,9 @@
 // **GATING:** feature = "pclsync-v2"
 
 use pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey, EncodeRsaPublicKey};
+use rsa::Oaep;
 use rsa::rand_core::OsRng;
 pub use rsa::{RsaPrivateKey, RsaPublicKey};
-use rsa::Oaep;
 use sha1::Sha1;
 use static_assertions::const_assert_eq;
 use subtle::ConstantTimeEq;
@@ -259,10 +259,7 @@ pub fn generate_keypair() -> Result<RsaKeyPair, PclsyncRsaError> {
 ///
 /// Mirrors `prsa_encrypt_data` (`pssl.c:718-740`). Returns exactly
 /// `PCLSYNC_RSA_BYTES` (= 512) bytes.
-pub fn oaep_wrap(
-    pubkey: &RsaPublicKey,
-    sym: &SymKeyVer1,
-) -> Result<Vec<u8>, PclsyncRsaError> {
+pub fn oaep_wrap(pubkey: &RsaPublicKey, sym: &SymKeyVer1) -> Result<Vec<u8>, PclsyncRsaError> {
     let mut plaintext = serialize_sym_key_ver1(sym);
     let mut rng = OsRng;
     let padding = Oaep::new::<Sha1>();
@@ -282,10 +279,7 @@ pub fn oaep_wrap(
 
 /// Unwrap an RSAES-OAEP-wrapped `sym_key_ver1`. Mirrors
 /// `prsa_decrypt_data` (`pssl.c:742-758`).
-pub fn oaep_unwrap(
-    privkey: &RsaPrivateKey,
-    wrapped: &[u8],
-) -> Result<SymKeyVer1, PclsyncRsaError> {
+pub fn oaep_unwrap(privkey: &RsaPrivateKey, wrapped: &[u8]) -> Result<SymKeyVer1, PclsyncRsaError> {
     if wrapped.len() != PCLSYNC_RSA_BYTES {
         return Err(PclsyncRsaError::WrongCiphertextLen {
             got: wrapped.len(),
@@ -385,8 +379,7 @@ mod tests {
     // fixture (generated out-of-band with `openssl genpkey -algorithm RSA
     // -pkeyopt rsa_keygen_bits:4096 -outform DER -out priv_key.der`). Live
     // keygen is still exercised by `generate_keypair_bits_4096`.
-    const PRIV_KEY_DER: &[u8] =
-        include_bytes!("../tests/fixtures/pclsync_v2/priv_key.der");
+    const PRIV_KEY_DER: &[u8] = include_bytes!("../tests/fixtures/pclsync_v2/priv_key.der");
 
     fn fixture_priv() -> RsaPrivateKey {
         parse_priv_key_der(PRIV_KEY_DER).expect("fixture DER must parse")
@@ -425,12 +418,18 @@ mod tests {
         let short = [0u8; 100];
         assert!(matches!(
             parse_sym_key_ver1(&short),
-            Err(PclsyncRsaError::WrongSymKeyLen { got: 100, expected: 168 })
+            Err(PclsyncRsaError::WrongSymKeyLen {
+                got: 100,
+                expected: 168
+            })
         ));
         let long = [0u8; 200];
         assert!(matches!(
             parse_sym_key_ver1(&long),
-            Err(PclsyncRsaError::WrongSymKeyLen { got: 200, expected: 168 })
+            Err(PclsyncRsaError::WrongSymKeyLen {
+                got: 200,
+                expected: 168
+            })
         ));
     }
 
@@ -494,7 +493,10 @@ mod tests {
         let short = vec![0u8; 511];
         assert!(matches!(
             oaep_unwrap(&priv_key, &short),
-            Err(PclsyncRsaError::WrongCiphertextLen { got: 511, expected: 512 })
+            Err(PclsyncRsaError::WrongCiphertextLen {
+                got: 511,
+                expected: 512
+            })
         ));
     }
 

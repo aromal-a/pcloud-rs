@@ -162,19 +162,19 @@ impl FileUploadBackend for CountingUploadBackend {
         let mut replay = false;
         {
             let mut pending = self.transient_on_chunk.lock().expect("lock");
-            if let Some(target) = *pending
-                && idx == target
-            {
-                *pending = None;
-                self.chunks_seen.lock().expect("lock").push(ChunkRecord {
-                    upload_id,
-                    offset,
-                    len: chunk.len(),
-                    replay: false,
-                });
-                return Err(WritePathError::UploadTransient(format!(
-                    "injected transient at chunk idx {idx} offset {offset}"
-                )));
+            if let Some(target) = *pending {
+                if idx == target {
+                    *pending = None;
+                    self.chunks_seen.lock().expect("lock").push(ChunkRecord {
+                        upload_id,
+                        offset,
+                        len: chunk.len(),
+                        replay: false,
+                    });
+                    return Err(WritePathError::UploadTransient(format!(
+                        "injected transient at chunk idx {idx} offset {offset}"
+                    )));
+                }
             }
             if *pending == Some(idx.saturating_sub(1)) {
                 // This call is the retry of the transient chunk.
@@ -321,8 +321,7 @@ fn chunked_flush_sustains_2gib_write_with_transient_retry() {
     // Chunk-count bookkeeping: we expect 512 unique offsets plus one
     // retried chunk (idx=100 re-fired).
     let chunks = backend.chunks();
-    let unique_offsets: std::collections::BTreeSet<u64> =
-        chunks.iter().map(|c| c.offset).collect();
+    let unique_offsets: std::collections::BTreeSet<u64> = chunks.iter().map(|c| c.offset).collect();
     assert_eq!(
         unique_offsets.len() as u64,
         TOTAL / CHUNK as u64,
@@ -421,8 +420,7 @@ fn chunked_flush_sustains_64mib_write_with_transient_retry() {
     assert_eq!(backend.total_bytes(), TOTAL as u64);
 
     let chunks = backend.chunks();
-    let unique_offsets: std::collections::BTreeSet<u64> =
-        chunks.iter().map(|c| c.offset).collect();
+    let unique_offsets: std::collections::BTreeSet<u64> = chunks.iter().map(|c| c.offset).collect();
     assert_eq!(unique_offsets.len(), expected_chunks);
 
     // Transient replay must have fired.
@@ -430,7 +428,10 @@ fn chunked_flush_sustains_64mib_write_with_transient_retry() {
     for c in &chunks {
         *counts.entry(c.offset).or_insert(0) += 1;
     }
-    assert!(counts.values().any(|&n| n > 1), "transient retry must replay");
+    assert!(
+        counts.values().any(|&n| n > 1),
+        "transient retry must replay"
+    );
 
     // Quiet unused-staging-blob warning on older file handles.
     let _ = tmp;

@@ -1549,9 +1549,7 @@ mod active_mounts_tests {
         }
         let guard = registry().lock().unwrap();
         for tid in 0..N {
-            let key = canonical_key(&PathBuf::from(format!(
-                "/nonexistent/aud06/conc/t{tid}"
-            )));
+            let key = canonical_key(&PathBuf::from(format!("/nonexistent/aud06/conc/t{tid}")));
             assert!(!guard.contains(&key), "leaked entry for t{tid}: {key:?}");
         }
     }

@@ -186,10 +186,10 @@ impl ProgressReporter {
                 let Ok(mut last) = self.last_tick.lock() else {
                     return;
                 };
-                if let Some(t) = *last
-                    && now.duration_since(t) < SPINNER_TICK
-                {
-                    return;
+                if let Some(t) = *last {
+                    if now.duration_since(t) < SPINNER_TICK {
+                        return;
+                    }
                 }
                 *last = Some(now);
                 let Ok(mut idx) = self.frame_idx.lock() else {

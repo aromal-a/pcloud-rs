@@ -351,9 +351,7 @@ fn windows_liveness_login_userinfo_listfolder_roundtrip_logout() {
                 )
             });
         hit.file_id.unwrap_or_else(|| {
-            panic!(
-                "scratch listfolder returned entry for {remote_name:?} without a file_id"
-            )
+            panic!("scratch listfolder returned entry for {remote_name:?} without a file_id")
         })
     };
     upload_guard.set_file_id(file_id);
@@ -441,10 +439,7 @@ fn windows_liveness_login_userinfo_listfolder_roundtrip_logout() {
         SessionState::LoggedOut,
         "session state must be LoggedOut after Logout"
     );
-    eprintln!(
-        "[live-e2e] windows_liveness: logout OK in {} ms",
-        logout_ms
-    );
+    eprintln!("[live-e2e] windows_liveness: logout OK in {} ms", logout_ms);
 
     eprintln!(
         "[live-e2e] windows_liveness: ALL PHASES OK in {} ms total",

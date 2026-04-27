@@ -91,6 +91,27 @@ pub enum JournalOp {
         /// Path whose pending writes must be durable at this point.
         path: String,
     },
+    /// Chunked-upload progress checkpoint. Recorded after each
+    /// `upload_write` ack from the backend so a crash mid-stream can
+    /// resume from the last journalled offset rather than the last
+    /// fsynced sidecar (the sidecar remains the resume source-of-truth;
+    /// this record gives an auditable per-chunk replay log alongside it).
+    ///
+    /// Added in audit-06 stream E (bd-1du.4.6) to make chunked
+    /// pipelining replay-safe: each chunk transmission is a discrete
+    /// journal record carrying `(path, upload_id, offset, len)` so a
+    /// post-crash inspector can reconstruct upload progress without
+    /// trusting the sidecar alone.
+    ChunkAck {
+        /// Absolute logical path that was being uploaded.
+        path: String,
+        /// Backend-assigned upload session id.
+        upload_id: u64,
+        /// Byte offset of the chunk that was acknowledged by the server.
+        offset: u64,
+        /// Length of the acknowledged chunk in bytes.
+        len: u64,
+    },
 }
 
 /// Record persisted on disk. `seq` gives total ordering; `op` carries the
@@ -294,13 +315,25 @@ pub fn replay_path(path: impl AsRef<Path>) -> Result<Vec<JournalRecord>, WriteJo
         // `[8..12]` are each 4 bytes by construction, so `try_into::<[u8;4]>`
         // is infallible. A panic here would mean a logic error in this
         // decode loop, not runtime data corruption.
-        let magic = u32::from_le_bytes(header[..4].try_into().unwrap());
+        let magic = u32::from_le_bytes(
+            header[..4]
+                .try_into()
+                .expect("invariant: header[..4] is 4 bytes by const construction"),
+        );
         if magic != MAGIC {
             // Stop at the first foreign/garbage frame.
             break;
         }
-        let payload_len = u32::from_le_bytes(header[4..8].try_into().unwrap());
-        let crc_expected = u32::from_le_bytes(header[8..12].try_into().unwrap());
+        let payload_len = u32::from_le_bytes(
+            header[4..8]
+                .try_into()
+                .expect("invariant: header[4..8] is 4 bytes by const construction"),
+        );
+        let crc_expected = u32::from_le_bytes(
+            header[8..12]
+                .try_into()
+                .expect("invariant: header[8..12] is 4 bytes by const construction"),
+        );
         if payload_len > MAX_RECORD_BYTES {
             return Err(WriteJournalError::RecordTooLarge(payload_len));
         }

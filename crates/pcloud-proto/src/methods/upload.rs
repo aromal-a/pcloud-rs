@@ -164,6 +164,15 @@ pub struct UploadCreateRequest {
     pub file_name: String,
     /// The `file_size` field (file size).
     pub file_size: u64,
+    /// Optional client-generated idempotency key (audit-06 H-4.2).
+    ///
+    /// When present, the daemon emits an extra `idempotencykey` parameter
+    /// so a network retry of `upload_create → upload_write → upload_save`
+    /// cannot produce a double-write — both the original and the retried
+    /// invocation carry the same key, so the server can short-circuit
+    /// duplicate session creation. The default `None` preserves the
+    /// pre-audit wire format for older callers.
+    pub idempotency_key: Option<String>,
 }
 
 impl UploadCreateRequest {
@@ -184,11 +193,14 @@ impl UploadCreateRequest {
     /// Returns a typed error on transport failure or malformed response.
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
-        let mut params = Vec::with_capacity(4);
+        let mut params = Vec::with_capacity(5);
         params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("folderid", self.parent_folder_id));
         params.push(BinaryParam::string("name", self.file_name.as_str()));
         params.push(BinaryParam::number("filesize", self.file_size));
+        if let Some(key) = self.idempotency_key.as_deref() {
+            params.push(BinaryParam::string("idempotencykey", key));
+        }
         params
     }
 }
@@ -218,6 +230,10 @@ pub struct UploadWriteRequest {
     pub upload_offset: u64,
     /// The `chunk_id` field (chunk id).
     pub chunk_id: u64,
+    /// Optional client-generated idempotency key matching the one supplied
+    /// to [`UploadCreateRequest`] (audit-06 H-4.2). Allows the server to
+    /// dedupe a retried `upload_write` against the same upload session.
+    pub idempotency_key: Option<String>,
 }
 
 impl UploadWriteRequest {
@@ -238,11 +254,14 @@ impl UploadWriteRequest {
     /// Returns a typed error on transport failure or malformed response.
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
-        let mut params = Vec::with_capacity(4);
+        let mut params = Vec::with_capacity(5);
         params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("uploadoffset", self.upload_offset));
         params.push(BinaryParam::number("id", self.chunk_id));
         params.push(BinaryParam::number("uploadid", self.upload_id));
+        if let Some(key) = self.idempotency_key.as_deref() {
+            params.push(BinaryParam::string("idempotencykey", key));
+        }
         params
     }
 
@@ -281,6 +300,12 @@ pub struct UploadWriteFromFileRequest {
     /// Byte count — must be ≤ `PSYNC_MAX_COPY_FROM_REQ`; splitting is the
     /// caller's responsibility (`pupload.c:1125-1131`).
     pub count: u64,
+    /// Optional client-generated idempotency key matching the one supplied
+    /// to [`UploadCreateRequest`] (audit-06 H-4.2). Server-side copies are
+    /// idempotent on the source `(fileid, hash)` already, but the key
+    /// allows the daemon to dedupe a retried server-side copy against the
+    /// same upload session if the network drops mid-call.
+    pub idempotency_key: Option<String>,
 }
 
 impl UploadWriteFromFileRequest {
@@ -301,7 +326,7 @@ impl UploadWriteFromFileRequest {
     /// Returns a typed error on transport failure or malformed response.
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
-        let mut params = Vec::with_capacity(8);
+        let mut params = Vec::with_capacity(9);
         params.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         params.push(BinaryParam::number("uploadoffset", self.upload_offset));
         params.push(BinaryParam::number("id", self.chunk_id));
@@ -310,6 +335,9 @@ impl UploadWriteFromFileRequest {
         params.push(BinaryParam::number("hash", self.hash));
         params.push(BinaryParam::number("offset", self.source_offset));
         params.push(BinaryParam::number("count", self.count));
+        if let Some(key) = self.idempotency_key.as_deref() {
+            params.push(BinaryParam::string("idempotencykey", key));
+        }
         params
     }
 }
@@ -396,6 +424,11 @@ pub struct UploadSaveRequest {
     pub ctime: Option<u64>,
     /// The `conflict` field (conflict).
     pub conflict: Option<ConflictParam>,
+    /// Optional client-generated idempotency key matching the one supplied
+    /// to [`UploadCreateRequest`] (audit-06 H-4.2). Lets the server reject
+    /// a retried `upload_save` with the same key after the original
+    /// committed, preventing a duplicate entry.
+    pub idempotency_key: Option<String>,
 }
 
 impl UploadSaveRequest {
@@ -416,8 +449,12 @@ impl UploadSaveRequest {
     /// Returns a typed error on transport failure or malformed response.
     #[must_use]
     pub fn params(&self) -> Vec<BinaryParam> {
-        // auth, folderid, name, uploadid, timeformat, [ctime], mtime, [ifhash]
-        let cap = 6 + usize::from(self.ctime.is_some()) + usize::from(self.conflict.is_some());
+        // auth, folderid, name, uploadid, timeformat, [ctime], mtime,
+        // [ifhash], [idempotencykey]
+        let cap = 6
+            + usize::from(self.ctime.is_some())
+            + usize::from(self.conflict.is_some())
+            + usize::from(self.idempotency_key.is_some());
         let mut out = Vec::with_capacity(cap);
         out.push(BinaryParam::string("auth", self.auth_token.expose_secret()));
         out.push(BinaryParam::number("folderid", self.parent_folder_id));
@@ -430,6 +467,9 @@ impl UploadSaveRequest {
         out.push(BinaryParam::number("mtime", self.modified_at_unix));
         if let Some(conflict) = &self.conflict {
             out.push(conflict.to_binary());
+        }
+        if let Some(key) = self.idempotency_key.as_deref() {
+            out.push(BinaryParam::string("idempotencykey", key));
         }
         out
     }
@@ -861,10 +901,30 @@ mod tests {
             hash: 4,
             source_offset: 5,
             count: 6,
+            idempotency_key: None,
         };
         let encoded = req.encode().expect("encode");
         assert_eq!(encoded.frame.command, "upload_writefromfile");
         assert_eq!(encoded.frame.parameter_count, 8);
+    }
+
+    // audit-06 H-4.2: when an idempotency key is supplied,
+    // `upload_writefromfile` carries one additional parameter.
+    #[test]
+    fn upload_writefromfile_idempotent_encodes_with_nine_params() {
+        let req = UploadWriteFromFileRequest {
+            auth_token: "t".into(),
+            upload_id: 1,
+            upload_offset: 0,
+            chunk_id: 2,
+            file_id: 3,
+            hash: 4,
+            source_offset: 5,
+            count: 6,
+            idempotency_key: Some("01H_test_key".to_owned()),
+        };
+        let encoded = req.encode().expect("encode");
+        assert_eq!(encoded.frame.parameter_count, 9);
     }
 
     #[test]
@@ -877,6 +937,7 @@ mod tests {
             modified_at_unix: 3,
             ctime: None,
             conflict: None,
+            idempotency_key: None,
         };
         let encoded = req.encode().expect("encode");
         assert_eq!(encoded.frame.parameter_count, 6);
@@ -892,9 +953,58 @@ mod tests {
             modified_at_unix: 3,
             ctime: Some(4),
             conflict: Some(ConflictParam::IfHash(99)),
+            idempotency_key: None,
         };
         let encoded = req.encode().expect("encode");
         assert_eq!(encoded.frame.parameter_count, 8);
+    }
+
+    // audit-06 H-4.2: a save with all of ctime + conflict + idempotency
+    // key must encode 9 parameters.
+    #[test]
+    fn upload_save_with_idempotency_key_counts_nine_params() {
+        let req = UploadSaveRequest {
+            auth_token: "t".into(),
+            parent_folder_id: 1,
+            file_name: "a".into(),
+            upload_id: 2,
+            modified_at_unix: 3,
+            ctime: Some(4),
+            conflict: Some(ConflictParam::IfHash(99)),
+            idempotency_key: Some("01H_save_key".to_owned()),
+        };
+        let encoded = req.encode().expect("encode");
+        assert_eq!(encoded.frame.parameter_count, 9);
+    }
+
+    // audit-06 H-4.2: upload_create with an idempotency key carries 5
+    // parameters; without one, 4 (the legacy default).
+    #[test]
+    fn upload_create_idempotent_encodes_with_five_params() {
+        let req = UploadCreateRequest {
+            auth_token: "t".into(),
+            parent_folder_id: 9,
+            file_name: "a.bin".to_owned(),
+            file_size: 1024,
+            idempotency_key: Some("01H_create_key".to_owned()),
+        };
+        let encoded = req.encode().expect("encode");
+        assert_eq!(encoded.frame.parameter_count, 5);
+    }
+
+    // audit-06 H-4.2: upload_write with an idempotency key carries 5
+    // parameters (auth + uploadoffset + id + uploadid + idempotencykey).
+    #[test]
+    fn upload_write_idempotent_encodes_with_five_params() {
+        let req = UploadWriteRequest {
+            auth_token: "t".into(),
+            upload_id: 1,
+            upload_offset: 0,
+            chunk_id: 2,
+            idempotency_key: Some("01H_write_key".to_owned()),
+        };
+        let encoded = req.encode_with_body(0).expect("encode");
+        assert_eq!(encoded.frame.parameter_count, 5);
     }
 
     #[test]

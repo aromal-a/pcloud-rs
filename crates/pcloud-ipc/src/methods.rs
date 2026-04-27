@@ -1194,7 +1194,6 @@ pub enum CryptoBackendIpc {
     Enhanced,
 }
 
-
 /// Wire-level mirror of
 /// `pcloud_backends::upload_sessions::ConflictMode`. Carried on
 /// [`Request::UploadCreate`]. Old clients that do not emit the field

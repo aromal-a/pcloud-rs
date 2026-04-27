@@ -422,8 +422,8 @@ fn entry_attr_to_stat(attr: &EntryAttr) -> libc::stat {
         st.st_ctime_nsec = attr.mtime_nsec as libc::c_long;
         st.st_atime = mtime as i64;
         st.st_atime_nsec = 0;
-        st.st_birthtime = mtime as i64;     // macOS-specific
-        st.st_birthtime_nsec = 0;           // macOS-specific
+        st.st_birthtime = mtime as i64; // macOS-specific
+        st.st_birthtime_nsec = 0; // macOS-specific
     }
     st
 }
@@ -546,9 +546,7 @@ extern "C" fn thunk_getattr(
                 unsafe { macos_ffi::fuse_reply_attr(req, &st, ATTR_TIMEOUT_SECS) };
             }
             Err(errno) => {
-                log::debug!(
-                    "[pcloud-fuse-t] getattr ino={ino} FAILED errno={errno}"
-                );
+                log::debug!("[pcloud-fuse-t] getattr ino={ino} FAILED errno={errno}");
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
             }
@@ -589,9 +587,7 @@ extern "C" fn thunk_open(
         };
         match adapter.open(ino) {
             Ok(handle_id) => {
-                log::debug!(
-                    "[pcloud-fuse-t] open ino={ino} -> handle={handle_id}"
-                );
+                log::debug!("[pcloud-fuse-t] open ino={ino} -> handle={handle_id}");
                 // SAFETY: `fi` is writable for this callback per the
                 // libfuse contract; we only store the handle id.
                 unsafe { (*fi).fh = handle_id };
@@ -600,9 +596,7 @@ extern "C" fn thunk_open(
                 unsafe { macos_ffi::fuse_reply_open(req, fi) };
             }
             Err(errno) => {
-                log::debug!(
-                    "[pcloud-fuse-t] open ino={ino} FAILED errno={errno}"
-                );
+                log::debug!("[pcloud-fuse-t] open ino={ino} FAILED errno={errno}");
                 // SAFETY: `req` is valid.
                 unsafe { macos_ffi::fuse_reply_err(req, errno) };
             }
@@ -2005,11 +1999,7 @@ extern "C" fn thunk_removexattr(
 /// `access` thunk. Permits all access checks — the kernel enforces
 /// uid/gid/mode bits independently; our access thunk returning 0
 /// defers to kernel-side permission checking.
-extern "C" fn thunk_access(
-    req: macos_ffi::fuse_req_t,
-    _ino: macos_ffi::fuse_ino_t,
-    _mask: i32,
-) {
+extern "C" fn thunk_access(req: macos_ffi::fuse_req_t, _ino: macos_ffi::fuse_ino_t, _mask: i32) {
     let _ = std::panic::catch_unwind(|| {
         // SAFETY: `req` is a valid libfuse request handle; replying
         // with 0 grants access and is async-signal-safe from a thunk.
@@ -2070,9 +2060,7 @@ fn build_fuse_args(opts: &MountOptions) -> Vec<CString> {
     argv.push(CString::new("pcloud-rs").expect("literal has no NUL"));
     // Honour the read_only flag: pass `ro` or `rw` accordingly.
     argv.push(CString::new("-o").expect("literal has no NUL"));
-    argv.push(
-        CString::new(if opts.read_only { "ro" } else { "rw" }).expect("literal has no NUL"),
-    );
+    argv.push(CString::new(if opts.read_only { "ro" } else { "rw" }).expect("literal has no NUL"));
     // Only pass allow_other when the caller explicitly requests it.
     // MountService::validate_mountpoint rejects allow_other=true by default;
     // we must not hard-code it or we bypass that policy gate.
@@ -2357,7 +2345,10 @@ mod tests {
 
     #[test]
     fn build_fuse_args_read_only_default_emits_ro() {
-        let args = collect_args(&MountOptions { read_only: true, ..MountOptions::default() });
+        let args = collect_args(&MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        });
         let ro_pos = args.iter().position(|a| a == "ro");
         assert!(ro_pos.is_some(), "read-only must include 'ro' option");
         // Immediately preceded by -o
@@ -2367,7 +2358,10 @@ mod tests {
 
     #[test]
     fn build_fuse_args_read_write_emits_rw() {
-        let args = collect_args(&MountOptions { read_only: false, ..MountOptions::default() });
+        let args = collect_args(&MountOptions {
+            read_only: false,
+            ..MountOptions::default()
+        });
         let rw_pos = args.iter().position(|a| a == "rw");
         assert!(rw_pos.is_some(), "read-write must include 'rw' option");
         let idx = rw_pos.unwrap();
@@ -2376,19 +2370,34 @@ mod tests {
 
     #[test]
     fn build_fuse_args_ro_absent_when_read_write() {
-        let args = collect_args(&MountOptions { read_only: false, ..MountOptions::default() });
-        assert!(!args.contains(&"ro".to_string()), "'ro' must not appear in rw args");
+        let args = collect_args(&MountOptions {
+            read_only: false,
+            ..MountOptions::default()
+        });
+        assert!(
+            !args.contains(&"ro".to_string()),
+            "'ro' must not appear in rw args"
+        );
     }
 
     #[test]
     fn build_fuse_args_rw_absent_when_read_only() {
-        let args = collect_args(&MountOptions { read_only: true, ..MountOptions::default() });
-        assert!(!args.contains(&"rw".to_string()), "'rw' must not appear in ro args");
+        let args = collect_args(&MountOptions {
+            read_only: true,
+            ..MountOptions::default()
+        });
+        assert!(
+            !args.contains(&"rw".to_string()),
+            "'rw' must not appear in ro args"
+        );
     }
 
     #[test]
     fn build_fuse_args_allow_other_absent_by_default() {
-        let args = collect_args(&MountOptions { allow_other: false, ..MountOptions::default() });
+        let args = collect_args(&MountOptions {
+            allow_other: false,
+            ..MountOptions::default()
+        });
         assert!(
             !args.contains(&"allow_other".to_string()),
             "allow_other must not appear when not requested"
@@ -2397,7 +2406,10 @@ mod tests {
 
     #[test]
     fn build_fuse_args_allow_other_present_when_set() {
-        let args = collect_args(&MountOptions { allow_other: true, ..MountOptions::default() });
+        let args = collect_args(&MountOptions {
+            allow_other: true,
+            ..MountOptions::default()
+        });
         let ao_pos = args.iter().position(|a| a == "allow_other");
         assert!(ao_pos.is_some(), "allow_other must appear when requested");
         let idx = ao_pos.unwrap();
@@ -2415,7 +2427,10 @@ mod tests {
 
     #[test]
     fn build_fuse_args_volname_defaults_to_pcloud() {
-        let args = collect_args(&MountOptions { fs_name: None, ..MountOptions::default() });
+        let args = collect_args(&MountOptions {
+            fs_name: None,
+            ..MountOptions::default()
+        });
         assert!(
             args.iter().any(|a| a.starts_with("volname=")),
             "volname= must be present"
@@ -2450,10 +2465,7 @@ mod tests {
         let mut i = 1;
         while i < args.len() {
             if args[i] == "-o" {
-                assert!(
-                    i + 1 < args.len(),
-                    "-o must be followed by an option value"
-                );
+                assert!(i + 1 < args.len(), "-o must be followed by an option value");
                 i += 2;
             } else {
                 panic!("unexpected top-level arg {:?} at position {i}", args[i]);
@@ -2568,15 +2580,24 @@ mod tests {
         let hint = install_hint(MacFuseBackend::FuseT);
         assert!(hint.contains("fuse-t"), "hint must mention fuse-t");
         assert!(hint.contains("fuse-t.org"), "hint must contain fuse-t URL");
-        assert!(hint.contains("macfuse"), "hint must suggest macFUSE as alternative");
+        assert!(
+            hint.contains("macfuse"),
+            "hint must suggest macFUSE as alternative"
+        );
     }
 
     #[test]
     fn install_hint_macfuse_mentions_url_and_fuset_alternative() {
         let hint = install_hint(MacFuseBackend::MacFuse);
         assert!(hint.contains("macFUSE"), "hint must mention macFUSE");
-        assert!(hint.contains("macfuse.github.io"), "hint must contain macFUSE URL");
-        assert!(hint.contains("fuse-t"), "hint must suggest fuse-t as alternative");
+        assert!(
+            hint.contains("macfuse.github.io"),
+            "hint must contain macFUSE URL"
+        );
+        assert!(
+            hint.contains("fuse-t"),
+            "hint must suggest fuse-t as alternative"
+        );
     }
 
     #[test]
@@ -2703,7 +2724,10 @@ mod tests {
         assert_eq!(st.st_mtime, 1_700_000_000i64, "mtime must be set");
         assert_eq!(st.st_ctime, 1_700_000_000i64, "ctime must match mtime");
         assert_eq!(st.st_atime, 1_700_000_000i64, "atime must match mtime");
-        assert_eq!(st.st_birthtime, 1_700_000_000i64, "birthtime must match mtime");
+        assert_eq!(
+            st.st_birthtime, 1_700_000_000i64,
+            "birthtime must match mtime"
+        );
     }
 
     #[test]
@@ -2753,7 +2777,10 @@ mod tests {
     #[test]
     fn entry_attr_to_param_generation_is_zero() {
         let param = entry_attr_to_param(&file_attr(1, 0));
-        assert_eq!(param.generation, 0, "generation must be 0 (no inode versioning yet)");
+        assert_eq!(
+            param.generation, 0,
+            "generation must be 0 (no inode versioning yet)"
+        );
     }
 
     // -------------------------------------------------------------------------
@@ -2970,7 +2997,13 @@ mod tests {
 
     #[test]
     fn timeout_constants_are_positive() {
-        assert!(ATTR_TIMEOUT_SECS > 0.0, "ATTR_TIMEOUT_SECS must be positive");
-        assert!(ENTRY_TIMEOUT_SECS > 0.0, "ENTRY_TIMEOUT_SECS must be positive");
+        assert!(
+            ATTR_TIMEOUT_SECS > 0.0,
+            "ATTR_TIMEOUT_SECS must be positive"
+        );
+        assert!(
+            ENTRY_TIMEOUT_SECS > 0.0,
+            "ENTRY_TIMEOUT_SECS must be positive"
+        );
     }
 }

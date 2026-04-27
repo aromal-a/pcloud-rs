@@ -54,8 +54,7 @@ impl core::fmt::Debug for SetupFingerprint {
         write!(
             f,
             "SetupFingerprint({:02x}{:02x}{:02x}{:02x}…[{} bytes])",
-            self.0[0], self.0[1], self.0[2], self.0[3],
-            FINGERPRINT_LEN
+            self.0[0], self.0[1], self.0[2], self.0[3], FINGERPRINT_LEN
         )
     }
 }

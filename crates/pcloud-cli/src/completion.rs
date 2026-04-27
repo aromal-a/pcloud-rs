@@ -83,45 +83,52 @@ pub fn build_cli() -> Command {
                 .subcommand(sub("remove", "Remove a sync folder"))
                 // M-8.1: sync subcommands previously missing from completion tree.
                 .subcommand(
-                    sub("change-type", "Change sync type for a registered sync folder")
-                        .arg(
-                            Arg::new("local-path")
-                                .required(true)
-                                .help("Local path of the existing sync root"),
-                        )
-                        .arg(
-                            Arg::new("sync-type")
-                                .required(true)
-                                .value_parser(["two-way", "upload-only", "download-only"])
-                                .help("New sync type"),
-                        ),
+                    sub(
+                        "change-type",
+                        "Change sync type for a registered sync folder",
+                    )
+                    .arg(
+                        Arg::new("local-path")
+                            .required(true)
+                            .help("Local path of the existing sync root"),
+                    )
+                    .arg(
+                        Arg::new("sync-type")
+                            .required(true)
+                            .value_parser(["two-way", "upload-only", "download-only"])
+                            .help("New sync type"),
+                    ),
                 )
                 .subcommand(
-                    sub("localscan", "Force an immediate local-filesystem scan")
-                        .arg(
-                            Arg::new("local-path")
-                                .required(false)
-                                .help("Restrict scan to this local path (default: all roots)"),
-                        ),
+                    sub("localscan", "Force an immediate local-filesystem scan").arg(
+                        Arg::new("local-path")
+                            .required(false)
+                            .help("Restrict scan to this local path (default: all roots)"),
+                    ),
                 )
                 .subcommand(
-                    sub("suggest", "Suggest folders suitable for syncing")
-                        .arg(
-                            Arg::new("limit")
-                                .long("limit")
-                                .value_parser(clap::value_parser!(u32))
-                                .help("Maximum number of suggestions to return"),
-                        ),
+                    sub("suggest", "Suggest folders suitable for syncing").arg(
+                        Arg::new("limit")
+                            .long("limit")
+                            .value_parser(clap::value_parser!(u32))
+                            .help("Maximum number of suggestions to return"),
+                    ),
                 )
                 .subcommand(
-                    sub("is-syncable", "Check whether a local path can be added as a sync root")
-                        .arg(
-                            Arg::new("local-path")
-                                .required(true)
-                                .help("Local path to classify"),
-                        ),
+                    sub(
+                        "is-syncable",
+                        "Check whether a local path can be added as a sync root",
+                    )
+                    .arg(
+                        Arg::new("local-path")
+                            .required(true)
+                            .help("Local path to classify"),
+                    ),
                 )
-                .subcommand(sub("status", "Show current sync engine status and queue depth")),
+                .subcommand(sub(
+                    "status",
+                    "Show current sync engine status and queue depth",
+                )),
         )
         .subcommand(
             Command::new("crypto")
@@ -129,20 +136,25 @@ pub fn build_cli() -> Command {
                 .subcommand(sub("start", "Unlock crypto folder"))
                 .subcommand(sub("stop", "Lock crypto folder"))
                 .subcommand(sub("status", "Show crypto backend and lifecycle"))
-                .subcommand(sub("reset", "Wipe local crypto fingerprint and folder registry"))
-                .subcommand(sub("priv-key-flags", "Return current crypto private-key flags"))
+                .subcommand(sub(
+                    "reset",
+                    "Wipe local crypto fingerprint and folder registry",
+                ))
+                .subcommand(sub(
+                    "priv-key-flags",
+                    "Return current crypto private-key flags",
+                ))
                 .subcommand(sub(
                     "send-change-private",
                     "Request server-side code to authorise a crypto password rotation",
                 ))
                 .subcommand(
-                    sub("change-password", "Rotate the crypto passphrase")
-                        .arg(
-                            Arg::new("password-stdin")
-                                .long("password-stdin")
-                                .action(ArgAction::SetTrue)
-                                .help("Read old crypto password from stdin"),
-                        ),
+                    sub("change-password", "Rotate the crypto passphrase").arg(
+                        Arg::new("password-stdin")
+                            .long("password-stdin")
+                            .action(ArgAction::SetTrue)
+                            .help("Read old crypto password from stdin"),
+                    ),
                 )
                 .subcommand(
                     sub(
@@ -508,17 +520,16 @@ pub fn build_cli() -> Command {
         .subcommand(
             Command::new("account")
                 .about("Account and auth management")
-                .subcommand(sub("verify-email", "Send a verification email for the active session"))
+                .subcommand(sub(
+                    "verify-email",
+                    "Send a verification email for the active session",
+                ))
                 .subcommand(
                     sub(
                         "verify-email-restricted",
                         "Verify email via a restricted verify-token",
                     )
-                    .arg(
-                        Arg::new("token")
-                            .required(true)
-                            .help("Verification token"),
-                    ),
+                    .arg(Arg::new("token").required(true).help("Verification token")),
                 )
                 .subcommand(
                     sub("lost-password", "Send a password-reset email").arg(
@@ -542,7 +553,10 @@ pub fn build_cli() -> Command {
                                 .help("Accept the pCloud Terms of Service"),
                         ),
                 )
-                .subcommand(sub("api-servers", "List available pCloud API server regions"))
+                .subcommand(sub(
+                    "api-servers",
+                    "List available pCloud API server regions",
+                ))
                 .subcommand(
                     sub("set-api-server", "Pin the daemon to a specific API region")
                         .arg(
@@ -566,18 +580,21 @@ pub fn build_cli() -> Command {
                 .subcommand(sub("promo", "Fetch the promotional URL for this platform")),
         )
         .subcommand(
-            sub("log", "Show git-log-style revision history for a synced file")
-                .arg(
-                    Arg::new("path")
-                        .required(true)
-                        .help("Absolute pCloud-drive path"),
-                )
-                .arg(
-                    Arg::new("limit")
-                        .long("limit")
-                        .value_parser(clap::value_parser!(u32))
-                        .help("Maximum number of revisions to return"),
-                ),
+            sub(
+                "log",
+                "Show git-log-style revision history for a synced file",
+            )
+            .arg(
+                Arg::new("path")
+                    .required(true)
+                    .help("Absolute pCloud-drive path"),
+            )
+            .arg(
+                Arg::new("limit")
+                    .long("limit")
+                    .value_parser(clap::value_parser!(u32))
+                    .help("Maximum number of revisions to return"),
+            ),
         )
         // ncx.65: `diff` and `restore` are CLI-side stubs that always
         // exit `Unavailable` (pCloud's public API does not expose the
@@ -591,25 +608,31 @@ pub fn build_cli() -> Command {
         // upstream API exposes a revision API — follow-up tracked as
         // `pcloud-rs-07o`.
         .subcommand(
-            sub("diff", "Show diff between two file revisions (stub — Unavailable)")
-                .hide(true)
-                .arg(
-                    Arg::new("path")
-                        .required(true)
-                        .help("Absolute pCloud-drive path"),
-                )
-                .arg(Arg::new("rev-a").required(true).help("First revision ID"))
-                .arg(Arg::new("rev-b").required(true).help("Second revision ID")),
+            sub(
+                "diff",
+                "Show diff between two file revisions (stub — Unavailable)",
+            )
+            .hide(true)
+            .arg(
+                Arg::new("path")
+                    .required(true)
+                    .help("Absolute pCloud-drive path"),
+            )
+            .arg(Arg::new("rev-a").required(true).help("First revision ID"))
+            .arg(Arg::new("rev-b").required(true).help("Second revision ID")),
         )
         .subcommand(
-            sub("restore", "Restore a file to a specific revision (stub — Unavailable)")
-                .hide(true)
-                .arg(
-                    Arg::new("path")
-                        .required(true)
-                        .help("Absolute pCloud-drive path"),
-                )
-                .arg(Arg::new("rev").required(true).help("Target revision ID")),
+            sub(
+                "restore",
+                "Restore a file to a specific revision (stub — Unavailable)",
+            )
+            .hide(true)
+            .arg(
+                Arg::new("path")
+                    .required(true)
+                    .help("Absolute pCloud-drive path"),
+            )
+            .arg(Arg::new("rev").required(true).help("Target revision ID")),
         )
         .subcommand(sub("mount", "Mount the pCloud filesystem"))
         .subcommand(sub("unmount", "Unmount the pCloud filesystem"))

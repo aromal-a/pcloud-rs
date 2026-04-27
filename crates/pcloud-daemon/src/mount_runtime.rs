@@ -74,14 +74,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pcloud_fs::fuse_adapter::{FuseAdapter, NullFuseAdapter};
+#[cfg(not(target_os = "macos"))]
+use pcloud_fs::mount_orphan::ProcMountinfoReader;
 use pcloud_fs::mount_orphan::{
     MountinfoReader, detect_orphans, fusermount_unmount, mountpoint_is_already_mounted,
 };
-#[cfg(not(target_os = "macos"))]
-use pcloud_fs::mount_orphan::ProcMountinfoReader;
+use pcloud_fs::mount_service::{MountError, MountHandle, MountOptions, MountService};
 #[cfg(target_os = "macos")]
 use pcloud_fs::platform::macos::MacosMountinfoReader;
-use pcloud_fs::mount_service::{MountError, MountHandle, MountOptions, MountService};
 use pcloud_ipc::{Response, ResponseStatus};
 use pcloud_observability::LockExt;
 
@@ -453,16 +453,16 @@ impl MountControl {
     /// should use `unmount` for that). Does not require `force_umount`
     /// to be enabled because the operator is explicit here.
     pub fn force_unmount_path(&self, path: &Path) -> Response {
-        if let Some(active) = &self.active
-            && active.mountpoint == path
-        {
-            return Response {
-                status: ResponseStatus::Conflict,
-                message: format!(
-                    "refusing to force-unmount active mount at {}; use 'unmount' instead",
-                    path.display()
-                ),
-            };
+        if let Some(active) = &self.active {
+            if active.mountpoint == path {
+                return Response {
+                    status: ResponseStatus::Conflict,
+                    message: format!(
+                        "refusing to force-unmount active mount at {}; use 'unmount' instead",
+                        path.display()
+                    ),
+                };
+            }
         }
         match fusermount_unmount(path, SHUTDOWN_UNMOUNT_WAIT) {
             Ok(()) => Response {
@@ -669,10 +669,8 @@ fn pid_is_alive(pid: i32) -> bool {
         // the canonical alive-probe. Returns null (Err) if the pid no
         // longer exists. Tracked under bd-xplat-windows for fidelity
         // with the Unix kill(0)/EPERM semantics.
-        use windows::Win32::System::Threading::{
-            OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-        };
         use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
         // SAFETY: both FFI calls accept primitive args and an open handle
         // is closed via CloseHandle before returning.
         unsafe {
@@ -1007,8 +1005,8 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
         // never poisoned by a panic inside this function (no panics between
         // Mutex::new and this lock call). Poison here would indicate a bug
         // elsewhere in daemon startup and is not recoverable.
-        *writer_slot_for_factory
-            .lock_or_poisoned("mount_runtime::writer_slot_for_factory") = Some(Arc::clone(&writer));
+        *writer_slot_for_factory.lock_or_poisoned("mount_runtime::writer_slot_for_factory") =
+            Some(Arc::clone(&writer));
 
         // Wire the write-path into the adapter too so adapter-level FUSE
         // ops (setattr/create/etc. that flow through `FuseAdapter`) reach

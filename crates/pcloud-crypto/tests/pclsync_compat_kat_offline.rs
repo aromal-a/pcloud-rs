@@ -29,7 +29,7 @@ use std::path::PathBuf;
 use pcloud_crypto::pclsync_compat_profile::PclsyncCompatProfile;
 use pcloud_crypto::pclsync_rsa;
 use pcloud_crypto::pclsync_sector::{
-    SectorKeys, open_sector, seal_sector_with_rnd, PCLSYNC_AUTH_TAG_SIZE, PCLSYNC_RND_SIZE,
+    PCLSYNC_AUTH_TAG_SIZE, PCLSYNC_RND_SIZE, SectorKeys, open_sector, seal_sector_with_rnd,
 };
 use sha2::{Digest, Sha256};
 
@@ -243,7 +243,9 @@ fn pclsync_compat_kat_offline_sector_decrypt_roundtrip() {
     //   - 33-byte payload (long path with CBC-CS tail)
     //   - 4096-byte payload (maximum sector)
     for &len in &[1usize, 15, 16, 33, 4096] {
-        let pt: Vec<u8> = (0..len).map(|i| ((i as u32).wrapping_mul(31) ^ 0xA5) as u8).collect();
+        let pt: Vec<u8> = (0..len)
+            .map(|i| ((i as u32).wrapping_mul(31) ^ 0xA5) as u8)
+            .collect();
         // `seal_sector_with_rnd` is deterministic given fixed keys + rnd + sid,
         // so the sealed ciphertext+tag this test produces are anchor-values:
         // any code change that alters them (or breaks open_sector's inverse
@@ -271,8 +273,13 @@ fn pclsync_compat_kat_offline_sector_decrypt_roundtrip() {
             aes_key: keys.aes_key,
             hmac_key: keys.hmac_key,
         };
-        let opened = open_sector(keys_borrow2, sector_id, &sealed.ciphertext, &sealed.auth_tag)
-            .expect("open_sector must round-trip the fixture plaintext");
+        let opened = open_sector(
+            keys_borrow2,
+            sector_id,
+            &sealed.ciphertext,
+            &sealed.auth_tag,
+        )
+        .expect("open_sector must round-trip the fixture plaintext");
         assert_eq!(
             opened.as_slice(),
             pt.as_slice(),
@@ -301,8 +308,13 @@ fn pclsync_compat_kat_offline_sector_decrypt_rejects_tampered_tag() {
         aes_key: keys.aes_key,
         hmac_key: keys.hmac_key,
     };
-    let err = open_sector(keys_borrow2, sector_id, &sealed.ciphertext, &sealed.auth_tag)
-        .expect_err("tampered auth tag must fail authentication");
+    let err = open_sector(
+        keys_borrow2,
+        sector_id,
+        &sealed.ciphertext,
+        &sealed.auth_tag,
+    )
+    .expect_err("tampered auth tag must fail authentication");
     // Exact variant: AuthFailed (not EmptySector / too-long).
     let msg = format!("{err}");
     assert!(

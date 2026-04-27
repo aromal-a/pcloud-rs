@@ -2,7 +2,7 @@
 // **GATING:** none (portable; uses Linux-only idioms — see TODO(bd-xplat)).
 
 use crate::commands::{Command, SecretInputs};
-use crate::prompt::{prompt_line, PromptError, SecretPrompt};
+use crate::prompt::{PromptError, SecretPrompt, prompt_line};
 use pcloud_model::public_links::PublicLinkUploadPolicy;
 use pcloud_secret::secret_string::SecretString;
 use thiserror::Error;
@@ -868,6 +868,8 @@ pub fn normalize_args(args: &[String]) -> Result<(Command, Vec<String>), Command
             "resume" => (Command::UploadResume, 2),
             "cancel" => (Command::UploadCancel, 2),
             "list" | "ls" => (Command::UploadList, 2),
+            // audit-06 H-4.2 + bd-1du row 93 — server-side copy.
+            "write-from-file" | "writefromfile" => (Command::UploadWriteFromFile, 2),
             other => {
                 return Err(CommandParseError::UnknownCommand(format!("upload {other}")));
             }
@@ -1341,6 +1343,7 @@ fn canonical_token_for(command: &Command) -> String {
         Command::UploadResume => "upload-resume",
         Command::UploadCancel => "upload-cancel",
         Command::UploadList => "upload-list",
+        Command::UploadWriteFromFile => "upload-write-from-file",
         Command::ConflictList => "conflict-list",
         Command::ConflictResolve => "conflict-resolve",
         // ── Crypto (Group A) ────────────────────────────────────────────
@@ -1522,6 +1525,7 @@ fn parse_single_token(token: &str) -> Result<Command, CommandParseError> {
         "upload-resume" => Command::UploadResume,
         "upload-cancel" => Command::UploadCancel,
         "upload-list" => Command::UploadList,
+        "upload-write-from-file" | "upload-writefromfile" => Command::UploadWriteFromFile,
         "conflict-list" => Command::ConflictList,
         "conflict-resolve" => Command::ConflictResolve,
         // ── Crypto (Group A) single-token aliases ────────────────────────
@@ -1891,8 +1895,7 @@ pub fn parse_inputs_for_command(
                 }
                 Some(_) => return Err(invalid_input("upload policy must be everyone|chosen|off")),
                 None => {
-                    let value =
-                        prompt_line("Upload policy (everyone/chosen/off)")?;
+                    let value = prompt_line("Upload policy (everyone/chosen/off)")?;
                     match value.to_ascii_lowercase().as_str() {
                         "everyone" => PublicLinkUploadPolicy::Everyone,
                         "chosen" => PublicLinkUploadPolicy::ChosenUsers,
@@ -2759,6 +2762,43 @@ pub fn parse_inputs_for_command(
                 inputs.download_local_path = local_path;
             }))
         }
+        // ── Upload server-side copy (audit-06 H-4.2 + bd-1du row 93) ─────
+        Command::UploadWriteFromFile => {
+            // `upload write-from-file <UPLOAD_ID> <SOURCE_FILEID>
+            // <SOURCE_HASH> <OFFSET> <COUNT>`
+            let upload_id: u64 = args
+                .get(2)
+                .ok_or_else(|| invalid_input("upload write-from-file: <UPLOAD_ID> required"))?
+                .parse::<u64>()
+                .map_err(|_| invalid_input("upload_id must be numeric"))?;
+            let source_fileid: u64 = args
+                .get(3)
+                .ok_or_else(|| invalid_input("upload write-from-file: <SOURCE_FILEID> required"))?
+                .parse::<u64>()
+                .map_err(|_| invalid_input("source_fileid must be numeric"))?;
+            let source_hash: u64 = args
+                .get(4)
+                .ok_or_else(|| invalid_input("upload write-from-file: <SOURCE_HASH> required"))?
+                .parse::<u64>()
+                .map_err(|_| invalid_input("source_hash must be numeric"))?;
+            let offset: u64 = args
+                .get(5)
+                .ok_or_else(|| invalid_input("upload write-from-file: <OFFSET> required"))?
+                .parse::<u64>()
+                .map_err(|_| invalid_input("offset must be numeric"))?;
+            let count: u64 = args
+                .get(6)
+                .ok_or_else(|| invalid_input("upload write-from-file: <COUNT> required"))?
+                .parse::<u64>()
+                .map_err(|_| invalid_input("count must be numeric"))?;
+            Ok(build_inputs(trust_device, recovery_code, |inputs| {
+                inputs.upload_write_from_file_session_id = upload_id;
+                inputs.upload_write_from_file_source_fileid = source_fileid;
+                inputs.upload_write_from_file_source_hash = source_hash;
+                inputs.upload_write_from_file_offset = offset;
+                inputs.upload_write_from_file_count = count;
+            }))
+        }
         // ── Backup delete (Group B) ───────────────────────────────────────
         Command::BackupDelete => {
             let backup_id = match args.get(2) {
@@ -2895,9 +2935,7 @@ pub fn parse_inputs_for_command(
                     .parse()
                     .map_err(|_| invalid_input("get-folder-key: FOLDER_ID must be numeric"))?,
                 None => {
-                    return Err(invalid_input(
-                        "get-folder-key: <FOLDER_ID> is required",
-                    ));
+                    return Err(invalid_input("get-folder-key: <FOLDER_ID> is required"));
                 }
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
@@ -2950,23 +2988,17 @@ pub enum CryptoSetupResolution {
 /// did not specify `--backend`; the caller then decides whether to
 /// open the interactive picker (tty) or reject with
 /// [`crate::exit_code::ExitCode::Usage`] (not a tty).
-pub fn resolve_crypto_setup_flags(
-    args: &[String],
-) -> Result<CryptoSetupResolution, PromptError> {
+pub fn resolve_crypto_setup_flags(args: &[String]) -> Result<CryptoSetupResolution, PromptError> {
     let hint = parse_flag_string(args, "--hint")?;
-    let ack = args
-        .iter()
-        .any(|a| a == "--acknowledge-not-interop");
+    let ack = args.iter().any(|a| a == "--acknowledge-not-interop");
     match parse_flag_string(args, "--backend")? {
         None => Ok(CryptoSetupResolution::NeedsInteractive { hint }),
         Some(value) => match value.as_str() {
-            "pclsync-compat" | "pclsync_compat" | "compat" => {
-                Ok(CryptoSetupResolution::Resolved {
-                    backend: pcloud_ipc::methods::CryptoBackendIpc::PclsyncCompat,
-                    acknowledge_not_interop: ack,
-                    hint,
-                })
-            }
+            "pclsync-compat" | "pclsync_compat" | "compat" => Ok(CryptoSetupResolution::Resolved {
+                backend: pcloud_ipc::methods::CryptoBackendIpc::PclsyncCompat,
+                acknowledge_not_interop: ack,
+                hint,
+            }),
             "enhanced" => {
                 if !ack {
                     // Exact error wording required by the Stage 4b.4 spec.
@@ -3249,6 +3281,12 @@ fn build_inputs(
         upload_total_bytes: 0,
         upload_conflict_mode: None,
         upload_session_id: 0,
+        // audit-06 H-4.2 + bd-1du row 93 — server-side copy.
+        upload_write_from_file_session_id: 0,
+        upload_write_from_file_source_fileid: 0,
+        upload_write_from_file_source_hash: 0,
+        upload_write_from_file_offset: 0,
+        upload_write_from_file_count: 0,
         conflict_path: String::new(),
         conflict_resolve_policy: String::new(),
         new_crypto_password: SecretString::new(String::new()),
@@ -5151,7 +5189,10 @@ mod tests {
                 acknowledge_not_interop,
                 hint,
             } => {
-                assert_eq!(backend, pcloud_ipc::methods::CryptoBackendIpc::PclsyncCompat);
+                assert_eq!(
+                    backend,
+                    pcloud_ipc::methods::CryptoBackendIpc::PclsyncCompat
+                );
                 // Ack flag is recorded verbatim but the daemon ignores
                 // it for this branch — the CLI does not silently strip
                 // it so post-hoc audit of the IPC request still shows
@@ -5206,7 +5247,10 @@ mod tests {
         let args = argv(&["crypto", "setup", "--backend", "hexapod"]);
         let err = super::resolve_crypto_setup_flags(&args).expect_err("unknown backend must fail");
         let msg = err.to_string();
-        assert!(msg.contains("hexapod"), "error must echo the bad value: {msg}");
+        assert!(
+            msg.contains("hexapod"),
+            "error must echo the bad value: {msg}"
+        );
         assert!(
             msg.contains("pclsync-compat") && msg.contains("enhanced"),
             "error must list the valid values: {msg}"

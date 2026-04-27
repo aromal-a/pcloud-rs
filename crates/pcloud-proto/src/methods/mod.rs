@@ -304,6 +304,7 @@ mod tests {
             parent_folder_id: 9,
             file_name: "report.txt".to_owned(),
             file_size: 1024,
+            idempotency_key: None,
         };
 
         let encoded_download = download.encode().expect("download request should encode");

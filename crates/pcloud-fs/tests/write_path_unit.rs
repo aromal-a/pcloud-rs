@@ -466,7 +466,9 @@ impl FileUploadBackend for MidChunkRetryBackend {
         offset: u64,
         chunk: &[u8],
     ) -> Result<(), WritePathError> {
-        let n = self.write_calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let n = self
+            .write_calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         if n < self.fail_write_calls {
             // Simulate a transient mid-chunk error (network flap).
             return Err(WritePathError::UploadTransient(format!(

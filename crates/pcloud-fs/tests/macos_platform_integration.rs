@@ -79,8 +79,8 @@ fn validate_mountpoint_empty_directory_is_ok() {
 
 #[test]
 fn active_platform_mount_is_macos_type() {
-    use std::any::TypeId;
     use pcloud_fs::platform::macos::MacosPlatformMount;
+    use std::any::TypeId;
     assert_eq!(
         TypeId::of::<ActivePlatformMount>(),
         TypeId::of::<MacosPlatformMount>(),
@@ -257,7 +257,11 @@ fn detect_orphans_identifies_unknown_macos_mounts() {
 fn detect_orphans_returns_all_when_nothing_known() {
     let reader = StaticMountinfoReader::new(MACOS_STYLE_FIXTURE);
     let orphans = detect_orphans(&reader, &[]).expect("detect_orphans must not error");
-    assert_eq!(orphans.len(), 2, "all mounts must be orphans when nothing known");
+    assert_eq!(
+        orphans.len(),
+        2,
+        "all mounts must be orphans when nothing known"
+    );
 }
 
 #[test]
@@ -323,10 +327,7 @@ fn fusermount_unmount_on_unmounted_dir_returns_err() {
 
 #[test]
 fn fusermount_unmount_on_nonexistent_path_returns_err() {
-    let result = fusermount_unmount(
-        Path::new("/nonexistent/path/xyz"),
-        Duration::from_secs(5),
-    );
+    let result = fusermount_unmount(Path::new("/nonexistent/path/xyz"), Duration::from_secs(5));
     assert!(
         result.is_err(),
         "unmounting a nonexistent path must return an error"
@@ -341,8 +342,14 @@ fn fusermount_unmount_on_nonexistent_path_returns_err() {
 fn mount_options_default_shape() {
     let opts = MountOptions::default();
     assert!(opts.read_only, "default MountOptions must be read-only");
-    assert!(!opts.allow_other, "default MountOptions must not allow_other");
-    assert!(opts.fs_name.is_none(), "default MountOptions must have no fs_name");
+    assert!(
+        !opts.allow_other,
+        "default MountOptions must not allow_other"
+    );
+    assert!(
+        opts.fs_name.is_none(),
+        "default MountOptions must have no fs_name"
+    );
 }
 
 #[test]
@@ -355,7 +362,10 @@ fn mount_service_rejects_allow_other_on_macos() {
     let result = svc.mount(
         dir.path(),
         NullFuseAdapter,
-        MountOptions { allow_other: true, ..MountOptions::default() },
+        MountOptions {
+            allow_other: true,
+            ..MountOptions::default()
+        },
     );
     assert!(result.is_err());
     assert!(
@@ -415,7 +425,10 @@ fn mount_service_probe_or_unsupported_never_panics() {
     match MacosPlatformMount.probe_supported() {
         Ok(()) => {}
         Err(MountError::Unsupported(hint)) => {
-            assert!(!hint.is_empty(), "Unsupported hint must not be empty: {hint}");
+            assert!(
+                !hint.is_empty(),
+                "Unsupported hint must not be empty: {hint}"
+            );
         }
         Err(other) => panic!("probe_supported must not return {other:?}"),
     }
