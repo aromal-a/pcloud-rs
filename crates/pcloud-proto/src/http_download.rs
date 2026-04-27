@@ -39,8 +39,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use pcloud_resilience::transport::parse_retry_after_from_headers;
 use pcloud_resilience::BandwidthPacer;
+use pcloud_resilience::transport::parse_retry_after_from_headers;
 use rustls::pki_types::ServerName;
 use rustls::{ClientConnection, StreamOwned};
 use sha2::{Digest, Sha256};
@@ -455,17 +455,17 @@ where
         // Surface Retry-After delay for 429 / 503 so callers can back off
         // for exactly the server-requested duration instead of using the
         // default exponential schedule.
-        if let Some(retry_after) = headers.retry_after
-            && (status == 429 || status == 503)
-        {
-            return Err(HttpDownloadError::RetryAfter(retry_after));
+        if let Some(retry_after) = headers.retry_after {
+            if status == 429 || status == 503 {
+                return Err(HttpDownloadError::RetryAfter(retry_after));
+            }
         }
         return Err(HttpDownloadError::HttpStatus(status));
     }
-    if let Some(length) = headers.content_length
-        && length > config.max_body_bytes
-    {
-        return Err(HttpDownloadError::BodyTooLarge);
+    if let Some(length) = headers.content_length {
+        if length > config.max_body_bytes {
+            return Err(HttpDownloadError::BodyTooLarge);
+        }
     }
 
     // `read_headers` currently returns an empty leftover, but defend
@@ -606,28 +606,28 @@ pub fn fetch_download_resumable(
     };
 
     // Attempt a range-based resume when there is an existing prefix.
-    if let Some(offset) = existing
-        && offset > 0
-    {
-        match try_resume(
-            download,
-            config,
-            expected_sha256,
-            &part_path,
-            offset,
-            dest_path,
-        ) {
-            Ok(outcome) => return Ok(outcome),
-            Err(ResumeAttempt::NoRangeSupport) => {
-                // Fall through to full redownload below.
+    if let Some(offset) = existing {
+        if offset > 0 {
+            match try_resume(
+                download,
+                config,
+                expected_sha256,
+                &part_path,
+                offset,
+                dest_path,
+            ) {
+                Ok(outcome) => return Ok(outcome),
+                Err(ResumeAttempt::NoRangeSupport) => {
+                    // Fall through to full redownload below.
+                }
+                Err(ResumeAttempt::Fatal(HttpDownloadError::RetryAfter(wait))) => {
+                    // Server requested back-off — honour it before falling
+                    // through to the full redownload attempt so we do not
+                    // hammer the endpoint immediately.
+                    std::thread::sleep(wait);
+                }
+                Err(ResumeAttempt::Fatal(e)) => return Err(e),
             }
-            Err(ResumeAttempt::Fatal(HttpDownloadError::RetryAfter(wait))) => {
-                // Server requested back-off — honour it before falling
-                // through to the full redownload attempt so we do not
-                // hammer the endpoint immediately.
-                std::thread::sleep(wait);
-            }
-            Err(ResumeAttempt::Fatal(e)) => return Err(e),
         }
     }
 

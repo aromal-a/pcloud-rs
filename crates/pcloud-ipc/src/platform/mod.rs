@@ -23,7 +23,8 @@ pub mod linux;
     target_os = "freebsd",
     target_os = "openbsd",
     target_os = "netbsd",
-    target_os = "macos"
+    target_os = "macos",
+    target_os = "dragonfly"
 ))]
 pub mod unix;
 
@@ -86,7 +87,8 @@ pub type ActivePlatform = linux::LinuxIpc;
     target_os = "freebsd",
     target_os = "openbsd",
     target_os = "netbsd",
-    target_os = "macos"
+    target_os = "macos",
+    target_os = "dragonfly"
 ))]
 pub type ActivePlatform = unix::UnixIpc;
 

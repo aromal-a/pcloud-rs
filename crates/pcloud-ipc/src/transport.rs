@@ -985,7 +985,8 @@ fn unix_peer_identity(stream: &UnixStream) -> Result<PeerIdentity, IpcTransportE
         target_os = "freebsd",
         target_os = "openbsd",
         target_os = "netbsd",
-        target_os = "macos"
+        target_os = "macos",
+        target_os = "dragonfly"
     ))]
     let (uid, pid) = crate::platform::unix::peer_ucred(stream)?;
 

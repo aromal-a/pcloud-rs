@@ -34,13 +34,13 @@ use std::thread;
 use std::time::Duration;
 
 use pcloud_config::resilience::ResiliencePolicy;
+use pcloud_resilience::transport::{
+    TransportErrorClass, TransportOutcomeLabel, observe_transport_error, observe_transport_latency,
+};
 use pcloud_resilience::{
     BackoffSchedule, BreakerState, CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError,
     Clock, GlobalRetryBudget, RateLimitError, RetryDecision, RetryPolicy, SystemClock, TokenBucket,
     TokenBucketConfig,
-};
-use pcloud_resilience::transport::{
-    TransportErrorClass, TransportOutcomeLabel, observe_transport_error, observe_transport_latency,
 };
 use thiserror::Error;
 
@@ -400,8 +400,8 @@ where
                     match self.retry.next(attempt) {
                         RetryDecision::Retry { wait } => {
                             // Check global budget before consuming a retry slot.
-                            if let Some(ref budget) = self.budget
-                                && !budget.try_consume() {
+                            if let Some(ref budget) = self.budget {
+                                if !budget.try_consume() {
                                     observe_transport_error(
                                         &self.host,
                                         TransportErrorClass::BudgetExhausted,
@@ -413,6 +413,7 @@ where
                                     );
                                     return Err(ResilientError::BudgetExhausted);
                                 }
+                            }
                             had_retry = true;
                             if !wait.is_zero() {
                                 self.waiter.wait(wait);
