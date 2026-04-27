@@ -52,6 +52,10 @@ members = [
   "crates/pcloud-plugin-publink-expiry",
   "crates/pcloud-plugin-backup-schedule",
 ]
+exclude = [
+  "vendor/if-addrs-dfly-fix",
+  "vendor/msvc_spectre_libs_stub",
+]
 resolver = "3"
 
 [workspace.package]
@@ -255,3 +259,11 @@ purpose = "Security-first Rust rewrite foundation for pcloud-rs."
 # Windows promotes to Tier-1.
 [patch.crates-io]
 msvc_spectre_libs = { path = "vendor/msvc_spectre_libs_stub" }
+# `if-addrs` 0.13.4 (pulled in transitively by `mdns-sd`) lacks
+# `target_os = "dragonfly"` in its cfg gates, so on DragonFly it
+# routes to the Linux netlink backend (`posix_not_apple`) and fails
+# to compile (no `sockaddr_nl` / `AF_NETLINK` / `NETLINK_ROUTE` in
+# DragonFly's `libc`). We vendor a minimal patch that adds DragonFly
+# to all the BSD-list cfg gates; behaviour on every other platform is
+# byte-identical.
+if-addrs = { path = "vendor/if-addrs-dfly-fix" }

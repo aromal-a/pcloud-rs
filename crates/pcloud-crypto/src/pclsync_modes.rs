@@ -55,8 +55,7 @@
 
 use aes::Aes256;
 use aes::cipher::{
-    BlockDecrypt, BlockEncrypt, KeyInit, KeyIvInit, StreamCipher,
-    generic_array::GenericArray,
+    BlockDecrypt, BlockEncrypt, KeyInit, KeyIvInit, StreamCipher, generic_array::GenericArray,
 };
 
 const BLOCK: usize = 16;
@@ -169,7 +168,7 @@ pub fn aes256_cbc_cts_encrypt(
     let cipher = Aes256::new(GenericArray::from_slice(key));
     let mut out = vec![0u8; n];
 
-    if n.is_multiple_of(BLOCK) {
+    if n % BLOCK == 0 {
         // Exact multiple of block size: plain CBC, no stealing required.
         // (CS3 still specifies an unconditional swap of the last two
         // ciphertext blocks even here; we apply it below.)
@@ -258,7 +257,7 @@ pub fn aes256_cbc_cts_decrypt(
     let cipher = Aes256::new(GenericArray::from_slice(key));
     let mut out = vec![0u8; n];
 
-    if n.is_multiple_of(BLOCK) {
+    if n % BLOCK == 0 {
         let blocks = n / BLOCK;
         // Reverse the CS3 swap first if there are ≥ 2 blocks.
         let mut ct = ciphertext.to_vec();

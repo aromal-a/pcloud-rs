@@ -715,10 +715,10 @@ impl IpcServer {
                     fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
                 } else {
                     use std::os::unix::fs::MetadataExt;
-                    if let Ok(meta) = fs::metadata(parent)
-                        && meta.uid() == self.owner_uid()
-                    {
-                        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+                    if let Ok(meta) = fs::metadata(parent) {
+                        if meta.uid() == self.owner_uid() {
+                            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+                        }
                     }
                 }
             }
@@ -743,10 +743,10 @@ impl IpcServer {
             // binding (pipes live in the NT pipe namespace, not the
             // filesystem). We still best-effort create it so any
             // sidecar files can be placed there.
-            if let Some(parent) = socket_path.parent()
-                && !parent.exists()
-            {
-                let _ = fs::create_dir_all(parent);
+            if let Some(parent) = socket_path.parent() {
+                if !parent.exists() {
+                    let _ = fs::create_dir_all(parent);
+                }
             }
             let backend = crate::platform::windows::WindowsIpc;
             let listener = backend.bind_listener(socket_path)?;

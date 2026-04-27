@@ -189,11 +189,9 @@ where
             .transport
             .execute(&encoded)
             .map_err(CryptoApiError::Transport)?;
-        let hash = response
-            .as_hash()
-            .ok_or(CryptoApiError::Malformed(
-                "crypto_getfolderkey response was not a hash",
-            ))?;
+        let hash = response.as_hash().ok_or(CryptoApiError::Malformed(
+            "crypto_getfolderkey response was not a hash",
+        ))?;
         expect_ok_result(hash)?;
         let key_b64 = hash.get_string("key").ok_or(CryptoApiError::Malformed(
             "crypto_getfolderkey response missing \"key\" field",
@@ -231,15 +229,15 @@ where
             .transport
             .execute(&encoded)
             .map_err(CryptoApiError::Transport)?;
-        let hash = response
-            .as_hash()
-            .ok_or(CryptoApiError::Malformed(
-                "crypto_getpubkey response was not a hash",
-            ))?;
-        expect_ok_result(hash)?;
-        let key_str = hash.get_string("publickey").ok_or(CryptoApiError::Malformed(
-            "crypto_getpubkey response missing \"publickey\" field",
+        let hash = response.as_hash().ok_or(CryptoApiError::Malformed(
+            "crypto_getpubkey response was not a hash",
         ))?;
+        expect_ok_result(hash)?;
+        let key_str = hash
+            .get_string("publickey")
+            .ok_or(CryptoApiError::Malformed(
+                "crypto_getpubkey response missing \"publickey\" field",
+            ))?;
         // Prefer hex (C wire format); fall back to base64 for forward
         // compatibility with server variants that may emit base64 here.
         if let Some(bytes) = decode_hex(key_str) {
@@ -273,11 +271,9 @@ where
             .transport
             .execute(&encoded)
             .map_err(CryptoApiError::Transport)?;
-        let hash = response
-            .as_hash()
-            .ok_or(CryptoApiError::Malformed(
-                "crypto_getfilekey response was not a hash",
-            ))?;
+        let hash = response.as_hash().ok_or(CryptoApiError::Malformed(
+            "crypto_getfilekey response was not a hash",
+        ))?;
         expect_ok_result(hash)?;
         let key_b64 = hash.get_string("key").ok_or(CryptoApiError::Malformed(
             "crypto_getfilekey response missing \"key\" field",
@@ -296,7 +292,7 @@ where
 /// non-hex character or on odd length. Lower-case hex only (matches
 /// what `pssl.c` emits via `mbedtls_mpi_write_string(.., 16, ..)`).
 fn decode_hex(s: &str) -> Option<Vec<u8>> {
-    if !s.len().is_multiple_of(2) || s.is_empty() {
+    if s.len() % 2 != 0 || s.is_empty() {
         return None;
     }
     let bytes = s.as_bytes();
@@ -484,10 +480,7 @@ mod tests {
     fn get_folder_key_decodes_base64_payload() {
         // base64("abc" || 0x00..0x02) = "YWJjAAEC"
         let key_payload = Value::String("YWJjAAEC".to_owned());
-        let resp = hash_with(vec![
-            ("result", Value::Number(0)),
-            ("key", key_payload),
-        ]);
+        let resp = hash_with(vec![("result", Value::Number(0)), ("key", key_payload)]);
         let transport = MockTransport::with_responses(vec![resp]);
         let api = CryptoApi::new(transport);
         let bytes = api.get_folder_key("tok", 424_242).expect("ok");
@@ -498,8 +491,7 @@ mod tests {
 
     #[test]
     fn get_folder_key_surfaces_server_1000_not_logged_in() {
-        let transport =
-            MockTransport::with_responses(vec![err_hash(1000, "not logged in")]);
+        let transport = MockTransport::with_responses(vec![err_hash(1000, "not logged in")]);
         let api = CryptoApi::new(transport);
         let err = api.get_folder_key("tok", 1).expect_err("must fail");
         match err {
@@ -538,8 +530,7 @@ mod tests {
 
     #[test]
     fn get_file_key_surfaces_server_2000_cant_connect() {
-        let transport =
-            MockTransport::with_responses(vec![err_hash(2000, "can't connect")]);
+        let transport = MockTransport::with_responses(vec![err_hash(2000, "can't connect")]);
         let api = CryptoApi::new(transport);
         let err = api.get_file_key("tok", 9).expect_err("must fail");
         match err {
@@ -552,8 +543,8 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-// ncx.89 — crypto_getpubkey (hex / base64 decoding)
-// -----------------------------------------------------------------
+    // ncx.89 — crypto_getpubkey (hex / base64 decoding)
+    // -----------------------------------------------------------------
 
     #[test]
     fn get_pub_key_decodes_hex_payload() {

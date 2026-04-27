@@ -207,7 +207,7 @@ fn xor_into(dst: &mut [u8], src: &[u8]) {
 
 fn cbc_cs_encrypt(cipher: &Aes256, iv: &[u8; 16], plaintext: &[u8], out: &mut [u8]) {
     let mut len = plaintext.len();
-    let needsteal = if !len.is_multiple_of(BLOCK) {
+    let needsteal = if len % BLOCK != 0 {
         let r = len % BLOCK;
         len -= r + BLOCK;
         r
@@ -261,7 +261,7 @@ fn cbc_cs_encrypt(cipher: &Aes256, iv: &[u8; 16], plaintext: &[u8], out: &mut [u
 
 fn cbc_cs_decrypt(cipher: &Aes256, iv: &[u8; 16], ciphertext: &[u8], out: &mut [u8]) {
     let mut len = ciphertext.len();
-    let needsteal = if !len.is_multiple_of(BLOCK) {
+    let needsteal = if len % BLOCK != 0 {
         let r = len % BLOCK;
         len -= r + BLOCK;
         r
@@ -366,10 +366,7 @@ pub fn seal_sector_with_rnd(
     let sector_id_le = sector_id.to_le_bytes();
 
     // pcrypto.c:500–504
-    let hmac_digest = hmac_sha512(
-        keys.hmac_key,
-        &[plaintext, &sector_id_le, rnd.as_ref()],
-    );
+    let hmac_digest = hmac_sha512(keys.hmac_key, &[plaintext, &sector_id_le, rnd.as_ref()]);
 
     // SAFETY: `keys.aes_key` is a fixed-length `&[u8; PCLSYNC_AES_KEY_LEN]`
     // (32 bytes), which is the required key size for AES-256.
