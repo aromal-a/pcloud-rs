@@ -45,6 +45,40 @@
 #![allow(clippy::module_name_repetitions)] // `CryptoShell`, `CryptoError`, `CryptoMode` etc. repeat the crate name by design.
 #![allow(clippy::doc_markdown)] // ADR refs / doc links don't need backtick formatting in prose.
 
+// ── Crypto provider seam (Stream G, Cargo features) ──────────────────────
+//
+// The `crypto-provider-aws-lc-fips` feature is a FORWARD-COMPAT SEAM
+// ONLY. Selecting it does NOT yield a FIPS-140-3 validated build today
+// because no validated provider is wired. Enabling it must be a
+// deliberate, documented step paired with the swap procedure in
+// `docs/fips.md`. We fail the build loudly so an operator who flips the
+// flag thinking it grants FIPS mode is corrected immediately.
+//
+// `crypto-provider-rustcrypto` (default) is a no-op marker: it confirms
+// the audited RustCrypto primitive stack is in use.
+#[cfg(all(
+    feature = "crypto-provider-aws-lc-fips",
+    not(feature = "crypto-provider-rustcrypto")
+))]
+compile_error!(
+    "pcloud-crypto: feature `crypto-provider-aws-lc-fips` is a forward-compat \
+     seam only. No FIPS-validated provider is wired in this build. See \
+     `docs/fips.md` for the swap procedure (vendoring an externally-validated \
+     primitive crate, rebuilding, and gating runtime policy via \
+     `CryptoPolicy::fips_mode`). To unblock the build, re-enable the default \
+     `crypto-provider-rustcrypto` feature."
+);
+#[cfg(all(
+    feature = "crypto-provider-aws-lc-fips",
+    feature = "crypto-provider-rustcrypto"
+))]
+compile_error!(
+    "pcloud-crypto: features `crypto-provider-rustcrypto` and \
+     `crypto-provider-aws-lc-fips` are mutually exclusive. Disable the \
+     default via `--no-default-features` before selecting the FIPS seam, \
+     and consult `docs/fips.md` for the validated-provider swap procedure."
+);
+
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
@@ -174,7 +208,6 @@ pub enum CryptoBackend {
     /// official pCloud apps. Requires explicit user acknowledgement.
     Enhanced,
 }
-
 
 impl std::fmt::Display for CryptoBackend {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -450,7 +483,9 @@ impl SectorContext {
     /// Construct a PclsyncCompat sector context bound to `file_id`.
     #[must_use]
     pub const fn for_file(file_id: u64) -> Self {
-        Self { file_id: Some(file_id) }
+        Self {
+            file_id: Some(file_id),
+        }
     }
 }
 
@@ -1343,7 +1378,9 @@ impl CryptoShell {
     /// This is the single choke-point that all sector-encrypt / sector-decrypt
     /// / filename-encrypt operations must go through so that `cache_ttl_secs`
     /// is actually enforced. Setting `cache_ttl_secs = 0` disables TTL.
-    fn require_active_key(&mut self) -> Result<&pcloud_secret::secret_bytes::SecretBytes, CryptoError> {
+    fn require_active_key(
+        &mut self,
+    ) -> Result<&pcloud_secret::secret_bytes::SecretBytes, CryptoError> {
         if self.keys.check_and_evict_if_stale() {
             // Key was live but has expired; drop back to Locked.
             self.unlock_state = state::UnlockState::Locked;
@@ -1433,13 +1470,13 @@ impl CryptoShell {
         // choice, warn at setup time. This is not an error (setup on a
         // not-yet-setup shell can still succeed), but it does flag
         // operator confusion before we bake the choice into the profile.
-        if let Some(existing) = self.backend
-            && existing != backend
-        {
-            log::warn!(
-                target: "pcloud_crypto::setup",
-                "crypto setup backend mismatch: existing={existing} requested={backend} (audit-06 LOW crypto L-4 / pcloud-rs-ncx.79-g)"
-            );
+        if let Some(existing) = self.backend {
+            if existing != backend {
+                log::warn!(
+                    target: "pcloud_crypto::setup",
+                    "crypto setup backend mismatch: existing={existing} requested={backend} (audit-06 LOW crypto L-4 / pcloud-rs-ncx.79-g)"
+                );
+            }
         }
         match backend {
             CryptoBackend::Enhanced => self.setup_enhanced(password, hint),
@@ -1674,10 +1711,11 @@ impl CryptoShell {
             // the same daemon session). `Instant::now()` is guaranteed not
             // to go backward within a process, so this cannot be bypassed
             // by clock manipulation without killing the daemon.
-            if let Some(floor) = self.lockout_monotonic_floor
-                && std::time::Instant::now() < floor {
+            if let Some(floor) = self.lockout_monotonic_floor {
+                if std::time::Instant::now() < floor {
                     return Err(CryptoError::BruteForceLockedOut);
                 }
+            }
         }
 
         // Normalize password bytes to Unicode NFC (H-4) so the same
@@ -1709,10 +1747,8 @@ impl CryptoShell {
             // within this daemon session (H-5 clock-rewind mitigation).
             let new_backoff = lockout_backoff_secs(new_failures);
             if new_backoff > 0 {
-                self.lockout_monotonic_floor = Some(
-                    std::time::Instant::now()
-                        + std::time::Duration::from_secs(new_backoff),
-                );
+                self.lockout_monotonic_floor =
+                    Some(std::time::Instant::now() + std::time::Duration::from_secs(new_backoff));
             }
             return Err(CryptoError::WrongPassword);
         }
@@ -1768,10 +1804,11 @@ impl CryptoShell {
                 return Err(CryptoError::BruteForceLockedOut);
             }
             // Monotonic check (clock-rewind resistant, same session).
-            if let Some(floor) = self.lockout_monotonic_floor
-                && std::time::Instant::now() < floor {
+            if let Some(floor) = self.lockout_monotonic_floor {
+                if std::time::Instant::now() < floor {
                     return Err(CryptoError::BruteForceLockedOut);
                 }
+            }
         }
 
         let normalized = normalize_password_nfc(&password);
@@ -1803,8 +1840,7 @@ impl CryptoShell {
                 let new_backoff = lockout_backoff_secs(new_failures);
                 if new_backoff > 0 {
                     self.lockout_monotonic_floor = Some(
-                        std::time::Instant::now()
-                            + std::time::Duration::from_secs(new_backoff),
+                        std::time::Instant::now() + std::time::Duration::from_secs(new_backoff),
                     );
                 }
                 Err(CryptoError::WrongPassword)
@@ -1826,6 +1862,19 @@ impl CryptoShell {
     /// assert!(c.is_setup());
     /// ```
     pub fn stop(&mut self) {
+        // AUDIT-NOTE (Stream B / audit-fragment §3 LOW "Lock operation"):
+        // `stop()` deliberately does NOT zero `self.sectors_sealed`. The
+        // nonce budget is keyed on the *master key identity*, not on
+        // session liveness — a `stop()` followed by `start()` with the
+        // same master key (the common unlock-after-lock case) reuses the
+        // exact same AES-256-GCM key schedule, and resetting the
+        // counter there would silently re-enter an already-burned nonce
+        // space and risk birthday-bound collisions. The counter is only
+        // cleared on a true key rotation (see `change_password_unlocked`
+        // and `change_password_unlocked_pclsync` where the master key
+        // is replaced). All other in-memory key material IS dropped
+        // here: master key bytes, RSA private key cache, sym-key cache,
+        // and the KMS plaintext-DEK cache.
         self.keys.active_key_material = None;
         #[cfg(feature = "pclsync-v2")]
         {
@@ -2252,26 +2301,17 @@ impl CryptoShell {
         // SAFETY: see keys::KeyManager::default — getrandom is always
         // available on supported targets (Linux/macOS/Windows).
         let mut new_salt = [0u8; pclsync_compat_profile::PCLSYNC_PBKDF2_SALT_LEN];
-        getrandom::getrandom(&mut new_salt)
-            .expect("OS randomness for PclsyncCompat salt rotation");
+        getrandom::getrandom(&mut new_salt).expect("OS randomness for PclsyncCompat salt rotation");
         let new_kek = pclsync_kdf::derive_kek(&new_password_norm, &new_salt);
 
         // Serialize live priv key to DER, AES-256-CTR wrap it in place.
         let mut priv_der = pclsync_rsa::serialize_priv_key_der(state.priv_key())
             .map_err(|_| CryptoError::PclsyncCompat)?;
-        pclsync_modes::aes256_ctr_pclsync_xor_inplace(
-            &new_kek.key,
-            &new_kek.iv,
-            0,
-            &mut priv_der,
-        );
+        pclsync_modes::aes256_ctr_pclsync_xor_inplace(&new_kek.key, &new_kek.iv, 0, &mut priv_der);
 
-        let flags_u32 = u32::try_from(flags & u64::from(u32::MAX))
-            .unwrap_or(0);
+        let flags_u32 = u32::try_from(flags & u64::from(u32::MAX)).unwrap_or(0);
         let new_priv_blob = pclsync_compat_profile::PclsyncCompatProfile::build_priv_blob(
-            flags_u32,
-            &new_salt,
-            &priv_der,
+            flags_u32, &new_salt, &priv_der,
         );
         priv_der.zeroize();
 
@@ -2349,11 +2389,7 @@ impl CryptoShell {
                 .pclsync_compat
                 .as_ref()
                 .ok_or(CryptoError::PclsyncCompat)?;
-            (
-                p.priv_key_ver1_blob.clone(),
-                p.pub_fingerprint,
-                p.flags,
-            )
+            (p.priv_key_ver1_blob.clone(), p.pub_fingerprint, p.flags)
         };
         let _ = rekeyed;
         Ok(ChangePasswordResult {
@@ -2401,9 +2437,12 @@ impl CryptoShell {
                 .pclsync_compat_state
                 .as_ref()
                 .ok_or(CryptoError::Locked)?;
-            let parent_sym = state
-                .folder_key(parent_id)
-                .ok_or(CryptoError::FolderKeyNotCached { folder_id: parent_id })?;
+            let parent_sym =
+                state
+                    .folder_key(parent_id)
+                    .ok_or(CryptoError::FolderKeyNotCached {
+                        folder_id: parent_id,
+                    })?;
             // `SymKeyVer1::hmac_key` is exactly `PCLSYNC_HMAC_KEY_LEN`
             // bytes (= `pclsync_filename::HMAC_KEY_LEN`), so we can
             // pass it to `FilenameKeys` by reference directly.
@@ -2411,8 +2450,7 @@ impl CryptoShell {
                 aes_key: &parent_sym.aes_key,
                 hmac_key: &parent_sym.hmac_key,
             };
-            pclsync_filename::encode_filename(keys, name)
-                .map_err(|_| CryptoError::PclsyncCompat)?
+            pclsync_filename::encode_filename(keys, name).map_err(|_| CryptoError::PclsyncCompat)?
         };
 
         // Generate a fresh SymKeyVer1 for the new folder (aes=32 B,
@@ -3025,11 +3063,12 @@ impl CryptoShell {
                     aes_key: &sym.aes_key,
                     hmac_key: &sym.hmac_key,
                 };
-                let sealed = pclsync_sector::seal_sector(keys, sector_index, plaintext)
-                    .map_err(|e| match e {
+                let sealed = pclsync_sector::seal_sector(keys, sector_index, plaintext).map_err(
+                    |e| match e {
                         pclsync_sector::SectorError::EmptySector => CryptoError::EmptySector,
                         _ => CryptoError::PclsyncCompat,
-                    })?;
+                    },
+                )?;
                 return Ok(SealedSectorFrame {
                     ciphertext: sealed.ciphertext,
                     auth_tag: Some(sealed.auth_tag),
@@ -3559,10 +3598,7 @@ mod tests {
 
         // The OLD password must still unlock. The new one must not.
         c.stop();
-        assert_eq!(
-            c.start(pw("next")).unwrap_err(),
-            CryptoError::WrongPassword
-        );
+        assert_eq!(c.start(pw("next")).unwrap_err(), CryptoError::WrongPassword);
         c.start(pw("orig")).expect("old password still works");
     }
 
@@ -3670,8 +3706,12 @@ mod tests {
     #[test]
     fn pclsync_compat_setup_then_start_roundtrip() {
         let mut c = CryptoShell::default();
-        c.setup_with_backend(pw("pclsync-pw"), Some("my hint".into()), CryptoBackend::PclsyncCompat)
-            .expect("setup pclsync-compat");
+        c.setup_with_backend(
+            pw("pclsync-pw"),
+            Some("my hint".into()),
+            CryptoBackend::PclsyncCompat,
+        )
+        .expect("setup pclsync-compat");
         assert!(c.is_setup());
         assert!(!c.is_started());
         assert_eq!(c.backend, Some(CryptoBackend::PclsyncCompat));

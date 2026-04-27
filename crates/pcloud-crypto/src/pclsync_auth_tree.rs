@@ -203,11 +203,7 @@ pub fn build_auth_tree(
     // counting the single-tag root). For an empty / single-leaf file it is 0.
     // After building, `levels` = [auth-sector levels..., root] so the count is
     // `levels.len() - 1` when the root is present.
-    let treelevels = if needmasterauth {
-        levels.len() - 1
-    } else {
-        0
-    };
+    let treelevels = if needmasterauth { levels.len() - 1 } else { 0 };
 
     // masterauthoff = sum of encrypted plaintext bytes (here: 4096 per leaf
     // sector, no short-sector padding done at this primitive layer) + every
@@ -237,11 +233,9 @@ fn level_sector_count(bytes: usize) -> usize {
 }
 
 /// Build one parent level by HMAC-chunking the child level 128 tags at a time.
-fn build_parent_level(
-    hmac_key: &[u8; PCLSYNC_HMAC_KEY_LEN],
-    child_level: &[u8],
-) -> Vec<u8> {
-    let mut parent = Vec::with_capacity(level_sector_count(child_level.len()) * PCLSYNC_AUTH_TAG_LEN);
+fn build_parent_level(hmac_key: &[u8; PCLSYNC_HMAC_KEY_LEN], child_level: &[u8]) -> Vec<u8> {
+    let mut parent =
+        Vec::with_capacity(level_sector_count(child_level.len()) * PCLSYNC_AUTH_TAG_LEN);
     for chunk in child_level.chunks(PCLSYNC_AUTH_SECTOR_SIZE) {
         let tag = hmac_sha512_trunc32(hmac_key, chunk);
         parent.extend_from_slice(&tag);
@@ -347,10 +341,11 @@ pub fn verify_path(
 #[must_use]
 pub fn compute_master_auth(tree: &AuthTree) -> [u8; PCLSYNC_AUTH_TAG_LEN] {
     let mut out = [0u8; PCLSYNC_AUTH_TAG_LEN];
-    if let Some(top) = tree.levels.last()
-        && top.len() >= PCLSYNC_AUTH_TAG_LEN {
+    if let Some(top) = tree.levels.last() {
+        if top.len() >= PCLSYNC_AUTH_TAG_LEN {
             out.copy_from_slice(&top[..PCLSYNC_AUTH_TAG_LEN]);
         }
+    }
     out
 }
 
@@ -395,7 +390,10 @@ mod tests {
     fn single_sector_needmasterauth_false() {
         let leaves = tags(1);
         let t = build_auth_tree(&key(), &leaves);
-        assert!(!t.needmasterauth, "single-sector file must not need master auth");
+        assert!(
+            !t.needmasterauth,
+            "single-sector file must not need master auth"
+        );
         assert_eq!(t.treelevels, 0);
         assert_eq!(t.levels.len(), 1);
         assert_eq!(t.levels[0].len(), PCLSYNC_AUTH_TAG_LEN);
@@ -454,7 +452,10 @@ mod tests {
         let t = build_auth_tree(&key(), &leaves);
         assert!(t.needmasterauth);
         assert_eq!(t.treelevels, 2);
-        assert_eq!(t.levels[0].len(), PCLSYNC_TREE_FANOUT * PCLSYNC_AUTH_SECTOR_SIZE);
+        assert_eq!(
+            t.levels[0].len(),
+            PCLSYNC_TREE_FANOUT * PCLSYNC_AUTH_SECTOR_SIZE
+        );
         assert_eq!(t.levels[1].len(), PCLSYNC_AUTH_SECTOR_SIZE);
         assert_eq!(t.levels[2].len(), PCLSYNC_AUTH_TAG_LEN);
     }
