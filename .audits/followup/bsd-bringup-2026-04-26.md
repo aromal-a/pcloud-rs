@@ -12,7 +12,7 @@ QEMU + KVM, SSH via the published Vagrant insecure key.
 | **FreeBSD 14.4** | ✓ (cloud-init image, port 2222) | clean (56 s) | **1538 passing / 0 failing** | Validated end-to-end. Commits: f3b3bcb (procfs + fs_watcher fixtures gated to Linux). |
 | **NetBSD 9.3** | ✓ (Vagrant box, port 2223, e1000 NIC) | clean (1m 20s `--all-targets` at a3c2c2e) | **1537 passing / 0 failing / 2 ignored** (33 binaries) | Required two compile fixes: `notify 6 → 8` for kqueue ABI (41a51a3), and `bsd.rs` `statvfs` alias for missing `statfs` type (b4bb777). Plus pacer test gated to Linux (a3c2c2e). Aggregate re-run at HEAD a3c2c2e. |
 | **OpenBSD 7.8** | ✓ (vagrant-libvirt, `DefinedNet/openbsd78@1.0.17`) | clean (2m 25s) | **1529 passing / 0 failing / 2 ignored** (32 binaries) | Required redirecting `target/` via `CARGO_TARGET_DIR=/usr/obj/pcloud-rs-target` (default `/home` is 3.5G, too small) plus chowning `/usr/obj` to `vagrant`. Plus circuit-breaker 1000-thread stress test gated for OpenBSD's tighter `kern.maxthread` per-user cap (d688494). Toolchain: rustc 1.90.0, git 2.51.0. |
-| **DragonFly 6.4** | ✓ (vagrant-libvirt, `dragonfly-test`) | **blocked** | **blocked** | Boots cleanly via vagrant-libvirt and gets rust 1.85.1 + git 2.49.0 from dports `Avalon` (LATEST branch). But the codebase uses `let_chains` (stable in Rust 1.88+), so cargo check fails with E0658 on 8 sites in `pcloud-config`. DragonFly's pkg quarterly hasn't bumped past 1.85.1 yet. Resolution: workspace MSRV corrected from 1.85 → 1.88 to match code reality (b02918a); DragonFly Tier-2 unblocks once their `lang/rust` port lands ≥ 1.88. Bonus quirk: cargo links against `libssl.so.12` (openssl 3) but the rust port's manifest declares `openssl-1.1.1v` as a dep — `pkg install -y openssl` (3.x) is required *after* `pkg install -y rust` to satisfy the actual ABI. |
+| **DragonFly 6.4** | ✓ (vagrant-libvirt, `dragonfly-test`) | clean (~12 s) | **1576 passing / 0 failing / 2 ignored** (33 binaries) | Toolchain: rustc 1.85.1 + git 2.49.0 (dports `Avalon` LATEST). Workspace MSRV restored to 1.85 (5b67f31) by refactoring all `let_chains` (let-and-let + let-and-cond) into nested `if-let { if cond { ... } }` form across ~50 sites. Plus: replaced `<unsigned>::is_multiple_of(N)` (stable 1.87) with `% N == 0` in pclsync_modes/sector + crypto_api; added `target_os = "dragonfly"` to the BSD cfg list in `pcloud-ipc::platform`; vendored three crates with DragonFly-friendly cfg overrides under `vendor/`: `if-addrs-0.13.4` (BSD cfg gates missing dragonfly → routed to Linux netlink), `notify-8.2.0` (Cargo.toml typo `dragonflybsd` → `dragonfly`), `regorus-0.9.1` (10 small accessors marked `pub const fn` calling `Vec::{len,is_empty}`, stable as const only since 1.87). Bonus quirk: `pkg install -y openssl` (3.x) is required **after** `pkg install -y rust` to satisfy `libssl.so.12` ABI even though the rust port's manifest lists `openssl-1.1.1v`. |
 
 ## Repro for OpenBSD / DragonFly
 
@@ -78,7 +78,7 @@ by pure-function unit tests in the same file.
 | FreeBSD | ✓ | 1538 / 0 | not yet run |
 | NetBSD | ✓ | 1537 / 0 (2 ignored) | not yet run |
 | OpenBSD 7.8 | ✓ | 1529 / 0 (2 ignored) | not yet run |
-| DragonFly 6.4 | toolchain-gated | dports rust 1.85 < workspace MSRV 1.88 | — |
+| DragonFly 6.4 | ✓ | 1576 / 0 (2 ignored) | not yet run |
 | macOS 26.3.1 (Tahoe, arm64) | ✓ | 1597 / 0 (3 ignored) | not yet run |
 
 ## macOS bring-up — 2026-04-26 same session
