@@ -55,6 +55,7 @@ members = [
 exclude = [
   "vendor/if-addrs-dfly-fix",
   "vendor/msvc_spectre_libs_stub",
+  "vendor/notify-dfly-fix",
 ]
 resolver = "3"
 
@@ -226,6 +227,15 @@ single_match_else = "allow"
 wildcard_imports = "allow"
 # `manual_string_new`: `String::new()` vs `"".to_owned()` is style.
 manual_string_new = "allow"
+# `collapsible_if` / `collapsible_match`: workspace MSRV is 1.85, which
+# does not have stable `let_chains`. The project explicitly committed
+# to nested `if let` form (see commits 5b67f31 / 8e45164 / c925dae).
+# Allowing this lint workspace-wide is intentional MSRV policy.
+collapsible_if = "allow"
+collapsible_match = "allow"
+# `manual_is_multiple_of`: the `is_multiple_of` API is stable from 1.87+;
+# the project's 1.85 MSRV means we keep `n % BLOCK == 0` form.
+manual_is_multiple_of = "allow"
 
 # ── unwrap discipline (staged rollout) ───────────────────────────────
 # TODO(pcloud-rs-8mb.34/L-14): promote these to "deny" once per-crate
@@ -267,3 +277,11 @@ msvc_spectre_libs = { path = "vendor/msvc_spectre_libs_stub" }
 # to all the BSD-list cfg gates; behaviour on every other platform is
 # byte-identical.
 if-addrs = { path = "vendor/if-addrs-dfly-fix" }
+# `notify` 8.2.0 has a typo in its Cargo.toml: it gates the kqueue+mio
+# BSD deps on `target_os = "dragonflybsd"`, but Rust's actual target_os
+# string is `"dragonfly"`. Result: on DragonFly the kqueue.rs source
+# (correctly cfg-gated) compiles but the deps it imports don't get
+# pulled in, producing a wave of E0432 / E0433 "unresolved import
+# kqueue" / "undeclared crate mio". Vendored copy fixes the typo;
+# every other platform compiles byte-identically.
+notify = { path = "vendor/notify-dfly-fix" }

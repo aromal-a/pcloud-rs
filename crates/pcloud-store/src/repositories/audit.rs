@@ -333,10 +333,10 @@ impl AuditRepository {
             // Continuity check against the previously-iterated row (or,
             // for the first row in the range, the caller trusts the
             // stored prev_hash as the chain anchor).
-            if let Some(expected_prev) = running_prev
-                && prev_hash_stored.as_slice() != expected_prev.as_slice()
-            {
-                return Err(AuditChainError::PrevHashMismatch { id });
+            if let Some(expected_prev) = running_prev {
+                if prev_hash_stored.as_slice() != expected_prev.as_slice() {
+                    return Err(AuditChainError::PrevHashMismatch { id });
+                }
             }
 
             // Recompute and compare entry_hash.
