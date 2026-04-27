@@ -361,12 +361,12 @@ pub fn validate_timeout_composition(
             "connect_timeout must not exceed read_timeout",
         ));
     }
-    if let Some(total) = total
-        && read > total
-    {
-        return Err(ConfigError::InvalidTimeoutComposition(
-            "read_timeout must not exceed total_request_timeout",
-        ));
+    if let Some(total) = total {
+        if read > total {
+            return Err(ConfigError::InvalidTimeoutComposition(
+                "read_timeout must not exceed total_request_timeout",
+            ));
+        }
     }
     Ok(())
 }

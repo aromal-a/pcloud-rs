@@ -110,10 +110,10 @@ fn nm_reports_metered() -> Result<bool, ()> {
         if !name_s.starts_with("nm-dns-") {
             continue;
         }
-        if let Ok(contents) = fs::read_to_string(entry.path())
-            && contents.contains("metered")
-        {
-            return Ok(true);
+        if let Ok(contents) = fs::read_to_string(entry.path()) {
+            if contents.contains("metered") {
+                return Ok(true);
+            }
         }
     }
     Ok(false)

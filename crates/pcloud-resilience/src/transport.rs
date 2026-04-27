@@ -884,36 +884,36 @@ impl ResilientTransport {
             // ── Fix 1: Terminal error gate ────────────────────────────────
             // If the transport layer raised a low-level error, classify it
             // before deciding to retry.
-            if let Some(ref err_msg) = response.error
-                && classify_error(err_msg) == ErrorKind::Terminal
-            {
-                #[cfg(feature = "transport-metrics")]
-                {
-                    // Typed classification: decode the wire tag if present;
-                    // otherwise fall back to `Io`. Legacy free-form messages
-                    // (no tag) are mapped to `Io` since we cannot distinguish
-                    // TLS from other I/O without a typed input.
-                    let cls = if let Some(rest) = err_msg.strip_prefix(TYPED_ERR_PREFIX) {
-                        if rest.starts_with("tls:") {
-                            TransportErrorClass::Tls
-                        } else if rest.starts_with("connect:") {
-                            TransportErrorClass::Connect
+            if let Some(ref err_msg) = response.error {
+                if classify_error(err_msg) == ErrorKind::Terminal {
+                    #[cfg(feature = "transport-metrics")]
+                    {
+                        // Typed classification: decode the wire tag if present;
+                        // otherwise fall back to `Io`. Legacy free-form messages
+                        // (no tag) are mapped to `Io` since we cannot distinguish
+                        // TLS from other I/O without a typed input.
+                        let cls = if let Some(rest) = err_msg.strip_prefix(TYPED_ERR_PREFIX) {
+                            if rest.starts_with("tls:") {
+                                TransportErrorClass::Tls
+                            } else if rest.starts_with("connect:") {
+                                TransportErrorClass::Connect
+                            } else {
+                                TransportErrorClass::Io
+                            }
                         } else {
                             TransportErrorClass::Io
-                        }
-                    } else {
-                        TransportErrorClass::Io
-                    };
-                    metrics_impl::increment_error(&self.host, cls);
-                    metrics_impl::observe_latency(
-                        &self.host,
-                        TransportOutcomeLabel::GiveUp,
-                        start.elapsed().as_secs_f64(),
-                    );
+                        };
+                        metrics_impl::increment_error(&self.host, cls);
+                        metrics_impl::observe_latency(
+                            &self.host,
+                            TransportOutcomeLabel::GiveUp,
+                            start.elapsed().as_secs_f64(),
+                        );
+                    }
+                    return TransportOutcome::Failed(format!(
+                        "Terminal transport error (not retried): {err_msg}"
+                    ));
                 }
-                return TransportOutcome::Failed(format!(
-                    "Terminal transport error (not retried): {err_msg}"
-                ));
             }
 
             // ── Success path ──────────────────────────────────────────────
