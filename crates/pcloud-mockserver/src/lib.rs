@@ -414,10 +414,11 @@ fn read_request(stream: &mut TcpStream) -> Option<ParsedRequest> {
     if let Some(len) = headers
         .get("content-length")
         .and_then(|v| v.parse::<usize>().ok())
-        && len > 0
     {
-        body.resize(len, 0);
-        reader.read_exact(&mut body).ok()?;
+        if len > 0 {
+            body.resize(len, 0);
+            reader.read_exact(&mut body).ok()?;
+        }
     }
 
     Some(ParsedRequest {
