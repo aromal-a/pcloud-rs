@@ -310,6 +310,13 @@ pub enum ConfigError {
         /// The offending raw value as provided.
         value: String,
     },
+    /// Timeout composition is internally inconsistent: the values must
+    /// satisfy `connect_timeout ≤ read_timeout ≤ total_timeout`.
+    /// audit-06 H-6.1: a misordered triple (e.g. `total < read`) causes
+    /// the read loop to fire spuriously before the total deadline can
+    /// arm, so the loader rejects it at config-load time.
+    #[error("timeout composition is invalid: {0}")]
+    InvalidTimeoutComposition(&'static str),
     /// I/O failure while reading config metadata or contents.
     #[error("config file I/O error: {0}")]
     Io(String),
