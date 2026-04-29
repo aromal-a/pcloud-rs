@@ -214,6 +214,21 @@ pub fn known_flag_names() -> &'static [&'static str] {
         // `backup snapshot-{create,restore,verify,prune}` — H12 PR1.
         "--gpg-recipient",
         "--retention-days",
+        // `account register <EMAIL> [--accept-terms]`.
+        "--accept-terms",
+        // `submit-password` / `submit-auth <TOKEN>` — argv-secret gate.
+        "--allow-argv-password",
+        // `file history --limit <N>`.
+        "--limit",
+        // `sync suggest --max <N>`.
+        "--max",
+        // `sync add --type <FLAVOR>`.
+        "--type",
+        // `crypto setup --backend <name> [--acknowledge-not-interop]
+        // [--hint <TEXT>]` (CryptoSetupV2).
+        "--backend",
+        "--acknowledge-not-interop",
+        "--hint",
     ]
 }
 
