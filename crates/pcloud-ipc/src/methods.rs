@@ -997,6 +997,37 @@ pub enum Request {
         /// [`ResponseStatus::Conflict`] if the folder is non-empty.
         recursive: bool,
     },
+    /// Delete a remote folder by numeric pCloud folder id. Mirrors
+    /// `deletefolder` / `deletefolderrecursive`. Authenticated.
+    /// Idempotent on `Folder Not Found`.
+    FolderDeleteById {
+        /// Folder id to delete.
+        folder_id: u64,
+        /// When `true`, delete the folder and its full subtree via
+        /// `deletefolderrecursive`. When `false`, fail with
+        /// [`ResponseStatus::Conflict`] if the folder is non-empty.
+        recursive: bool,
+    },
+    /// Create a remote folder identified by its absolute
+    /// pCloud-drive `path`. The daemon splits `path` into parent +
+    /// leaf, resolves the parent against the local metadata cache,
+    /// and dispatches `createfolder`. Idempotent on existing folder
+    /// of the same name; conflicts only when the leaf exists as a
+    /// *file*.
+    ///
+    /// Authenticated. Failure modes:
+    /// [`ResponseStatus::InvalidRequest`] when `path` is not
+    /// absolute, is the root, or has no leaf component;
+    /// [`ResponseStatus::InternalError`] when the parent folder is
+    /// not present in the metadata cache (the SMB plugin is
+    /// expected to have warmed it via `stat`/`list_directory` first);
+    /// [`ResponseStatus::Conflict`] when the leaf exists as a file.
+    ///
+    /// Tracker: bd-smbr-pcloud P5.
+    CreateFolderByPath {
+        /// Absolute pCloud-drive path of the new folder.
+        path: String,
+    },
     /// Rename or move a file or folder identified by its absolute
     /// pCloud-drive `from` path to its new absolute path `to`. The
     /// daemon resolves both paths to ids, decides between

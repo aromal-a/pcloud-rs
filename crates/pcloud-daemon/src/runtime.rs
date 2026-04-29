@@ -790,6 +790,7 @@ impl RuntimeShell {
                 folder_id,
                 recursive,
             } => self.folder_delete_by_id(folder_id, recursive),
+            Request::CreateFolderByPath { path } => self.create_folder_by_path(path),
             Request::RenamePath { from, to } => self.rename_path(from, to),
             Request::FileHistory { path, limit } => self.file_history(path, limit),
             // Backup/snapshot lifecycle (zstd + SHA3 sidecar default,
@@ -1617,6 +1618,89 @@ impl RuntimeShell {
                 _ => Response {
                     status: ResponseStatus::InternalError,
                     message: format!("folder delete failed: {err}"),
+                },
+            },
+        }
+    }
+
+    /// bd-smbr-pcloud P5 — create a remote folder by absolute
+    /// pCloud-drive path. Delegates to
+    /// [`crate::folder_backend::FolderRuntime::create_remote_folder_by_path`]
+    /// (which mirrors C `psync_create_remote_folder_by_path`).
+    /// Idempotent on existing folder of the same name.
+    pub fn create_folder_by_path(&mut self, path: String) -> Response {
+        if !path.starts_with('/') {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "create-folder-by-path requires an absolute path starting with '/'"
+                    .to_owned(),
+            };
+        }
+        if path == "/" {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "create-folder-by-path: cannot create the root folder".to_owned(),
+            };
+        }
+        // Quick sanity: every segment must be non-empty (no
+        // `//foo` and no trailing `/`).
+        if split_parent_and_leaf(&path).is_none() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: format!("create-folder-by-path: malformed path {path:?}"),
+            };
+        }
+        let Some(auth_token) = self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        else {
+            return Response {
+                status: ResponseStatus::Unauthorized,
+                message: "create-folder-by-path requires an authenticated session".to_owned(),
+            };
+        };
+        match self
+            .folder_runtime
+            .create_remote_folder_by_path(auth_token, &path)
+        {
+            Ok(resp) => self.audited_response(
+                "fs.create_folder_by_path",
+                Some(format!(
+                    "path={path} folder_id={} created={}",
+                    resp.folder_id, resp.created
+                )),
+                format!(
+                    "create-folder-by-path: {path:?} \
+                     folder_id={} created={}",
+                    resp.folder_id, resp.created
+                ),
+            ),
+            Err(err) => match &err {
+                // 2009 == File / Component already exists with a
+                // different kind. Distinguish folder-vs-file collisions.
+                pcloud_proto::FolderApiError::Result { result: 2009, .. } => Response {
+                    status: ResponseStatus::Conflict,
+                    message: format!(
+                        "create-folder-by-path: {path:?} blocked by an existing entry"
+                    ),
+                },
+                // 2005 (Folder Not Found): the parent component was
+                // removed mid-flight. Treat as InternalError so SMB
+                // clients can retry after a fresh stat.
+                pcloud_proto::FolderApiError::Result { result: 2005, .. } => Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!(
+                        "create-folder-by-path: parent of {path:?} not found"
+                    ),
+                },
+                _ => Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!(
+                        "create-folder-by-path: API create failed for {path:?}: {err}"
+                    ),
                 },
             },
         }
@@ -7359,6 +7443,7 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::FileDeleteByPath { .. } => "FileDeleteByPath",
         Request::FolderDeleteByPath { .. } => "FolderDeleteByPath",
         Request::FolderDeleteById { .. } => "FolderDeleteById",
+        Request::CreateFolderByPath { .. } => "CreateFolderByPath",
         Request::RenamePath { .. } => "RenamePath",
         Request::FileHistory { .. } => "FileHistory",
         Request::ConflictList => "ConflictList",
