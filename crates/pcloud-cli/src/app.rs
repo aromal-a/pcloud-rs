@@ -308,12 +308,12 @@ pub fn help_text() -> &'static str {
         "    change-link-upload <ID> <POL>     Upload policy on the link.\n",
         "    create-upload-link ...            Create an upload-only link.\n",
         "    delete-upload-link <ID>           Delete an upload-only link.\n",
-        "    create-tree-link <PATHS...>       Selective tree link (mixed files).\n",
-        "    create-tree-link-from-paths <NAME> <PCLOUD-PATH>...\n",
+        "    create-tree-link <FOLDER-IDS...>  Selective tree link (folder ids only).\n",
+        "    create-tree-link-from-paths <NAME> <PCLOUD-FOLDER-PATH>...\n",
         "                                      Create a tree public link by resolving\n",
-        "                                      one or more absolute pCloud-drive paths\n",
-        "                                      to ids on the daemon (authenticated path\n",
-        "                                      resolver). At least one path required.\n",
+        "                                      one or more absolute pCloud-drive folder\n",
+        "                                      paths to ids on the daemon. File paths\n",
+        "                                      are not supported — folder paths only.\n",
         "    list-link-access <ID>             List upload-link access grants.\n",
         "    add-link-access / remove-link-access <ID> <EMAIL>\n",
         "                                      Manage upload-link access list.\n",
@@ -1053,6 +1053,9 @@ fn allowed_flags_for(command: &Command) -> &'static [&'static str] {
         Command::SnapshotPrune | Command::BackupSnapshotPrune => {
             &["--retention-days", "--yes", "--gpg-recipient"]
         }
+        // `change-link-password <ID> [PASSWORD|clear]` — password on argv
+        // requires the explicit argv-secret gate acknowledgement.
+        Command::ChangeLinkPassword => &["--allow-argv-password"],
         // `log <PATH> [--limit N] [--json]` — R9 #9 revision history.
         // `--json` is a global flag stripped earlier by `GlobalFlags`.
         Command::FileHistory => &["--limit"],
@@ -1075,8 +1078,11 @@ fn allowed_flags_for(command: &Command) -> &'static [&'static str] {
         Command::AccountLostPassword => &[],
         // `crypto change-password` / `crypto change-password-unlocked`
         // — old + new password via secure prompts; hint + code positionals.
+        // `--allow-argv-password` is accepted (with a visible warning) for
+        // scripted callers that cannot use stdin/env. Must be consistent with
+        // the gate check in `parse_inputs_for_command`.
         Command::CryptoChangePassword | Command::CryptoChangePasswordUnlocked => {
-            &["--password-stdin", "--password-env"]
+            &["--password-stdin", "--password-env", "--allow-argv-password"]
         }
         // `crypto setup [--backend <name>] [--acknowledge-not-interop]
         // [--hint <TEXT>]` — dual-backend setup selector. Backend and hint
@@ -1863,7 +1869,22 @@ pub fn parse_inputs_for_command(
             };
             let public_link_password: Option<SecretString> = match args.get(3) {
                 Some(value) if value.eq_ignore_ascii_case("clear") => None,
-                Some(value) => Some(SecretString::new(value.clone())),
+                Some(value) => {
+                    // Security: argv passwords are visible in /proc/*/cmdline
+                    // and shell history. Require explicit acknowledgement.
+                    if !args.iter().any(|a| a == "--allow-argv-password") {
+                        eprintln!(
+                            "Error: Passing passwords as command-line arguments leaks them via \
+                             /proc/*/cmdline and shell history. Use --allow-argv-password to override."
+                        );
+                        std::process::exit(2);
+                    }
+                    eprintln!(
+                        "warning: passing a link password on the command line is insecure \
+                         (visible via /proc/<pid>/cmdline). --allow-argv-password acknowledged."
+                    );
+                    Some(SecretString::new(value.clone()))
+                }
                 None => {
                     let value = SecretPrompt::new("New password or 'clear'").read_secret()?;
                     if value.eq_ignore_ascii_case("clear") {
@@ -2445,7 +2466,8 @@ pub fn parse_inputs_for_command(
         Command::Stat => {
             // `pcloudc stat <absolute-remote-path>`. Mirrors C
             // `psync_stat_path` (`pclsync/psynclib.h:743`).
-            let path = match args.get(1) {
+            // args[0] = binary name, args[1] = "stat", args[2] = path.
+            let path = match args.get(2) {
                 Some(value) => value.clone(),
                 None => {
                     return Err(invalid_input(
@@ -2610,11 +2632,25 @@ pub fn parse_inputs_for_command(
         }
         // ── Crypto change-password (Group A) ─────────────────────────────
         Command::CryptoChangePassword => {
-            // `crypto change-password <HINT> <CODE> [--max-flags N]`
-            // Old password: uses `crypto_password` (SecretString) via prompt.
-            // New password: uses `new_crypto_password` via prompt.
+            // `crypto change-password [OLD_PW] [NEW_PW] [HINT] [CODE]`
+            // Passphrases from argv are treated as secrets; require
+            // --allow-argv-password if either is supplied on argv.
             let old_password = match args.get(2) {
-                Some(pw) => pw.clone(),
+                Some(pw) => {
+                    if !args.iter().any(|a| a == "--allow-argv-password") {
+                        eprintln!(
+                            "Error: Passing crypto passphrases as command-line arguments leaks \
+                             them via /proc/*/cmdline and shell history. Use \
+                             --allow-argv-password to override."
+                        );
+                        std::process::exit(2);
+                    }
+                    eprintln!(
+                        "warning: passing a crypto passphrase on the command line is insecure \
+                         (visible via /proc/<pid>/cmdline). --allow-argv-password acknowledged."
+                    );
+                    pw.clone()
+                }
                 None => SecretPrompt::new("Current crypto passphrase").read_secret()?,
             };
             let new_password = match args.get(3) {
@@ -2631,9 +2667,25 @@ pub fn parse_inputs_for_command(
             }))
         }
         Command::CryptoChangePasswordUnlocked => {
-            // `crypto change-password-unlocked <HINT> <CODE>` — no old password needed.
+            // `crypto change-password-unlocked [NEW_PW] [HINT] [CODE]`
+            // No old password needed but the new passphrase on argv still
+            // requires --allow-argv-password.
             let new_password = match args.get(2) {
-                Some(pw) => pw.clone(),
+                Some(pw) => {
+                    if !args.iter().any(|a| a == "--allow-argv-password") {
+                        eprintln!(
+                            "Error: Passing crypto passphrases as command-line arguments leaks \
+                             them via /proc/*/cmdline and shell history. Use \
+                             --allow-argv-password to override."
+                        );
+                        std::process::exit(2);
+                    }
+                    eprintln!(
+                        "warning: passing a crypto passphrase on the command line is insecure \
+                         (visible via /proc/<pid>/cmdline). --allow-argv-password acknowledged."
+                    );
+                    pw.clone()
+                }
                 None => SecretPrompt::new("New crypto passphrase").read_secret()?,
             };
             let hint = args.get(3).cloned().unwrap_or_default();
@@ -3163,6 +3215,9 @@ fn parse_flag_string(args: &[String], flag: &str) -> Result<Option<String>, Prom
                 .next()
                 .ok_or_else(|| invalid_input("flag requires a value"))?;
             return Ok(Some(raw.clone()));
+        } else if let Some(rest) = tok.strip_prefix(&format!("{flag}=")) {
+            // Support `--flag=value` inline form in addition to `--flag value`.
+            return Ok(Some(rest.to_owned()));
         }
     }
     Ok(None)
@@ -3912,6 +3967,8 @@ mod tests {
             "change-link-password".to_owned(),
             "17".to_owned(),
             "new-secret".to_owned(),
+            // Argv password requires explicit acknowledgement.
+            "--allow-argv-password".to_owned(),
         ];
 
         let inputs = parse_inputs_for_command(&Command::ChangeLinkPassword, &args)
@@ -5366,5 +5423,71 @@ mod tests {
             Request::CryptoGetFileKey { file_id } => assert_eq!(file_id, 5678),
             other => panic!("expected CryptoGetFileKey, got {other:?}"),
         }
+    }
+
+    // ── Regression: 07-H-01 stat off-by-one ──────────────────────────────
+    // Prior to this fix `pcloudc stat /path` sent `"stat"` as the remote
+    // path because the parser read `args.get(1)` (the command token) instead
+    // of `args.get(2)` (the first positional argument).
+
+    #[test]
+    fn stat_parses_path_from_correct_position() {
+        use pcloud_ipc::Request;
+        let args = argv(&["stat", "/Documents/report.txt"]);
+        let cmd = parse_command(&args).expect("stat command must parse");
+        assert_eq!(cmd, Command::Stat);
+        let inputs = parse_inputs_for_command(&cmd, &args).expect("stat inputs must parse");
+        assert_eq!(
+            inputs.stat_remote_path, "/Documents/report.txt",
+            "stat_remote_path must be the user-supplied path, not the command name"
+        );
+        let req = cmd.into_request(&inputs);
+        match req {
+            Request::StatPath { path } => {
+                assert_eq!(path, "/Documents/report.txt");
+                assert_ne!(path, "stat", "stat must not forward the command token as the path");
+            }
+            other => panic!("expected StatPath, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn stat_without_path_is_an_error() {
+        let args = argv(&["stat"]);
+        let cmd = parse_command(&args).expect("stat without path still parses the command");
+        assert_eq!(cmd, Command::Stat);
+        let err = parse_inputs_for_command(&cmd, &args)
+            .expect_err("stat without path must return an error");
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("absolute pCloud-drive path") || msg.contains("stat"),
+            "error must mention the required path argument: {msg}"
+        );
+    }
+
+    // ── Regression: 07-M-02 parse_flag_string inline `--flag=value` ──────
+    // `--flag value` and `--flag=value` must both be accepted.
+
+    #[test]
+    fn sync_suggest_max_accepts_inline_equals_form() {
+        let args = argv(&["sync", "suggest", "--max=10"]);
+        let cmd = parse_command(&args).expect("sync suggest must parse");
+        assert_eq!(cmd, Command::SyncSuggest);
+        let inputs = parse_inputs_for_command(&cmd, &args)
+            .expect("sync suggest --max=10 must be accepted");
+        assert_eq!(
+            inputs.sync_suggest_max,
+            Some(10),
+            "--max=10 must be parsed as max=10, not silently ignored"
+        );
+    }
+
+    #[test]
+    fn sync_suggest_max_accepts_spaced_form() {
+        let args = argv(&["sync", "suggest", "--max", "5"]);
+        let cmd = parse_command(&args).expect("sync suggest must parse");
+        let inputs =
+            parse_inputs_for_command(&cmd, &args).expect("sync suggest --max 5 must be accepted");
+        assert_eq!(inputs.sync_suggest_max, Some(5));
     }
 }

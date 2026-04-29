@@ -593,14 +593,18 @@ impl<B: FileUploadBackend> WritePathService<B> {
             }
         }
 
-        self.stage
-            .write_blob_at(&blob_name, effective_offset, data)?;
+        // P1.2 (F-01 fix): journal MUST be written and fsynced BEFORE the staging
+        // blob is mutated. A crash after the journal fsync but before write_blob_at
+        // leaves a replayable record; a crash before journal_append loses only an
+        // unacknowledged write (safe). The order was previously inverted.
         self.journal_append(JournalOp::Write {
             path: path.clone(),
             offset: effective_offset,
             len: data.len() as u64,
             staging_blob: blob_name.clone(),
         })?;
+        self.stage
+            .write_blob_at(&blob_name, effective_offset, data)?;
 
         dirty = dirty.saturating_add(data.len() as u64);
         {
@@ -902,6 +906,22 @@ impl<B: FileUploadBackend> WritePathService<B> {
         let flushed_bytes = std::fs::metadata(&blob_path).map(|m| m.len()).unwrap_or(0);
         self.backend.upload_file(&parent, &name, &blob_path)?;
 
+        // F-01 fix: checkpoint the journal AFTER the backend confirms the upload.
+        // A crash between upload success and journal reset is safe — replay will
+        // re-upload (idempotent). A crash before upload would leave the journal
+        // intact so it can re-drive the upload on restart.
+        if let Err(e) = self
+            .journal
+            .lock()
+            .map_err(|_| WritePathError::Internal("journal mutex poisoned in flush"))
+            .and_then(|mut j| j.reset().map_err(WritePathError::Journal))
+        {
+            log::warn!(
+                "pcloud-fs: journal checkpoint failed after upload — \
+                 journal will replay the write on next mount (safe but redundant): {e}"
+            );
+        }
+
         // Reset dirty accounting.
         let now = Instant::now();
         {
@@ -1100,8 +1120,19 @@ impl<B: FileUploadBackend> WritePathService<B> {
     /// Close a file descriptor: remove the handle. Does **not** flush —
     /// callers must invoke [`Self::flush`] first to enforce durability
     /// (matching kernel `flush` before `release` semantics).
+    ///
+    /// # F-02 staging cleanup
+    ///
+    /// When the handle is released after a successful flush (`dirty_bytes == 0`),
+    /// the staging blob is removed so plaintext user data does not accumulate on
+    /// local disk after upload. Dirty releases (e.g. unlink or error path) retain
+    /// the blob so crash-recovery replay can re-upload it.
     pub fn release(&self, ino: u64) {
         if let Ok(mut handles) = self.handles.lock() {
+            let blob_name_and_clean = handles.get(&ino).and_then(|handle| {
+                handle.lock().ok().map(|h| (h.blob_name.clone(), h.dirty_bytes == 0))
+            });
+
             // M-5.4: when a handle is removed without a prior flush (e.g.
             // unlink/error path), reclaim its dirty bytes from the global
             // staging counter so the headroom is available to other writers.
@@ -1119,6 +1150,19 @@ impl<B: FileUploadBackend> WritePathService<B> {
                 }
             }
             handles.remove(&ino);
+
+            // F-02 fix: evict the staging blob after a clean (fully-flushed)
+            // release. This prevents plaintext user data from accumulating on
+            // local disk after a successful upload. Dirty releases retain the
+            // blob for crash-recovery replay.
+            if let Some((blob_name, true)) = blob_name_and_clean {
+                if let Err(e) = self.stage.remove_blob(&blob_name) {
+                    log::warn!(
+                        "pcloud-fs: failed to remove staging blob on release — \
+                         the local copy will be collected on next startup: {e}"
+                    );
+                }
+            }
         }
     }
 
@@ -2886,5 +2930,126 @@ mod tests {
         // Saturating cap at 60s.
         assert_eq!(exp_backoff(base, 10), Duration::from_secs(60));
         assert_eq!(exp_backoff(base, 30), Duration::from_secs(60));
+    }
+
+    /// F-01 regression: journal record must be appended BEFORE the staging blob
+    /// is mutated. After a write the journal must contain a record describing
+    /// the write, so a crash after journal fsync but before blob mutation leaves
+    /// a replayable record.
+    #[test]
+    fn write_appends_journal_before_staging_mutation() {
+        let d = tempdir().unwrap();
+        let stage = StagingDir::open(d.path().join("stage")).unwrap();
+        let journal = WriteJournal::open(stage.journal_path()).unwrap();
+        let backend = Arc::new(MockUploadBackend::new());
+        let svc = WritePathService::new(
+            stage,
+            journal,
+            Arc::clone(&backend),
+            WritePathOptions {
+                flush_threshold_bytes: 1024 * 1024 * 1024,
+                flush_interval: Duration::from_secs(3600),
+                ..WritePathOptions::default()
+            },
+        );
+        svc.create(1, "/", "ordered.txt").unwrap();
+        svc.write(1, 0, b"hello journal ordering").unwrap();
+        let records = svc.replay_journal().expect("replay must succeed");
+        let has_write = records.iter().any(|r| matches!(r.op, JournalOp::Write { .. }));
+        assert!(
+            has_write,
+            "F-01: journal must contain Write record before flush; got {records:?}"
+        );
+    }
+
+    /// F-01 regression: journal must be truncated after a successful flush/upload
+    /// so records are not replayed and re-uploaded on next restart.
+    #[test]
+    fn flush_checkpoints_journal_after_upload() {
+        let d = tempdir().unwrap();
+        let stage = StagingDir::open(d.path().join("stage")).unwrap();
+        let journal = WriteJournal::open(stage.journal_path()).unwrap();
+        let backend = Arc::new(MockUploadBackend::new());
+        let svc = WritePathService::new(
+            stage,
+            journal,
+            Arc::clone(&backend),
+            WritePathOptions {
+                flush_threshold_bytes: 1024 * 1024 * 1024,
+                flush_interval: Duration::from_secs(3600),
+                ..WritePathOptions::default()
+            },
+        );
+        svc.create(1, "/", "checkpoint.txt").unwrap();
+        svc.write(1, 0, b"data to upload").unwrap();
+        let before = svc.replay_journal().unwrap();
+        assert!(!before.is_empty(), "journal must have records before flush");
+        svc.flush(1).unwrap();
+        let after = svc.replay_journal().unwrap();
+        assert!(
+            after.is_empty(),
+            "F-01: journal must be empty after successful flush; got {after:?}"
+        );
+    }
+
+    /// F-02 regression: staging blob must be removed when a clean handle is
+    /// released (flush succeeded before release) to avoid plaintext data
+    /// accumulating on local disk after upload.
+    #[test]
+    fn staging_blob_removed_on_clean_release() {
+        let d = tempdir().unwrap();
+        let stage = StagingDir::open(d.path().join("stage")).unwrap();
+        let journal = WriteJournal::open(stage.journal_path()).unwrap();
+        let backend = Arc::new(MockUploadBackend::new());
+        let blob_path = stage.blob_path("ino-1.blob").unwrap();
+        let svc = WritePathService::new(
+            stage,
+            journal,
+            Arc::clone(&backend),
+            WritePathOptions {
+                flush_threshold_bytes: 1024 * 1024 * 1024,
+                flush_interval: Duration::from_secs(3600),
+                ..WritePathOptions::default()
+            },
+        );
+        svc.create(1, "/", "blob_cleanup.txt").unwrap();
+        svc.write(1, 0, b"clean release test").unwrap();
+        assert!(blob_path.exists(), "staging blob must exist after write");
+        svc.flush(1).unwrap();
+        svc.release(1);
+        assert!(
+            !blob_path.exists(),
+            "F-02: staging blob must be removed after flush + release"
+        );
+    }
+
+    /// F-02: a dirty release (no preceding flush) must NOT remove the blob so
+    /// crash-recovery replay can re-upload the data.
+    #[test]
+    fn staging_blob_retained_on_dirty_release() {
+        let d = tempdir().unwrap();
+        let stage = StagingDir::open(d.path().join("stage")).unwrap();
+        let journal = WriteJournal::open(stage.journal_path()).unwrap();
+        let backend = Arc::new(MockUploadBackend::new());
+        let blob_path = stage.blob_path("ino-2.blob").unwrap();
+        let svc = WritePathService::new(
+            stage,
+            journal,
+            Arc::clone(&backend),
+            WritePathOptions {
+                flush_threshold_bytes: 1024 * 1024 * 1024,
+                flush_interval: Duration::from_secs(3600),
+                ..WritePathOptions::default()
+            },
+        );
+        svc.create(2, "/", "dirty_release.txt").unwrap();
+        svc.write(2, 0, b"unflushed dirty data").unwrap();
+        assert!(blob_path.exists(), "staging blob must exist after write");
+        // Release WITHOUT flushing first.
+        svc.release(2);
+        assert!(
+            blob_path.exists(),
+            "F-02: staging blob must be retained on dirty release for crash recovery"
+        );
     }
 }

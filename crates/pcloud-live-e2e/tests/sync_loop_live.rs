@@ -34,6 +34,7 @@ fn is_live_enabled() -> bool {
 
 /// Live sync loop: login, add sync root, verify loop processes it.
 #[test]
+#[ignore = "live-e2e: requires PCLOUD_LIVE_E2E=1 + credentials; run with --ignored"]
 fn live_sync_loop_processes_authenticated_root() {
     if !is_live_enabled() {
         eprintln!("PCLOUD_LIVE_E2E not set; skipping live sync loop test");

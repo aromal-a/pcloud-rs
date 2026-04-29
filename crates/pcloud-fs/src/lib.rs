@@ -124,8 +124,10 @@ impl FilesystemShell {
 
     /// Seed the staging area with a file and its contents. Intended for
     /// tests and deterministic fixtures; does not invoke the journal.
+    /// Bypasses the byte-budget guard so oversized test payloads are
+    /// always accepted. Production writes must go through the journal.
     pub fn seed_staged_file(&mut self, path: impl Into<String>, bytes: Vec<u8>) {
-        self.writeback.staging.stage(path, bytes);
+        self.writeback.staging.seed_unchecked(path, bytes);
     }
 
     /// Stage an all-zero write of `bytes` size through the journal. This is

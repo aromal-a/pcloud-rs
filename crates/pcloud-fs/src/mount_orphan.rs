@@ -428,4 +428,36 @@ mod tests {
         let orphans = detect_orphans(&reader, &[]).unwrap();
         assert!(orphans.is_empty());
     }
+
+    /// F-10 regression: the macOS/BSD getmntinfo reader historically emitted
+    /// `fuse.pcloud` for every FUSE-type mount, including unrelated sshfs,
+    /// macFUSE, and other FUSE volumes. This test verifies that a synthetic
+    /// mountinfo payload containing non-pCloud FUSE entries does NOT yield
+    /// any pCloud orphan entries, preventing false-positive force-unmounts.
+    #[test]
+    fn foreign_fuse_mounts_not_classified_as_pcloud_orphans() {
+        // Simulate a corrected macOS/BSD reader: sshfs and generic fuse are
+        // excluded; only genuine fuse.pcloud* entries appear.
+        let payload = concat!(
+            // sshfs — NOT a pCloud mount (fuse.sshfs)
+            "0 0 0:0 / /home/user/remote - fuse.sshfs sshfs@192.168.1.1:/data rw\n",
+            // generic fuse type — NOT pCloud
+            "0 0 0:0 / /mnt/macfuse-vol - fuse macfuse-dev rw\n",
+            // Genuine pCloud mount
+            "0 0 0:0 / /home/user/pCloudDrive - fuse.pcloud pcloud rw\n",
+        );
+        let reader = StaticMountinfoReader::new(payload);
+        let orphans = detect_orphans(&reader, &[]).unwrap();
+        let points: Vec<&Path> = orphans.iter().map(|e| e.mount_point.as_path()).collect();
+        assert_eq!(orphans.len(), 1, "expected 1 pCloud orphan, got {points:?}");
+        assert!(points.contains(&Path::new("/home/user/pCloudDrive")));
+        assert!(
+            !points.contains(&Path::new("/home/user/remote")),
+            "sshfs must not be classified as pCloud orphan"
+        );
+        assert!(
+            !points.contains(&Path::new("/mnt/macfuse-vol")),
+            "generic fuse must not be classified as pCloud orphan"
+        );
+    }
 }

@@ -999,4 +999,57 @@ mod tests {
         assert_eq!(row.0, "auth.event");
         assert_eq!(row.1.as_deref(), Some("LoginSucceeded"));
     }
+
+    /// Regression test for F-08: apply_schema_v5 must survive being called
+    /// when `text_value` / `int_value` already exist (column-exists guard).
+    #[test]
+    fn migration_v5_is_idempotent_with_preexisting_columns() {
+        use crate::schema::{
+            apply_schema_v1, apply_schema_v2, apply_schema_v3, apply_schema_v4, apply_schema_v5,
+        };
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        apply_schema_v1(&conn).unwrap();
+        apply_schema_v2(&conn).unwrap();
+        apply_schema_v3(&conn).unwrap();
+        apply_schema_v4(&conn).unwrap();
+        // Simulate a partial v5: add columns but do NOT bump user_version.
+        conn.execute_batch("ALTER TABLE preferences ADD COLUMN text_value TEXT;")
+            .unwrap();
+        conn.execute_batch("ALTER TABLE preferences ADD COLUMN int_value INTEGER;")
+            .unwrap();
+        // Now applying v5 again must not error on duplicate-column.
+        apply_schema_v5(&conn).expect("v5 must be idempotent when columns already exist");
+        let ver: u32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ver, 5);
+    }
+
+    /// Regression test for F-08: apply_schema_v6 must survive being called
+    /// when `sync_type` already exists on `sync_root_records`.
+    #[test]
+    fn migration_v6_is_idempotent_with_preexisting_column() {
+        use crate::schema::{
+            apply_schema_v1, apply_schema_v2, apply_schema_v3, apply_schema_v4, apply_schema_v5,
+            apply_schema_v6,
+        };
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        apply_schema_v1(&conn).unwrap();
+        apply_schema_v2(&conn).unwrap();
+        apply_schema_v3(&conn).unwrap();
+        apply_schema_v4(&conn).unwrap();
+        apply_schema_v5(&conn).unwrap();
+        // Simulate a partial v6: add column but do NOT bump user_version.
+        conn.execute_batch(
+            "ALTER TABLE sync_root_records ADD COLUMN sync_type INTEGER NOT NULL DEFAULT 3 \
+             CHECK (sync_type IN (1, 2, 3));",
+        )
+        .unwrap();
+        // Now applying v6 again must not error on duplicate-column.
+        apply_schema_v6(&conn).expect("v6 must be idempotent when column already exists");
+        let ver: u32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ver, 6);
+    }
 }

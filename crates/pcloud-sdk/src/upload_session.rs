@@ -83,6 +83,17 @@ impl Default for UploadConfig {
 
 /// Conflict mode selection for a session upload. Maps to the C
 /// `ifhash` param family documented in `UPLOAD-SPEC-14042026.md §5`.
+///
+/// # Current Status
+///
+/// **`ConflictMode` is accepted by [`UploadRequest`] but is NOT currently
+/// threaded through to the wire layer.** The value is stored on the request
+/// struct but `run_upload` discards it (`let _ = &request.conflict_mode`).
+/// This is a known limitation tracked under `bd-1du`; the `ifhash` wire
+/// parameter has not yet been plumbed into the `upload_save` call. Until that
+/// is done, the server will apply its default conflict behaviour regardless of
+/// what variant is supplied here. Do not depend on conditional-overwrite or
+/// create-if-absent semantics in production code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConflictMode {
     /// Conditional overwrite — server accepts only if the existing

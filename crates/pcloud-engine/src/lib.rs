@@ -721,8 +721,33 @@ impl EngineShell {
     ///
     /// On success the matched conflict is removed from the scheduler
     /// queue (it has been resolved).
+    /// Resolve a single conflict by path using the given policy string.
+    /// Returns `Ok(resolution)` if the path matched a queued conflict,
+    /// or `Err(reason)` if no conflict with that path exists.
+    ///
+    /// Valid policy strings: `"prefer_local"`, `"prefer_remote"`,
+    /// `"newest_wins"`, `"rename_both"`. Any other value is treated as
+    /// `"manual_review"` (no-op).
+    ///
+    /// On success the matched conflict is removed from the scheduler
+    /// queue (it has been resolved).
     pub fn resolve_conflict_by_path(
         &mut self,
+        path: &str,
+        policy: &str,
+    ) -> Result<ConflictResolution, String> {
+        self.resolve_conflict_by_sync_id_and_path(None, path, policy)
+    }
+
+    /// Resolve a conflict keyed by an explicit `(sync_id, path)` pair.
+    ///
+    /// F-11: Use this when multiple sync roots may share the same relative
+    /// path and you need to be certain you are targeting the correct root.
+    /// `sync_id = None` falls back to path-only matching (backward-compat
+    /// with `resolve_conflict_by_path`).
+    pub fn resolve_conflict_by_sync_id_and_path(
+        &mut self,
+        sync_id: Option<SyncId>,
         path: &str,
         policy: &str,
     ) -> Result<ConflictResolution, String> {
@@ -732,8 +757,28 @@ impl EngineShell {
             .scheduler
             .queued_operations
             .iter()
-            .position(|op| matches!(op, PlannedOperation::Conflict { path: p, .. } if p == path))
-            .ok_or_else(|| format!("no queued conflict at path: {path}"))?;
+            .position(|op| {
+                if let PlannedOperation::Conflict {
+                    path: p,
+                    sync_id: sid,
+                    ..
+                } = op
+                {
+                    p == path && sync_id.is_none_or(|id| id == *sid)
+                } else {
+                    false
+                }
+            })
+            .ok_or_else(|| {
+                if let Some(id) = sync_id {
+                    format!(
+                        "no queued conflict at sync_id={} path: {path}",
+                        id.get()
+                    )
+                } else {
+                    format!("no queued conflict at path: {path}")
+                }
+            })?;
 
         let op = &self.scheduler.queued_operations[idx];
         let override_policy = match policy {
@@ -799,6 +844,52 @@ impl EngineShell {
     pub fn mark_transfer_failed(&mut self, path: &str, error: impl Into<String>) -> bool {
         let error = error.into();
         self.uploads.mark_failed(path, error.clone()) || self.downloads.mark_failed(path, error)
+    }
+
+    /// Re-enqueue a [`PlannedOperation`] that a previous attempt classified
+    /// as [`pcloud_model::transfer::FailureDisposition::RetryLater`].
+    ///
+    /// F-05: The recovery classifier returns `RetryLater` for transient
+    /// network failures, but previously `mark_transfer_failed` only moved
+    /// work into the coordinator's failed list, never back into the
+    /// scheduler. Callers that obtain a `RetryLater` disposition from
+    /// [`Self::classify_failure`] should call this method (after honouring
+    /// any backoff delay) to put the operation back on the active schedule.
+    ///
+    /// The operation is pushed to the **front** of the scheduler queue so
+    /// transient-failure retries are tried again on the very next
+    /// `advance_transfer_cycle` call rather than being deprioritised behind
+    /// freshly discovered work. The stale failed-list entry for `path` is
+    /// cleared from both coordinators as a side effect.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use pcloud_engine::EngineShell;
+    /// use pcloud_model::ids::SyncId;
+    /// use pcloud_model::sync::PlannedOperation;
+    ///
+    /// let mut engine = EngineShell::new();
+    /// let op = PlannedOperation::UploadFile {
+    ///     sync_id: SyncId::new(1),
+    ///     path: "docs/report.txt".into(),
+    ///     remote_parent_folder_id: None,
+    ///     remote_name: "report.txt".into(),
+    /// };
+    /// engine.requeue_for_retry(op.clone());
+    /// // The operation is now at the front of the scheduler queue.
+    /// assert_eq!(
+    ///     engine.advance_transfer_cycle().first(),
+    ///     Some(&op),
+    /// );
+    /// ```
+    pub fn requeue_for_retry(&mut self, operation: PlannedOperation) {
+        // Clear from failed lists so the retry attempt starts clean.
+        let path = operation.path().to_owned();
+        self.uploads.clear_failed(&path);
+        self.downloads.clear_failed(&path);
+        // Push to front so the retry is attempted before any newly queued work.
+        self.scheduler.queued_operations.insert(0, operation);
     }
 
     /// Remove all queued and in-flight work associated with `sync_id`

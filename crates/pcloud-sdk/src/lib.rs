@@ -51,14 +51,33 @@
 //!
 //! # Semver
 //!
-//! `pcloud-sdk` re-exports only the types defined in `upload_session` and
-//! `pcloud_proto::Notification`. Types from private workspace crates such as
-//! `pcloud_config::{ConfigProfile, Environment}` are NOT re-exported; callers
-//! that need them must add a direct dependency on `pcloud-config`. This
-//! constraint is intentional: it prevents pcloud-sdk's semver from being
-//! implicitly coupled to private crate churn. Any future public re-export of
-//! a private-crate type must be wrapped in an SDK-owned newtype or alias, and
-//! documented here (§8:221 audit compliance).
+//! `pcloud-sdk` explicitly re-exports the types defined in `upload_session`
+//! and [`pcloud_proto::Notification`].
+//!
+//! Several workspace-internal types also appear in public method signatures:
+//!
+//! - [`pcloud_config::ConfigProfile`] appears in [`EmbeddedDaemon::config`]
+//!   and in the dispatch-level raw API.
+//! - [`pcloud_config::Environment`] appears in
+//!   [`EmbeddedDaemonBuilder::environment`].
+//! - [`pcloud_ipc::Request`] / [`pcloud_ipc::Response`] appear in
+//!   [`EmbeddedDaemon::dispatch`].
+//! - [`pcloud_plugin_api`] types appear in the plugin-registration surface.
+//! - [`pcloud_model::public_links::CreatedTreePublicLink`] appears in
+//!   [`EmbeddedDaemon::create_tree_public_link_from_paths`].
+//!
+//! These types are exposed by necessity and are part of the public contract.
+//! Callers using the raw-dispatch or plugin APIs must take direct dependencies
+//! on those crates. Any future addition of a new workspace-crate type to a
+//! public signature must be documented here (§8:221 audit compliance).
+//!
+//! # TLS Backend
+//!
+//! The SDK currently only supports rustls with webpki-roots as the TLS
+//! backend. `pcloud-proto` hard-pins rustls; there is no `tls-native` feature
+//! at this time. Enterprise embedders that need platform-native trust stores
+//! should track `bd-1du` for the planned `tls-native` feature flag, which
+//! requires upstream changes in `pcloud-proto/src/transport.rs`.
 //!
 //! # Examples
 //!
@@ -768,6 +787,10 @@ pub enum AuthHelperError {
     /// code. Excessive retries may trigger a server-side cool-down.
     #[error("two-factor code submission failed: {0}")]
     TwoFactorCode(String),
+    /// Password or token login was rejected by the daemon. Wraps the
+    /// server message. Recoverability: user action — re-enter credentials.
+    #[error("login failed: {0}")]
+    Login(String),
 }
 
 /// Error surface for the signed-URL download helpers.
@@ -1375,6 +1398,97 @@ impl EmbeddedDaemon {
     /// ```
     pub fn dispatch(&mut self, request: Request) -> Response {
         dispatch(&mut self.runtime, request)
+    }
+
+    /// Submit a username and password credential pair to the auth state machine.
+    /// Mirrors `psync_set_user_pass` / `psync_login`.
+    ///
+    /// The password is accepted as a plain `&str` at the SDK boundary and
+    /// wrapped into a [`pcloud_ipc::RedactedString`] so it zeroizes on drop
+    /// and never appears in `Debug` output.
+    ///
+    /// Returns `Ok(())` on acceptance. When two-factor auth is required the
+    /// server returns a TFA challenge; follow up with
+    /// [`Self::submit_two_factor_code`].
+    ///
+    /// # Errors
+    ///
+    /// [`SdkError::Auth`] wrapping [`AuthHelperError::Login`] when the
+    /// server rejects the credentials.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use std::path::PathBuf;
+    /// # use pcloud_sdk::EmbeddedDaemon;
+    /// # let mut d = EmbeddedDaemon::builder(PathBuf::from("/tmp/x")).build().unwrap();
+    /// let _ = d.login("user@example.com", "password");
+    /// ```
+    // AUDIT-NOTE: gptrev-01 M-01 — first-class login helper added so that
+    // API-REFERENCE.md entry "EmbeddedDaemon::login" compiles.
+    pub fn login(&mut self, username: &str, password: &str) -> Result<(), SdkError> {
+        let response = self.dispatch(Request::PasswordSubmission {
+            username: username.to_owned(),
+            value: password.to_owned().into(),
+        });
+        if response.status == ResponseStatus::Ok {
+            Ok(())
+        } else {
+            Err(SdkError::from(AuthHelperError::Login(response.message)))
+        }
+    }
+
+    /// Submit a pre-obtained pCloud API auth token to the auth state machine.
+    /// Mirrors `psync_set_auth`.
+    ///
+    /// The token is accepted as a plain `&str` and wrapped into a
+    /// [`pcloud_ipc::RedactedString`] so it zeroizes on drop.
+    ///
+    /// # Errors
+    ///
+    /// [`SdkError::Auth`] wrapping [`AuthHelperError::Login`] on rejection.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use std::path::PathBuf;
+    /// # use pcloud_sdk::EmbeddedDaemon;
+    /// # let mut d = EmbeddedDaemon::builder(PathBuf::from("/tmp/x")).build().unwrap();
+    /// let _ = d.login_with_token("my-auth-token");
+    /// ```
+    // AUDIT-NOTE: gptrev-01 M-01 — first-class login_with_token helper added.
+    pub fn login_with_token(&mut self, token: &str) -> Result<(), SdkError> {
+        let response = self.dispatch(Request::AuthTokenSubmission {
+            value: token.to_owned().into(),
+        });
+        if response.status == ResponseStatus::Ok {
+            Ok(())
+        } else {
+            Err(SdkError::from(AuthHelperError::Login(response.message)))
+        }
+    }
+
+    /// Submit a TFA recovery code. Convenience wrapper over
+    /// [`Self::submit_two_factor_code`] with `recovery_code = true`.
+    ///
+    /// Mirrors the `psync_tfa_set_code` recovery-code path.
+    ///
+    /// # Errors
+    ///
+    /// Propagates errors from [`Self::submit_two_factor_code`].
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use std::path::PathBuf;
+    /// # use pcloud_sdk::EmbeddedDaemon;
+    /// # let mut d = EmbeddedDaemon::builder(PathBuf::from("/tmp/x")).build().unwrap();
+    /// let _ = d.submit_recovery_code("recovery-phrase-here", false);
+    /// ```
+    // AUDIT-NOTE: gptrev-01 M-01 — submit_recovery_code added so
+    // API-REFERENCE.md entry compiles. Delegates to submit_two_factor_code.
+    pub fn submit_recovery_code(&mut self, code: &str, trust_device: bool) -> Result<(), SdkError> {
+        self.submit_two_factor_code(code, trust_device, true)
     }
 
     /// Register a plugin against the embedded daemon's plugin registry.
@@ -2442,9 +2556,19 @@ impl EmbeddedDaemon {
     }
 
     /// Create a tree public link by resolving one or more absolute pCloud-drive
-    /// paths to remote folder ids under the daemon's authenticated context, then
-    /// invoking `ptree_public_link`. Mirrors the C path-based variant of
-    /// `psync_create_uploadlink` / `ptree_public_link` (row 149, bd-1du).
+    /// **folder** paths to remote folder ids under the daemon's authenticated
+    /// context, then invoking `ptree_public_link`. Mirrors the C path-based
+    /// variant of `psync_create_uploadlink` / `ptree_public_link`
+    /// (row 149, bd-1du).
+    ///
+    /// # Limitation
+    ///
+    /// Every path in `paths` is treated as a **folder** path. File paths are
+    /// not resolved and will not be included in the tree link — the underlying
+    /// `TreePublicLinkPaths.files` field is always left empty. If you need to
+    /// include individual files, resolve their numeric file ids and use the
+    /// lower-level IPC `CreateTreePublicLink` request directly via
+    /// [`EmbeddedDaemon::dispatch`].
     ///
     /// Returns a [`pcloud_model::public_links::CreatedTreePublicLink`] on
     /// success.
@@ -3478,18 +3602,25 @@ impl EmbeddedDaemon {
     /// # let mut d = EmbeddedDaemon::builder(PathBuf::from("/tmp/x")).build().unwrap();
     /// d.delete_file("/Documents/old.txt").unwrap();
     /// ```
-    pub fn delete_file(&mut self, _path: &str) -> Result<(), SdkError> {
+    pub fn delete_file(&mut self, path: &str) -> Result<(), SdkError> {
         if self.runtime.auth.snapshot().auth_token.is_none() {
             return Err(SdkError::from(FileMutationHelperError::NotAuthenticated));
         }
-        // TODO(bd-1du.10): wire to correct IPC variant (DeleteFile) once that Request
-        // variant exists in pcloud-ipc::methods::Request. `_path` is held
-        // unused until that wiring lands — the guard above preserves the
-        // error surface shape (NotAuthenticated vs DeleteFailed) so callers
-        // can rely on it even while the IPC variant is stubbed.
-        Err(SdkError::from(FileMutationHelperError::DeleteFailed(
-            "delete_file IPC variant not yet implemented (bd-1du.10)".to_owned(),
-        )))
+        if path.trim().is_empty() || !path.starts_with('/') {
+            return Err(SdkError::from(FileMutationHelperError::DeleteFailed(
+                "delete_file requires an absolute path starting with '/'".to_owned(),
+            )));
+        }
+        let response = self.dispatch(Request::FileDeleteByPath {
+            path: path.to_owned(),
+        });
+        if response.status == ResponseStatus::Ok {
+            Ok(())
+        } else {
+            Err(SdkError::from(FileMutationHelperError::DeleteFailed(
+                response.message,
+            )))
+        }
     }
 
     /// Rename (move) a remote file from `src_path` to `dst_path`.
@@ -3504,16 +3635,30 @@ impl EmbeddedDaemon {
     /// d.rename_file("/Documents/old.txt", "/Documents/new.txt").unwrap();
     /// ```
     pub fn rename_file(&mut self, src_path: &str, dst_path: &str) -> Result<(), SdkError> {
-        let _ = (src_path, dst_path);
         if self.runtime.auth.snapshot().auth_token.is_none() {
             return Err(SdkError::from(FileMutationHelperError::NotAuthenticated));
         }
-        // TODO(bd-1du.10): wire to correct IPC variant (RenameFile / MoveFile) once that
-        // Request variant exists in pcloud-ipc::methods::Request. Tracked
-        // under bd-1du.10.
-        Err(SdkError::from(FileMutationHelperError::RenameFailed(
-            "rename_file IPC variant not yet implemented (bd-1du.10)".to_owned(),
-        )))
+        if src_path.trim().is_empty() || !src_path.starts_with('/') {
+            return Err(SdkError::from(FileMutationHelperError::RenameFailed(
+                "rename_file: src_path must be an absolute path starting with '/'".to_owned(),
+            )));
+        }
+        if dst_path.trim().is_empty() || !dst_path.starts_with('/') {
+            return Err(SdkError::from(FileMutationHelperError::RenameFailed(
+                "rename_file: dst_path must be an absolute path starting with '/'".to_owned(),
+            )));
+        }
+        let response = self.dispatch(Request::RenamePath {
+            from: src_path.to_owned(),
+            to: dst_path.to_owned(),
+        });
+        if response.status == ResponseStatus::Ok {
+            Ok(())
+        } else {
+            Err(SdkError::from(FileMutationHelperError::RenameFailed(
+                response.message,
+            )))
+        }
     }
 
     /// Stat a remote file by absolute pCloud-drive path. Returns the

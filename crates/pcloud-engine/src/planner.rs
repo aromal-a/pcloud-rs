@@ -92,20 +92,31 @@ impl Planner {
         candidates: &[SyncCandidate],
     ) -> (Vec<PlannedOperation>, Vec<SyncCandidate>) {
         let mut sorted = candidates.to_vec();
+        // F-06: sort and group by (sync_id, path, source) so that the same
+        // relative path under different sync roots is never collapsed into a
+        // single pairing, preventing cross-root conflict misrouting and path
+        // collapse bugs on multi-root configurations.
         sorted.sort_by(|left, right| {
-            left.path
-                .cmp(&right.path)
+            left.sync_id
+                .get()
+                .cmp(&right.sync_id.get())
+                .then(left.path.cmp(&right.path))
                 .then(left.source.cmp(&right.source))
         });
 
         let mut operations = Vec::new();
         let mut idx = 0usize;
         while idx < sorted.len() && operations.len() < self.max_operations_per_tick {
+            let sync_id = sorted[idx].sync_id;
             let path = sorted[idx].path.clone();
             let mut local = None;
             let mut remote = None;
 
-            while idx < sorted.len() && sorted[idx].path == path {
+            // Consume all candidates for the same (sync_id, path) group.
+            while idx < sorted.len()
+                && sorted[idx].sync_id == sync_id
+                && sorted[idx].path == path
+            {
                 match sorted[idx].source {
                     ChangeSource::Local => local = Some(sorted[idx].clone()),
                     ChangeSource::Remote => remote = Some(sorted[idx].clone()),
@@ -128,8 +139,12 @@ impl Planner {
                 let mut count = 0usize;
                 let mut scan = idx;
                 while scan < sorted.len() {
-                    let path = &sorted[scan].path;
-                    while scan < sorted.len() && &sorted[scan].path == path {
+                    let cur_id = sorted[scan].sync_id;
+                    let cur_path = &sorted[scan].path;
+                    while scan < sorted.len()
+                        && sorted[scan].sync_id == cur_id
+                        && &sorted[scan].path == cur_path
+                    {
                         scan += 1;
                     }
                     count += 1;

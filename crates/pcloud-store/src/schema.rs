@@ -100,30 +100,36 @@ pub fn apply_schema_v4(conn: &Connection) -> Result<(), rusqlite::Error> {
 }
 
 /// Apply schema version 5: extends `preferences` with `text_value` and `int_value` columns.
+///
+/// Idempotent: each `ALTER TABLE` is guarded by a column-existence check so a
+/// partial migration that added a column but crashed before bumping
+/// `user_version` does not brick the next startup with a duplicate-column error.
 pub fn apply_schema_v5(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute_batch(
-        "
-        ALTER TABLE preferences ADD COLUMN text_value TEXT;
-        ALTER TABLE preferences ADD COLUMN int_value INTEGER;
-
-        PRAGMA user_version = 5;
-        ",
-    )
+    if !column_exists(conn, "preferences", "text_value")? {
+        conn.execute_batch("ALTER TABLE preferences ADD COLUMN text_value TEXT;")?;
+    }
+    if !column_exists(conn, "preferences", "int_value")? {
+        conn.execute_batch("ALTER TABLE preferences ADD COLUMN int_value INTEGER;")?;
+    }
+    conn.execute_batch("PRAGMA user_version = 5;")
 }
 
 /// Schema v6 carries per-sync-root `sync_type` (mirrors C `psync_synctype_t`).
 ///
 /// The column is added with a default of `3` (full sync) so that pre-existing
 /// sync roots keep their current behavior after migration.
+///
+/// Idempotent: the `ALTER TABLE` is guarded by a column-existence check so a
+/// partial migration that added the column but crashed before bumping
+/// `user_version` does not brick the next startup with a duplicate-column error.
 pub fn apply_schema_v6(conn: &Connection) -> Result<(), rusqlite::Error> {
-    conn.execute_batch(
-        "
-        ALTER TABLE sync_root_records ADD COLUMN sync_type INTEGER NOT NULL DEFAULT 3
-            CHECK (sync_type IN (1, 2, 3));
-
-        PRAGMA user_version = 6;
-        ",
-    )
+    if !column_exists(conn, "sync_root_records", "sync_type")? {
+        conn.execute_batch(
+            "ALTER TABLE sync_root_records ADD COLUMN sync_type INTEGER NOT NULL DEFAULT 3 \
+             CHECK (sync_type IN (1, 2, 3));",
+        )?;
+    }
+    conn.execute_batch("PRAGMA user_version = 6;")
 }
 
 /// Schema v7 adds a typed key/value table that mirrors the C `setting` table

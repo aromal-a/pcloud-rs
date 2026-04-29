@@ -1357,6 +1357,7 @@ impl RuntimeShell {
     ///   `pcloud-proto::folder_api`.
     /// * `created` — defaults to `0` (treated as "unknown" by the
     ///   smbr plugin, which falls back to `modified`).
+    ///
     /// Both are tracked under `bd-smbr-pcloud P4 follow-up`; the IPC
     /// wire shape stays stable while we close the gaps.
     pub fn list_folder_by_path(&mut self, path: String) -> Response {

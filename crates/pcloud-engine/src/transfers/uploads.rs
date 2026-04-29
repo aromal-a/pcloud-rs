@@ -123,6 +123,16 @@ impl UploadCoordinator {
         )
     }
 
+    /// Remove the failed task at `path` from the failed list without
+    /// re-queuing it. Used by [`crate::EngineShell::requeue_for_retry`]
+    /// to clear the stale failed entry before pushing the operation back
+    /// onto the scheduler. Returns `true` if a matching entry was found.
+    pub fn clear_failed(&mut self, path: &str) -> bool {
+        let before = self.failed.len();
+        self.failed.retain(|t| t.operation.path() != path);
+        self.failed.len() < before
+    }
+
     /// Mark the upload-side task at `path` as failed with `error`.
     /// Returns `true` if a matching task was found and moved.
     pub fn mark_failed(&mut self, path: &str, error: impl Into<String>) -> bool {
