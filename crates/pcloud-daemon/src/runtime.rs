@@ -786,6 +786,10 @@ impl RuntimeShell {
             Request::FolderDeleteByPath { path, recursive } => {
                 self.folder_delete_by_path(path, recursive)
             }
+            Request::FolderDeleteById {
+                folder_id,
+                recursive,
+            } => self.folder_delete_by_id(folder_id, recursive),
             Request::RenamePath { from, to } => self.rename_path(from, to),
             Request::FileHistory { path, limit } => self.file_history(path, limit),
             // Backup/snapshot lifecycle (zstd + SHA3 sidecar default,
@@ -1299,15 +1303,23 @@ impl RuntimeShell {
     /// Empty / whitespace paths are refused with
     /// [`ResponseStatus::InvalidRequest`] before the provider is
     /// consulted.
-    /// bd-smbr-pcloud P2 — list folder children by absolute pCloud
-    /// drive path. The live wiring will resolve `path` to a folder id
-    /// against the metadata cache (with API fallback) and dispatch
-    /// `pcloud_proto::folder_api::FolderApi::list_folder_with_metadata`,
-    /// returning a JSON array of [`pcloud_ipc::ListFolderEntry`] in
-    /// [`Response::message`]. Until that wiring lands the handler
-    /// returns [`ResponseStatus::Unavailable`] with a tracker pointer
-    /// so a caller (notably the smbr `pcloud` VFS plugin) sees the
-    /// honest scope rather than a silent panic.
+    /// bd-smbr-pcloud P4 — list folder children by absolute pCloud
+    /// drive path. Resolves `path` via
+    /// [`crate::folder_backend::FolderRuntime::list_folder_contents`]
+    /// and emits a JSON-serialised `Vec<pcloud_ipc::ListFolderEntry>`
+    /// in [`Response::message`].
+    ///
+    /// The mapping from `RemoteFolderEntry` → `ListFolderEntry` is
+    /// lossy on two fields the wire schema declares but the
+    /// underlying type does not yet expose:
+    /// * `hash` — defaults to the empty string. Folders never have
+    ///   a content hash (consistent with the schema doc); files
+    ///   currently report empty pending a richer extractor in
+    ///   `pcloud-proto::folder_api`.
+    /// * `created` — defaults to `0` (treated as "unknown" by the
+    ///   smbr plugin, which falls back to `modified`).
+    /// Both are tracked under `bd-smbr-pcloud P4 follow-up`; the IPC
+    /// wire shape stays stable while we close the gaps.
     pub fn list_folder_by_path(&mut self, path: String) -> Response {
         if !path.starts_with('/') {
             return Response {
@@ -1316,12 +1328,64 @@ impl RuntimeShell {
                     .to_owned(),
             };
         }
-        Response {
-            status: ResponseStatus::Unavailable,
-            message: format!(
-                "list-folder-by-path is not yet wired (bd-smbr-pcloud P2). \
-                 Path was: {path}"
-            ),
+        let Some(auth_token) = self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        else {
+            return Response {
+                status: ResponseStatus::Unauthorized,
+                message: "list-folder-by-path requires an authenticated session".to_owned(),
+            };
+        };
+        match self.folder_runtime.list_folder_contents(auth_token, &path) {
+            Ok(listing) => {
+                let entries: Vec<pcloud_ipc::ListFolderEntry> = listing
+                    .entries
+                    .iter()
+                    .map(|entry| pcloud_ipc::ListFolderEntry {
+                        file_id: entry
+                            .folder_id
+                            .or(entry.file_id)
+                            .unwrap_or(0),
+                        name: entry.name.clone(),
+                        size: entry.size.unwrap_or(0),
+                        // P4 follow-up: enrich the proto-level
+                        // entry to expose `hash` + `created` so we
+                        // can fill them in here without a lossy
+                        // default. Tracker: bd-smbr-pcloud P4 fu.
+                        hash: String::new(),
+                        modified: entry.modified.unwrap_or(0) as i64,
+                        created: 0,
+                        is_folder: entry.is_folder,
+                    })
+                    .collect();
+                let count = entries.len();
+                let body = match serde_json::to_string(&entries) {
+                    Ok(s) => s,
+                    Err(err) => {
+                        return Response {
+                            status: ResponseStatus::InternalError,
+                            message: format!(
+                                "list-folder-by-path: JSON serialise failed: {err}"
+                            ),
+                        };
+                    }
+                };
+                self.audited_response(
+                    "fs.list_folder_by_path",
+                    Some(format!("path={path} entries={count}")),
+                    body,
+                )
+            }
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!(
+                    "list-folder-by-path: {path:?}: {err}"
+                ),
+            },
         }
     }
 
@@ -1366,6 +1430,56 @@ impl RuntimeShell {
                 "folder-delete-by-path is not yet wired (bd-smbr-pcloud P2). \
                  Path={path} recursive={recursive}"
             ),
+        }
+    }
+
+    /// `FolderDeleteById` IPC handler — delete a remote folder by
+    /// numeric folder id. Mirrors C `task_deletefolder` /
+    /// `task_deletefolderrec`. Authenticated. Idempotent on
+    /// `Folder Not Found`.
+    pub fn folder_delete_by_id(&mut self, folder_id: u64, recursive: bool) -> Response {
+        let auth_token = match self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        {
+            Some(token) => token,
+            None => {
+                return Response {
+                    status: ResponseStatus::Conflict,
+                    message: "folder-delete-by-id requires an authenticated session".to_owned(),
+                };
+            }
+        };
+        match self
+            .folder_runtime
+            .delete_folder_by_id(auth_token, folder_id, recursive)
+        {
+            Ok(()) => Response {
+                status: ResponseStatus::Ok,
+                message: format!("folder deleted: folder_id={folder_id}, recursive={recursive}"),
+            },
+            Err(err) => match &err {
+                pcloud_proto::FolderApiError::Result { result: 2005, .. } => Response {
+                    // pCloud `2005 Folder Not Found` — idempotent path.
+                    status: ResponseStatus::Ok,
+                    message: format!("folder already absent: folder_id={folder_id} ({err})"),
+                },
+                pcloud_proto::FolderApiError::Result { result: 2003, .. } => Response {
+                    // pCloud `2003 Directory Not Empty` (recursive=false).
+                    status: ResponseStatus::Conflict,
+                    message: format!(
+                        "folder is not empty: folder_id={folder_id} ({err}); \
+                         retry with recursive=true"
+                    ),
+                },
+                _ => Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!("folder delete failed: {err}"),
+                },
+            },
         }
     }
 
@@ -7001,6 +7115,7 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::ListFolderByPath { .. } => "ListFolderByPath",
         Request::FileDeleteByPath { .. } => "FileDeleteByPath",
         Request::FolderDeleteByPath { .. } => "FolderDeleteByPath",
+        Request::FolderDeleteById { .. } => "FolderDeleteById",
         Request::RenamePath { .. } => "RenamePath",
         Request::FileHistory { .. } => "FileHistory",
         Request::ConflictList => "ConflictList",
