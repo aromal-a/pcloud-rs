@@ -967,6 +967,41 @@ impl TransferRuntime {
         self.api
             .upload_delete(auth_token.expose_secret(), upload_id)
     }
+
+    /// Delete a remote file by numeric id. Mirrors C
+    /// `task_deletefile` (`pclsync/pupload.c:1650-1661`). Returns
+    /// `Ok(())` on success.
+    pub fn delete_file_by_id(
+        &self,
+        auth_token: SecretString,
+        file_id: u64,
+    ) -> Result<(), TransferApiError<TransferBackendError>> {
+        self.api
+            .delete_file(auth_token.expose_secret(), file_id)
+            .map(|_| ())
+    }
+
+    /// Rename and/or move a remote file by numeric id. Mirrors C
+    /// `task_renameremotefile` (`pclsync/pupload.c:276-291`). Pass
+    /// the existing parent folder id as `to_folder_id` for a pure
+    /// rename; pass a different parent id to move the file across
+    /// folders in a single API call.
+    pub fn rename_file_by_id(
+        &self,
+        auth_token: SecretString,
+        file_id: u64,
+        to_folder_id: u64,
+        to_name: impl Into<String>,
+    ) -> Result<(), TransferApiError<TransferBackendError>> {
+        self.api
+            .rename_file(
+                auth_token.expose_secret(),
+                file_id,
+                to_folder_id,
+                to_name,
+            )
+            .map(|_| ())
+    }
 }
 
 /// Enforce the data-residency policy at the `upload_create` call site.

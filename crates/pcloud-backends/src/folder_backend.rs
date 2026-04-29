@@ -363,6 +363,43 @@ impl FolderRuntime {
         )))
     }
 
+    /// Delete a remote folder by id. Mirrors C `task_deletefolder`
+    /// (`pclsync/psynclib.c:1166`). With `recursive = false` the API
+    /// rejects a non-empty folder; with `recursive = true` it deletes
+    /// the entire subtree atomically server-side.
+    pub fn delete_folder_by_id(
+        &self,
+        auth_token: SecretString,
+        folder_id: u64,
+        recursive: bool,
+    ) -> Result<(), FolderApiError<FolderBackendError>> {
+        if recursive {
+            self.api
+                .delete_folder_recursive(auth_token.expose_secret(), folder_id)
+                .map(|_| ())
+        } else {
+            self.api
+                .delete_folder(auth_token.expose_secret(), folder_id)
+                .map(|_| ())
+        }
+    }
+
+    /// Rename and/or move a remote folder identified by id. Mirrors
+    /// the C `renamefolder` task. Pass the existing parent folder id
+    /// as `to_folder_id` for a pure rename; pass a different parent
+    /// id to move the folder across folders in a single API call.
+    pub fn rename_folder_by_id(
+        &self,
+        auth_token: SecretString,
+        folder_id: u64,
+        to_folder_id: u64,
+        to_name: impl Into<String>,
+    ) -> Result<(), FolderApiError<FolderBackendError>> {
+        self.api
+            .rename_folder(auth_token.expose_secret(), folder_id, to_folder_id, to_name)
+            .map(|_| ())
+    }
+
     /// List the contents of a remote folder by absolute path.
     ///
     /// Mirrors the C `listfolder` wire command, returning the full

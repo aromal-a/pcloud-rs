@@ -1303,6 +1303,36 @@ impl RuntimeShell {
     /// Empty / whitespace paths are refused with
     /// [`ResponseStatus::InvalidRequest`] before the provider is
     /// consulted.
+    /// bd-smbr-pcloud P4.3 — resolve an absolute pCloud-drive path
+    /// to its kind + numeric id, by reading the local metadata cache
+    /// only. Returns `Ok(None)` when the path is not present in the
+    /// cache so the caller can decide whether to fall back to the
+    /// API or surface "not found".
+    ///
+    /// Mirrors the cache-first half of [`Self::stat_path`]; the
+    /// API-fallback half is intentionally not duplicated here
+    /// because the only kind-aware API is the same `listfolder`
+    /// already used by [`Self::list_folder_by_path`], and the new
+    /// FS-by-path handlers prefer to *fail closed* on a cache miss
+    /// rather than implicitly issue listfolder per delete (which
+    /// would let a malicious caller fingerprint the parent folder
+    /// via timing).
+    fn resolve_kind_by_path(
+        &self,
+        path: &str,
+    ) -> Result<Option<(u64, bool)>, ResponseStatus> {
+        let db_path = &self.store.db_path;
+        let conn = match rusqlite::Connection::open(db_path) {
+            Ok(c) => c,
+            Err(_) => return Ok(None),
+        };
+        match pcloud_store::FileMetadataRepository::resolve_path(&conn, path) {
+            Ok(Some(record)) => Ok(Some((record.file_id, record.is_folder))),
+            Ok(None) => Ok(None),
+            Err(_) => Ok(None),
+        }
+    }
+
     /// bd-smbr-pcloud P4 — list folder children by absolute pCloud
     /// drive path. Resolves `path` via
     /// [`crate::folder_backend::FolderRuntime::list_folder_contents`]
@@ -1389,11 +1419,14 @@ impl RuntimeShell {
         }
     }
 
-    /// bd-smbr-pcloud P2 — delete a remote file by absolute path. See
-    /// [`Self::list_folder_by_path`] for the rollout plan; the live
-    /// wiring will go through
-    /// `pcloud_proto::transfer_api::TransferApi::delete_file` once the
-    /// path-resolver is plumbed.
+    /// bd-smbr-pcloud P4.3 — delete a remote file by absolute
+    /// pCloud-drive path. Resolves `path` against the local
+    /// metadata cache (cache-only, see [`Self::resolve_kind_by_path`])
+    /// then dispatches
+    /// [`crate::transfer_backend::TransferRuntime::delete_file_by_id`].
+    /// Idempotent on missing path: SMB clients with a stale dirent
+    /// cache do not get a noisy failure for a path their cached
+    /// `readdir` thinks still exists.
     pub fn file_delete_by_path(&mut self, path: String) -> Response {
         if !path.starts_with('/') {
             return Response {
@@ -1402,20 +1435,58 @@ impl RuntimeShell {
                     .to_owned(),
             };
         }
-        Response {
-            status: ResponseStatus::Unavailable,
-            message: format!(
-                "file-delete-by-path is not yet wired (bd-smbr-pcloud P2). \
-                 Path was: {path}"
+        let resolved = match self.resolve_kind_by_path(&path) {
+            Ok(opt) => opt,
+            Err(status) => return Response {
+                status,
+                message: format!("file-delete-by-path: resolve failed for {path:?}"),
+            },
+        };
+        let Some((file_id, is_folder)) = resolved else {
+            return self.audited_response(
+                "fs.file_delete_by_path",
+                Some(format!("path={path} result=already_absent")),
+                format!("file-delete-by-path: {path:?} not present (idempotent)"),
+            );
+        };
+        if is_folder {
+            return Response {
+                status: ResponseStatus::Conflict,
+                message: format!(
+                    "file-delete-by-path: {path:?} resolves to a folder \
+                     (use folder-delete-by-path)"
+                ),
+            };
+        }
+        let Some(auth_token) = self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        else {
+            return Response {
+                status: ResponseStatus::Unauthorized,
+                message: "file-delete-by-path requires an authenticated session".to_owned(),
+            };
+        };
+        match self.transfer_runtime.delete_file_by_id(auth_token, file_id) {
+            Ok(()) => self.audited_response(
+                "fs.file_delete_by_path",
+                Some(format!("path={path} file_id={file_id}")),
+                format!("file-delete-by-path: deleted {path:?} (file_id={file_id})"),
             ),
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!("file-delete-by-path: API delete failed for {path:?}: {err}"),
+            },
         }
     }
 
-    /// bd-smbr-pcloud P2 — delete a remote folder by absolute path.
-    /// See [`Self::list_folder_by_path`] for the rollout plan; the
-    /// live wiring will pick between
-    /// `FolderApi::delete_folder` and
-    /// `FolderApi::delete_folder_recursive` depending on `recursive`.
+    /// bd-smbr-pcloud P4.3 — delete a remote folder by absolute
+    /// pCloud-drive path. Picks between `deletefolder` and
+    /// `deletefolderrecursive` based on `recursive`. Idempotent on
+    /// missing path.
     pub fn folder_delete_by_path(&mut self, path: String, recursive: bool) -> Response {
         if !path.starts_with('/') {
             return Response {
@@ -1424,12 +1495,80 @@ impl RuntimeShell {
                     .to_owned(),
             };
         }
-        Response {
-            status: ResponseStatus::Unavailable,
-            message: format!(
-                "folder-delete-by-path is not yet wired (bd-smbr-pcloud P2). \
-                 Path={path} recursive={recursive}"
+        let resolved = match self.resolve_kind_by_path(&path) {
+            Ok(opt) => opt,
+            Err(status) => return Response {
+                status,
+                message: format!("folder-delete-by-path: resolve failed for {path:?}"),
+            },
+        };
+        let Some((folder_id, is_folder)) = resolved else {
+            return self.audited_response(
+                "fs.folder_delete_by_path",
+                Some(format!(
+                    "path={path} result=already_absent recursive={recursive}"
+                )),
+                format!("folder-delete-by-path: {path:?} not present (idempotent)"),
+            );
+        };
+        if !is_folder {
+            return Response {
+                status: ResponseStatus::Conflict,
+                message: format!(
+                    "folder-delete-by-path: {path:?} resolves to a file \
+                     (use file-delete-by-path)"
+                ),
+            };
+        }
+        let Some(auth_token) = self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        else {
+            return Response {
+                status: ResponseStatus::Unauthorized,
+                message: "folder-delete-by-path requires an authenticated session".to_owned(),
+            };
+        };
+        match self
+            .folder_runtime
+            .delete_folder_by_id(auth_token, folder_id, recursive)
+        {
+            Ok(()) => self.audited_response(
+                "fs.folder_delete_by_path",
+                Some(format!(
+                    "path={path} folder_id={folder_id} recursive={recursive}"
+                )),
+                format!(
+                    "folder-delete-by-path: deleted {path:?} \
+                     (folder_id={folder_id}, recursive={recursive})"
+                ),
             ),
+            Err(err) => match &err {
+                pcloud_proto::FolderApiError::Result { result: 2005, .. } => {
+                    self.audited_response(
+                        "fs.folder_delete_by_path",
+                        Some(format!("path={path} result=already_absent_api")),
+                        format!(
+                            "folder-delete-by-path: {path:?} not present (API idempotent)"
+                        ),
+                    )
+                }
+                pcloud_proto::FolderApiError::Result { result: 2003, .. } => Response {
+                    status: ResponseStatus::Conflict,
+                    message: format!(
+                        "folder-delete-by-path: {path:?} not empty (recursive={recursive})"
+                    ),
+                },
+                _ => Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!(
+                        "folder-delete-by-path: API delete failed for {path:?}: {err}"
+                    ),
+                },
+            },
         }
     }
 
@@ -1483,12 +1622,15 @@ impl RuntimeShell {
         }
     }
 
-    /// bd-smbr-pcloud P2 — rename or move a file/folder identified by
-    /// absolute path. See [`Self::list_folder_by_path`] for the
-    /// rollout plan; the live wiring will probe `from` to determine
-    /// file vs folder and dispatch
-    /// `TransferApi::rename_file` / `FolderApi::rename_folder`
-    /// accordingly, including cross-folder moves.
+    /// bd-smbr-pcloud P4.3 — rename or move a file/folder identified
+    /// by absolute pCloud-drive path. Probes `from` to determine
+    /// file vs folder, then dispatches
+    /// [`crate::transfer_backend::TransferRuntime::rename_file_by_id`]
+    /// or
+    /// [`crate::folder_backend::FolderRuntime::rename_folder_by_id`].
+    /// Cross-folder moves are supported when the destination's
+    /// parent folder differs from the source's; the parent must
+    /// already exist.
     pub fn rename_path(&mut self, from: String, to: String) -> Response {
         if !from.starts_with('/') || !to.starts_with('/') {
             return Response {
@@ -1497,12 +1639,86 @@ impl RuntimeShell {
                     .to_owned(),
             };
         }
-        Response {
-            status: ResponseStatus::Unavailable,
-            message: format!(
-                "rename-path is not yet wired (bd-smbr-pcloud P2). \
-                 from={from} to={to}"
+        let (to_parent_path, to_name) = match split_parent_and_leaf(&to) {
+            Some(parts) => parts,
+            None => return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: format!("rename-path: cannot extract parent+leaf from {to:?}"),
+            },
+        };
+        let resolved = match self.resolve_kind_by_path(&from) {
+            Ok(opt) => opt,
+            Err(status) => return Response {
+                status,
+                message: format!("rename-path: resolve failed for from={from:?}"),
+            },
+        };
+        let Some((source_id, is_folder)) = resolved else {
+            return Response {
+                status: ResponseStatus::InternalError,
+                message: format!(
+                    "rename-path: {from:?} not in metadata cache (cannot determine kind)"
+                ),
+            };
+        };
+        let resolved_parent = match self.resolve_kind_by_path(&to_parent_path) {
+            Ok(opt) => opt,
+            Err(status) => return Response {
+                status,
+                message: format!(
+                    "rename-path: resolve failed for parent of {to:?} ({to_parent_path:?})"
+                ),
+            },
+        };
+        let to_folder_id = match resolved_parent {
+            Some((id, true)) => id,
+            Some((_, false)) => return Response {
+                status: ResponseStatus::Conflict,
+                message: format!(
+                    "rename-path: parent of {to:?} ({to_parent_path:?}) is a file, not a folder"
+                ),
+            },
+            None => return Response {
+                status: ResponseStatus::InternalError,
+                message: format!(
+                    "rename-path: parent of {to:?} ({to_parent_path:?}) not in metadata cache"
+                ),
+            },
+        };
+        let Some(auth_token) = self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        else {
+            return Response {
+                status: ResponseStatus::Unauthorized,
+                message: "rename-path requires an authenticated session".to_owned(),
+            };
+        };
+        let outcome = if is_folder {
+            self.folder_runtime
+                .rename_folder_by_id(auth_token, source_id, to_folder_id, &to_name)
+                .map_err(|e| format!("renamefolder failed: {e}"))
+        } else {
+            self.transfer_runtime
+                .rename_file_by_id(auth_token, source_id, to_folder_id, &to_name)
+                .map_err(|e| format!("renamefile failed: {e}"))
+        };
+        match outcome {
+            Ok(()) => self.audited_response(
+                "fs.rename_path",
+                Some(format!(
+                    "from={from} to={to} kind={} id={source_id} to_parent={to_folder_id}",
+                    if is_folder { "folder" } else { "file" }
+                )),
+                format!("rename-path: {from:?} → {to:?}"),
             ),
+            Err(msg) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!("rename-path: {from:?} → {to:?}: {msg}"),
+            },
         }
     }
 
@@ -6948,6 +7164,33 @@ fn map_path_resolve_error(err: crate::path_resolver::PathResolveError) -> Respon
 /// Returns an empty string when no code can be extracted (the JSON
 /// field is still emitted — never dropped — so the schema stays
 /// stable).
+/// Split an absolute pCloud-drive `path` into `(parent, leaf)`, where
+/// `parent` is the absolute path of the directory holding the entry
+/// and `leaf` is the basename. Returns `None` for inputs that have
+/// no leaf to extract (the empty string, the root `/`, or a path
+/// that's all slashes).
+///
+/// Used by [`Runtime::rename_path`] (bd-smbr-pcloud P4.3) to derive
+/// the destination's parent + new name from a single `to` path
+/// argument.
+fn split_parent_and_leaf(path: &str) -> Option<(String, String)> {
+    let trimmed = path.trim_end_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let split = trimmed.rsplit_once('/')?;
+    let parent = if split.0.is_empty() {
+        "/".to_owned()
+    } else {
+        split.0.to_owned()
+    };
+    let leaf = split.1.to_owned();
+    if leaf.is_empty() {
+        return None;
+    }
+    Some((parent, leaf))
+}
+
 fn short_code_from_link(link: &str) -> String {
     // Prefer the explicit `code=` form when present (webapp links).
     if let Some((_, tail)) = link.split_once("code=") {
