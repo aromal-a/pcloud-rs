@@ -1008,6 +1008,36 @@ pub enum Request {
         /// [`ResponseStatus::Conflict`] if the folder is non-empty.
         recursive: bool,
     },
+    /// Atomically (re)write the full contents of a remote file at
+    /// absolute pCloud-drive `path` from the supplied
+    /// base64-encoded `data`. Drives `upload_create` →
+    /// `upload_write` → `upload_save` server-side in a single IPC
+    /// call. If the file already exists, it is overwritten in
+    /// place.
+    ///
+    /// **Scope (P7):** whole-file replace only. Random / partial /
+    /// offset-based writes are explicitly out of scope until the
+    /// SMB-side write-buffering layer lands (P7 follow-up). A
+    /// caller asking for an offset-based write on a path the
+    /// plugin has never written from offset 0 sees
+    /// [`VfsError::NotSupported`] from the smbr side; this IPC
+    /// variant doesn't model it at all.
+    ///
+    /// Authenticated. Failure modes:
+    /// [`ResponseStatus::InvalidRequest`] for malformed paths or a
+    /// missing leaf; [`ResponseStatus::InternalError`] for
+    /// upload-session lifecycle failures (incl. parent folder not
+    /// in cache); [`ResponseStatus::Unauthorized`] when no auth
+    /// token is active.
+    ///
+    /// Tracker: bd-smbr-pcloud P7.
+    WriteFileFresh {
+        /// Absolute pCloud-drive path of the file to write.
+        path: String,
+        /// Base64-encoded body bytes (standard alphabet, padded).
+        /// Empty body creates a zero-length file.
+        data_b64: String,
+    },
     /// Read a byte range from a remote file by absolute
     /// pCloud-drive `path`. The daemon resolves `path` to a numeric
     /// `file_id` against the local metadata cache, fetches a signed

@@ -796,6 +796,9 @@ impl RuntimeShell {
                 offset,
                 length,
             } => self.read_file_range(path, offset, length),
+            Request::WriteFileFresh { path, data_b64 } => {
+                self.write_file_fresh(path, data_b64)
+            }
             Request::RenamePath { from, to } => self.rename_path(from, to),
             Request::FileHistory { path, limit } => self.file_history(path, limit),
             // Backup/snapshot lifecycle (zstd + SHA3 sidecar default,
@@ -1752,6 +1755,132 @@ impl RuntimeShell {
                 status: ResponseStatus::InternalError,
                 message: format!(
                     "read-file-range: GET failed for {path:?} (range {offset}+{request_len}): {err}"
+                ),
+            },
+        }
+    }
+
+    /// bd-smbr-pcloud P7 — atomically (re)write a remote file's
+    /// full contents at `path` from base64-encoded `data_b64`.
+    /// Drives `upload_create` → `upload_write` → `upload_save` in
+    /// a single shot via
+    /// [`crate::transfer_backend::TransferRuntime::upload_bytes`].
+    /// Whole-file replace only; partial/offset writes are scoped
+    /// out (P7 follow-up).
+    pub fn write_file_fresh(&mut self, path: String, data_b64: String) -> Response {
+        // Per-IPC payload ceiling for symmetry with `read_file_range`.
+        // pCloud's upload_write streams arbitrary blobs server-side,
+        // but a single IPC frame is bounded so a misbehaving SMB
+        // client can't hand us 4 GiB in one shot. Larger writes will
+        // come from a chunked-driver IPC variant in the P7 follow-up.
+        const MAX_WRITE: usize = 32 * 1024 * 1024;
+        if !path.starts_with('/') {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "write-file-fresh requires an absolute path starting with '/'"
+                    .to_owned(),
+            };
+        }
+        let (parent_path, file_name) = match split_parent_and_leaf(&path) {
+            Some(parts) => parts,
+            None => return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: format!(
+                    "write-file-fresh: cannot extract parent+leaf from {path:?}"
+                ),
+            },
+        };
+        // Resolve the parent folder. Cache-only; the SMB plugin is
+        // expected to have warmed the cache via stat/list_directory.
+        let resolved = match self.resolve_kind_by_path(&parent_path) {
+            Ok(opt) => opt,
+            Err(status) => return Response {
+                status,
+                message: format!(
+                    "write-file-fresh: resolve failed for parent of {path:?}"
+                ),
+            },
+        };
+        let parent_id = match resolved {
+            Some((id, true)) => id,
+            Some((_, false)) => return Response {
+                status: ResponseStatus::Conflict,
+                message: format!(
+                    "write-file-fresh: parent of {path:?} ({parent_path:?}) is a file"
+                ),
+            },
+            None => return Response {
+                status: ResponseStatus::InternalError,
+                message: format!(
+                    "write-file-fresh: parent of {path:?} ({parent_path:?}) not in metadata cache"
+                ),
+            },
+        };
+        // Decode the body. Empty body is allowed (zero-length file).
+        use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD as B64;
+        let bytes = match B64.decode(data_b64.as_bytes()) {
+            Ok(b) => b,
+            Err(err) => return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: format!("write-file-fresh: base64 decode failed: {err}"),
+            },
+        };
+        if bytes.len() > MAX_WRITE {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: format!(
+                    "write-file-fresh: body too large ({} > {} byte cap)",
+                    bytes.len(),
+                    MAX_WRITE
+                ),
+            };
+        }
+        let Some(auth_token) = self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        else {
+            return Response {
+                status: ResponseStatus::Unauthorized,
+                message: "write-file-fresh requires an authenticated session".to_owned(),
+            };
+        };
+        // upload_create gives a fresh session.
+        let session = match self.transfer_runtime.upload_create(
+            auth_token.clone_secret(),
+            parent_id,
+            file_name.clone(),
+            bytes.len() as u64,
+        ) {
+            Ok(s) => s,
+            Err(err) => return Response {
+                status: ResponseStatus::InternalError,
+                message: format!("write-file-fresh: upload_create failed: {err}"),
+            },
+        };
+        // upload_bytes does write+save in a single shot.
+        match self
+            .transfer_runtime
+            .upload_bytes(auth_token, &session, &bytes)
+        {
+            Ok(_frame) => self.audited_response(
+                "fs.write_file_fresh",
+                Some(format!(
+                    "path={path} parent_id={parent_id} bytes={}",
+                    bytes.len()
+                )),
+                format!(
+                    "write-file-fresh: wrote {} bytes to {path:?} (parent_id={parent_id})",
+                    bytes.len()
+                ),
+            ),
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!(
+                    "write-file-fresh: upload_bytes failed for {path:?}: {err}"
                 ),
             },
         }
@@ -7618,6 +7747,7 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::FolderDeleteById { .. } => "FolderDeleteById",
         Request::CreateFolderByPath { .. } => "CreateFolderByPath",
         Request::ReadFileRange { .. } => "ReadFileRange",
+        Request::WriteFileFresh { .. } => "WriteFileFresh",
         Request::RenamePath { .. } => "RenamePath",
         Request::FileHistory { .. } => "FileHistory",
         Request::ConflictList => "ConflictList",
