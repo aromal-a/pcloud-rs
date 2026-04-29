@@ -791,6 +791,11 @@ impl RuntimeShell {
                 recursive,
             } => self.folder_delete_by_id(folder_id, recursive),
             Request::CreateFolderByPath { path } => self.create_folder_by_path(path),
+            Request::ReadFileRange {
+                path,
+                offset,
+                length,
+            } => self.read_file_range(path, offset, length),
             Request::RenamePath { from, to } => self.rename_path(from, to),
             Request::FileHistory { path, limit } => self.file_history(path, limit),
             // Backup/snapshot lifecycle (zstd + SHA3 sidecar default,
@@ -1621,6 +1626,174 @@ impl RuntimeShell {
                 },
             },
         }
+    }
+
+    /// bd-smbr-pcloud P6 — read a byte range from a remote file by
+    /// absolute pCloud-drive path. Resolves `path` against the
+    /// metadata cache for `(file_id, total_size)`, fetches a signed
+    /// `getfilelink`, and issues a single ranged HTTPS GET that
+    /// covers `[offset, offset + min(length, 8 MiB))`. Returns a
+    /// JSON [`ReadRangePayload`] (base64-encoded body) in
+    /// [`Response::message`].
+    pub fn read_file_range(
+        &mut self,
+        path: String,
+        offset: u64,
+        length: u64,
+    ) -> Response {
+        // Per-IPC payload ceiling: keep one read bounded so a
+        // misbehaving SMB client cannot blow up `Response::message`.
+        // The smbr plugin's page-cache chunk is 4 MiB by default;
+        // this is one chunk plus headroom.
+        const MAX_READ: u64 = 8 * 1024 * 1024;
+        if !path.starts_with('/') {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "read-file-range requires an absolute path starting with '/'"
+                    .to_owned(),
+            };
+        }
+        if length == 0 {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "read-file-range: `length` must be > 0".to_owned(),
+            };
+        }
+        let capped = length.min(MAX_READ);
+        // Cache-only resolve — fail closed on miss to avoid the
+        // timing-side-channel discussed in the P4.3 commit.
+        let db_path = &self.store.db_path;
+        let conn = match rusqlite::Connection::open(db_path) {
+            Ok(c) => c,
+            Err(err) => {
+                return Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!("read-file-range: open metadata cache failed: {err}"),
+                };
+            }
+        };
+        let record = match pcloud_store::FileMetadataRepository::resolve_path(&conn, &path) {
+            Ok(Some(r)) => r,
+            Ok(None) => {
+                return Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!("read-file-range: {path:?} not in metadata cache"),
+                };
+            }
+            Err(err) => {
+                return Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!("read-file-range: cache lookup failed for {path:?}: {err}"),
+                };
+            }
+        };
+        if record.is_folder {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: format!("read-file-range: {path:?} is a folder, not a file"),
+            };
+        }
+        let total_size = record.size;
+        // Past-EOF reads return zero bytes + eof=true so SMB
+        // clients see the canonical "read past end of file"
+        // outcome without the daemon having to issue a doomed GET.
+        if offset >= total_size {
+            return self.emit_read_payload(
+                "fs.read_file_range",
+                &path,
+                offset,
+                Vec::new(),
+                total_size,
+                /* eof */ true,
+            );
+        }
+        // Clamp the range to the file's tail.
+        let end_exclusive = (offset + capped).min(total_size);
+        let request_len = end_exclusive - offset;
+        let Some(auth_token) = self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        else {
+            return Response {
+                status: ResponseStatus::Unauthorized,
+                message: "read-file-range requires an authenticated session".to_owned(),
+            };
+        };
+        let link = match self
+            .transfer_runtime
+            .get_file_link(auth_token, record.file_id, /* forced_host */ None)
+        {
+            Ok(l) => l,
+            Err(err) => {
+                return Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!("read-file-range: getfilelink failed for {path:?}: {err}"),
+                };
+            }
+        };
+        let download = self.transfer_runtime.download_for_range(&link, offset, end_exclusive);
+        match pcloud_proto::fetch_download(&download, self.transfer_runtime.http_download_config()) {
+            Ok(bytes) => {
+                let bytes_returned = bytes.len() as u64;
+                let eof = offset + bytes_returned >= total_size;
+                self.emit_read_payload(
+                    "fs.read_file_range",
+                    &path,
+                    offset,
+                    bytes,
+                    total_size,
+                    eof,
+                )
+            }
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!(
+                    "read-file-range: GET failed for {path:?} (range {offset}+{request_len}): {err}"
+                ),
+            },
+        }
+    }
+
+    /// Build a `ReadRangePayload`, JSON-serialise, and audit-emit.
+    /// Extracted so the EOF early-return and the post-GET path share
+    /// a single response shape.
+    fn emit_read_payload(
+        &mut self,
+        op: &str,
+        path: &str,
+        offset: u64,
+        bytes: Vec<u8>,
+        total_size: u64,
+        eof: bool,
+    ) -> Response {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD as B64;
+        let bytes_returned = bytes.len() as u64;
+        let payload = pcloud_ipc::ReadRangePayload {
+            data_b64: B64.encode(&bytes),
+            bytes_returned,
+            total_size,
+            eof,
+        };
+        let body = match serde_json::to_string(&payload) {
+            Ok(s) => s,
+            Err(err) => {
+                return Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!("read-file-range: JSON serialise failed: {err}"),
+                };
+            }
+        };
+        self.audited_response(
+            op,
+            Some(format!(
+                "path={path} offset={offset} bytes={bytes_returned} eof={eof} total={total_size}"
+            )),
+            body,
+        )
     }
 
     /// bd-smbr-pcloud P5 — create a remote folder by absolute
@@ -7444,6 +7617,7 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::FolderDeleteByPath { .. } => "FolderDeleteByPath",
         Request::FolderDeleteById { .. } => "FolderDeleteById",
         Request::CreateFolderByPath { .. } => "CreateFolderByPath",
+        Request::ReadFileRange { .. } => "ReadFileRange",
         Request::RenamePath { .. } => "RenamePath",
         Request::FileHistory { .. } => "FileHistory",
         Request::ConflictList => "ConflictList",

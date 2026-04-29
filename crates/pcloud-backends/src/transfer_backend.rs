@@ -968,6 +968,42 @@ impl TransferRuntime {
             .upload_delete(auth_token.expose_secret(), upload_id)
     }
 
+    /// Borrow the [`pcloud_proto::HttpDownloadConfig`] this runtime
+    /// is configured with. Used by the daemon's
+    /// `read-file-range` IPC handler so it can issue a manual ranged
+    /// GET via [`pcloud_proto::fetch_download`] without rebuilding
+    /// the config from scratch.
+    #[must_use]
+    pub fn http_download_config(&self) -> &pcloud_proto::HttpDownloadConfig {
+        &self.download
+    }
+
+    /// Build a [`pcloud_proto::SignedDownload`] covering the half-
+    /// open byte range `[start, end)` from the given
+    /// [`pcloud_proto::DownloadLink`]. Caller is responsible for
+    /// passing valid bounds (`start < end`); the daemon clamps
+    /// inputs against the file's `total_size` before calling this.
+    #[must_use]
+    pub fn download_for_range(
+        &self,
+        link: &pcloud_proto::DownloadLink,
+        start: u64,
+        end: u64,
+    ) -> pcloud_proto::SignedDownload {
+        let (host, port) = link
+            .hosts
+            .first()
+            .map(|h| split_host_port(h))
+            .unwrap_or_else(|| ("c1.pcloud.com".to_owned(), None));
+        pcloud_proto::SignedDownload {
+            host,
+            port,
+            path: link.path.clone(),
+            dwltag: link.download_tag.clone(),
+            range: Some((start, end)),
+        }
+    }
+
     /// Delete a remote file by numeric id. Mirrors C
     /// `task_deletefile` (`pclsync/pupload.c:1650-1661`). Returns
     /// `Ok(())` on success.

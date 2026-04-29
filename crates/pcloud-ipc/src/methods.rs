@@ -1008,6 +1008,40 @@ pub enum Request {
         /// [`ResponseStatus::Conflict`] if the folder is non-empty.
         recursive: bool,
     },
+    /// Read a byte range from a remote file by absolute
+    /// pCloud-drive `path`. The daemon resolves `path` to a numeric
+    /// `file_id` against the local metadata cache, fetches a signed
+    /// download link via `getfilelink`, and issues a single
+    /// `Range: bytes=<offset>-<offset+length-1>` HTTPS GET against
+    /// the chosen content server. The body is base64-encoded into
+    /// the [`ReadRangePayload`] returned in [`Response::message`].
+    ///
+    /// The smbr `pcloud` VFS plugin layers an LRU page cache above
+    /// this so a single SMB read of a 4 MiB chunk produces at most
+    /// one IPC call and one HTTPS GET.
+    ///
+    /// Authenticated. Failure modes:
+    /// [`ResponseStatus::InvalidRequest`] when `path` is not
+    /// absolute, the resolved entry is a folder, or
+    /// `length == 0`;
+    /// [`ResponseStatus::InternalError`] when the path is not in
+    /// the metadata cache or the HTTPS GET fails;
+    /// [`ResponseStatus::Unauthorized`] when no auth token is
+    /// active.
+    ///
+    /// Tracker: bd-smbr-pcloud P6.
+    ReadFileRange {
+        /// Absolute pCloud-drive path of the file to read.
+        path: String,
+        /// Half-open byte offset into the file (zero-based, in
+        /// bytes). `0` reads from the start.
+        offset: u64,
+        /// Number of bytes to read. The daemon enforces a
+        /// per-IPC ceiling (currently 8 MiB) to keep payloads
+        /// bounded; callers asking for more get the cap and a
+        /// short read.
+        length: u64,
+    },
     /// Create a remote folder identified by its absolute
     /// pCloud-drive `path`. The daemon splits `path` into parent +
     /// leaf, resolves the parent against the local metadata cache,
@@ -1474,6 +1508,31 @@ pub struct StatPathPayload {
     pub is_folder: bool,
     /// How the path was resolved: `"cache"` or `"api"`.
     pub source: String,
+}
+
+/// Payload returned by [`Request::ReadFileRange`].
+///
+/// `data_b64` is the base64 (standard, padded) encoding of the body
+/// bytes the daemon read from the signed URL. `total_size` is the
+/// resolved file's full size — the SMB plugin uses it to detect
+/// "client requested past EOF" without an extra `stat` round-trip.
+/// `bytes_returned` matches `data_b64` after base64-decode and may
+/// be less than the request's `length` when the read crossed EOF.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReadRangePayload {
+    /// Base64-encoded body bytes (standard alphabet, padded). The
+    /// decoded length equals [`Self::bytes_returned`].
+    pub data_b64: String,
+    /// Number of decoded body bytes — `data_b64.decoded_len()`.
+    /// Reported separately so callers can sanity-check the encoding.
+    pub bytes_returned: u64,
+    /// File's total size (in bytes), as reported by the metadata
+    /// cache that resolved the read.
+    pub total_size: u64,
+    /// `true` when the read reached or crossed EOF
+    /// (`offset + bytes_returned >= total_size`). Lets the SMB
+    /// plugin set the `Eof` SMB2 flag without an extra round-trip.
+    pub eof: bool,
 }
 
 /// One entry in the JSON array returned for

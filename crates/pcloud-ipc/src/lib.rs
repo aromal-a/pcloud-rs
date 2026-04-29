@@ -80,9 +80,9 @@ pub use auth::{PeerIdentity, current_effective_uid};
 pub use client::IpcClient;
 pub use methods::{
     AuditVerifierStatusPayload, AuditVerifyRange, ConflictEntry, DrainStatusPayload,
-    IntegrityStatusPayload, ListFolderEntry, Method, Request, RequestEnvelope, Response,
-    ResponseStatus, SessionStatusPayload, SloReportEntry, SloReportPayload, SnapshotAction,
-    StatPathPayload, UploadConflictMode, ValueKvKind, ValueKvPayload,
+    IntegrityStatusPayload, ListFolderEntry, Method, ReadRangePayload, Request, RequestEnvelope,
+    Response, ResponseStatus, SessionStatusPayload, SloReportEntry, SloReportPayload,
+    SnapshotAction, StatPathPayload, UploadConflictMode, ValueKvKind, ValueKvPayload,
 };
 pub use protocol::{
     Frame, FrameHeader, MessageKind, decode_request, decode_response, encode_request,
