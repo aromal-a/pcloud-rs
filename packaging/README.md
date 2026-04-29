@@ -37,7 +37,7 @@ If you are looking for:
 | `flatpak/`     | Flatpak (.flatpak) | `com.pcloud.pcloud-rs` app bundle for Flathub           | Local-build working; Flathub PR pending |
 | `freebsd/`     | rc.d script       | `/usr/local/etc/rc.d/pcloudd` service                   | Working on FreeBSD |
 | `homebrew/`    | Ruby formula      | `brew install pcloud-rs` (source build) + `fuse-t` cask  | Scaffolding   |
-| *(systemd)*    | systemd unit      | Canonical unit lives at `packaging/systemd/pcloudd.service` (owned by a sibling agent); `packaging/init/systemd/pcloudd.service` is a legacy wrapper variant. | Working |
+| `systemd/`     | systemd unit      | Canonical unit at `packaging/systemd/pcloudd.service`. Drop-ins: `override.conf.example` (API access — required before first start), `override-fuse.conf.example` (FUSE mount), `override-user.conf.example` (required for `--user` installs). | Working |
 | `macos/`       | launchd plists    | User LaunchAgent + system LaunchDaemon + entitlements   | Plists working; notarisation pending |
 | `man/`         | troff             | `pcloudc(1)`, `pcloudd(1)`, `pcloud.conf(5)`            | Working (owned by another agent) |
 | `netbsd/`      | rc.d script       | `/etc/rc.d/pcloudd` service                             | Scaffolding   |
@@ -57,20 +57,22 @@ If you are looking for:
 
 Every packaging channel in this tree must agree on these paths.
 
-| Artefact                    | Linux deb/rpm / snap         | Docker image                       | macOS Homebrew          | macOS pkg              | Windows MSI                                      |
+| Artefact                    | Linux deb/rpm                | Linux snap / Docker image          | macOS Homebrew          | macOS pkg              | Windows MSI                                      |
 |-----------------------------|------------------------------|------------------------------------|--------------------------|------------------------|--------------------------------------------------|
-| Daemon binary (`pcloudd`)   | `/usr/local/bin/pcloudd`     | `/usr/local/bin/pcloudd`           | `$(brew --prefix)/bin/pcloudd` | `/usr/local/libexec/pcloudd` | `C:\Program Files\pcloud-rs\pcloudd.exe` |
-| CLI binary (`pcloudc`)      | `/usr/local/bin/pcloudc`     | `/usr/local/bin/pcloudc`           | `$(brew --prefix)/bin/pcloudc` | `/usr/local/bin/pcloudc`    | `C:\Program Files\pcloud-rs\pcloudc.exe` |
+| Daemon binary (`pcloudd`)   | `/usr/bin/pcloudd`           | `/usr/local/bin/pcloudd`           | `$(brew --prefix)/bin/pcloudd` | `/usr/local/libexec/pcloudd` | `C:\Program Files\pcloud-rs\pcloudd.exe` |
+| CLI binary (`pcloudc`)      | `/usr/bin/pcloudc`           | `/usr/local/bin/pcloudc`           | `$(brew --prefix)/bin/pcloudc` | `/usr/local/bin/pcloudc`    | `C:\Program Files\pcloud-rs\pcloudc.exe` |
 | State root (`$PCLOUD_ROOT`) | `~/.config/pcloud/` (user)   | `/var/lib/pcloud-rs/` (container)   | `~/Library/Application Support/pcloud` | `/var/lib/pcloudd/`  | `%APPDATA%\pcloud-rs\`                 |
 | Config file                 | `~/.config/pcloud/config.toml` | `/etc/pcloud-rs/pcloud-rs.toml`      | `~/.config/pcloud/config.toml` | `/etc/pcloud/pcloudd.toml` | `%APPDATA%\pcloud-rs\config.toml`        |
 | Auth vault                  | `$PCLOUD_ROOT/auth.vault` (0600 file, 0700 dir) — opt-in only              |||||
 
 > **Systemd ExecStart paths must match the installed location.** The
 > current `packaging/systemd/pcloudd.service` uses
-> `ExecStart=/usr/local/bin/pcloudd serve`, which matches the Docker
-> image, the AppImage layout, and the local `cargo install` default.
-> Distro-packaged variants (`/usr/bin/pcloudd`) must supply their own
-> override unit or rewrite `ExecStart=` at package-build time.
+> `ExecStart=/usr/bin/pcloudd serve`, which matches the deb/rpm install
+> layout. Docker image / AppImage / local `cargo install` layouts put
+> the binary at `/usr/local/bin/pcloudd`; those deployments must supply
+> their own override unit or rewrite `ExecStart=` at package-build time.
+> The user unit install (`systemctl --user`) additionally requires
+> `override-user.conf.example` to strip system-only directives.
 
 ## Environment-variable surface
 

@@ -152,6 +152,50 @@ jobs:
           fi
           echo "OK: reproducible build verified"
 
+  # Optional-feature build check (audit-06 wave-G8 H-06).
+  #
+  # CI previously ran only default-feature clippy/test, so enterprise-only
+  # feature combinations (KMS, metrics, OTLP tracing, IDP insecure-test)
+  # could rot unnoticed. This job compiles each significant non-default
+  # feature set to catch breakage early. It does NOT run tests — optional
+  # features may require runtime services (OTLP collector, KMS endpoint)
+  # that are unavailable on ephemeral runners.
+  #
+  # Intentionally excluded features:
+  #   - pcloud-config: fips-preview — compile-error by design (not yet
+  #     implemented); listed in Cargo.toml as a future placeholder only.
+  optional-features:
+    name: Optional feature builds
+    runs-on: ubuntu-latest
+    needs: test-linux
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install system deps (FUSE)
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      # pcloud-config: KMS factory (links against pcloud-kms and pcloud-secret)
+      - name: cargo check pcloud-config --features kms-factory
+        run: cargo check -p pcloud-config --features kms-factory
+      # pcloud-config: AWS KMS provider pass-through
+      - name: cargo check pcloud-config --features aws-kms
+        run: cargo check -p pcloud-config --features aws-kms
+      # pcloud-daemon: Prometheus metrics exporter
+      - name: cargo check pcloud-daemon --features metrics
+        run: cargo check -p pcloud-daemon --features metrics
+      # pcloud-daemon: structured JSON logs
+      - name: cargo check pcloud-daemon --features json-logs
+        run: cargo check -p pcloud-daemon --features json-logs
+      # pcloud-daemon: OpenTelemetry distributed tracing
+      - name: cargo check pcloud-daemon --features tracing-otlp
+        run: cargo check -p pcloud-daemon --features tracing-otlp
+      # pcloud-observability: Prometheus exporter feature
+      - name: cargo check pcloud-observability --features prometheus-exporter
+        run: cargo check -p pcloud-observability --features prometheus-exporter
+      # pcloud-observability: OTLP exporter feature
+      - name: cargo check pcloud-observability --features tracing-otlp
+        run: cargo check -p pcloud-observability --features tracing-otlp
+
   # mdbook build gate (pcloud-rs-s1p.75 / FIX-PLAN P2-7 MED / §12-opus L-4)
   # Ensures every chapter in docs/book compiles successfully.
   mdbook:

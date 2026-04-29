@@ -30,7 +30,8 @@
 # Side effects: spawns a supervised pcloudd process. No files are created.
 
 daemon="/usr/local/bin/pcloudd"
-daemon_flags=""
+# `serve` is required: without it pcloudd prints a one-shot summary and exits.
+daemon_flags="serve"
 daemon_user="_pcloud"
 
 . /etc/rc.d/rc.subr

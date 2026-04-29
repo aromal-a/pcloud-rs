@@ -1,0 +1,63 @@
+# pcloudd.service drop-in override — required for --user (per-user) deployments
+#
+# The shipped pcloudd.service uses DynamicUser=yes, PrivateUsers=yes, and several
+# other directives that systemd REJECTS in a user unit (per-user mode).  If you
+# install the base unit under ~/.config/systemd/user/ you MUST also install this
+# drop-in, which strips the system-only directives.
+#
+# Installation:
+#   mkdir -p ~/.config/systemd/user/pcloudd.service.d/
+#   install -m 644 packaging/systemd/override-user.conf.example \
+#       ~/.config/systemd/user/pcloudd.service.d/user-compat.conf
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now pcloudd.service
+#
+# What this drop-in does:
+#   - Clears DynamicUser=  (not supported in user units; systemd refuses to
+#     start the service with "DynamicUser= enabled for user unit, which is
+#     not supported").
+#   - Clears PrivateUsers= (user namespacing semantics differ in user sessions).
+#   - Clears ProtectSystem= (filesystem namespace restrictions require
+#     CAP_SYS_ADMIN in a user unit; systemd ignores or rejects them).
+#   - Clears ProtectHome=  (same reason).
+#   - Clears ProtectProc= / ProcSubset= (require privileged namespaces).
+#   - Clears ProtectKernelTunables=/ProtectKernelModules=/ProtectKernelLogs=
+#     ProtectControlGroups= (no-op / rejected in user scope).
+#   - Clears ProtectClock= / ProtectHostname= (same).
+#   - Keeps all resource limits, capability drops, syscall filter, and
+#     UMask=0077 — these are valid in user units.
+#
+# The result is a user unit with reduced sandboxing compared to the system
+# unit, which is the only correct posture for systemd --user mode today.
+# If your distro ships a newer systemd that lifts these restrictions, test
+# carefully before removing this drop-in.
+
+[Service]
+# --- Strip system-only identity directives ---
+DynamicUser=
+PrivateUsers=
+
+# --- Strip filesystem namespace directives (unsupported in user scope) ---
+ProtectSystem=
+ProtectHome=
+PrivateTmp=
+ProtectKernelTunables=
+ProtectKernelModules=
+ProtectKernelLogs=
+ProtectControlGroups=
+ProtectClock=
+ProtectHostname=
+ProtectProc=
+ProcSubset=
+
+# --- Clear ReadWritePaths (was a fallback for DynamicUser=no; not needed here) ---
+ReadWritePaths=
+
+# --- Clear systemd-managed directories (user units manage their own XDG paths) ---
+RuntimeDirectory=
+StateDirectory=
+LogsDirectory=
+
+# The daemon will use XDG_RUNTIME_DIR / XDG_STATE_HOME / XDG_DATA_HOME as
+# configured by the user session (or overridden via PCLOUD_ROOT= in
+# ~/.config/systemd/user/pcloudd.service.d/api-access.conf).

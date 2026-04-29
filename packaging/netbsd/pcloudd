@@ -36,9 +36,12 @@ $_rc_subr_loaded . /etc/rc.subr
 
 name="pcloudd"
 rcvar=$name
+# The pcloudd binary does NOT accept -p / --pidfile.  rc.subr writes the
+# pidfile itself via ${pidfile}; `serve` is required so pcloudd enters the
+# IPC serve loop instead of printing a one-shot summary and exiting.
 command="/usr/pkg/bin/pcloudd"
+command_args="serve"
 pidfile="/var/run/${name}.pid"
-command_args="-p ${pidfile}"
 start_precmd="pcloudd_precmd"
 
 pcloudd_precmd()

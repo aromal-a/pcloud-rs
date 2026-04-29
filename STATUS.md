@@ -2,7 +2,34 @@
 
 Single source of truth for Rust parity counts.
 
-_Last reviewed: 2026-04-24 (post Windows Tier-3 → Tier-2 promotion)._
+_Last reviewed: 2026-04-29 (gptrev-01 reachability audit — 4 rows downgraded)._
+
+## 2026-04-29 update — gptrev-01 reachability corrections
+
+Stream G1 reachability audit found four rows marked `Implemented` in the
+parity matrix that lack IPC/daemon/CLI/SDK call paths:
+
+- **Rows 147/148/168** (`psync_folder_public_link_full`,
+  `psync_folder_updownlink_link`, `psync_screenshot_public_link`): backend
+  code exists (`PublicLinkRuntime::create_folder_public_link_with_options`,
+  `::create_folder_updownlink`, `::create_screenshot_public_link`) but no
+  `Request::*` IPC variant, daemon handler, or CLI command exposes them.
+  Flipped `Implemented` → `Partial`.
+- **Row 138** (`shares,psync_crypto_share_folder`, duplicate entry):
+  `SharesRuntime::crypto_share_folder{_rsa}` exist in backend but are
+  unreachable from IPC — `ShareFolder` IPC routes only to non-crypto
+  `share_folder`. Flipped `Implemented` → `Partial`.
+
+Additionally, row 93 (`upload_writefromfile`) was closed under audit-06
+stream-c (2026-04-26): `TransferRuntime::upload_write_from_file` + daemon
+handler + CLI all wired. That closure (previously not recorded in STATUS.md
+top section) is reflected in the new headline.
+
+Also added `EmbeddedDaemon::login`, `::login_with_token`, `::submit_recovery_code`
+SDK helpers (M-01 from gptrev-01) so API-REFERENCE.md entries compile.
+
+Headline: **150 / 6 / 0 / 30 (186 rows).** Delta from prior `153 / 3`:
+row 93 Implemented (+1), rows 138/147/148/168 downgraded to Partial (−4).
 
 ## 2026-04-24 update — Windows bring-up (Tier-3 → Tier-2)
 
@@ -606,8 +633,8 @@ Every other document must link here and avoid hard-coded totals.
 |---|---|---|
 | Release posture | **Pre-alpha** | Not production-ready; `bd-1du.10` is still open. |
 | Parity rows total | **186** | Row source: [`C_FEATURE_PARITY_MATRIX.csv`](./C_FEATURE_PARITY_MATRIX.csv) |
-| Implemented | **153** | Retained-path feature coverage |
-| Partial | **3** | Rows 93 (`upload_writefromfile` server-side-copy not wired), 124 (`psync_crypto_share_folder` HMAC vs RSA-4096), 142 (`psync_crypto_account_teamshare` HMAC vs RSA-4096) — audit-04/05 corrections |
+| Implemented | **150** | Retained-path feature coverage |
+| Partial | **6** | Rows 124, 138, 142 (crypto/shares RSA-4096 E2E + IPC reachability); rows 147, 148, 168 (public-link specialty — backend only, no IPC/daemon/CLI route). See "Remaining Partial Rows". |
 | Missing | **0** | No un-triaged C surface remains |
 | Rejected | **30** | Ghosts, stubs, UI-bridge helpers, insecure-legacy — see [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md) |
 | Test suite | **2029 passed / 0 failed / 46 ignored** | O-wave gate: all green; +1 ignored (live-gated). |
@@ -629,8 +656,8 @@ Source: [`C_FEATURE_PARITY_MATRIX.csv`](./C_FEATURE_PARITY_MATRIX.csv)
 | Metric       | Count |
 |--------------|-------|
 | Total rows   | 186   |
-| Implemented  | 153   |
-| Partial      | 3     |
+| Implemented  | 150   |
+| Partial      | 6     |
 | Missing      | 0     |
 | Rejected     | 30    |
 
@@ -672,29 +699,37 @@ remains open.
 
 ## Remaining Partial Rows
 
-Three rows remain Partial after the 2026-04-19 audit-06 wave 2 corrections
-(rows 26 and 27 flipped `Partial` → `Rejected` under ncx.4; see
-[`REJECTED-RATIONALES-14042026.md#row-23`](./REJECTED-RATIONALES-14042026.md#row-23)
-and `#row-24`):
+Six rows are Partial as of 2026-04-29 (gptrev-01 reachability sweep).
+Row 93 was closed under audit-06 stream-c (2026-04-26).
+Rows 26/27 were flipped Rejected under audit-06 ncx.4.
+Four new public-link/crypto-share reachability gaps found by gptrev-01.
 
-- **Row 93** — `transfers,upload wire methods`. The
-  `upload_writefromfile` proto encoder is implemented
-  (`pcloud_proto::methods::upload::UploadWriteFromFileRequest`). The
-  `Request::UploadWriteFromFile` IPC variant is defined (fields
-  rewired to the C primitive shape: `upload_session_id`, `source_fileid`,
-  `source_hash`, `offset`, `count`) and proptest-round-tripped, but the
-  daemon handler is a stub. Needs `TransferRuntime::upload_write_from_file`
-  method that invokes `UploadWriteFromFileRequest` on the wire.
-  TODO at `crates/pcloud-backends/src/transfer_backend.rs:601-613`.
-- **Row 124** — `crypto,psync_crypto_share_folder`. The `share_temppass`
-  flow uses HMAC-SHA256 rather than the RSA-4096 asymmetric signature
-  the C client requires for the share-invite handoff. Tracked under
-  `bd-1du.5`.
-- **Row 142** — `crypto,psync_crypto_account_teamshare`. Same root cause
-  as row 124: `share_temppass` HMAC-SHA256 vs. RSA-4096. Tracked under
-  `bd-1du.5`.
+### Crypto / shares (bd-1du.5 / pcloud-rs-ncx.89-e2e)
 
-All three are tracked under `bd-1du.10` and block the parity gate.
+- **Row 124** — `crypto,psync_crypto_share_folder`. RSA-4096-OAEP backend
+  wiring landed (`SharesRuntime::crypto_share_folder_rsa`). Remaining gate:
+  live two-account E2E on a real pCloud server. Tracker: `bd-1du.5`.
+- **Row 138** — `shares,psync_crypto_share_folder` (duplicate row). Backend
+  functions `::crypto_share_folder` and `::crypto_share_folder_rsa` exist
+  but neither is reachable from IPC: no `Request::CryptoShareFolder` variant;
+  `ShareFolder` IPC routes only to non-crypto `share_folder`. Blocker: add
+  `Request::CryptoShareFolder` IPC variant + daemon dispatch. Tracker: `bd-1du.5`.
+- **Row 142** — `crypto,psync_crypto_account_teamshare`. RSA-4096-OAEP
+  backend landed. Remaining gate: live E2E. Tracker: `bd-1du.5`.
+
+### Public-link reachability gaps (gptrev-01 H-01, 2026-04-29)
+
+Backend code exists for all three; none is reachable from IPC/daemon/CLI.
+Blocker: add corresponding IPC Request variant + daemon dispatch route.
+
+- **Row 147** — `links,psync_folder_public_link_full`. Backend:
+  `crates/pcloud-backends/src/public_link_backend.rs:1000`.
+- **Row 148** — `links,psync_folder_updownlink_link`. Backend:
+  `crates/pcloud-backends/src/public_link_backend.rs:1047`.
+- **Row 168** — `links,psync_screenshot_public_link`. Backend:
+  `crates/pcloud-backends/src/public_link_backend.rs:1023`.
+
+All six Partial rows are tracked under `bd-1du.10` and block the parity gate.
 
 The 30 `Rejected` rows have per-item justification in
 [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md).

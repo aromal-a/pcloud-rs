@@ -37,6 +37,12 @@ jobs:
       matrix:
         target:
           - fuzz_open_sector
+          # H-05 fix: fuzz_pclsync_filename_decode was defined in
+          # crates/pcloud-crypto/fuzz/Cargo.toml but never wired into CI.
+          # The decoder runs a custom AES256/HMAC-SHA512 + base32 path that
+          # is attacker-reachable from a crypto folder listing; a panic
+          # there is a DoS. Added 2026-04-26.
+          - fuzz_pclsync_filename_decode
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
@@ -49,6 +55,33 @@ jobs:
           restore-keys: fuzz-corpus-pcloud-crypto-${{ matrix.target }}-
       - name: Fuzz ${{ matrix.target }}
         working-directory: crates/pcloud-crypto
+        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=300
+        continue-on-error: true
+
+  fuzz-daemon:
+    name: Fuzz (pcloud-daemon)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # H-05 fix: fuzz_auth_vault_decode was defined in
+          # crates/pcloud-daemon/fuzz/Cargo.toml but never wired into CI.
+          # The vault-token parser is security-critical: a panic inside
+          # load_token is a token-theft DoS. Added 2026-04-26.
+          - fuzz_auth_vault_decode
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - run: cargo install cargo-fuzz
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@v4
+        with:
+          path: crates/pcloud-daemon/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-pcloud-daemon-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-pcloud-daemon-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: crates/pcloud-daemon
         run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=300
         continue-on-error: true
 

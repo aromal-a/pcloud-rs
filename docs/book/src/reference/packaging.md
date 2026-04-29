@@ -103,13 +103,18 @@ binaries: `pcloudc` (client) and `pcloudd` (daemon).
 ### Nix / NixOS
 
 - **Recipe**: `flake.nix` at the repo root (not under `packaging/`).
-  Exposes `packages.<system>.pcloud-rs` and a
-  `nixosModules.pcloud-rs` module.
+  Exposes `packages.<system>.pcloud-rs` (and `.pcloud-rs-repro`) and
+  `apps.<system>.{pcloud-rs,pcloudd,pcloudc}`. **No `nixosModules`
+  output exists yet** — any documentation referring to
+  `nixosModules.pcloud-rs` is incorrect; a NixOS service module is a
+  planned contribution, not a current flake output.
 - **Build command**: `nix build .#pcloud-rs`.
 - **Artefact**: `$out/bin/{pcloudc,pcloudd}` in the Nix store.
+  The `apps.pcloudd` and `apps.pcloudc` outputs point at the correct
+  binary names (`pcloudc` and `pcloudd`).
 - **Signing**: Nix store hash (no external signature required).
-- **Reproducibility**: `flake.lock` is committed; the toolchain is
-  pinned via `rust-overlay`.
+- **Reproducibility**: `flake.lock` is committed; the build is
+  pinned via a nixpkgs revision in the flake inputs.
 
 ### Flatpak
 

@@ -65,6 +65,7 @@
     <key>ExitTimeOut</key>
     <integer>30</integer>
 
+    <!-- Avoid rapid restart loops: wait 10 seconds before restarting on crash. -->
     <key>ThrottleInterval</key>
     <integer>10</integer>
 
@@ -75,10 +76,6 @@
         <key>Crashed</key>
         <true/>
     </dict>
-
-    <!-- Avoid rapid restart loops: wait 10s before restarting on crash -->
-    <key>ThrottleInterval</key>
-    <integer>10</integer>
 
     <!-- Kill child processes when launchd stops the job -->
     <key>AbandonProcessGroup</key>
@@ -107,7 +104,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PCLOUD_ROOT</key>
-        <string>{{USER_HOME}}/.config/pcloud</string>
+        <string>{{USER_HOME}}/.config/pcloud-rs</string>
         <key>PCLOUD_ENV</key>
         <string>production</string>
         <key>PCLOUD_LOG_LEVEL</key>
@@ -117,7 +114,7 @@
         <key>PCLOUD_API_SERVER_NAME</key>
         <string>api.pcloud.com</string>
         <key>PCLOUD_CONFIG</key>
-        <string>{{USER_HOME}}/.config/pcloud/config.toml</string>
+        <string>{{USER_HOME}}/.config/pcloud-rs/config.toml</string>
         <!-- Set to 1 to persist auth tokens to the macOS Keychain -->
         <key>PCLOUD_DURABLE_AUTH_TOKENS</key>
         <string>1</string>

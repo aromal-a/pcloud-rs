@@ -27,9 +27,11 @@ If you are new to the parity effort:
 - **Rationale categories** are introduced directly below; every
   rejected row is tagged with one of them, which is the quickest way
   to orient yourself when skimming.
-- **Counts live in [`STATUS.md`](./STATUS.md)**, per ADR 0009. If this
-  file's "28" count drifts from `STATUS.md`, `STATUS.md` is the one
-  you trust.
+- **Counts live in [`STATUS.md`](./STATUS.md)**, per ADR 0009. If the
+  rejected-row count stated at the top of this file drifts from
+  `STATUS.md`, `STATUS.md` is the one you trust. (The header says 30;
+  earlier prose mentioned 28 — two additional rows were flipped Rejected
+  under audit-06 ncx.4.)
 
 This document gives a verified per-symbol rationale for every Rejected row. Each entry was checked against the C source body (or absence thereof) on this fork. No row status was changed; this doc only justifies them.
 

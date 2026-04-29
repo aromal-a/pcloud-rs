@@ -6,7 +6,9 @@
 #     - /etc/prometheus/rules/pcloud-rs-alerts.yml
 #
 # All alerts assume metrics are scraped from the pcloudd /metrics endpoint
-# (default: http://localhost:9180/metrics, configurable via PCLOUD_METRICS_ADDR).
+# (default: http://localhost:9353/metrics, configurable via PCLOUD_METRICS_PORT).
+# The daemon binds loopback-only by default; wildcard bind requires both
+# PCLOUD_METRICS_BIND_ALL=1 AND Environment::Development (double-gated).
 #
 # Authoritative metric names (crates/pcloud-observability/src/metrics.rs):
 #   pcloud_request_count{method, status}          counter

@@ -1,12 +1,18 @@
 # Fuzzing pcloud-rs (Rust)
 
 Nightly fuzzing is wired up by the `fuzz` job in
-[`.github/workflows/rust.yml`](../../.github/workflows/rust.yml). The job runs
-daily at 02:00 UTC (and on manual `workflow_dispatch`), discovers every
-`cargo-fuzz` target under `**/fuzz/fuzz_targets/*.rs`, and executes
-each for up to 10 minutes (`-max_total_time=600`). Corpora are persisted
-between runs via `actions/cache@v4` and crash artifacts are uploaded and
-filed as GitHub issues automatically.
+[`.github/workflows/fuzz.yml`](../.github/workflows/fuzz.yml). The job runs
+daily at 02:00 UTC (and on manual `workflow_dispatch`). Targets are enumerated
+explicitly in the workflow matrix (not auto-discovered); when you add a new
+`fuzz_targets/*.rs` file, add its name to the corresponding matrix list in
+`fuzz.yml`. Corpora are persisted between runs via `actions/cache@v4`. Crash
+artifacts are NOT automatically filed as GitHub issues — triage them manually
+by following the steps below.
+
+> **Note (2026-04-26):** `continue-on-error: true` is set on all fuzz jobs.
+> A libFuzzer crash is a finding to triage, not broken infrastructure.
+> A human must review uploaded crash artifacts and file a bead before the
+> next release tag is cut.
 
 This document captures the conventions for running and maintaining fuzz
 targets locally.

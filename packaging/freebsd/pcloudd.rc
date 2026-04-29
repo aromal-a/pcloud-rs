@@ -52,8 +52,9 @@ load_rc_config $name
 command="/usr/local/bin/pcloudd"
 # rc.subr tracks the PID via this file; pcloudd does not write it itself.
 # Do NOT pass -p to pcloudd — that flag does not exist on the Rust binary.
+# `serve` is required: without it pcloudd prints a one-shot summary and exits.
 pidfile="/var/run/${name}.pid"
-command_args=""
+command_args="serve"
 
 start_precmd()
 {

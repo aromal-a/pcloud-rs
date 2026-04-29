@@ -1,0 +1,130 @@
+name: Release Packaging
+
+# Builds .deb and .rpm packages on version tag push and uploads them as
+# release artifacts. Runs in addition to (NOT in place of) the existing
+# `release.yml` workflow that produces the raw binaries + SBOM + cosign
+# signatures.
+#
+# Stream G — Packaging CI (closes the audit gap recorded in
+# .audit-fragments/11-deployment.md §5: ".deb build NOT wired into CI"
+# and the lower-severity equivalent for .rpm.)
+#
+# The .deb produced here uses `cargo-deb` reading [package.metadata.deb]
+# from crates/pcloud-daemon/Cargo.toml. The .rpm uses `cargo-generate-rpm`
+# reading [package.metadata.generate-rpm] from the same manifest. The
+# legacy nfpm.yaml recipe in packaging/debian/ remains in tree as an
+# alternative path but is NOT exercised by this workflow.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to package (e.g. v0.1.0)'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+permissions:
+  contents: write   # required for `gh release upload`
+
+jobs:
+  build-packages:
+    name: Build .deb and .rpm packages (Linux x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system build deps
+        # libfuse3-dev is needed by pcloud-fs at link time; the runtime
+        # dependency is libfuse3-3 (declared in metadata.deb / metadata.generate-rpm).
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            fuse3 libfuse3-dev pkg-config libssl-dev rpm
+
+      - name: Install cargo-deb and cargo-generate-rpm
+        run: |
+          cargo install cargo-deb --locked --version ^2
+          cargo install cargo-generate-rpm --locked --version ^0.14
+
+      - name: Determine version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            VERSION="${{ github.event.inputs.tag }}"
+          else
+            VERSION="${GITHUB_REF_NAME}"
+          fi
+          # Strip a leading 'v' if present; cargo-deb accepts a bare semver.
+          VERSION_BARE="${VERSION#v}"
+          echo "version=${VERSION_BARE}" >> "$GITHUB_OUTPUT"
+          echo "tag=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "Building packages for version ${VERSION_BARE} (tag ${VERSION})"
+
+      - name: Build release binaries (daemon + CLI)
+        # Reproducible-ish: pin SOURCE_DATE_EPOCH to the tag commit so the
+        # binary timestamps match release.yml. cargo-deb / cargo-generate-rpm
+        # consume target/release/{pcloudd,pcloudc} from this step.
+        run: |
+          export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          cargo build --release --workspace \
+            -p pcloud-daemon -p pcloud-cli
+
+      - name: Build .deb package
+        run: |
+          mkdir -p dist
+          cargo deb \
+            --no-build \
+            --no-strip \
+            --package pcloud-daemon \
+            --output dist/pcloud-rs_${{ steps.version.outputs.version }}_amd64.deb
+          ls -la dist/
+
+      - name: Validate .deb metadata
+        run: |
+          dpkg-deb --info dist/pcloud-rs_${{ steps.version.outputs.version }}_amd64.deb
+          dpkg-deb --contents dist/pcloud-rs_${{ steps.version.outputs.version }}_amd64.deb | head -40
+
+      - name: Build .rpm package
+        run: |
+          cargo generate-rpm \
+            --package crates/pcloud-daemon \
+            --auto-req auto \
+            --output dist/pcloud-rs-${{ steps.version.outputs.version }}-1.x86_64.rpm
+          ls -la dist/
+
+      - name: Validate .rpm metadata
+        run: |
+          rpm -qip dist/pcloud-rs-${{ steps.version.outputs.version }}-1.x86_64.rpm
+          rpm -qlp dist/pcloud-rs-${{ steps.version.outputs.version }}-1.x86_64.rpm | head -40
+
+      - name: Compute SHA-256 digests
+        run: |
+          cd dist
+          sha256sum *.deb *.rpm > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-packages
+          path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/SHA256SUMS
+
+      - name: Attach packages to GitHub release
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ steps.version.outputs.tag }}" \
+            dist/*.deb dist/*.rpm dist/SHA256SUMS \
+            --clobber
