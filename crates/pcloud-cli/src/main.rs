@@ -454,7 +454,7 @@ fn run(argv: &[String]) -> ExitCode {
     // `send` path, which wraps the request in an envelope with
     // `traceparent = None` — byte-identical to the pre-trace-id
     // contract.
-    let send_result = match flags.traceparent.as_deref() {
+    let do_send = || match flags.traceparent.as_deref() {
         Some(tp) => {
             let envelope =
                 pcloud_ipc::RequestEnvelope::new(request.clone()).with_traceparent(tp.to_owned());
@@ -462,6 +462,18 @@ fn run(argv: &[String]) -> ExitCode {
         }
         None => client.send(&socket_path, &request),
     };
+    let mut send_result = do_send();
+    // If the daemon socket is missing (no daemon running), offer to
+    // start `pcloudd` on the user's behalf and retry once. Skipped in
+    // non-interactive contexts (`--quiet` or stdin not a TTY) so
+    // scripts get the original NotFound error.
+    if let Err(pcloud_ipc::IpcTransportError::Io(ref io_err)) = send_result {
+        if io_err.kind() == std::io::ErrorKind::NotFound {
+            if let Ok(()) = try_autostart_daemon(&socket_path, &flags) {
+                send_result = do_send();
+            }
+        }
+    }
 
     match send_result {
         Ok(response) => {
@@ -1701,6 +1713,140 @@ fn socket_path_for_defaults() -> Result<std::path::PathBuf, String> {
         }
     };
     Ok(config.paths.ipc_socket_path())
+}
+
+/// **PLATFORM:** all (Unix and Windows). When a request fails because
+/// the daemon socket does not exist, prompt the user once for consent
+/// and spawn `pcloudd serve` detached, then wait up to 10s for the
+/// socket to bind. Skips the prompt entirely (returns `Err` quietly)
+/// when stdin is not a TTY or `--quiet` is set, so scripts and CI
+/// preserve the historical NotFound error.
+///
+/// Locates the daemon binary by:
+/// 1. `$PCLOUDD` env var (full path), if set;
+/// 2. sibling of `current_exe()` (covers `cargo install`, in-tree
+///    `target/release/`, and packaged installs that ship pcloudd next
+///    to pcloudc);
+/// 3. `PATH` lookup as a last resort.
+///
+/// The spawned child detaches from the controlling terminal so the
+/// CLI can exit cleanly while the daemon keeps running.
+fn try_autostart_daemon(
+    socket_path: &std::path::Path,
+    flags: &GlobalFlags,
+) -> Result<(), String> {
+    use std::io::{IsTerminal, Write};
+
+    if flags.quiet {
+        return Err("--quiet: skipping interactive autostart prompt".into());
+    }
+    if !std::io::stdin().is_terminal() {
+        return Err("stdin is not a TTY: skipping interactive autostart prompt".into());
+    }
+
+    eprint!("pcloudd is not running. Start it now? [Y/n] ");
+    std::io::stderr().flush().ok();
+    let mut answer = String::new();
+    if std::io::stdin().read_line(&mut answer).is_err() {
+        return Err("could not read confirmation".into());
+    }
+    if !is_affirmative(answer.trim()) {
+        return Err("declined by user".into());
+    }
+
+    let daemon = locate_daemon_binary()?;
+    eprintln!("Starting daemon: {} serve …", daemon.display());
+    let mut cmd = std::process::Command::new(&daemon);
+    cmd.arg("serve");
+    cmd.stdin(std::process::Stdio::null());
+    cmd.stdout(std::process::Stdio::null());
+    cmd.stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        // Detach from the controlling terminal so a Ctrl-C in the CLI
+        // does not also kill the freshly spawned daemon.
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                // Best-effort setsid; ignore EPERM (already a session
+                // leader) — the only failure that matters is
+                // "completely cannot daemonize", which would be
+                // surfaced by the spawn() call below anyway.
+                let _ = libc::setsid();
+                Ok(())
+            });
+        }
+    }
+    cmd.spawn()
+        .map_err(|e| format!("spawn pcloudd: {e}"))?;
+
+    // Wait for the socket to appear and the daemon to start accepting
+    // connections. Connect-and-disconnect probes are the only honest
+    // signal: existence of the socket file alone does not mean
+    // `accept()` is armed.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while std::time::Instant::now() < deadline {
+        if socket_path.exists() {
+            #[cfg(unix)]
+            {
+                if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
+                    return Ok(());
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                return Ok(());
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    Err("daemon did not become reachable within 10s".into())
+}
+
+/// Match a Y/N answer in a few common forms (English + French) plus
+/// the bare-Enter default. Empty input means "yes" since the prompt
+/// is rendered with `[Y/n]`.
+fn is_affirmative(answer: &str) -> bool {
+    let a = answer.trim().to_ascii_lowercase();
+    matches!(
+        a.as_str(),
+        "" | "y" | "yes" | "yeah" | "yep" | "o" | "oui" | "ok" | "1"
+    )
+}
+
+/// Locate the `pcloudd` binary for autostart. Order: `$PCLOUDD`,
+/// sibling of `current_exe()`, then `$PATH`.
+fn locate_daemon_binary() -> Result<std::path::PathBuf, String> {
+    let bin_name = if cfg!(windows) { "pcloudd.exe" } else { "pcloudd" };
+    if let Some(env_path) = std::env::var_os("PCLOUDD") {
+        let p = std::path::PathBuf::from(env_path);
+        if p.exists() {
+            return Ok(p);
+        }
+        return Err(format!(
+            "$PCLOUDD={} does not exist",
+            p.display()
+        ));
+    }
+    if let Ok(self_path) = std::env::current_exe() {
+        if let Some(dir) = self_path.parent() {
+            let candidate = dir.join(bin_name);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            let candidate = dir.join(bin_name);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
+    }
+    Err(format!(
+        "could not find `{bin_name}` (set $PCLOUDD or place it next to pcloudc / on $PATH)"
+    ))
 }
 
 /// Pre-supplied inputs for `pcloudc login` that skip the corresponding
