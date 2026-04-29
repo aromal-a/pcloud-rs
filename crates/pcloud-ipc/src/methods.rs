@@ -942,6 +942,85 @@ pub enum Request {
         /// Absolute pCloud-drive path to stat.
         path: String,
     },
+    /// List the direct children of a folder identified by its absolute
+    /// pCloud-drive path. Returns a JSON array of
+    /// [`ListFolderEntry`] objects in [`Response::message`]. Used by
+    /// the smbr `pcloud` VFS plugin (see
+    /// `crates/smb-vfs/src/backends/PCLOUD_PLUGIN.md` in the smbr tree)
+    /// and any other userspace consumer that needs `readdir`-shaped
+    /// access to a remote folder without first round-tripping through
+    /// `GetFolderIdByPath`.
+    ///
+    /// Authenticated. Returns
+    /// [`ResponseStatus::Unauthorized`] when the daemon is logged out
+    /// and [`ResponseStatus::InvalidRequest`] when `path` is not
+    /// absolute or contains traversal segments.
+    ///
+    /// Tracker: bd-smbr-pcloud P2.
+    ListFolderByPath {
+        /// Absolute pCloud-drive path of the folder to list.
+        path: String,
+    },
+    /// Delete a remote file identified by absolute pCloud-drive path.
+    /// Resolves `path` → `file_id` against the local metadata cache
+    /// (with API fallback) and dispatches `deletefile`. Mirrors C
+    /// `psync_delete_file`.
+    ///
+    /// Authenticated. Idempotent — `ResponseStatus::Ok` on success
+    /// and on "already absent". Other failure modes:
+    /// [`ResponseStatus::InvalidRequest`] for non-absolute paths;
+    /// [`ResponseStatus::Conflict`] when the path resolves to a
+    /// folder.
+    ///
+    /// Tracker: bd-smbr-pcloud P2.
+    FileDeleteByPath {
+        /// Absolute pCloud-drive path of the file to delete.
+        path: String,
+    },
+    /// Delete a remote folder identified by absolute pCloud-drive
+    /// path. With `recursive = false` the daemon dispatches
+    /// `deletefolder` and the API rejects a non-empty folder
+    /// (mirroring POSIX `rmdir`); with `recursive = true` it
+    /// dispatches `deletefolderrecursive` which removes the entire
+    /// subtree atomically server-side.
+    ///
+    /// Authenticated. Idempotent on the path-not-found case. Other
+    /// failure modes: [`ResponseStatus::Conflict`] when
+    /// `recursive = false` and the folder is non-empty.
+    ///
+    /// Tracker: bd-smbr-pcloud P2.
+    FolderDeleteByPath {
+        /// Absolute pCloud-drive path of the folder to delete.
+        path: String,
+        /// When `true`, delete the folder and its full subtree via
+        /// `deletefolderrecursive`. When `false`, fail with
+        /// [`ResponseStatus::Conflict`] if the folder is non-empty.
+        recursive: bool,
+    },
+    /// Rename or move a file or folder identified by its absolute
+    /// pCloud-drive `from` path to its new absolute path `to`. The
+    /// daemon resolves both paths to ids, decides between
+    /// `renamefile` and `renamefolder` based on the source kind, and
+    /// dispatches a single API call.
+    ///
+    /// Cross-folder moves are supported when the destination's parent
+    /// resolves to a different folder id than the source's parent.
+    ///
+    /// Authenticated. Failure modes:
+    /// [`ResponseStatus::InvalidRequest`] for malformed paths;
+    /// [`ResponseStatus::Conflict`] when `to` already exists with the
+    /// wrong kind (e.g. renaming a file onto an existing directory);
+    /// [`ResponseStatus::Unavailable`] for transient API errors.
+    ///
+    /// Tracker: bd-smbr-pcloud P2.
+    RenamePath {
+        /// Absolute pCloud-drive path of the entry to rename/move.
+        from: String,
+        /// Absolute pCloud-drive destination path. The destination's
+        /// parent folder must already exist; the basename becomes the
+        /// new entry name.
+        to: String,
+    },
     /// Send a password-reset email for the given account. Mirrors C
     /// `psync_lost_password`. No auth required.
     LostPassword {
@@ -1364,6 +1443,33 @@ pub struct StatPathPayload {
     pub is_folder: bool,
     /// How the path was resolved: `"cache"` or `"api"`.
     pub source: String,
+}
+
+/// One entry in the JSON array returned for
+/// [`Request::ListFolderByPath`]. Shape mirrors `StatPathPayload` so
+/// readers familiar with one can consume the other.
+///
+/// The full payload is `Vec<ListFolderEntry>` serialised to JSON in
+/// [`Response::message`]. Sort order matches what the daemon's
+/// metadata cache returns, which in turn matches the API's
+/// `listfolder` response (server-defined; do **not** rely on
+/// alphabetical order client-side).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ListFolderEntry {
+    /// Remote file id (for files) or folder id (for folders).
+    pub file_id: u64,
+    /// Leaf entry name (no slashes; no trailing `/` on folders).
+    pub name: String,
+    /// Size in bytes. `0` for folders.
+    pub size: u64,
+    /// Content hash (hex string). Empty for folders.
+    pub hash: String,
+    /// Last-modified timestamp (unix seconds).
+    pub modified: i64,
+    /// Creation timestamp (unix seconds).
+    pub created: i64,
+    /// `true` if this entry is a folder.
+    pub is_folder: bool,
 }
 
 #[cfg(test)]

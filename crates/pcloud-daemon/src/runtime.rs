@@ -774,6 +774,19 @@ impl RuntimeShell {
             Request::GetFolderOwnerId { path } => self.get_folder_owner_id(path),
             Request::FilesystemStatus { path } => self.filesystem_status(path),
             Request::StatPath { path } => self.stat_path(path),
+            // bd-smbr-pcloud P2: filesystem ops needed by the smbr
+            // pcloud-rs VFS plugin. The IPC surface is locked here so
+            // smbr can build against it; the live handlers will wire
+            // through `pcloud_backends::folder_backend` /
+            // `transfer_backend` (already implemented). For now they
+            // return Unavailable so an early adopter sees an explicit
+            // tracker pointer instead of a silent panic.
+            Request::ListFolderByPath { path } => self.list_folder_by_path(path),
+            Request::FileDeleteByPath { path } => self.file_delete_by_path(path),
+            Request::FolderDeleteByPath { path, recursive } => {
+                self.folder_delete_by_path(path, recursive)
+            }
+            Request::RenamePath { from, to } => self.rename_path(from, to),
             Request::FileHistory { path, limit } => self.file_history(path, limit),
             // Backup/snapshot lifecycle (zstd + SHA3 sidecar default,
             // optional GPG envelope). The full pipeline is now wired
@@ -1286,6 +1299,105 @@ impl RuntimeShell {
     /// Empty / whitespace paths are refused with
     /// [`ResponseStatus::InvalidRequest`] before the provider is
     /// consulted.
+    /// bd-smbr-pcloud P2 — list folder children by absolute pCloud
+    /// drive path. The live wiring will resolve `path` to a folder id
+    /// against the metadata cache (with API fallback) and dispatch
+    /// `pcloud_proto::folder_api::FolderApi::list_folder_with_metadata`,
+    /// returning a JSON array of [`pcloud_ipc::ListFolderEntry`] in
+    /// [`Response::message`]. Until that wiring lands the handler
+    /// returns [`ResponseStatus::Unavailable`] with a tracker pointer
+    /// so a caller (notably the smbr `pcloud` VFS plugin) sees the
+    /// honest scope rather than a silent panic.
+    pub fn list_folder_by_path(&mut self, path: String) -> Response {
+        if !path.starts_with('/') {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "list-folder-by-path requires an absolute path starting with '/'"
+                    .to_owned(),
+            };
+        }
+        Response {
+            status: ResponseStatus::Unavailable,
+            message: format!(
+                "list-folder-by-path is not yet wired (bd-smbr-pcloud P2). \
+                 Path was: {path}"
+            ),
+        }
+    }
+
+    /// bd-smbr-pcloud P2 — delete a remote file by absolute path. See
+    /// [`Self::list_folder_by_path`] for the rollout plan; the live
+    /// wiring will go through
+    /// `pcloud_proto::transfer_api::TransferApi::delete_file` once the
+    /// path-resolver is plumbed.
+    pub fn file_delete_by_path(&mut self, path: String) -> Response {
+        if !path.starts_with('/') {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "file-delete-by-path requires an absolute path starting with '/'"
+                    .to_owned(),
+            };
+        }
+        Response {
+            status: ResponseStatus::Unavailable,
+            message: format!(
+                "file-delete-by-path is not yet wired (bd-smbr-pcloud P2). \
+                 Path was: {path}"
+            ),
+        }
+    }
+
+    /// bd-smbr-pcloud P2 — delete a remote folder by absolute path.
+    /// See [`Self::list_folder_by_path`] for the rollout plan; the
+    /// live wiring will pick between
+    /// `FolderApi::delete_folder` and
+    /// `FolderApi::delete_folder_recursive` depending on `recursive`.
+    pub fn folder_delete_by_path(&mut self, path: String, recursive: bool) -> Response {
+        if !path.starts_with('/') {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "folder-delete-by-path requires an absolute path starting with '/'"
+                    .to_owned(),
+            };
+        }
+        Response {
+            status: ResponseStatus::Unavailable,
+            message: format!(
+                "folder-delete-by-path is not yet wired (bd-smbr-pcloud P2). \
+                 Path={path} recursive={recursive}"
+            ),
+        }
+    }
+
+    /// bd-smbr-pcloud P2 — rename or move a file/folder identified by
+    /// absolute path. See [`Self::list_folder_by_path`] for the
+    /// rollout plan; the live wiring will probe `from` to determine
+    /// file vs folder and dispatch
+    /// `TransferApi::rename_file` / `FolderApi::rename_folder`
+    /// accordingly, including cross-folder moves.
+    pub fn rename_path(&mut self, from: String, to: String) -> Response {
+        if !from.starts_with('/') || !to.starts_with('/') {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "rename-path requires both `from` and `to` to be absolute paths"
+                    .to_owned(),
+            };
+        }
+        Response {
+            status: ResponseStatus::Unavailable,
+            message: format!(
+                "rename-path is not yet wired (bd-smbr-pcloud P2). \
+                 from={from} to={to}"
+            ),
+        }
+    }
+
+    /// Return the revision history of a remote file by absolute path.
+    /// Mirrors C `psync_listrevisions`. The current implementation
+    /// dispatches through the optional HTTP provider on
+    /// `pcloud-proto`; when the provider is not enabled, returns
+    /// [`ResponseStatus::Unavailable`] with a tracker pointer so
+    /// callers see the honest scope.
     pub fn file_history(&mut self, path: String, limit: Option<u32>) -> Response {
         if path.trim().is_empty() {
             return Response {
@@ -6886,6 +6998,10 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::GetFolderOwnerId { .. } => "GetFolderOwnerId",
         Request::FilesystemStatus { .. } => "FilesystemStatus",
         Request::StatPath { .. } => "StatPath",
+        Request::ListFolderByPath { .. } => "ListFolderByPath",
+        Request::FileDeleteByPath { .. } => "FileDeleteByPath",
+        Request::FolderDeleteByPath { .. } => "FolderDeleteByPath",
+        Request::RenamePath { .. } => "RenamePath",
         Request::FileHistory { .. } => "FileHistory",
         Request::ConflictList => "ConflictList",
         Request::ConflictResolve { .. } => "ConflictResolve",
