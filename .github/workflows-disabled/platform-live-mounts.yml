@@ -1,0 +1,46 @@
+name: Native platform live mounts
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 3 * * 0'
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  macos-fuse-t:
+    name: macOS fuse-t live read/write/unmount
+    # The custom label is deliberate: the runner owner must install and
+    # approve fuse-t before assigning `pcloud-fuse-t`. A stock hosted runner
+    # cannot turn a system-extension prompt into a reliable release gate.
+    runs-on: [self-hosted, macOS, pcloud-fuse-t]
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.1
+      - name: Prove fuse-t is installed before running ignored tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkgutil --pkg-info io.fuse-t.pkg.core
+      - name: Strict live readdir and unmount
+        shell: bash
+        env:
+          PCLOUD_FUSE_TEST: '1'
+          PCLOUD_MACOS_FUSE_BACKEND: fuse-t
+        run: >-
+          cargo test -p pcloud-fs --test macos_mount_live --locked
+          readdir_root_via_fuset -- --ignored --exact --nocapture
+      - name: Strict live create, write, fsync, and unmount
+        shell: bash
+        env:
+          PCLOUD_FUSE_TEST: '1'
+          PCLOUD_MACOS_FUSE_BACKEND: fuse-t
+        run: >-
+          cargo test -p pcloud-fs --test macos_mount_live --locked
+          write_create_fsync_via_fuset -- --ignored --exact --nocapture

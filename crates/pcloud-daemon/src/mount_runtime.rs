@@ -1,4 +1,4 @@
-//! Daemon-side mount orchestration for bd-1du.4.e sub-task 2.
+//! Daemon-side native mount orchestration.
 //!
 //! This module wires the narrow IPC-visible surface:
 //!
@@ -12,23 +12,23 @@
 //!
 //! The authenticated mount path installs a **fully composed
 //! `ProtoFuseAdapter`** via [`pcloud_shim_adapter_factory`] — this is done
-//! in [`crate::runtime::Runtime::try_install_pcloud_shim_factory`] which
+//! in `crate::runtime::Runtime::try_install_pcloud_shim_factory` which
 //! runs before every `mount_filesystem()` call. The composed adapter
 //! carries:
 //!
-//! * a [`ProtoFolderBackend`] wired to a live [`BinaryApiTransport`] and a
-//!   zeroising [`SecretString`] auth token (listfolder / stat),
-//! * a [`ProtoFileBackend`] for content reads (`getfilelink` + HTTP GET),
-//! * a [`ProtoUploadBackend`] for the write path (`upload_create` /
-//!   `upload_write` / `upload_save`),
-//! * a [`PageCache`][pcloud_fs::page_cache::PageCache] sized from
-//!   `[mount].cache_size_mb` and/or `PCLOUD_CACHE_SIZE_GB`,
+//! * a daemon-owned canonical `RemoteFs` adapter for live metadata,
+//!   range reads, folder mutations, and write sessions,
+//! * the standard folder/transfer runtimes behind that single service,
+//!   with a zeroising [`SecretString`] auth token,
+//! * a [`PageCacheGeneric<PageKey>`][pcloud_fs::page_cache::PageCacheGeneric]
+//!   sized from `[mount].cache_size_mb` and/or `PCLOUD_CACHE_SIZE_GB`,
 //! * a [`WriteJournal`] + [`WritePathService`] rooted under
 //!   `<cache_dir>/fuse-staging`.
 //!
 //! On Linux the adapter is wrapped in a [`PcloudFsShim`] and dispatched via
-//! [`MountService::mount_fuser`]; on macOS the bare adapter is handed to
-//! [`MountService::mount`] which routes through the fuse-t FFI. All FUSE
+//! [`MountService::mount_fuser`]; on macOS and Windows the bare adapter is
+//! handed to [`MountService::mount`], which routes through fuse-t or WinFSP.
+//! All filesystem
 //! operations (lookup, readdir, read, write, flush, fsync, create, unlink,
 //! rename, mkdir, rmdir) are forwarded through the adapter to the pCloud
 //! API.
@@ -39,67 +39,200 @@
 //! lifecycle itself (validate → mount → drain → unmount) is still
 //! exercisable and the shutdown invariants hold.
 //!
-//! Do **not** claim mounted-drive parity on the back of this module
-//! alone — the bd-1du.4 tracker and `C_FEATURE_PARITY_MATRIX.csv` remain
-//! the source of truth.
+//! Do **not** claim platform release readiness on the back of this module
+//! alone: native release-commit, package, and credentialed pCloud gates remain
+//! authoritative.
 //!
-//! ## Write-path wiring (bd-1du.4.6, footnote `[fuse-wiring]`)
+//! ## Write-path wiring
 //!
 //! [`pcloud_shim_adapter_factory`] now constructs a full
 //! [`WritePathService`] bound to the daemon's
-//! [`ProtoUploadBackend`] + per-mount [`StagingDir`] + on-disk
+//! canonical `RemoteFs` upload adapter + per-mount [`StagingDir`] + on-disk
 //! [`WriteJournal`] and hands it to the composed [`PcloudFsShim`]. On the
 //! Linux kernel mount path this means `create` / `write` / `flush` /
 //! `fsync` / `setattr(size)` / `unlink` / `rename` are serviced by the
 //! real writer instead of returning `ENOSYS`. Read+write up to the 64
-//! MiB `flush_threshold_bytes` finalises via whole-file upload; chunked
-//! `upload_write` pipelining for sustained multi-GiB writes is tracked
-//! under `bd-1du.4.6` (see `TODO(bd-1du.4.6)` in
-//! `pcloud-fs/src/write_path.rs`). The drain hook installed by the same
+//! MiB `flush_threshold_bytes` finalises via whole-file upload. Writes that
+//! reach the threshold use resumable `upload_create` / bounded
+//! `upload_write` / `upload_save`, with acknowledged offsets persisted for
+//! crash recovery. The drain hook installed by the same
 //! factory flushes every dirty inode before the kernel mount
 //! disappears, keeping the ordered 5s shutdown sequence intact.
 //!
-//! The parity-matrix row remains under Reviewer 19's `bd-1du.10`
-//! discipline — this module does not flip it.
+//! The parity-matrix row is implemented; platform release qualification is a
+//! separate evidence gate.
 
-// **PLATFORM:** Linux + macOS.
+// **PLATFORM:** Linux + macOS + Windows.
 // **GATING:** `#[cfg(target_os = "linux")]` around the `PcloudFsShim`
-// wrapper (fuser-only); `#[cfg(target_os = "macos")]` around the bare
-// `ProtoFuseAdapter` wrapper that feeds the fuse-t FFI; shared FS
+// wrapper (fuser-only); macOS/Windows around the bare `ProtoFuseAdapter`
+// wrapper that feeds fuse-t/WinFSP; shared FS
 // composition (backends, staging, journal, write path) gated to
-// `#[cfg(any(target_os = "linux", target_os = "macos"))]`.
+// `#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "macos", target_os = "windows"))]`.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
 use pcloud_fs::fuse_adapter::{FuseAdapter, NullFuseAdapter};
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+)))]
 use pcloud_fs::mount_orphan::ProcMountinfoReader;
 use pcloud_fs::mount_orphan::{
     MountinfoReader, detect_orphans, fusermount_unmount, mountpoint_is_already_mounted,
 };
 use pcloud_fs::mount_service::{MountError, MountHandle, MountOptions, MountService};
+#[cfg(any(
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+use pcloud_fs::platform::bsd::BsdMountinfoReader;
 #[cfg(target_os = "macos")]
 use pcloud_fs::platform::macos::MacosMountinfoReader;
+#[cfg(target_os = "windows")]
+use pcloud_fs::platform::windows::WindowsMountinfoReader;
 use pcloud_ipc::{Response, ResponseStatus};
 use pcloud_observability::LockExt;
 
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use pcloud_fs::backend::{ProtoFileBackend, ProtoFolderBackend, ProtoUploadBackend};
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+use pcloud_backends::{
+    auth_backend::AuthRuntime,
+    folder_backend::FolderRuntime,
+    remote_fs::{DeleteOutcome, RemoteFs, RemoteFsError, RemoteId, UploadConflict},
+    transfer_backend::TransferRuntime,
+};
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+use pcloud_config::ConfigProfile;
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+use pcloud_fs::backend::{FileBackend, FileHandle, FolderBackend};
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+use pcloud_fs::errors::FsError;
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
 use pcloud_fs::fuse_adapter::{AdapterOptions, ProtoFuseAdapter};
-#[cfg(target_os = "linux")]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 use pcloud_fs::fuser_shim::PcloudFsShim;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
 use pcloud_fs::staging::StagingDir;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
 use pcloud_fs::write_journal::WriteJournal;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+use pcloud_fs::write_path::{FileUploadBackend, UploadStatus, WritePathError};
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
 use pcloud_fs::write_path::{WritePathOptions, WritePathService};
-#[cfg(any(target_os = "linux", target_os = "macos"))]
-use pcloud_proto::BinaryApiTransport;
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+use pcloud_proto::UploadSession;
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+use pcloud_proto::folder_api::{RemoteFolderEntry, RemoteFolderListing};
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
 use pcloud_secret::secret_string::SecretString;
 
 /// Factory that produces a [`FuseAdapter`] for a given mount request.
@@ -142,8 +275,12 @@ pub fn boxed_adapter<A: FuseAdapter>(adapter: A) -> Box<dyn DynFuseAdapter> {
     Box::new(FuseAdapterBox(adapter))
 }
 
-/// Drain hook invoked before unmount. Returns a short human summary.
-pub type DrainHook = Arc<dyn Fn() -> String + Send + Sync>;
+/// Drain hook invoked before unmount.
+///
+/// `Ok` carries a short human summary. `Err` is a durability failure: an
+/// explicit unmount must leave the mount active so dirty data remains
+/// recoverable and the caller can retry after correcting the backend error.
+pub type DrainHook = Arc<dyn Fn() -> Result<String, String> + Send + Sync>;
 
 /// Journal fsync hook invoked as the very first step of the shutdown
 /// sequence so data hits disk before the kernel mount disappears.
@@ -244,7 +381,7 @@ impl Default for MountControl {
     fn default() -> Self {
         Self::new(
             default_adapter_factory(),
-            Arc::new(|| "no drain work queued".to_owned()),
+            Arc::new(|| Ok("no drain work queued".to_owned())),
         )
     }
 }
@@ -273,8 +410,36 @@ impl MountControl {
         {
             Box::new(MacosMountinfoReader)
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(target_os = "linux")]
         {
+            Box::new(ProcMountinfoReader)
+        }
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ))]
+        {
+            Box::new(BsdMountinfoReader)
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Box::new(WindowsMountinfoReader)
+        }
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+            target_os = "macos",
+            target_os = "windows"
+        )))]
+        {
+            // Platforms without a kernel-mount backend cannot own stale
+            // pcloud mounts. The non-Linux reader intentionally returns an
+            // empty payload, while mount attempts fail as UnsupportedPlatform.
             Box::new(ProcMountinfoReader)
         }
     }
@@ -514,9 +679,33 @@ impl MountControl {
             };
         }
 
-        // Validate first so the error message is specific (missing dir vs
-        // not-owned vs world-writable) instead of a generic fuser error.
-        if let Err(err) = MountService::validate_mountpoint(mountpoint) {
+        // Validate first so the error message is specific. Windows accepts
+        // a free drive-letter root as well as an empty directory, so it must
+        // use the native validator instead of the POSIX directory-only one.
+        #[cfg(target_os = "windows")]
+        let validation = {
+            use pcloud_fs::platform::PlatformMount;
+            pcloud_fs::platform::windows::WindowsPlatformMount.validate_mountpoint(mountpoint)
+        };
+        #[cfg(not(any(
+            target_os = "windows",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        )))]
+        let validation = MountService::validate_mountpoint(mountpoint);
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ))]
+        let validation = {
+            use pcloud_fs::platform::PlatformMount;
+            pcloud_fs::platform::bsd::BsdPlatformMount.validate_mountpoint(mountpoint)
+        };
+        if let Err(err) = validation {
             return mount_error_to_response(err);
         }
 
@@ -536,6 +725,8 @@ impl MountControl {
                     mountpoint.display(),
                     if cfg!(target_os = "macos") {
                         format!("diskutil unmount force {}", mountpoint.display())
+                    } else if cfg!(target_os = "windows") {
+                        "pcloudc unmount".to_owned()
                     } else {
                         format!("fusermount3 -u {}", mountpoint.display())
                     }
@@ -582,13 +773,30 @@ impl MountControl {
     /// queued work has a chance to finish (or report) before the kernel
     /// mount goes away.
     pub fn unmount(&mut self) -> Response {
-        let Some(active) = self.active.take() else {
+        if self.active.is_none() {
             return Response {
                 status: ResponseStatus::Conflict,
                 message: "no active filesystem mount".to_owned(),
             };
+        }
+        let drain_summary = match self.require_successful_drain() {
+            Ok(summary) => summary,
+            Err(error) => {
+                return Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!(
+                        "refusing to unmount: writer drain failed: {error}; mount remains active"
+                    ),
+                };
+            }
         };
-        let drain_summary = (self.drain)();
+        // Taking the handle is deliberately deferred until after the drain
+        // succeeds. That makes failure retryable instead of losing ownership
+        // of a still-mounted filesystem with dirty staged writes.
+        let active = self
+            .active
+            .take()
+            .expect("active mount checked before successful drain");
         let unmount_result = active.handle.unmount();
         // Sidecar cleanup runs regardless of kernel outcome: even if
         // the kernel teardown failed, *this daemon* no longer owns the
@@ -613,6 +821,10 @@ impl MountControl {
         }
     }
 
+    fn require_successful_drain(&self) -> Result<String, String> {
+        (self.drain)()
+    }
+
     /// Signal-aware drain helper invoked by the serve loop when the
     /// drain state machine flips `Running → Draining`.
     ///
@@ -634,7 +846,10 @@ impl MountControl {
             Ok(()) => summary.push_str("journal fsync: ok; "),
             Err(e) => summary.push_str(&format!("journal fsync failed: {e}; ")),
         }
-        summary.push_str(&format!("drain: {}", (self.drain)()));
+        match (self.drain)() {
+            Ok(message) => summary.push_str(&format!("drain: {message}")),
+            Err(error) => summary.push_str(&format!("drain failed: {error}")),
+        }
         summary
     }
 }
@@ -717,8 +932,10 @@ fn ordered_shutdown(
         Ok(()) => summary.push_str("journal fsync: ok; "),
         Err(e) => summary.push_str(&format!("journal fsync failed: {e}; ")),
     }
-    let drain_msg = (drain)();
-    summary.push_str(&format!("drain: {drain_msg}; "));
+    match (drain)() {
+        Ok(message) => summary.push_str(&format!("drain: {message}; ")),
+        Err(error) => summary.push_str(&format!("drain failed: {error}; ")),
+    }
     match handle.unmount() {
         Ok(()) => summary.push_str("session: released; "),
         Err(e) => summary.push_str(&format!("session unmount failed: {e}; ")),
@@ -781,9 +998,12 @@ impl Drop for MountControl {
 /// flag) so operators running under systemd can request the override
 /// without needing a CLI handle.
 fn force_umount_from_env() -> bool {
-    std::env::var("PCLOUD_FORCE_UMOUNT")
-        .ok()
-        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+    let value = std::env::var("PCLOUD_FORCE_UMOUNT").ok();
+    force_umount_from_value(value.as_deref())
+}
+
+fn force_umount_from_value(value: Option<&str>) -> bool {
+    value.is_some_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
 }
 
 fn mount_error_to_response(err: MountError) -> Response {
@@ -799,7 +1019,13 @@ fn mount_error_to_response(err: MountError) -> Response {
         MountError::UnsupportedPlatform => ResponseStatus::Unavailable,
         MountError::Unsupported(_) => ResponseStatus::Unavailable,
         MountError::Io(_) => ResponseStatus::InternalError,
-        #[cfg(target_os = "linux")]
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ))]
         MountError::Fuser(_) => ResponseStatus::Unavailable,
     };
     Response {
@@ -828,11 +1054,451 @@ pub fn default_adapter_factory() -> AdapterFactory {
 /// it explicitly via `clone_secret` at each adapter construction so every
 /// duplication of the token buffer is auditable in review (matches the
 /// existing pattern in [`crate::runtime::PendingPasswordAuth`]).
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+struct CanonicalMountBackend {
+    auth: AuthRuntime,
+    folder: FolderRuntime,
+    transfer: TransferRuntime,
+    auth_token: SecretString,
+    store_path: PathBuf,
+    runtime_dir: PathBuf,
+    sessions: std::sync::Mutex<std::collections::HashMap<u64, UploadSession>>,
+    chunk_ids: std::sync::Mutex<std::collections::HashMap<u64, u64>>,
+    quota_cache: std::sync::Mutex<Option<(std::time::Instant, (u64, u64))>>,
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+impl std::fmt::Debug for CanonicalMountBackend {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CanonicalMountBackend")
+            .field("auth_token", &"<redacted>")
+            .field("store_path", &self.store_path)
+            .field("runtime_dir", &self.runtime_dir)
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+impl CanonicalMountBackend {
+    fn new(config: &ConfigProfile, auth_token: SecretString) -> Self {
+        Self {
+            auth: AuthRuntime::from_config(config),
+            folder: FolderRuntime::from_config(config),
+            transfer: TransferRuntime::from_config(config),
+            auth_token,
+            store_path: config.paths.state_dir.join("store.sqlite3"),
+            runtime_dir: config.paths.runtime_dir.clone(),
+            sessions: std::sync::Mutex::new(std::collections::HashMap::new()),
+            chunk_ids: std::sync::Mutex::new(std::collections::HashMap::new()),
+            quota_cache: std::sync::Mutex::new(None),
+        }
+    }
+
+    fn remote(&self) -> RemoteFs<'_> {
+        RemoteFs::new(&self.folder, &self.transfer, self.auth_token.clone_secret())
+    }
+
+    fn durable_remote(&self) -> Result<RemoteFs<'_>, RemoteFsError> {
+        self.remote()
+            .with_durability(self.store_path.clone(), self.runtime_dir.clone())
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+fn remote_error_to_fs(error: RemoteFsError) -> FsError {
+    match error {
+        RemoteFsError::NotFound { .. } => FsError::NotFound,
+        RemoteFsError::ExpectedFolder { .. } => FsError::NotDirectory,
+        RemoteFsError::InvalidPath { .. }
+        | RemoteFsError::ExpectedFile { .. }
+        | RemoteFsError::Ambiguous { .. }
+        | RemoteFsError::MissingId { .. }
+        | RemoteFsError::MissingSize { .. }
+        | RemoteFsError::RangeTooLarge { .. }
+        | RemoteFsError::UnexpectedEof { .. }
+        | RemoteFsError::SourceTooLong { .. }
+        | RemoteFsError::RecursiveCopy { .. }
+        | RemoteFsError::DestinationExists { .. } => FsError::Invalid,
+        RemoteFsError::Folder(pcloud_proto::FolderApiError::Result { result, message })
+        | RemoteFsError::TransferApi(pcloud_proto::TransferApiError::Result { result, message }) => {
+            FsError::from_pcloud_result(result, message)
+        }
+        RemoteFsError::Io(_) => FsError::Io,
+        other => FsError::transport(other.to_string()),
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+fn metadata_to_folder_entry(
+    metadata: pcloud_backends::remote_fs::RemoteMetadata,
+) -> RemoteFolderEntry {
+    let (is_folder, folder_id, file_id) = match metadata.id {
+        RemoteId::Folder(id) => (true, Some(id), None),
+        RemoteId::File(id) => (false, None, Some(id)),
+    };
+    RemoteFolderEntry {
+        name: metadata.name,
+        is_folder,
+        folder_id,
+        file_id,
+        owner_user_id: None,
+        is_mine: metadata.is_mine,
+        encrypted: metadata.encrypted,
+        is_shared: metadata.is_shared,
+        permissions: metadata.permissions,
+        size: metadata.size,
+        modified: metadata.modified,
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+impl FolderBackend for CanonicalMountBackend {
+    fn statfs(&self) -> Result<(u64, u64), FsError> {
+        const QUOTA_TTL: Duration = Duration::from_secs(30);
+
+        {
+            let cache = self
+                .quota_cache
+                .lock_or_poisoned("mount_runtime::canonical_mount_quota_cache");
+            if let Some((fetched_at, quota)) = cache.as_ref()
+                && fetched_at.elapsed() < QUOTA_TTL
+            {
+                return Ok(*quota);
+            }
+        }
+
+        let userinfo = self
+            .auth
+            .userinfo(self.auth_token.clone_secret())
+            .map_err(|error| FsError::transport(format!("userinfo quota query failed: {error}")))?;
+        let total = userinfo
+            .quota
+            .ok_or_else(|| FsError::transport("userinfo response omitted account quota"))?;
+        let used = userinfo
+            .used_quota
+            .ok_or_else(|| FsError::transport("userinfo response omitted used account quota"))?;
+        let quota = (total, total.saturating_sub(used));
+        *self
+            .quota_cache
+            .lock_or_poisoned("mount_runtime::canonical_mount_quota_cache") =
+            Some((std::time::Instant::now(), quota));
+        Ok(quota)
+    }
+
+    fn list_contents(&self, path: &str) -> Result<RemoteFolderListing, FsError> {
+        let listing = self.remote().list(path).map_err(remote_error_to_fs)?;
+        let RemoteId::Folder(folder_id) = listing.folder.id else {
+            return Err(FsError::NotDirectory);
+        };
+        Ok(RemoteFolderListing {
+            folder_id,
+            path: listing.folder.path,
+            name: listing.folder.name,
+            entries: listing
+                .entries
+                .into_iter()
+                .map(metadata_to_folder_entry)
+                .collect(),
+            api_server: None,
+            owner_user_id: None,
+            is_mine: listing.folder.is_mine,
+            encrypted: listing.folder.encrypted,
+            is_shared: listing.folder.is_shared,
+            permissions: listing.folder.permissions,
+        })
+    }
+
+    fn create_folder(&self, parent_path: &str, name: &str) -> Result<u64, FsError> {
+        let path = join_remote_path(parent_path, name);
+        let created = self.remote().mkdir(&path).map_err(remote_error_to_fs)?;
+        match created.id {
+            RemoteId::Folder(id) => Ok(id),
+            RemoteId::File(_) => Err(FsError::Io),
+        }
+    }
+
+    fn delete_folder(&self, path: &str) -> Result<(), FsError> {
+        match self
+            .remote()
+            .delete(path, false)
+            .map_err(remote_error_to_fs)?
+        {
+            DeleteOutcome::Deleted(RemoteId::Folder(_)) | DeleteOutcome::AlreadyAbsent => Ok(()),
+            DeleteOutcome::Deleted(RemoteId::File(_)) => Err(FsError::NotDirectory),
+        }
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+impl FileBackend for CanonicalMountBackend {
+    fn open(&self, file_id: u64) -> Result<FileHandle, FsError> {
+        Ok(FileHandle {
+            file_id,
+            size: 0,
+            host: "canonical-remotefs".to_owned(),
+            path: String::new(),
+            dwltag: None,
+        })
+    }
+
+    fn read(&self, handle: &FileHandle, offset: u64, len: usize) -> Result<Vec<u8>, FsError> {
+        self.remote()
+            .read_range_by_id(handle.file_id, offset, len as u64)
+            .map_err(remote_error_to_fs)
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+impl FileUploadBackend for CanonicalMountBackend {
+    fn upload_file(
+        &self,
+        parent_path: &str,
+        name: &str,
+        staging_file: &Path,
+    ) -> Result<(), WritePathError> {
+        let path = join_remote_path(parent_path, name);
+        self.durable_remote()
+            .and_then(|remote| {
+                remote
+                    .upload_file_resumable(&path, staging_file, UploadConflict::Overwrite)
+                    .map(|_| ())
+            })
+            .map_err(remote_error_to_write)
+    }
+
+    fn unlink_remote(&self, path: &str) -> Result<(), WritePathError> {
+        self.remote()
+            .delete(path, false)
+            .map(|_| ())
+            .map_err(remote_error_to_write)
+    }
+
+    fn rename_remote(&self, from: &str, to: &str) -> Result<(), WritePathError> {
+        self.remote()
+            .move_path(from, to)
+            .map(|_| ())
+            .map_err(remote_error_to_write)
+    }
+
+    fn upload_create(&self, parent_path: &str, name: &str) -> Result<u64, WritePathError> {
+        let path = join_remote_path(parent_path, name);
+        let session = self
+            .remote()
+            .begin_streaming_write(&path, 0)
+            .map_err(remote_error_to_write)?;
+        let upload_id = session.upload_id;
+        self.sessions
+            .lock_or_poisoned("mount_runtime::canonical_mount_sessions")
+            .insert(upload_id, session);
+        self.chunk_ids
+            .lock_or_poisoned("mount_runtime::canonical_mount_chunk_ids")
+            .insert(upload_id, 0);
+        Ok(upload_id)
+    }
+
+    fn upload_write(
+        &self,
+        upload_id: u64,
+        offset: u64,
+        chunk: &[u8],
+    ) -> Result<(), WritePathError> {
+        let chunk_id = *self
+            .chunk_ids
+            .lock_or_poisoned("mount_runtime::canonical_mount_chunk_ids")
+            .get(&upload_id)
+            .unwrap_or(&0);
+        let acknowledged = self
+            .remote()
+            .write_streaming_chunk(upload_id, offset, chunk_id, chunk)
+            .map_err(remote_error_to_write)?;
+        let expected = offset.saturating_add(chunk.len() as u64);
+        if acknowledged != expected {
+            return Err(WritePathError::Upload(format!(
+                "upload_write acknowledged offset {acknowledged}, expected {expected}"
+            )));
+        }
+        self.chunk_ids
+            .lock_or_poisoned("mount_runtime::canonical_mount_chunk_ids")
+            .insert(upload_id, chunk_id.saturating_add(1));
+        Ok(())
+    }
+
+    fn upload_save(
+        &self,
+        upload_id: u64,
+        parent_path: &str,
+        name: &str,
+        _total_size: u64,
+    ) -> Result<(), WritePathError> {
+        let session = self
+            .sessions
+            .lock_or_poisoned("mount_runtime::canonical_mount_sessions")
+            .get(&upload_id)
+            .cloned()
+            .map(Ok)
+            .unwrap_or_else(|| {
+                let parent = self.remote().stat(parent_path)?;
+                let RemoteId::Folder(parent_folder_id) = parent.id else {
+                    return Err(RemoteFsError::ExpectedFolder {
+                        path: parent_path.to_owned(),
+                    });
+                };
+                Ok(UploadSession {
+                    upload_id,
+                    file_id: None,
+                    parent_folder_id,
+                    file_name: name.to_owned(),
+                    api_server: None,
+                })
+            })
+            .map_err(remote_error_to_write)?;
+        self.remote()
+            .commit_streaming_write(&session, None, unix_now())
+            .map_err(remote_error_to_write)?;
+        self.sessions
+            .lock_or_poisoned("mount_runtime::canonical_mount_sessions")
+            .remove(&upload_id);
+        self.chunk_ids
+            .lock_or_poisoned("mount_runtime::canonical_mount_chunk_ids")
+            .remove(&upload_id);
+        Ok(())
+    }
+
+    fn upload_status(&self, upload_id: u64) -> Result<UploadStatus, WritePathError> {
+        match self.remote().streaming_write_status(upload_id, 0) {
+            Ok(info) => Ok(UploadStatus::Bytes(info.size)),
+            Err(RemoteFsError::TransferApi(pcloud_proto::TransferApiError::Result { .. })) => {
+                Ok(UploadStatus::NotFound)
+            }
+            Err(error) => Err(remote_error_to_write(error)),
+        }
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+fn remote_error_to_write(error: RemoteFsError) -> WritePathError {
+    WritePathError::Fs(remote_error_to_fs(error))
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+fn join_remote_path(parent: &str, name: &str) -> String {
+    if parent == "/" {
+        format!("/{name}")
+    } else {
+        format!("{parent}/{name}")
+    }
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
 #[derive(Debug)]
+/// Inputs captured by the canonical live-mount adapter factory.
 pub struct ShimFactoryParams {
-    /// Live protocol transport (shared, cheap to clone).
-    pub transport: BinaryApiTransport,
+    /// Validated daemon profile used to compose canonical runtimes.
+    pub config: ConfigProfile,
     /// Auth token held in a zeroising [`SecretString`].
     pub auth_token: SecretString,
     /// Staging root for the write path (per-mount scratch dir).
@@ -846,19 +1512,25 @@ pub struct ShimFactoryParams {
 /// Object-safe adapter that wraps a fully-composed [`PcloudFsShim`] and
 /// dispatches to [`MountService::mount_fuser`] instead of the
 /// `FuseAdapter`-wrapping path.
-#[cfg(target_os = "linux")]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 struct PcloudShimAdapter {
-    writer: Arc<WritePathService<ProtoUploadBackend<BinaryApiTransport>>>,
-    shim: Option<
-        PcloudFsShim<
-            ProtoFolderBackend<BinaryApiTransport>,
-            ProtoFileBackend<BinaryApiTransport>,
-            ProtoUploadBackend<BinaryApiTransport>,
-        >,
-    >,
+    writer: Arc<WritePathService<CanonicalMountBackend>>,
+    shim: Option<PcloudFsShim<CanonicalMountBackend, CanonicalMountBackend, CanonicalMountBackend>>,
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 impl DynFuseAdapter for PcloudShimAdapter {
     fn mount_with(
         mut self: Box<Self>,
@@ -884,23 +1556,15 @@ impl DynFuseAdapter for PcloudShimAdapter {
 }
 
 /// Object-safe adapter that wraps a bare [`ProtoFuseAdapter`] for the
-/// macOS fuse-t path. Dispatches through [`MountService::mount`] (which
-/// routes to `MacosPlatformMount::mount_adapter` and then the fuse-t FFI).
-/// The `fuser` crate is Linux-only, so we deliberately skip the
-/// `PcloudFsShim` wrapper on macOS — the fuse-t FFI thunks in
-/// `pcloud_fs::platform::macos_ffi` speak to `FuseAdapter` directly.
-#[cfg(target_os = "macos")]
+/// macOS fuse-t and Windows WinFSP paths. [`MountService::mount`] selects
+/// the native platform bridge. The `fuser` shim is Linux-only.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 struct PcloudProtoAdapter {
-    writer: Arc<WritePathService<ProtoUploadBackend<BinaryApiTransport>>>,
-    adapter: Option<
-        ProtoFuseAdapter<
-            ProtoFolderBackend<BinaryApiTransport>,
-            ProtoFileBackend<BinaryApiTransport>,
-        >,
-    >,
+    writer: Arc<WritePathService<CanonicalMountBackend>>,
+    adapter: Option<ProtoFuseAdapter<CanonicalMountBackend, CanonicalMountBackend>>,
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 impl DynFuseAdapter for PcloudProtoAdapter {
     fn mount_with(
         mut self: Box<Self>,
@@ -930,25 +1594,31 @@ impl DynFuseAdapter for PcloudProtoAdapter {
 /// unmount.
 ///
 /// On Linux the factory wraps the composed adapter in a [`PcloudFsShim`]
-/// and mounts it via [`MountService::mount_fuser`]. On macOS the factory
-/// mounts the bare [`ProtoFuseAdapter`] via [`MountService::mount`] which
-/// routes through the fuse-t FFI; there is no `fuser::Filesystem` layer
-/// on macOS because the `fuser` crate is Linux-only.
+/// and mounts it via [`MountService::mount_fuser`]. On macOS and Windows
+/// it mounts the bare [`ProtoFuseAdapter`] via [`MountService::mount`],
+/// which selects fuse-t or WinFSP respectively.
 ///
 /// Returns `(factory, drain_hook)`. The drain hook holds a shared reference
 /// to the writer so the caller can install it into [`MountControl::new`].
-#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly",
+    target_os = "macos",
+    target_os = "windows"
+))]
 #[must_use]
 pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory, DrainHook) {
-    let writer_slot: Arc<
-        std::sync::Mutex<Option<Arc<WritePathService<ProtoUploadBackend<BinaryApiTransport>>>>>,
-    > = Arc::new(std::sync::Mutex::new(None));
+    let writer_slot: Arc<std::sync::Mutex<Option<Arc<WritePathService<CanonicalMountBackend>>>>> =
+        Arc::new(std::sync::Mutex::new(None));
     let writer_slot_for_factory = Arc::clone(&writer_slot);
 
     // Capture individual fields so the factory closure is `Fn` (not FnOnce)
     // and each invocation clones the secret explicitly via `clone_secret`.
     let ShimFactoryParams {
-        transport,
+        config,
         auth_token,
         staging_root,
         write_options,
@@ -957,22 +1627,23 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
     let auth_token = Arc::new(auth_token);
 
     let factory: AdapterFactory = Box::new(move || {
-        let folder = Arc::new(ProtoFolderBackend::new(
-            transport.clone(),
-            auth_token.clone_secret(),
-        ));
-        let files = Arc::new(ProtoFileBackend::new(
-            transport.clone(),
+        let remote = Arc::new(CanonicalMountBackend::new(
+            &config,
             auth_token.clone_secret(),
         ));
         let stage = StagingDir::open(&staging_root)
             .map_err(|e| MountError::Io(std::io::Error::other(e.to_string())))?;
         let journal = WriteJournal::open(stage.journal_path())
             .map_err(|e| MountError::Io(std::io::Error::other(e.to_string())))?;
-        let upload = Arc::new(ProtoUploadBackend::new(
-            transport.clone(),
-            auth_token.clone_secret(),
-        ));
+        let pending_journal_records = journal
+            .replay()
+            .map_err(|e| MountError::Io(std::io::Error::other(e.to_string())))?;
+        if !pending_journal_records.is_empty() {
+            return Err(MountError::Io(std::io::Error::other(format!(
+                "refusing writable FUSE mount: {} unreplayed write-journal record(s) remain in staging; replay executor is not available",
+                pending_journal_records.len()
+            ))));
+        }
         // Startup-resume reconcile: before accepting any FUSE write,
         // walk the staging root's per-inode `ino-*.upload-progress`
         // sidecars and reconcile each against the server via
@@ -982,7 +1653,7 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
         // have been idle past `DEFAULT_HEARTBEAT_TIMEOUT`.
         match pcloud_fs::write_path::replay_upload_sidecars(
             &staging_root,
-            upload.as_ref(),
+            remote.as_ref(),
             pcloud_fs::write_path::DEFAULT_HEARTBEAT_TIMEOUT,
         ) {
             Ok(outcomes) if !outcomes.is_empty() => {
@@ -999,7 +1670,12 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
                 log::error!("pcloud-daemon mount: upload sidecar reconcile failed: {e}");
             }
         }
-        let writer = Arc::new(WritePathService::new(stage, journal, upload, write_options));
+        let writer = Arc::new(WritePathService::new(
+            stage,
+            journal,
+            Arc::clone(&remote),
+            write_options,
+        ));
         // Publish the writer for the drain hook.
         // INVARIANT: `writer_slot_for_factory` is an internal Mutex that is
         // never poisoned by a panic inside this function (no panics between
@@ -1015,15 +1691,23 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
         // Linux: wrap in `Arc` and hand to `PcloudFsShim` which dispatches
         // `fuser::Filesystem` ops back into the adapter + the writer.
         //
-        // macOS: hand the bare adapter to `MountService::mount` which
-        // routes through the fuse-t FFI. There is no `fuser` layer; the
-        // FFI thunks in `pcloud_fs::platform::macos_ffi` speak
-        // `FuseAdapter` directly.
-        #[cfg(target_os = "linux")]
+        // macOS/Windows: hand the bare adapter to `MountService::mount`,
+        // which routes through fuse-t or WinFSP. There is no `fuser` layer.
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ))]
         {
             let adapter = Arc::new(
-                ProtoFuseAdapter::with_file_backend(folder, files, adapter_options)
-                    .with_write_path(Arc::clone(&writer)),
+                ProtoFuseAdapter::with_file_backend(
+                    Arc::clone(&remote),
+                    Arc::clone(&remote),
+                    adapter_options,
+                )
+                .with_write_path(Arc::clone(&writer)),
             );
 
             let shim = PcloudFsShim::new(adapter, Arc::clone(&writer));
@@ -1033,10 +1717,14 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
             }))
         }
 
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
-            let adapter = ProtoFuseAdapter::with_file_backend(folder, files, adapter_options)
-                .with_write_path(Arc::clone(&writer));
+            let adapter = ProtoFuseAdapter::with_file_backend(
+                Arc::clone(&remote),
+                Arc::clone(&remote),
+                adapter_options,
+            )
+            .with_write_path(Arc::clone(&writer));
             Ok(Box::new(PcloudProtoAdapter {
                 writer,
                 adapter: Some(adapter),
@@ -1055,7 +1743,7 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
         // panics while holding the lock, so it cannot be poisoned.
         let w = writer_slot.lock_or_poisoned("mount_runtime::writer_slot::drain_hook");
         let Some(writer) = w.as_ref() else {
-            return "writer drain: no active writer".to_owned();
+            return Ok("writer drain: no active writer".to_owned());
         };
         let open_fhs = writer.open_inode_count();
         let outcomes = writer.drain_all();
@@ -1065,12 +1753,14 @@ pub fn pcloud_shim_adapter_factory(params: ShimFactoryParams) -> (AdapterFactory
             .filter_map(|(ino, r)| r.as_ref().err().map(|e| format!("ino={ino}: {e}")))
             .collect();
         if failed.is_empty() {
-            format!("writer drain: ok (open_fhs={open_fhs}, flushed={flushed})")
+            Ok(format!(
+                "writer drain: ok (open_fhs={open_fhs}, flushed={flushed})"
+            ))
         } else {
-            format!(
+            Err(format!(
                 "writer drain: partial (open_fhs={open_fhs}, flushed={flushed}, failed=[{}])",
                 failed.join("; ")
-            )
+            ))
         }
     });
 
@@ -1131,7 +1821,13 @@ mod tests {
         assert!(!ctl.is_mounted());
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
     #[test]
     fn mount_rejects_world_writable_mountpoint() {
         let tmp = tempdir().unwrap();
@@ -1162,7 +1858,7 @@ mod tests {
         let mut ctl = MountControl::default();
         assert!(ctl.replace_factory(
             mock_factory(Arc::clone(&mounts)),
-            Arc::new(|| "drained".to_owned()),
+            Arc::new(|| Ok("drained".to_owned())),
         ));
     }
 
@@ -1173,26 +1869,122 @@ mod tests {
         // it (the BinaryApiTransport refuses to connect), but the drain
         // hook is wired and reports "no active writer" until a mount has
         // actually produced one.
-        use pcloud_proto::{BinaryApiTransport, TransportConfig};
+        use pcloud_config::{ConfigProfile, Environment};
         use pcloud_secret::secret_string::SecretString;
         let tmp = tempdir().unwrap();
-        let transport = BinaryApiTransport::new({
-            let mut cfg = TransportConfig::dev_plaintext("127.0.0.1", 1u16, "localhost");
-            cfg.connect_timeout = std::time::Duration::from_millis(10);
-            cfg.read_timeout = std::time::Duration::from_millis(10);
-            cfg.total_request_timeout = std::time::Duration::from_secs(30);
-            cfg
-        });
         let params = ShimFactoryParams {
-            transport,
+            config: ConfigProfile::secure_defaults(
+                tmp.path().to_path_buf(),
+                Environment::Development,
+            ),
             auth_token: SecretString::new("dummy-token"),
             staging_root: tmp.path().join("stage"),
             write_options: pcloud_fs::write_path::WritePathOptions::default(),
             adapter_options: pcloud_fs::fuse_adapter::AdapterOptions::default(),
         };
         let (_factory, drain) = pcloud_shim_adapter_factory(params);
-        let msg = (drain)();
+        let msg = (drain)().expect("empty drain must succeed");
         assert!(msg.contains("no active writer"), "got: {msg}");
+    }
+
+    #[test]
+    fn drain_failure_is_a_typed_error_not_a_success_summary() {
+        let ctl = MountControl::new(
+            default_adapter_factory(),
+            Arc::new(|| Err("ino=42: checksum mismatch".to_owned())),
+        );
+        let error = ctl
+            .require_successful_drain()
+            .expect_err("dirty failed inode must block explicit unmount");
+        assert!(error.contains("ino=42"), "got: {error}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn canonical_mount_backend_lists_and_reads_without_metadata_cache() {
+        use pcloud_config::{ConfigProfile, Environment};
+        use pcloud_fs::backend::{FileBackend as _, FolderBackend as _};
+        use pcloud_secret::secret_string::SecretString;
+
+        let root = tempdir().unwrap();
+        let config =
+            ConfigProfile::secure_defaults(root.path().to_path_buf(), Environment::Development);
+        let backend = CanonicalMountBackend::new(&config, SecretString::new("test-token"));
+
+        // No pcloud-store connection or metadata cache is created or seeded.
+        // Both operations must traverse the canonical live RemoteFs service.
+        let listing = backend.list_contents("/").expect("live root listing");
+        let notes = listing
+            .entries
+            .iter()
+            .find(|entry| entry.name == "notes.txt")
+            .expect("development fixture file");
+        let file_id = notes.file_id.expect("fixture file id");
+        let handle = backend
+            .open_with_size(file_id, notes.size.unwrap_or_default())
+            .expect("canonical open");
+        let bytes = backend.read(&handle, 0, 30).expect("canonical range read");
+        assert_eq!(bytes, b"downloaded:/get/abc/report.txt");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn canonical_mount_backend_reports_account_quota() {
+        use pcloud_config::{ConfigProfile, Environment};
+        use pcloud_fs::backend::FolderBackend as _;
+        use pcloud_secret::secret_string::SecretString;
+
+        let root = tempdir().unwrap();
+        let config =
+            ConfigProfile::secure_defaults(root.path().to_path_buf(), Environment::Development);
+        let backend = CanonicalMountBackend::new(&config, SecretString::new("auth-token-42"));
+
+        let expected = (10 * 1024 * 1024 * 1024, 6 * 1024 * 1024 * 1024);
+        assert_eq!(
+            backend.statfs().expect("development account quota"),
+            expected
+        );
+        assert_eq!(backend.statfs().expect("cached account quota"), expected);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn pcloud_shim_factory_refuses_non_empty_write_journal() {
+        use pcloud_config::{ConfigProfile, Environment};
+        use pcloud_fs::write_journal::JournalOp;
+        use pcloud_secret::secret_string::SecretString;
+
+        let tmp = tempdir().unwrap();
+        let staging_root = tmp.path().join("stage");
+        {
+            let stage = StagingDir::open(&staging_root).unwrap();
+            let mut journal = WriteJournal::open(stage.journal_path()).unwrap();
+            journal
+                .append(JournalOp::FlushBarrier {
+                    path: "/dirty.txt".to_owned(),
+                })
+                .unwrap();
+        }
+
+        let params = ShimFactoryParams {
+            config: ConfigProfile::secure_defaults(
+                tmp.path().to_path_buf(),
+                Environment::Development,
+            ),
+            auth_token: SecretString::new("dummy-token"),
+            staging_root,
+            write_options: pcloud_fs::write_path::WritePathOptions::default(),
+            adapter_options: pcloud_fs::fuse_adapter::AdapterOptions::default(),
+        };
+        let (factory, _drain) = pcloud_shim_adapter_factory(params);
+        let err = match factory() {
+            Ok(_) => panic!("factory must refuse a non-empty write journal"),
+            Err(err) => err,
+        };
+        assert!(
+            err.to_string().contains("unreplayed write-journal"),
+            "got: {err}"
+        );
     }
 
     #[test]
@@ -1207,21 +1999,21 @@ mod tests {
     }
 
     #[test]
-    fn check_orphans_rejects_when_pcloud_orphans_present_and_not_forced() {
+    fn check_orphans_rejects_private_pcloud_rs_mount_when_not_forced() {
         use pcloud_fs::mount_orphan::StaticMountinfoReader;
         let payload = concat!(
             "24 28 8:2 / /home rw,relatime shared:30 - ext4 /dev/sda2 rw\n",
-            "25 28 0:44 / /home/user/pCloudDrive rw,nosuid,nodev,relatime shared:77 - fuse.pcloud pcloud rw\n",
-            "26 28 0:45 / /mnt/legacy rw,nosuid,nodev,relatime shared:78 - fuse.pclsync pclsync rw\n",
+            "25 28 0:44 / /home/user/pCloudDrive rw,nosuid,nodev,relatime shared:77 - fuse.pcloud-rs pcloud-rs rw\n",
+            "26 28 0:45 / /mnt/official rw,nosuid,nodev,relatime shared:78 - fuse.pcloud pcloud rw\n",
         );
         let mut ctl = MountControl::default();
         ctl.set_force_umount(false);
         ctl.set_mountinfo_reader(Box::new(StaticMountinfoReader::new(payload)));
         match ctl.check_orphans().unwrap() {
             OrphanCheckOutcome::Rejected(paths) => {
-                assert_eq!(paths.len(), 2);
+                assert_eq!(paths.len(), 1);
                 assert!(paths.contains(&PathBuf::from("/home/user/pCloudDrive")));
-                assert!(paths.contains(&PathBuf::from("/mnt/legacy")));
+                assert!(!paths.contains(&PathBuf::from("/mnt/official")));
             }
             other => panic!("expected Rejected, got {other:?}"),
         }
@@ -1242,7 +2034,8 @@ mod tests {
         // the orphan and must decide. Parity with the daemon behaviour
         // is covered by `check_orphans_rejects_when_pcloud_orphans_present_and_not_forced`.
         use pcloud_fs::mount_orphan::StaticMountinfoReader;
-        let payload = "25 28 0:44 / /home/user/pCloudDrive rw shared:77 - fuse.pcloud pcloud rw\n";
+        let payload =
+            "25 28 0:44 / /home/user/pCloudDrive rw shared:77 - fuse.pcloud-rs pcloud-rs rw\n";
         let mut ctl = MountControl::default();
         ctl.set_mountinfo_reader(Box::new(StaticMountinfoReader::new(payload)));
         match ctl.check_orphans().unwrap() {
@@ -1254,26 +2047,13 @@ mod tests {
     }
 
     #[test]
-    fn force_umount_env_var_enables_override() {
-        // SAFETY: single-threaded test that scopes the env var to this
-        // test's body. We restore the previous value on exit.
-        let prev = std::env::var("PCLOUD_FORCE_UMOUNT").ok();
-        // SAFETY: setting env vars in tests is acceptable; other tests
-        // run in separate processes per cargo's default and nextest
-        // harnesses. This test does not read env vars in parallel
-        // with others in this module.
-        unsafe {
-            std::env::set_var("PCLOUD_FORCE_UMOUNT", "1");
-        }
-        let ctl = MountControl::default();
-        assert!(ctl.force_umount_enabled());
-        // Restore.
-        unsafe {
-            match prev {
-                Some(v) => std::env::set_var("PCLOUD_FORCE_UMOUNT", v),
-                None => std::env::remove_var("PCLOUD_FORCE_UMOUNT"),
-            }
-        }
+    fn force_umount_env_value_enables_override() {
+        assert!(force_umount_from_value(Some("1")));
+        assert!(force_umount_from_value(Some("true")));
+        assert!(force_umount_from_value(Some("TRUE")));
+        assert!(!force_umount_from_value(Some("0")));
+        assert!(!force_umount_from_value(Some("false")));
+        assert!(!force_umount_from_value(None));
     }
 
     #[test]
@@ -1286,7 +2066,7 @@ mod tests {
             mock_factory(Arc::clone(&mounts)),
             Arc::new(move || {
                 drain_for_hook.fetch_add(1, Ordering::SeqCst);
-                "ok".to_owned()
+                Ok("ok".to_owned())
             }),
         );
         // Fresh empty tempdir passes validation. The mock adapter is

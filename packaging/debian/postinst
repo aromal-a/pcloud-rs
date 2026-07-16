@@ -19,7 +19,10 @@ case "$1" in
         fi
 
         echo "pcloud-rs installed. To start the daemon manually:"
-        echo "    systemctl --user start pcloudd.service"
+        echo "    sudo systemctl start pcloudd.service"
+        echo "The packaged unit is installed as a system unit under /lib/systemd/system."
+        echo "For a per-user unit, copy packaging/systemd/pcloudd.service and"
+        echo "packaging/systemd/override-user.conf.example into ~/.config/systemd/user/."
         echo "or run it directly: pcloudd --help"
         ;;
 

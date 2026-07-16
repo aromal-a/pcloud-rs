@@ -467,42 +467,330 @@ fn check_vault_perms_unix(vault_path: &Path) -> DoctorCheck {
     )
 }
 
-/// Windows ACL shape check. Intent: the current-user SID must be the
-/// single ACE granting `FullControl` on both the vault file and its
-/// parent directory (equivalent to the Unix `0600` / `0700` posture).
-///
-/// This function compiles only on Windows; the real ACL probe is wired
-/// through `windows::Win32::Security` once that dependency is added to
-/// `pcloud-cli/Cargo.toml` (tracked under bd-xplat-windows). The
-/// placeholder below uses only `std` so the crate still builds on
-/// Windows targets without new dependencies; when the `readonly`
-/// attribute is clear on the file *and* the parent directory, the
-/// vault is assumed to be in the safe shape pending full ACL audit.
-/// This matches the documented plan in `PLAN_CROSSPLATFORM.md §3.5`.
+/// Windows ACL shape check. The vault file and parent directory must be
+/// owned by the current user, grant that user full control, and contain no
+/// allow ACE for principals other than the user, LocalSystem, or the local
+/// Administrators group. This is the practical NTFS equivalent of the Unix
+/// owner-only posture while acknowledging the Windows administration model.
 #[cfg(windows)]
 fn check_vault_perms_windows(vault_path: &Path) -> DoctorCheck {
-    let md = match fs::metadata(vault_path) {
-        Ok(m) => m,
-        Err(e) => {
+    if let Err(error) = fs::metadata(vault_path) {
+        return DoctorCheck::fail(
+            "vault_perms",
+            format!("cannot stat vault {}: {error}", vault_path.display()),
+        );
+    }
+    let Some(parent) = vault_path.parent() else {
+        return DoctorCheck::fail("vault_perms", "vault path has no parent directory");
+    };
+    let current_user = match windows_current_user_sid() {
+        Ok(sid) => sid,
+        Err(error) => return DoctorCheck::fail("vault_perms", error),
+    };
+    let current_owner = match windows_current_owner_sid() {
+        Ok(sid) => sid,
+        Err(error) => return DoctorCheck::fail("vault_perms", error),
+    };
+    for (label, path, is_directory) in
+        [("vault", vault_path, false), ("vault parent", parent, true)]
+    {
+        if let Err(error) =
+            audit_windows_path_acl(path, current_owner.sid(), current_user.sid(), is_directory)
+        {
             return DoctorCheck::fail(
                 "vault_perms",
-                format!("cannot stat vault {}: {e}", vault_path.display()),
+                format!("{label} ACL is unsafe ({}): {error}", path.display()),
             );
         }
-    };
-    // Placeholder until `windows::Win32::Security` is added as a
-    // pcloud-cli dependency; report a WARN so operators know the full
-    // ACL audit has not run.
-    let ro = md.permissions().readonly();
-    DoctorCheck::warn(
+    }
+
+    DoctorCheck::ok(
         "vault_perms",
         format!(
-            "vault NTFS ACL audit not yet wired (readonly={}, {}) — \
-             full SID-only FullControl check pending (bd-xplat-windows)",
-            ro,
+            "vault and parent have owner-scoped NTFS ACLs ({})",
             vault_path.display()
         ),
     )
+}
+
+#[cfg(windows)]
+struct WindowsSidBuffer {
+    words: Vec<usize>,
+}
+
+#[cfg(windows)]
+impl WindowsSidBuffer {
+    fn sid(&self) -> windows::Win32::Security::PSID {
+        use windows::Win32::Security::{PSID, TOKEN_USER};
+
+        // SAFETY: `words` was allocated with `TOKEN_USER` alignment and was
+        // populated successfully by `GetTokenInformation(TokenUser)`.
+        let token_user = unsafe { &*(self.words.as_ptr().cast::<TOKEN_USER>()) };
+        PSID(token_user.User.Sid.0)
+    }
+}
+
+#[cfg(windows)]
+struct WindowsOwnerSidBuffer {
+    words: Vec<usize>,
+}
+
+#[cfg(windows)]
+impl WindowsOwnerSidBuffer {
+    fn sid(&self) -> windows::Win32::Security::PSID {
+        use windows::Win32::Security::{PSID, TOKEN_OWNER};
+
+        // SAFETY: `words` was allocated with `TOKEN_OWNER` alignment and was
+        // populated successfully by `GetTokenInformation(TokenOwner)`.
+        let token_owner = unsafe { &*(self.words.as_ptr().cast::<TOKEN_OWNER>()) };
+        PSID(token_owner.Owner.0)
+    }
+}
+
+#[cfg(windows)]
+struct WindowsHandle(windows::Win32::Foundation::HANDLE);
+
+#[cfg(windows)]
+impl Drop for WindowsHandle {
+    fn drop(&mut self) {
+        use windows::Win32::Foundation::CloseHandle;
+
+        if !self.0.is_invalid() {
+            // SAFETY: this is the uniquely owned process-token handle.
+            let _ = unsafe { CloseHandle(self.0) };
+        }
+    }
+}
+
+#[cfg(windows)]
+fn windows_current_user_sid() -> Result<WindowsSidBuffer, String> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TokenUser};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let mut token = HANDLE::default();
+    // SAFETY: `GetCurrentProcess` is a pseudo-handle; `token` is writable.
+    unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }
+        .map_err(|error| format!("cannot open current process token: {error}"))?;
+    let _token = WindowsHandle(token);
+
+    let mut needed = 0u32;
+    // SAFETY: the first call is the documented size probe.
+    let _ = unsafe { GetTokenInformation(token, TokenUser, None, 0, &mut needed) };
+    if needed == 0 {
+        return Err("cannot determine current-user SID buffer size".to_owned());
+    }
+    let word_size = std::mem::size_of::<usize>();
+    let mut words = vec![0usize; (needed as usize).div_ceil(word_size)];
+    // SAFETY: `words` is aligned and has at least `needed` writable bytes.
+    unsafe {
+        GetTokenInformation(
+            token,
+            TokenUser,
+            Some(words.as_mut_ptr().cast()),
+            needed,
+            &mut needed,
+        )
+    }
+    .map_err(|error| format!("cannot read current-user SID: {error}"))?;
+    Ok(WindowsSidBuffer { words })
+}
+
+#[cfg(windows)]
+fn windows_current_owner_sid() -> Result<WindowsOwnerSidBuffer, String> {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Security::{GetTokenInformation, TOKEN_QUERY, TokenOwner};
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    let mut token = HANDLE::default();
+    // SAFETY: `GetCurrentProcess` is a pseudo-handle; `token` is writable.
+    unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) }
+        .map_err(|error| format!("cannot open current process token: {error}"))?;
+    let _token = WindowsHandle(token);
+
+    let mut needed = 0u32;
+    // SAFETY: the first call is the documented size probe.
+    let _ = unsafe { GetTokenInformation(token, TokenOwner, None, 0, &mut needed) };
+    if needed == 0 {
+        return Err("cannot determine current-owner SID buffer size".to_owned());
+    }
+    let word_size = std::mem::size_of::<usize>();
+    let mut words = vec![0usize; (needed as usize).div_ceil(word_size)];
+    // SAFETY: `words` is aligned and has at least `needed` writable bytes.
+    unsafe {
+        GetTokenInformation(
+            token,
+            TokenOwner,
+            Some(words.as_mut_ptr().cast()),
+            needed,
+            &mut needed,
+        )
+    }
+    .map_err(|error| format!("cannot read current-owner SID: {error}"))?;
+    Ok(WindowsOwnerSidBuffer { words })
+}
+
+#[cfg(windows)]
+struct WindowsSecurityDescriptor(windows::Win32::Security::PSECURITY_DESCRIPTOR);
+
+#[cfg(windows)]
+impl Drop for WindowsSecurityDescriptor {
+    fn drop(&mut self) {
+        use windows::Win32::Foundation::{HLOCAL, LocalFree};
+
+        if !self.0.0.is_null() {
+            // SAFETY: `GetNamedSecurityInfoW` allocates this descriptor with
+            // LocalAlloc and transfers ownership to the caller.
+            let _ = unsafe { LocalFree(HLOCAL(self.0.0.cast())) };
+        }
+    }
+}
+
+#[cfg(windows)]
+fn audit_windows_path_acl(
+    path: &Path,
+    current_owner: windows::Win32::Security::PSID,
+    current_user: windows::Win32::Security::PSID,
+    is_directory: bool,
+) -> Result<(), String> {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt as _;
+
+    use windows::Win32::Foundation::{ERROR_SUCCESS, GENERIC_ALL};
+    use windows::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+    use windows::Win32::Security::{
+        ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
+        DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation, INHERIT_ONLY_ACE,
+        IsWellKnownSid, OWNER_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+        WinBuiltinAdministratorsSid, WinCreatorOwnerRightsSid, WinLocalSystemSid,
+    };
+    use windows::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+    use windows::Win32::System::SystemServices::{
+        ACCESS_ALLOWED_ACE_TYPE, ACCESS_ALLOWED_CALLBACK_ACE_TYPE,
+        ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE, ACCESS_ALLOWED_COMPOUND_ACE_TYPE,
+        ACCESS_ALLOWED_OBJECT_ACE_TYPE,
+    };
+    use windows::core::PCWSTR;
+
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut owner = PSID::default();
+    let mut dacl: *mut ACL = std::ptr::null_mut();
+    let mut descriptor = PSECURITY_DESCRIPTOR::default();
+    let security_info = windows::Win32::Security::OBJECT_SECURITY_INFORMATION(
+        OWNER_SECURITY_INFORMATION.0 | DACL_SECURITY_INFORMATION.0,
+    );
+    // SAFETY: all output pointers are writable and `wide` is NUL-terminated.
+    let status = unsafe {
+        GetNamedSecurityInfoW(
+            PCWSTR(wide.as_ptr()),
+            SE_FILE_OBJECT,
+            security_info,
+            Some(&mut owner),
+            None,
+            Some(&mut dacl),
+            None,
+            &mut descriptor,
+        )
+    };
+    if status != ERROR_SUCCESS {
+        return Err(format!("GetNamedSecurityInfoW failed with {}", status.0));
+    }
+    let _descriptor = WindowsSecurityDescriptor(descriptor);
+    if owner.is_invalid() || dacl.is_null() {
+        return Err("missing owner or DACL".to_owned());
+    }
+    // SAFETY: both SIDs are valid while their owning buffers live.
+    if unsafe { EqualSid(owner, current_owner) }.is_err() {
+        return Err("owner does not match the process token owner".to_owned());
+    }
+
+    let mut info = ACL_SIZE_INFORMATION::default();
+    // SAFETY: `dacl` points inside the live security descriptor and `info` is
+    // a correctly sized writable ACL_SIZE_INFORMATION buffer.
+    unsafe {
+        GetAclInformation(
+            dacl,
+            (&raw mut info).cast::<c_void>(),
+            std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
+            AclSizeInformation,
+        )
+    }
+    .map_err(|error| format!("cannot inspect DACL: {error}"))?;
+
+    let mut current_user_rights = 0u32;
+    for index in 0..info.AceCount {
+        let mut ace_ptr: *mut c_void = std::ptr::null_mut();
+        // SAFETY: `index` is within the ACE count reported for this DACL.
+        unsafe { GetAce(dacl, index, &mut ace_ptr) }
+            .map_err(|error| format!("cannot read ACE {index}: {error}"))?;
+        if ace_ptr.is_null() {
+            return Err(format!("ACE {index} is null"));
+        }
+        // SAFETY: every ACE begins with ACE_HEADER; GetAce returned a live ACE.
+        let header = unsafe { &*(ace_ptr.cast::<windows::Win32::Security::ACE_HEADER>()) };
+        let ace_type = u32::from(header.AceType);
+        let is_allow = matches!(
+            ace_type,
+            ACCESS_ALLOWED_ACE_TYPE
+                | ACCESS_ALLOWED_CALLBACK_ACE_TYPE
+                | ACCESS_ALLOWED_CALLBACK_OBJECT_ACE_TYPE
+                | ACCESS_ALLOWED_COMPOUND_ACE_TYPE
+                | ACCESS_ALLOWED_OBJECT_ACE_TYPE
+        );
+        if !is_allow {
+            continue;
+        }
+        if ace_type != ACCESS_ALLOWED_ACE_TYPE {
+            return Err(format!("unsupported allow ACE type {ace_type}"));
+        }
+        // An inherit-only ACE on a file cannot grant access to that file. On
+        // the parent directory it can expose future vault children, so it is
+        // audited like every other allow ACE.
+        if !is_directory && u32::from(header.AceFlags) & INHERIT_ONLY_ACE.0 != 0 {
+            continue;
+        }
+        if usize::from(header.AceSize) < std::mem::size_of::<ACCESS_ALLOWED_ACE>() {
+            return Err(format!("ACE {index} is truncated"));
+        }
+        // SAFETY: the size check proves the fixed ACCESS_ALLOWED_ACE prefix is
+        // present. SidStart is the documented inline SID location.
+        let ace = unsafe { &*(ace_ptr.cast::<ACCESS_ALLOWED_ACE>()) };
+        let trustee = PSID((&raw const ace.SidStart).cast_mut().cast::<c_void>());
+        // SAFETY: `trustee` points into the live ACE and `current_user` lives
+        // in the caller-owned token buffer.
+        if unsafe { EqualSid(trustee, current_user) }.is_ok() {
+            current_user_rights |= ace.Mask;
+            continue;
+        }
+        // The Owner Rights SID is equivalent to the verified current owner
+        // for this object and is used by the vault writer's protected DACL.
+        // SAFETY: `trustee` is a valid SID from the DACL.
+        if unsafe { IsWellKnownSid(trustee, WinCreatorOwnerRightsSid) }.as_bool() {
+            current_user_rights |= ace.Mask;
+            continue;
+        }
+        // SAFETY: `trustee` is a valid SID from the DACL.
+        let is_system = unsafe { IsWellKnownSid(trustee, WinLocalSystemSid) }.as_bool();
+        // SAFETY: same valid SID as above.
+        let is_administrator =
+            unsafe { IsWellKnownSid(trustee, WinBuiltinAdministratorsSid) }.as_bool();
+        if !is_system && !is_administrator {
+            return Err(format!(
+                "ACE {index} grants access to an untrusted principal"
+            ));
+        }
+    }
+
+    let full_control = current_user_rights & FILE_ALL_ACCESS.0 == FILE_ALL_ACCESS.0
+        || current_user_rights & GENERIC_ALL.0 == GENERIC_ALL.0;
+    if !full_control {
+        return Err("current user lacks FullControl".to_owned());
+    }
+    Ok(())
 }
 
 fn check_mount_root(mount_root: Option<&Path>) -> DoctorCheck {
@@ -724,6 +1012,10 @@ fn free_space_bytes(dir: &Path) -> std::io::Result<u64> {
 
 #[cfg(unix)]
 fn free_space_bytes_unix(dir: &Path) -> std::io::Result<u64> {
+    fn stat_value_to_u64<T: TryInto<u64>>(value: T) -> u64 {
+        value.try_into().unwrap_or_default()
+    }
+
     use std::ffi::CString;
     let c = CString::new(dir.as_os_str().as_encoded_bytes())
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
@@ -736,28 +1028,33 @@ fn free_space_bytes_unix(dir: &Path) -> std::io::Result<u64> {
         return Err(std::io::Error::last_os_error());
     }
     // `f_bavail * f_frsize` is the canonical free-bytes-for-non-root
-    // computation. Cast carefully; `statvfs` fields are platform typed.
-    let free: u64 = (out.f_bavail as u64).saturating_mul(out.f_frsize as u64);
+    // computation. `statvfs` field widths/signedness vary across Unix ABIs;
+    // normalize through a checked generic conversion and fail closed to zero
+    // for an impossible negative/out-of-range kernel value.
+    let free = stat_value_to_u64(out.f_bavail).saturating_mul(stat_value_to_u64(out.f_frsize));
     Ok(free)
 }
 
-/// Windows free-space probe. Calls `GetDiskFreeSpaceExW` once
-/// `pcloud-cli` gains a Windows build; for now we fall back to
-/// `fs::metadata`-based existence verification and report "unknown"
-/// by erroring out so the caller downgrades to a WARN. The full
-/// wiring is tracked under bd-xplat-windows.
+/// Windows free-space probe using the quota-aware bytes available to the
+/// calling user reported by `GetDiskFreeSpaceExW`.
 #[cfg(windows)]
 fn free_space_bytes_windows(dir: &Path) -> std::io::Result<u64> {
-    // Existence check mirrors the Unix path (statvfs errors early on
-    // a non-existent dir); we surface the same semantics here.
+    use std::os::windows::ffi::OsStrExt as _;
+    use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
+    use windows::core::PCWSTR;
+
     let _ = fs::metadata(dir)?;
-    // Placeholder until `windows::Win32::Storage::FileSystem::
-    // GetDiskFreeSpaceExW` is wired in. We return Unsupported so
-    // `disk_check` records a WARN — never silently claims a value.
-    Err(std::io::Error::new(
-        std::io::ErrorKind::Unsupported,
-        "GetDiskFreeSpaceExW integration pending (bd-xplat-windows)",
-    ))
+    let wide: Vec<u16> = dir
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut available = 0u64;
+    // SAFETY: `wide` is NUL-terminated and live for the call; `available`
+    // is a valid writable out-parameter. The unused totals are null.
+    unsafe { GetDiskFreeSpaceExW(PCWSTR(wide.as_ptr()), Some(&mut available), None, None) }
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
+    Ok(available)
 }
 
 fn check_journal(journal_dir: &Path) -> DoctorCheck {
@@ -1020,10 +1317,8 @@ mod tests {
         assert!(c.message.contains("0700"));
     }
 
-    /// Windows-only compile-time harness: asserts that the Windows arm
-    /// of [`check_vault_perms`] is reachable with the documented
-    /// signature. The real ACL audit cannot be executed on Linux, so
-    /// this test only verifies shape when targeting Windows.
+    /// Windows-only native harness: a freshly created user-owned vault must
+    /// satisfy the owner/full-control/no-broad-grant ACL audit.
     #[test]
     #[cfg(windows)]
     fn vault_perms_check_inspects_acl_on_windows() {
@@ -1035,9 +1330,7 @@ mod tests {
         fs::write(&vault, b"").unwrap();
         let c: DoctorCheck = check_vault_perms(&vault);
         assert_eq!(c.name, "vault_perms");
-        // Until the full `windows::Win32::Security` probe lands the
-        // check is documented to report WARN — never silently OK.
-        assert_eq!(c.status, DoctorStatus::Warn);
+        assert_eq!(c.status, DoctorStatus::Ok, "got: {}", c.message);
     }
 
     /// The `clock_drift` check must warn when the observed

@@ -12,15 +12,9 @@
 #   sign-macos.sh ./build/pcloud-rs.app \
 #     "Developer ID Application: Acme Corp (ABCDE12345)"
 #
-# NOTE on --deep:
-#   --deep recursively signs every nested bundle/executable. It is convenient
-#   but dangerous because it will re-sign third-party frameworks that were
-#   already signed correctly, potentially breaking their notarisation chain
-#   or overwriting a more-restrictive embedded entitlement set.
-#   Apple's official guidance (TN3161) says: sign nested code explicitly
-#   from the inside out, NOT with --deep, for shipping builds. We use --deep
-#   here for simplicity because the current artifact has no embedded
-#   third-party frameworks; revisit before adding any.
+# Sign nested code explicitly from the inside out before invoking this helper
+# on a bundle.  Deliberately avoid codesign's recursive mode: it can overwrite
+# third-party signatures or their more-restrictive entitlements.
 
 set -euo pipefail
 
@@ -53,13 +47,13 @@ fi
 
 echo "[sign-macos] signing $TARGET with identity: $IDENTITY"
 
-codesign --force --deep --options runtime --timestamp \
+codesign --force --options runtime --timestamp \
   --entitlements "$ENTITLEMENTS" \
   --sign "$IDENTITY" \
   "$TARGET"
 
 echo "[sign-macos] verifying signature"
-codesign --verify --deep --strict --verbose=2 "$TARGET"
+codesign --verify --strict --verbose=2 "$TARGET"
 
 echo "[sign-macos] gatekeeper assessment"
 if ! spctl --assess --type execute --verbose=4 "$TARGET" 2>&1; then

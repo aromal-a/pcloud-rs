@@ -66,32 +66,38 @@ Mitigations:
 
 ## Trust Boundaries
 
-The daemon is the **only** component that holds live secrets. Clients (CLI, SDK consumers, FUSE host) talk to the daemon over local IPC and receive capability handles, not raw tokens.
+The daemon runtime is the **only** component that holds live secrets. Stable
+clients (CLI, public SDK consumers, FUSE host) talk to the long-running daemon
+over local IPC and receive results, not raw tokens. The unpublished
+`pcloud-embedded-sdk` hosts that same daemon runtime in the caller's process
+and therefore expands that process's trust boundary.
 
 ```
-+-----------------+      local IPC (0600 + SO_PEERCRED / SID-DACL)
-|  pcloudc CLI    | <--------------------------------+
-+-----------------+                                   |
-                                                      v
-+-----------------+                         +-------------------+
-|  pcloud-sdk     | <---- in-process ---->  |  pcloud-daemon    |
-+-----------------+                         |   - auth vault    |
-                                            |   - crypto keys   |
-+-----------------+                         |   - sync engine   |
-|  FUSE host      | <------ IPC ---------->  |   - transfer mgr  |
-+-----------------+                         +-------------------+
-                                                      |
-                                                      v TLS only (Production)
-                                            +-------------------+
-                                            |  pCloud API       |
-                                            +-------------------+
++--------------------------------+  owner-authenticated local IPC
+| pcloudc | pcloud-sdk | mounts  | ------------------------------+
++--------------------------------+                               |
+                                                                 v
+                                                     +-------------------+
+                                                     |  pcloud-daemon    |
+                                                     |  auth / crypto    |
+                                                     |  sync / transfer  |
+                                                     +---------+---------+
+                                                               |
+                                                               v TLS only
+                                                     +-------------------+
+                                                     |  pCloud API       |
+                                                     +-------------------+
 ```
 
 Key properties of the boundary:
 
 - the vault is owned by the daemon process UID and is never exposed over IPC as raw bytes;
 - the CLI cannot request "give me the password"; it can only request actions the daemon will perform on its behalf;
-- the SDK in-process path still flows through the same capability API — there is no "backdoor" accessor that unwraps `SecretString` outside the daemon module;
+- the public `pcloud-sdk` has no in-process path and exposes no raw IPC or
+  backend types;
+- the internal `pcloud-embedded-sdk` still flows through the daemon capability
+  API — there is no accessor that unwraps `SecretString` outside the daemon
+  module;
 - audit and persistence failures on security-sensitive paths are **surfaced**, not swallowed. A failure to append to the hash-chained audit log is an error, not a warning.
 
 ## Production Transport Policy

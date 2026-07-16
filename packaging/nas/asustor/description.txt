@@ -1,0 +1,4 @@
+pcloud-rs provides the pcloudc command-line client and the pcloudd durable
+background daemon for accessing, copying, sharing, and synchronizing pCloud
+storage. Mounted-drive support additionally requires a working FUSE device on
+the NAS and is not enabled automatically by this package.

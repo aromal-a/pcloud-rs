@@ -1,16 +1,20 @@
 # **PLATFORM MATRIX:**
-# - Linux: full support (tier 1)
-# - FreeBSD: tier 2 (most deps work)
-# - macOS: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.4
-# - Windows: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.5
+# - Tier-1 runtime and mount targets: Linux, macOS, Windows, FreeBSD,
+#   NetBSD, OpenBSD, and DragonFly BSD.
+# - Tier-1 portable runtime targets with mount explicitly unsupported:
+#   illumos/OmniOS and Oracle Solaris.
+# - Tier-2 appliance candidates: Synology, QNAP, and ASUSTOR.
+# See docs/book/src/architecture/platform-support.md for the qualification
+# evidence required before any release is advertised as supported.
 #
 # Cross-platform dependency discipline:
-# - Linux-only crates (e.g. `fuser`) live under
-#   `[target.'cfg(target_os = "linux")'.dependencies]` in the consuming crate.
+# - OS-specific crates and native symbols live under the narrowest target cfg
+#   that actually provides the corresponding ABI. `fuser` is used on Linux
+#   and the supported BSD family; macOS and Windows use direct native FFI.
 # - `libc` is cross-platform as a crate; Linux-only *symbols*
 #   (SO_PEERCRED, SIGRTMIN, SysV shm, etc.) must be gated at the source level
 #   with `#[cfg(target_os = "linux")]`, not by gating the dependency itself.
-# - macOS/Windows-specific deps will be added under
+# - macOS/Windows-specific deps live under
 #   `[target.'cfg(target_os = "macos")'.dependencies]` and
 #   `[target.'cfg(windows)'.dependencies]` in the relevant crates.
 
@@ -40,6 +44,7 @@ members = [
   "crates/pcloud-cli",
   "crates/pcloud-p2p",
   "crates/pcloud-sdk",
+  "crates/pcloud-sdk-public",
   "crates/pcloud-live-e2e",
   "crates/pcloud-resilience",
   "crates/pcloud-compat",
@@ -49,8 +54,14 @@ members = [
   "crates/pcloud-daemon-win",
   "crates/pcloud-idp",
   "crates/pcloud-fleet",
+  "crates/pcloud-plugin-host",
+  "crates/pcloud-plugin-wasmtime",
   "crates/pcloud-plugin-publink-expiry",
   "crates/pcloud-plugin-backup-schedule",
+  "crates/pcloud-rsync",
+  "crates/pcloud-supervisor",
+  "crates/pcloud-webdav",
+  "xtask",
 ]
 exclude = [
   "vendor/if-addrs-dfly-fix",
@@ -65,7 +76,7 @@ edition = "2024"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
 publish = false
-rust-version = "1.85"
+rust-version = "1.89"
 repository = "https://github.com/ezechiel203/pcloud-rs"
 homepage = "https://github.com/ezechiel203/pcloud-rs"
 authors = ["pcloud-rs contributors"]
@@ -110,10 +121,10 @@ opt-level = 3
 #    provided inputs are deterministic, while `--build-id=uuid` (the occasional
 #    default) is NOT.
 # 4. Scrub local absolute build paths via `--remap-path-prefix`. The remap
-#    target below matches the GitHub Actions runner layout
-#    (`/home/runner/work/<repo>/<repo>`); local developers reproducing a CI
-#    artifact must set `SOURCE_DATE_EPOCH` and either build inside the same
-#    path or pass an equivalent `RUSTFLAGS` override. This is documented in
+#    target below is the canonical release-build path retained for artifact
+#    compatibility. Local release operators must set `SOURCE_DATE_EPOCH` and
+#    either build inside the same path or pass an equivalent `RUSTFLAGS`
+#    override. This is documented in
 #    `docs/book/src/development/reproducible-builds.md`.
 #
 # NOTE: `rustflags` inside `[profile.*]` is unstable on stable toolchains; the
@@ -163,22 +174,34 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 cron = "0.12"
 directories = "5"
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] }
-# fuser is Linux-only. This workspace entry is for version centralisation only.
-# The single consumer (pcloud-fs) correctly gates it under
-# [target.'cfg(target_os = "linux")'.dependencies], so it is never compiled on
-# macOS or Windows. Do NOT add it as an ungated dependency in any crate.
+# CLAUDEREV deferred-set D4 (fire 48) audit: `notify-debouncer-full` was
+# evaluated as a replacement for the hand-rolled debouncer in
+# `crates/pcloud-fs/src/fs_watcher.rs`, but its debounce semantics
+# **lack the max-age guard** that fire 20 of the original campaign
+# added to fix the iter-1 SYNC-H-04-2 continuous-churn stall. Adopting
+# `notify-debouncer-full` as-is would re-introduce that stall. The
+# workspace dep is therefore intentionally NOT added until either
+# upstream gains a max-age cap or we wrap the debouncer with our own
+# tick callback. See `CLAUDEREV/DEFERRED-PROGRESS.md` fire 48.
+# fuser is used by Linux and the supported BSD family. The single consumer
+# (pcloud-fs) enables the native libfuse ABI only for FreeBSD, NetBSD, OpenBSD,
+# and DragonFly; macOS and Windows use their direct fuse-t/WinFSP adapters.
+# Do not add it as an ungated dependency in another crate.
 fuser = "0.16"
 getrandom = "0.2"
+getrandom4 = { package = "getrandom", version = "0.4" }
 hmac = "0.12"
 indexmap = "2"
 pbkdf2 = { version = "0.12", default-features = false }
 # RSA 4096 keypair generation + RSAES-OAEP (SHA-1) wrapping for the
 # `pclsync-v2` wire-compat path. Matches mbedtls defaults used by the C client
-# (MBEDTLS_RSA_PKCS_V21 + MBEDTLS_MD_SHA1). RustCrypto `rsa` crate — pure Rust,
-# constant-time, forbids unsafe.
-rsa = "0.9"
-pkcs1 = "0.7"
-sha1 = "0.10"
+# (MBEDTLS_RSA_PKCS_V21 + MBEDTLS_MD_SHA1). RustCrypto `rsa` is pure Rust and
+# unsafe-free. The 0.10 release candidate moved private-key arithmetic to
+# `crypto-bigint`, but RustSec still conservatively applies RUSTSEC-2023-0071
+# to the crate family. Pin the exact RC and retain the time-boxed exception
+# until upstream publishes and audits the stable constant-time release.
+rsa = { version = "=0.10.0-rc.18", features = ["getrandom", "sha1"] }
+sha1 = "0.11"
 static_assertions = "1.1"
 libc = "0.2"
 log = "0.4"
@@ -192,6 +215,7 @@ rpassword = "7.3"
 thiserror = "2.0"
 zeroize = { version = "1.8", features = ["zeroize_derive"] }
 zstd = { version = "0.13", default-features = false }
+
 
 [workspace.lints.clippy]
 # ── pedantic allows ──────────────────────────────────────────────────
@@ -228,14 +252,12 @@ single_match_else = "allow"
 wildcard_imports = "allow"
 # `manual_string_new`: `String::new()` vs `"".to_owned()` is style.
 manual_string_new = "allow"
-# `collapsible_if` / `collapsible_match`: workspace MSRV is 1.85, which
-# does not have stable `let_chains`. The project explicitly committed
-# to nested `if let` form (see commits 5b67f31 / 8e45164 / c925dae).
-# Allowing this lint workspace-wide is intentional MSRV policy.
+# `collapsible_if` / `collapsible_match`: keep control flow explicit and
+# readable across the supported platform toolchains.
 collapsible_if = "allow"
 collapsible_match = "allow"
-# `manual_is_multiple_of`: the `is_multiple_of` API is stable from 1.87+;
-# the project's 1.85 MSRV means we keep `n % BLOCK == 0` form.
+# `manual_is_multiple_of`: retain the arithmetic form consistently across
+# the workspace and vendored targets.
 manual_is_multiple_of = "allow"
 
 # ── unwrap discipline (staged rollout) ───────────────────────────────
@@ -270,6 +292,11 @@ purpose = "Security-first Rust rewrite foundation for pcloud-rs."
 # Windows promotes to Tier-1.
 [patch.crates-io]
 msvc_spectre_libs = { path = "vendor/msvc_spectre_libs_stub" }
+# `spin 0.9.8` was yanked after its repository moved, but remains pinned by
+# `flume 0.11` and the policy engine. Keep the byte-identical upstream source
+# in-tree so release resolution is reproducible and does not select a yanked
+# registry artifact. Remove this patch once both dependants accept spin 0.12.
+spin = { path = "vendor/spin-0.9.8" }
 # `if-addrs` 0.13.4 (pulled in transitively by `mdns-sd`) lacks
 # `target_os = "dragonfly"` in its cfg gates, so on DragonFly it
 # routes to the Linux netlink backend (`posix_not_apple`) and fails
@@ -286,10 +313,7 @@ if-addrs = { path = "vendor/if-addrs-dfly-fix" }
 # kqueue" / "undeclared crate mio". Vendored copy fixes the typo;
 # every other platform compiles byte-identically.
 notify = { path = "vendor/notify-dfly-fix" }
-# `regorus 0.9.1` declares 9 small accessors as `pub const fn` and
-# inside them calls `Vec::{len,is_empty}`, which only became `const`
-# in Rust 1.87. On rust 1.85 (DragonFly's dports `Avalon` LATEST)
-# this trips E0658 "is not yet stable as a const fn". Vendored copy
-# drops the `const` keyword from those 9 functions; behaviour is
-# unchanged at runtime and on every other platform.
+# `regorus 0.9.1` is retained as a reviewed source snapshot for DragonFly
+# and other BSD builds. The local copy removes const-only annotations from
+# accessors without changing runtime behavior.
 regorus = { path = "vendor/regorus-dfly-fix" }

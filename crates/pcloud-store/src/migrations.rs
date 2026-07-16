@@ -7,9 +7,9 @@ use thiserror::Error;
 use crate::schema::{
     SCHEMA_VERSION_V1, SCHEMA_VERSION_V2, SCHEMA_VERSION_V3, SCHEMA_VERSION_V4, SCHEMA_VERSION_V5,
     SCHEMA_VERSION_V6, SCHEMA_VERSION_V7, SCHEMA_VERSION_V8, SCHEMA_VERSION_V9, SCHEMA_VERSION_V10,
-    SCHEMA_VERSION_V11, apply_schema_v1, apply_schema_v2, apply_schema_v3, apply_schema_v4,
-    apply_schema_v5, apply_schema_v6, apply_schema_v7, apply_schema_v8, apply_schema_v9,
-    apply_schema_v10, apply_schema_v11,
+    SCHEMA_VERSION_V11, SCHEMA_VERSION_V12, apply_schema_v1, apply_schema_v2, apply_schema_v3,
+    apply_schema_v4, apply_schema_v5, apply_schema_v6, apply_schema_v7, apply_schema_v8,
+    apply_schema_v9, apply_schema_v10, apply_schema_v11, apply_schema_v12,
 };
 
 /// Forward-only migration plan to bring the store up to a target schema version.
@@ -112,6 +112,9 @@ pub fn apply_plan(conn: &Connection, plan: &MigrationPlan) -> Result<(), rusqlit
     }
     if current < SCHEMA_VERSION_V11 && plan.target_version >= SCHEMA_VERSION_V11 {
         apply_schema_v11(conn)?;
+    }
+    if current < SCHEMA_VERSION_V12 && plan.target_version >= SCHEMA_VERSION_V12 {
+        apply_schema_v12(conn)?;
     }
 
     Ok(())

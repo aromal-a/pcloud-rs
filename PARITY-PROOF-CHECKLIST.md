@@ -10,7 +10,7 @@ narrative is in [`C_FEATURE_PARITY_REVIEW.md`](./C_FEATURE_PARITY_REVIEW.md).
 
 - [ ] All retained matrix rows are `Implemented` with tested, reachable code
 - [x] All `Rejected` rows have rationale in `REJECTED-RATIONALES-14042026.md`
-      (28 rows / 28 rationales, 1:1, verified 2026-04-18)
+      (30 rows / 30 rationales, 1:1, verified 2026-04-30)
 - [x] No false "production ready" claims in docs
       (honesty constraint in `CLAUDE.md` preserved; no "production ready"
       / "full parity" / "drop-in replacement" claims found in
@@ -28,22 +28,21 @@ narrative is in [`C_FEATURE_PARITY_REVIEW.md`](./C_FEATURE_PARITY_REVIEW.md).
 - [ ] FUSE: macOS fuse-t verified (hardware — out of AI scope)
 - [ ] FUSE: Windows WinFSP verified (hardware — out of AI scope)
 - [x] STATUS.md counts match matrix
-      (aligned to 156 / 2 / 0 / 28, 186 rows on 2026-04-18)
+      (aligned to 149 / 7 / 0 / 30, 186 rows on 2026-04-30)
 - [ ] Human reviewer sign-off
 
 ## Remaining Partial Rows (must be Implemented or explicitly Rejected before close)
 
-- [ ] **Row 93** — `transfers,upload wire methods`. Land
-      `Request::UploadWriteFromFile` IPC variant, `TransferRuntime`
-      method, daemon dispatcher arm, and CLI caller for the
-      `upload_writefromfile` server-side-copy operation. Proto encoder
-      already exists at `pcloud_proto::methods::upload::UploadWriteFromFileRequest`;
-      TODO marker at `crates/pcloud-backends/src/transfer_backend.rs:445`.
-- [ ] **Row 149** — `links,ptree_public_link`. Land
-      `Request::CreateTreePublicLinkFromPaths` IPC variant so the
-      daemon resolves paths under its own auth context, and route
-      `Command::CreateTreeLinkFromPaths` through it instead of the
-      client-side resolver + id-based IPC shim.
+- [ ] **Row 94** — `transfers,SDK UploadSession`. Wire public
+      `EmbeddedDaemon::start_upload` to a production daemon-backed chunked
+      driver, thread `ConflictMode` into upload-save/ifhash semantics, and add
+      live pCloud E2E proof.
+- [ ] **Rows 124, 138, 142** — crypto-share/team-share. Add IPC/daemon/CLI/SDK
+      reachability for crypto share/team-share and complete live two-account
+      RSA proof.
+- [ ] **Rows 147, 148, 168** — public-link specialty helpers. Add
+      IPC/daemon/CLI/SDK reachability for folder link with options, folder
+      up/down-link send, and screenshot public links.
 
 ## Hardware-Verification Items (out of AI scope)
 
@@ -64,6 +63,10 @@ narrative is in [`C_FEATURE_PARITY_REVIEW.md`](./C_FEATURE_PARITY_REVIEW.md).
 
 ## Audit History
 
+- **GPTREV Worker 4 — 2026-04-30.** API/CLI/SDK parity reconciliation.
+  Row 93 closed with full upload/source offset reachability; row 94
+  downgraded to Partial. Current tally: 149 Implemented / 7 Partial /
+  0 Missing / 30 Rejected (186 rows).
 - **Audit 03 — 2026-04-18.** Line-level matrix reconciliation under
   `bd-1du.10`. Findings: 156 Implemented / 2 Partial / 0 Missing / 28
   Rejected (186 rows). STATUS.md headline corrected from 158 / 0 / 0 /
@@ -85,8 +88,8 @@ narrative is in [`C_FEATURE_PARITY_REVIEW.md`](./C_FEATURE_PARITY_REVIEW.md).
 | Dimension | Value |
 |---|---|
 | Release posture | **Pre-alpha** — gate `bd-1du.10` is open |
-| Matrix counts | **156 Implemented / 2 Partial / 0 Missing / 28 Rejected** across 186 rows |
-| Rejected rationales | 28 / 28 present (1:1 verified) |
+| Matrix counts | **149 Implemented / 7 Partial / 0 Missing / 30 Rejected** across 186 rows |
+| Rejected rationales | 30 / 30 present (1:1 verified) |
 | Linux FUSE live proof | **Landed** (write-unmount-remount-readback byte-identical) |
 | macOS / Windows FUSE live proof | **Not yet** (hardware — out of AI scope) |
 | Nine-gate CI | **All green** on last run (see `STATUS.md`) |

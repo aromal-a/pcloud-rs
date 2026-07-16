@@ -1,10 +1,10 @@
 //! **PLATFORM: all** (Linux | FreeBSD | macOS | Windows) at the type
-//! level; **Linux-live** at the implementation level.
-//! **GATING: `#[cfg(target_os = "linux")]`** on the Linux back-end
+//! level; live on Linux, FreeBSD, macOS, and Windows.
+//! **GATING:** per-platform native back ends
 //! delegations in this file; other platforms return
 //! [`MountError::UnsupportedPlatform`].
 //!
-//! Mount lifecycle scaffold for bd-1du.4.a.
+//! Cross-platform mount lifecycle and validation.
 //!
 //! Provides [`MountService`], the public entry point for mounting a
 //! `FuseAdapter` at a filesystem path, and [`MountHandle`], an RAII guard
@@ -12,9 +12,8 @@
 //! registered on first mount so that the kernel mount is cleaned up even
 //! on abrupt shutdown.
 //!
-//! The concrete OS implementation of "open a FUSE session and hand back a
-//! RAII handle" lives in [`crate::platform::linux`]. This module is a
-//! thin cross-platform shim that validates the mountpoint and delegates.
+//! Concrete OS implementations open the native session and return a common
+//! RAII handle. This module validates policy and delegates.
 
 use std::path::{Path, PathBuf};
 
@@ -25,9 +24,11 @@ use crate::fuse_adapter::FuseAdapter;
 /// Options accepted by [`MountService::mount`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct MountOptions {
-    /// Mount read-only. Defaults to `true` for the 4.a scaffold.
+    /// Mount read-only. Defaults to `true`; the authenticated daemon mount
+    /// explicitly opts into write mode after attaching its durable writer.
     pub read_only: bool,
-    /// Optional filesystem name shown in `/proc/mounts`. Defaults to `pcloud`.
+    /// Optional display/source name shown in the native mount table. The
+    /// filesystem subtype remains the private `pcloud-rs` ownership marker.
     pub fs_name: Option<String>,
     /// When `true`, the mount would allow other users on the host to access
     /// it. This crate always rejects that configuration.
@@ -130,7 +131,7 @@ pub enum MountError {
         value: f64,
     },
     /// The current platform has no FUSE implementation linked in.
-    #[error("mount is only supported on Linux")]
+    #[error("mount is unsupported on this platform")]
     UnsupportedPlatform,
     /// Platform is theoretically supported (e.g. macOS via fuse-t) but a
     /// required runtime component is missing or the scaffolding has not
@@ -143,7 +144,13 @@ pub enum MountError {
     Io(#[from] std::io::Error),
     /// The Linux `fuser` crate reported an error while setting up the
     /// session.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
     #[error("fuser session error: {0}")]
     Fuser(String),
 }
@@ -208,7 +215,13 @@ impl MountService {
             return Err(MountError::MountpointNotEmpty(mountpoint.to_path_buf()));
         }
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ))]
         {
             use std::os::unix::fs::MetadataExt;
             // SAFETY: geteuid is always safe.
@@ -267,6 +280,7 @@ impl MountService {
         }
         Self::validate_options(&mut options)?;
 
+        #[cfg(not(target_os = "windows"))]
         Self::validate_mountpoint(mountpoint)?;
 
         #[cfg(target_os = "linux")]
@@ -281,7 +295,34 @@ impl MountService {
             backend.mount_adapter(Box::new(adapter), mountpoint, options)
         }
 
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(target_os = "windows")]
+        {
+            use crate::platform::PlatformMount;
+            let backend = crate::platform::windows::WindowsPlatformMount;
+            backend.mount_adapter(Box::new(adapter), mountpoint, options)
+        }
+
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ))]
+        {
+            use crate::platform::PlatformMount;
+            let backend = crate::platform::bsd::BsdPlatformMount;
+            backend.mount_adapter(Box::new(adapter), mountpoint, options)
+        }
+
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+            target_os = "macos",
+            target_os = "windows"
+        )))]
         {
             let _ = adapter;
             let _ = options;
@@ -297,7 +338,13 @@ impl MountService {
     ///
     /// Mountpoint validation, `allow_other` rejection, and the NoDev/NoSuid/
     /// DefaultPermissions hardening are identical to [`Self::mount`].
-    #[cfg(target_os = "linux")]
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
     pub fn mount_fuser<F>(
         &self,
         mountpoint: &Path,
@@ -312,7 +359,19 @@ impl MountService {
         }
         Self::validate_options(&mut options)?;
         Self::validate_mountpoint(mountpoint)?;
-        crate::platform::linux::mount_fuser_filesystem(mountpoint, filesystem, options)
+        #[cfg(target_os = "linux")]
+        {
+            crate::platform::linux::mount_fuser_filesystem(mountpoint, filesystem, options)
+        }
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ))]
+        {
+            crate::platform::bsd::mount_fuser_filesystem(mountpoint, filesystem, options)
+        }
     }
 }
 
@@ -364,11 +423,26 @@ impl MountService {
 pub struct MountHandle {
     #[cfg(target_os = "linux")]
     inner: Option<crate::platform::linux::LinuxMountHandle>,
+    #[cfg(any(
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
+    bsd_inner: Option<crate::platform::bsd::BsdMountHandle>,
     #[cfg(target_os = "windows")]
     windows_inner: Option<WindowsInner>,
     #[cfg(target_os = "macos")]
     macos_inner: Option<MacosMountInner>,
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    #[cfg(not(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+        target_os = "windows",
+        target_os = "macos"
+    )))]
     _phantom: std::marker::PhantomData<()>,
 }
 
@@ -398,8 +472,10 @@ pub(crate) struct MacosMountInner {
 // invokes `fuse_session_loop`; `fuse_session_exit` is documented safe
 // to call from a different thread than the loop.
 #[cfg(target_os = "macos")]
+// SAFETY: see block above.
 unsafe impl Send for MacosMountInner {}
 #[cfg(target_os = "macos")]
+// SAFETY: see block above.
 unsafe impl Sync for MacosMountInner {}
 
 /// Windows-gated inner state for a live WinFSP mount.
@@ -423,13 +499,28 @@ pub(crate) struct WindowsInner {
     pub mount_point: Vec<u16>,
     pub adapter: *mut std::ffi::c_void,
     pub lib: std::sync::Arc<crate::platform::windows::winfsp_ffi::WinFspLibrary>,
+    /// Registration id returned by
+    /// `crate::platform::windows::reaper::register_mount`. Drop calls
+    /// `unregister_mount(reaper_id)` so the registry does not retain the
+    /// stop-dispatcher closure past this mount's lifetime. CLAUDEREV
+    /// FUSE-C-1 fix.
+    pub reaper_id: u64,
+    /// Shared `done` flag. The reaper closure and `teardown_windows`
+    /// race for the swap-from-false; whichever path wins performs the
+    /// unsafe `FspFileSystemStopDispatcher` + `FspFileSystemDelete`
+    /// sequence, the other becomes a no-op. Prevents double-free on
+    /// the `fs` handle if both signal-driven shutdown and program-
+    /// level RAII teardown fire for the same mount.
+    pub done: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 // SAFETY: the raw pointers are owned exclusively by `MountHandle`; ownership
 // is transferred on Drop / unmount. `WinFspLibrary` is Send+Sync.
 #[cfg(target_os = "windows")]
+// SAFETY: see block above.
 unsafe impl Send for WindowsInner {}
 #[cfg(target_os = "windows")]
+// SAFETY: see block above.
 unsafe impl Sync for WindowsInner {}
 
 impl MountHandle {
@@ -438,6 +529,19 @@ impl MountHandle {
     #[cfg(target_os = "linux")]
     pub(crate) fn from_linux(inner: crate::platform::linux::LinuxMountHandle) -> Self {
         Self { inner: Some(inner) }
+    }
+
+    /// Construct a `MountHandle` from a BSD `fuser` session.
+    #[cfg(any(
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
+    pub(crate) fn from_bsd(inner: crate::platform::bsd::BsdMountHandle) -> Self {
+        Self {
+            bsd_inner: Some(inner),
+        }
     }
 
     /// Construct a `MountHandle` from a live WinFSP file-system handle.
@@ -453,6 +557,8 @@ impl MountHandle {
         mount_point: Vec<u16>,
         adapter: *mut std::ffi::c_void,
         lib: std::sync::Arc<crate::platform::windows::winfsp_ffi::WinFspLibrary>,
+        reaper_id: u64,
+        done: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         Self {
             windows_inner: Some(WindowsInner {
@@ -460,6 +566,8 @@ impl MountHandle {
                 mount_point,
                 adapter,
                 lib,
+                reaper_id,
+                done,
             }),
         }
     }
@@ -496,6 +604,18 @@ impl MountHandle {
             }
             Ok(())
         }
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ))]
+        {
+            if let Some(inner) = self.bsd_inner.take() {
+                return inner.unmount();
+            }
+            Ok(())
+        }
         #[cfg(target_os = "windows")]
         {
             if let Some(inner) = self.windows_inner.take() {
@@ -510,7 +630,15 @@ impl MountHandle {
             }
             Ok(())
         }
-        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+            target_os = "windows",
+            target_os = "macos"
+        )))]
         {
             Ok(())
         }
@@ -618,17 +746,42 @@ impl MountHandle {
         if inner.fs.is_null() {
             return;
         }
+        // First, remove the closure from the reaper registry so a
+        // signal-driven drain past this point cannot fire it for our
+        // already-torn-down `fs`. `unregister_mount` is idempotent on
+        // a missing id (the reaper may have already drained); we ignore
+        // its boolean return — the `done` flag below is the authoritative
+        // arbiter, not the registry membership. CLAUDEREV FUSE-C-1 fix.
+        let _ = crate::platform::windows::reaper::unregister_mount(inner.reaper_id);
+
+        // Race-tight stop+delete. `done.swap(true, AcqRel)` returns the
+        // PRIOR value: if it was already `true`, the reaper closure
+        // already ran (or is racing to completion under a separate signal
+        // thread that won the swap); we must skip stop+delete to avoid
+        // double-free. If it was `false`, we just won the race and own
+        // the unsafe teardown.
+        let already_done = inner.done.swap(true, std::sync::atomic::Ordering::AcqRel);
+
         // SAFETY: `fs` is a valid WinFSP handle we own. Stop must precede
         // Delete; after Delete the user-context pointer is no longer
         // referenced by WinFSP so we can reclaim the boxed adapter.
+        // The `done` swap above guarantees exclusive ownership of `fs`
+        // for this teardown path.
+        // SAFETY: see paragraph above (and the FUSE-C-1 race-tightness
+        // contract documented just before this `let already_done` swap).
         unsafe {
-            (inner.lib.fsp_stop_dispatcher)(inner.fs);
-            (inner.lib.fsp_delete)(inner.fs);
+            if !already_done {
+                (inner.lib.fsp_stop_dispatcher)(inner.fs);
+                (inner.lib.fsp_delete)(inner.fs);
+            }
             if !inner.adapter.is_null() {
                 // SAFETY: the adapter pointer was produced via
                 // `Box::into_raw(Box::new(Box::<dyn FuseAdapter>::...))`
                 // in `mount_with_winfsp`; dropping the reconstructed Box
-                // releases the trait object.
+                // releases the trait object. Adapter ownership belongs
+                // exclusively to the RAII path (the reaper closure
+                // intentionally leaks it on signal-driven shutdown
+                // because the OS reaps the process).
                 let _ =
                     Box::from_raw(inner.adapter as *mut Box<dyn crate::fuse_adapter::FuseAdapter>);
             }
@@ -652,6 +805,20 @@ impl Drop for MountHandle {
                     // `last_drop_error()` slot so monitoring can pick
                     // it up.
                     log::error!("MountHandle::drop: unmount failed: {err}");
+                    set_last_drop_error(err.to_string());
+                }
+            }
+        }
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ))]
+        {
+            if let Some(inner) = self.bsd_inner.take() {
+                if let Err(err) = inner.unmount() {
+                    log::error!("MountHandle::drop: BSD unmount failed: {err}");
                     set_last_drop_error(err.to_string());
                 }
             }
@@ -686,6 +853,7 @@ impl Drop for MountHandle {
 /// endpoint to drain and inspect it.
 static LAST_DROP_ERROR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+#[cfg(not(target_os = "windows"))]
 fn set_last_drop_error(msg: String) {
     if let Ok(mut slot) = LAST_DROP_ERROR.lock() {
         *slot = Some(msg);

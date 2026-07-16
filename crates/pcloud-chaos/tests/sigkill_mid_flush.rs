@@ -22,8 +22,10 @@
 // **PLATFORM:** Unix (Linux, BSD, macOS)
 // **GATING:** #[cfg(unix)].
 
+#[cfg(unix)]
 use std::time::Duration;
 
+#[cfg(unix)]
 use tempfile::tempdir;
 
 #[test]
@@ -39,7 +41,6 @@ fn chaos_sigkill_mid_flush() {
     #[cfg(not(unix))]
     {
         let _ = pcloud_chaos::skip("chaos_sigkill_mid_flush", "SIGKILL requires unix");
-        return;
     }
     #[cfg(unix)]
     unix_impl::run();

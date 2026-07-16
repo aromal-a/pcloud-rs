@@ -11,7 +11,7 @@ use pcloud_model::{
     sync::{ChangeKind, ChangeSource, EntryKind, SyncCandidate},
 };
 
-use crate::fs_events::FsEvent;
+use crate::fs_events::{FsEvent, FsEventKind};
 use crate::selective::SelectivePolicy;
 
 /// Local filesystem scanner state. Tracks how frequently a full
@@ -185,6 +185,9 @@ pub struct IncrementalScanTracker {
     last_full_scan: HashMap<SyncId, Instant>,
     /// Per-root queued watcher events, drained on each `decide` call.
     pending_events: HashMap<SyncId, Vec<FsEvent>>,
+    /// Roots whose watcher reported event loss/backpressure and must
+    /// be reconciled by a full scan on the next decision.
+    full_rescan_required: HashSet<SyncId>,
 }
 
 impl IncrementalScanTracker {
@@ -195,6 +198,7 @@ impl IncrementalScanTracker {
             full_scan_interval,
             last_full_scan: HashMap::new(),
             pending_events: HashMap::new(),
+            full_rescan_required: HashSet::new(),
         }
     }
 
@@ -203,6 +207,11 @@ impl IncrementalScanTracker {
     /// that root (unless a full scan fires, in which case the events
     /// are discarded because the full scan covers them).
     pub fn push_event(&mut self, event: FsEvent) {
+        if event.kind == FsEventKind::Overflow {
+            self.full_rescan_required.insert(event.sync_id);
+            self.pending_events.remove(&event.sync_id);
+            return;
+        }
         self.pending_events
             .entry(event.sync_id)
             .or_default()
@@ -218,10 +227,12 @@ impl IncrementalScanTracker {
     /// with the drained watcher events.
     pub fn decide(&mut self, sync_id: SyncId) -> ScanDecision {
         let now = Instant::now();
-        let needs_full = match self.last_full_scan.get(&sync_id) {
-            None => true,
-            Some(last) => now.duration_since(*last) >= self.full_scan_interval,
-        };
+        let forced_full = self.full_rescan_required.remove(&sync_id);
+        let needs_full = forced_full
+            || match self.last_full_scan.get(&sync_id) {
+                None => true,
+                Some(last) => now.duration_since(*last) >= self.full_scan_interval,
+            };
 
         if needs_full {
             // Discard pending events — the full scan covers everything.
@@ -252,12 +263,20 @@ impl IncrementalScanTracker {
     pub fn untrack(&mut self, sync_id: SyncId) {
         self.last_full_scan.remove(&sync_id);
         self.pending_events.remove(&sync_id);
+        self.full_rescan_required.remove(&sync_id);
     }
 
     /// Number of pending watcher events for a sync root.
     #[must_use]
     pub fn pending_count(&self, sync_id: SyncId) -> usize {
         self.pending_events.get(&sync_id).map_or(0, |v| v.len())
+    }
+
+    /// Whether watcher backpressure/error handling has forced a full
+    /// rescan for `sync_id`.
+    #[must_use]
+    pub fn full_rescan_required(&self, sync_id: SyncId) -> bool {
+        self.full_rescan_required.contains(&sync_id)
     }
 
     /// Whether a full scan has ever been recorded for `sync_id`.
@@ -372,6 +391,9 @@ where
     #[cfg(not(unix))]
     {
         // Windows: no inode API; fall back to depth-limiting only.
+        // Keep the shared recursion signature portable; cycle identity is
+        // unavailable here, but the set remains owned by the root walk.
+        let _ = &seen;
         let meta = match std::fs::metadata(path) {
             Ok(m) => m,
             Err(e) => {
@@ -538,6 +560,59 @@ mod tests {
         assert_eq!(candidates[1].change_kind, ChangeKind::Delete);
     }
 
+    /// T1.1.c.3: a `SelectivePolicy` built from a sync root's
+    /// configured `exclude_globs` (via `from_exclude_patterns`) filters
+    /// the planner candidate stream end-to-end through the same
+    /// `normalize_entries_filtered` API the daemon now calls.
+    #[test]
+    fn config_driven_exclude_globs_filter_local_scan() {
+        use crate::selective::SelectivePolicy;
+        let scanner = LocalScanner::default();
+        // Mimics what the daemon's `run_local_scan` builds from
+        // `SyncRootRecord.exclude_globs`.
+        let policy =
+            SelectivePolicy::from_exclude_patterns(&["*.tmp".to_owned(), "build/**".to_owned()])
+                .expect("parses");
+        let candidates = scanner
+            .normalize_entries_filtered(
+                &[
+                    LocalScanEntry {
+                        sync_id: SyncId::new(7),
+                        path: "src/main.rs".to_owned(),
+                        entry_kind: EntryKind::File,
+                        deleted: false,
+                        remote_parent_folder_id: None,
+                    },
+                    LocalScanEntry {
+                        sync_id: SyncId::new(7),
+                        path: "scratch/notes.tmp".to_owned(),
+                        entry_kind: EntryKind::File,
+                        deleted: false,
+                        remote_parent_folder_id: None,
+                    },
+                    LocalScanEntry {
+                        sync_id: SyncId::new(7),
+                        path: "build/release/x".to_owned(),
+                        entry_kind: EntryKind::File,
+                        deleted: false,
+                        remote_parent_folder_id: None,
+                    },
+                    LocalScanEntry {
+                        sync_id: SyncId::new(7),
+                        path: "Cargo.toml".to_owned(),
+                        entry_kind: EntryKind::File,
+                        deleted: false,
+                        remote_parent_folder_id: None,
+                    },
+                ],
+                &policy,
+            )
+            .expect("filtered normalize");
+        let paths: Vec<&str> = candidates.iter().map(|c| c.path.as_str()).collect();
+        // *.tmp and build/** filtered out; non-matching entries kept.
+        assert_eq!(paths, vec!["src/main.rs", "Cargo.toml"]);
+    }
+
     #[test]
     fn rejects_invalid_local_scan_paths() {
         let scanner = LocalScanner::default();
@@ -627,6 +702,33 @@ mod tests {
         // Events should be discarded.
         assert_eq!(tracker.decide(SyncId::new(1)), ScanDecision::FullScan);
         assert_eq!(tracker.pending_count(SyncId::new(1)), 0);
+    }
+
+    #[test]
+    fn tracker_overflow_event_forces_full_scan() {
+        let mut tracker = IncrementalScanTracker::new(std::time::Duration::from_secs(300));
+        tracker.record_full_scan(SyncId::new(1));
+        tracker.push_event(FsEvent {
+            sync_id: SyncId::new(1),
+            path: "docs/new.txt".to_owned(),
+            entry_kind: EntryKind::File,
+            kind: FsEventKind::Create,
+        });
+        tracker.push_event(FsEvent {
+            sync_id: SyncId::new(1),
+            path: ".".to_owned(),
+            entry_kind: EntryKind::Folder,
+            kind: FsEventKind::Overflow,
+        });
+
+        assert!(tracker.full_rescan_required(SyncId::new(1)));
+        assert_eq!(
+            tracker.pending_count(SyncId::new(1)),
+            0,
+            "overflow full-scan marker subsumes stale point events"
+        );
+        assert_eq!(tracker.decide(SyncId::new(1)), ScanDecision::FullScan);
+        assert!(!tracker.full_rescan_required(SyncId::new(1)));
     }
 
     #[test]

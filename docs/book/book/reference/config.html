@@ -1,0 +1,852 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Configuration - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/reference/config.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="configuration-reference"><a class="header" href="#configuration-reference">Configuration Reference</a></h1>
+<blockquote>
+<p>Authoritative source: <code>crates/pcloud-config/src/**/*.rs</code>. This page is
+regenerated from the Rust types — anything it says about a key, default,
+type, or validation rule must match the code. If the two drift, the code
+wins and this page is wrong; open an issue.</p>
+</blockquote>
+<h2 id="who-this-page-is-for"><a class="header" href="#who-this-page-is-for">Who this page is for</a></h2>
+<ul>
+<li><strong>Beginner operators</strong>: start with <a href="#file-format">File format</a>,
+<a href="#location--discovery">Location &amp; discovery</a>, and
+<a href="#environment-overrides">Environment overrides</a>. Every other section is
+reference-grade: skim headings, read examples, skip the rest.</li>
+<li><strong>Experienced operators / SREs</strong>: focus on
+<a href="#precedence-how-a-key-resolves">Precedence</a>,
+<a href="#validation--refusal-rules">Validation &amp; refusal rules</a>, and the
+per-section <em>Tuning</em> boxes.</li>
+<li><strong>FAANG-grade readers (security / platform)</strong>: read
+<a href="#on-disk-envelope--migrations">On-disk envelope &amp; migrations</a>,
+<a href="#schema-validator">Schema validator</a>, and the <strong>Security</strong> bullet on
+every key. Non-enforced settings are explicitly called out.</li>
+</ul>
+<h2 id="file-format"><a class="header" href="#file-format">File format</a></h2>
+<p><strong>JSON, not TOML.</strong> Earlier revisions of this document described a
+<code>config.toml</code> layout; that was aspirational. The actual on-disk envelope
+is a JSON document with a fixed shape defined in
+<code>crates/pcloud-config/src/schema.rs</code>:</p>
+<pre><code class="language-json">{
+  "version": 2,
+  "profile": {
+    "environment": "Production",
+    "paths": { "...": "..." },
+    "api": { "...": "..." },
+    "extensions": { "...": "..." },
+    "runtime": { "...": "..." },
+    "features": { "...": "..." },
+    "limits": { "...": "..." },
+    "mount": { "...": "..." },
+    "observability": { "...": "..." },
+    "resilience": { "...": "..." },
+    "data_residency": { "...": "..." }
+  }
+}
+</code></pre>
+<p>Every object sets <code>additionalProperties: false</code>: unknown keys at any
+level fail the load with a JSON-pointer-precise error (see
+<a href="#schema-validator">Schema validator</a>).</p>
+<blockquote>
+<p><strong>No <code>[crypto]</code>, <code>[crypto.kms]</code>, or <code>[network]</code> section exists today.</strong>
+Previous drafts referenced them as future work; they are not read by
+any code path in the current workspace and are rejected by the loader
+as unknown properties. Crypto is controlled via <code>features.crypto_enabled</code>
+plus runtime unlock commands, not a static block.</p>
+</blockquote>
+<h2 id="location--discovery"><a class="header" href="#location--discovery">Location &amp; discovery</a></h2>
+<p>The loader does <strong>not</strong> implement automatic file discovery — the daemon
+and CLI take an explicit <code>--config &lt;path&gt;</code> argument, or a mandatory
+<code>PCLOUD_CONFIG=&lt;path&gt;</code> override when that environment variable is set.
+The file must be a JSON envelope, not TOML. The canonical
+candidate paths returned by
+<code>pcloud_config::loader::default_candidate_paths(home)</code> are:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Platform</th><th>Candidate paths (in order)</th></tr>
+</thead>
+<tbody>
+<tr><td>Linux / *BSD</td><td><code>$HOME/.config/pcloud/config.json</code>, then <code>$HOME/.pcloud/config.json</code></td></tr>
+<tr><td>macOS</td><td>same (XDG fallback is respected by <code>PcloudDirs::discover</code>)</td></tr>
+<tr><td>Windows</td><td><code>%APPDATA%\pcloud\pcloud-rs\config\config.json</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The managed directory layout itself is resolved by
+<code>PcloudDirs::discover()</code> in <code>crates/pcloud-config/src/paths.rs</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Platform</th><th><code>config</code></th><th><code>state</code></th><th><code>cache</code></th><th><code>runtime</code></th></tr>
+</thead>
+<tbody>
+<tr><td>Linux / *BSD</td><td><code>$XDG_CONFIG_HOME/pcloud/pcloud-rs</code></td><td><code>$XDG_DATA_HOME/pcloud/pcloud-rs</code></td><td><code>$XDG_CACHE_HOME/pcloud/pcloud-rs</code></td><td><code>$XDG_RUNTIME_DIR/pcloud/pcloud-rs</code> (falls back to <code>&lt;cache&gt;/pcloud-rs-runtime</code>)</td></tr>
+<tr><td>macOS</td><td><code>~/Library/Application Support/com.pcloud.pcloud-rs</code></td><td>same as config</td><td><code>~/Library/Caches/com.pcloud.pcloud-rs</code></td><td><code>&lt;cache&gt;/pcloud-rs-runtime</code></td></tr>
+<tr><td>Windows</td><td><code>%APPDATA%\pcloud\pcloud-rs\config</code></td><td><code>%APPDATA%\pcloud\pcloud-rs\data</code></td><td><code>%LOCALAPPDATA%\pcloud\pcloud-rs\cache</code></td><td><code>&lt;cache&gt;\pcloud-rs-runtime</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>PCLOUD_ROOT=&lt;abs-path&gt;</code> re-roots <strong>all four managed directories plus
+the plugin dir</strong> under <code>&lt;root&gt;/{config,state,runtime,cache,plugins}</code>.
+Intended for multi-instance and tests.</p>
+<p><strong>Legacy migration.</strong> <code>~/.pcloud/</code> (pre-XDG layout) is <strong>never</strong> read
+unless you set <code>PCLOUD_MIGRATE_LEGACY_PATHS=1</code> and explicitly call
+<code>PcloudDirs::migrate_from_legacy_if_needed()</code>. Migration is <em>copy, not
+move</em>, and skips destinations that already contain data.</p>
+<h2 id="validation--refusal-rules"><a class="header" href="#validation--refusal-rules">Validation &amp; refusal rules</a></h2>
+<p>The loader (<code>crates/pcloud-config/src/loader.rs</code>) enforces in this
+order:</p>
+<ol>
+<li><strong>File permission check</strong> (<code>check_permissions</code>). In <code>Production</code>,
+any file with <code>mode &amp; 0o077 != 0</code> is refused with
+<code>ConfigError::InsecureConfigPermissions</code>. In <code>Development</code> / <code>Test</code>
+the same condition produces a <code>LoadedProfile::warnings</code> entry. The
+<code>--insecure-config</code> CLI flag downgrades Production to a warning,
+intended for dev only.</li>
+<li><strong>JSON parse</strong> (<code>serde_json::from_str</code>). Malformed JSON →
+<code>ConfigError::InvalidJson</code>.</li>
+<li><strong>Version migration</strong> (<code>migrate::migrate_to_current</code>). Envelopes at
+v0 (bare profile, no envelope) and v1 (envelope without
+<code>observability</code>) are promoted in-memory; v&gt;<code>CURRENT_VERSION</code> (2) is
+refused with <code>MigrationError::TooNew</code>. Migration is <strong>forward-only
+and in-memory</strong> — the on-disk file is unchanged unless the caller
+rewrites it.</li>
+<li><strong>Schema validation</strong> (<code>schema::validate_document</code>). Hand-rolled
+draft-07 subset: <code>type</code>, <code>required</code>, <code>additionalProperties: false</code>,
+<code>enum</code>, numeric <code>minimum</code>/<code>maximum</code>, <code>properties</code>, homogeneous
+<code>items</code>. Every violation reports JSON pointer + line + column in one
+pass.</li>
+<li><strong>Typed deserialization</strong> (<code>serde_json::from_value</code> into
+<code>ConfigProfile</code>).</li>
+<li><strong>Semantic validation</strong> (<code>ConfigProfile::validate</code>):
+<ul>
+<li><code>paths</code>: all four directories must be absolute
+(<code>ConfigError::PathMustBeAbsolute</code>).</li>
+<li><code>api</code>: <code>Production</code> rejects <code>ApiMode::Plaintext</code>; non-empty host /
+server_name / non-zero port &amp; timeouts required in plaintext/TLS
+modes.</li>
+<li><code>extensions</code>: capability flags or trusted keys require
+<code>plugins_enabled=true</code>; <code>plugin_dir</code> must be absolute.</li>
+<li><code>runtime</code>: no group or other permission bits on any managed
+directory mode.</li>
+<li><code>mount</code>: <code>allow_other=true</code> with <code>owner_only_by_default=true</code> is
+rejected.</li>
+</ul>
+</li>
+</ol>
+<p>Validation aborts on the first violation. There is no partial success.</p>
+<blockquote>
+<p><strong><code>pcloudc doctor</code></strong> runs the same load path early so operators can
+surface errors without attaching to a live daemon. A file that passes
+<code>doctor</code> is guaranteed to pass <code>pcloudd start</code> (in the same
+environment).</p>
+</blockquote>
+<h2 id="precedence-how-a-key-resolves"><a class="header" href="#precedence-how-a-key-resolves">Precedence (how a key resolves)</a></h2>
+<p>From lowest to highest precedence:</p>
+<ol>
+<li><strong>Struct defaults</strong> — <code>ConfigProfile::secure_defaults(root, env)</code>
+is the in-memory baseline when no file is present.</li>
+<li><strong>On-disk envelope</strong> — <code>profile.&lt;key&gt;</code> after migration + schema
+validation + typed deserialization.</li>
+<li><strong>Targeted <code>PCLOUD_*</code> env var</strong> — applied by
+<code>env::apply_env_overrides</code> <em>after</em> deserialize, <em>before</em>
+semantic validation. See the full table in
+<a href="#environment-overrides">Environment overrides</a>.</li>
+<li><strong>Coarse <code>PCLOUD_ROOT</code></strong> — re-roots every path. Applied <em>first</em>
+inside <code>apply_env_overrides</code>, so targeted env vars below still win
+for their field.</li>
+<li><strong><code>PCLOUD_ENV</code> snap</strong> — flipping the environment also snaps
+<code>api.mode</code> to that environment’s secure default <strong>unless</strong>
+<code>PCLOUD_API_MODE</code> is also set (explicit mode wins).</li>
+<li><strong>CLI flags</strong> — <code>--env</code>, <code>--config</code>, <code>--insecure-config</code>. The CLI
+constructs <code>LoadOptions</code> and hands the loader an already-chosen
+path; there is no per-field CLI override today.</li>
+</ol>
+<p>After all six layers are applied, <code>ConfigProfile::validate()</code> runs a
+final pass, so an override that produces an invalid profile (e.g.
+<code>PCLOUD_ENV=production</code> combined with <code>PCLOUD_API_MODE=plaintext</code>)
+fails the load with <code>ConfigError::InvalidApiEndpoint</code> rather than
+quietly accepting.</p>
+<h2 id="on-disk-envelope--migrations"><a class="header" href="#on-disk-envelope--migrations">On-disk envelope &amp; migrations</a></h2>
+<ul>
+<li><code>version</code> is a <code>u32 &gt;= 0</code>. <code>CURRENT_VERSION = 2</code>.</li>
+<li><strong>v0 → v1</strong>: wrap bare-profile into <code>{version, profile}</code>. No data
+change. A pre-envelope file that never had a <code>version</code> field is
+treated as v0.</li>
+<li><strong>v1 → v2</strong>: add the <code>observability</code> block using
+<code>ObservabilityFlags::secure_defaults()</code> when missing. Existing
+overrides preserved.</li>
+<li>Rollback is not supported. A v2 envelope is not readable by an older
+build — restore from backup if you must revert.</li>
+<li>Migration runs in memory only. The on-disk file is not rewritten by
+the loader.</li>
+</ul>
+<h2 id="schema-validator"><a class="header" href="#schema-validator">Schema validator</a></h2>
+<p>Defined verbatim as <code>schema::CONFIG_SCHEMA_JSON</code> (draft-07-compatible).
+The Rust-side checker in <code>schema.rs</code> mirrors the JSON, adding precise
+pointer + line/column diagnostics:</p>
+<pre><code>at /profile/api/port (line 14, col 19): value 70000 above maximum 65535
+at /profile/api     (line 11, col 5):  unexpected property 'hsot' (additionalProperties=false)
+at /profile/paths   (line 6,  col 5):  missing required property 'cache_dir'
+</code></pre>
+<p>External tools (IDE JSON-schema hints, <code>check-jsonschema</code> in CI) can
+consume <code>CONFIG_SCHEMA_JSON</code> as a standalone schema document.</p>
+<h2 id="profile-sections"><a class="header" href="#profile-sections">Profile sections</a></h2>
+<p>Every section below corresponds to a submodule under
+<code>crates/pcloud-config/src/</code>. Required fields are enforced by the
+schema; absent optional fields use the serde <code>Default</code> impl.</p>
+<h3 id="profileenvironment"><a class="header" href="#profileenvironment"><code>profile.environment</code></a></h3>
+<ul>
+<li><strong>Type</strong>: string enum <code>"Development" | "Test" | "Production"</code>.</li>
+<li><strong>Required</strong>: yes.</li>
+<li><strong>Default</strong>: Production for release builds, Development for debug.</li>
+<li><strong>Purpose</strong>: pins transport + permission posture. Production refuses
+plaintext API transport, group/world-readable config files, insecure
+directory modes, and zero-valued API timeouts. Dev/Test downgrade the
+file-permission check to a warning.</li>
+<li><strong>Interactions</strong>: <code>PCLOUD_ENV</code> overrides; if <code>PCLOUD_API_MODE</code> is not
+set, a fresh <code>environment</code> also snaps <code>api.mode</code> to the secure
+default for that environment.</li>
+<li><strong>Example</strong>: <code>"environment": "Production"</code>.</li>
+</ul>
+<h3 id="profilepaths"><a class="header" href="#profilepaths"><code>profile.paths</code></a></h3>
+<p>All four fields are required; all must be absolute.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default (Linux)</th><th>Purpose</th><th>Security</th><th>Example</th></tr>
+</thead>
+<tbody>
+<tr><td><code>config_dir</code></td><td>absolute string</td><td><code>$XDG_CONFIG_HOME/pcloud/pcloud-rs</code></td><td>Persistent user config + auth-token vault</td><td>Must be <code>0700</code> in Production (via <code>runtime.config_dir_mode</code>)</td><td><code>/home/alice/.config/pcloud/pcloud-rs</code></td></tr>
+<tr><td><code>state_dir</code></td><td>absolute string</td><td><code>$XDG_DATA_HOME/pcloud/pcloud-rs</code></td><td>SQLite store, audit log, sync DB</td><td><code>0700</code> in Production; holds sync metadata + audit trail</td><td><code>/home/alice/.local/share/pcloud/pcloud-rs</code></td></tr>
+<tr><td><code>runtime_dir</code></td><td>absolute string</td><td><code>$XDG_RUNTIME_DIR/pcloud/pcloud-rs</code> (falls back to <code>&lt;cache&gt;/pcloud-rs-runtime</code>)</td><td>IPC socket (<code>pcloud.sock</code>), PID file</td><td><code>0700</code> — loosening leaks the IPC socket to other local users</td><td><code>/run/user/1000/pcloud/pcloud-rs</code></td></tr>
+<tr><td><code>cache_dir</code></td><td>absolute string</td><td><code>$XDG_CACHE_HOME/pcloud/pcloud-rs</code></td><td>Thumbnails, FUSE staging, transient blobs</td><td><code>0700</code> — FUSE staging may briefly hold plaintext of encrypted content</td><td><code>/home/alice/.cache/pcloud/pcloud-rs</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Tuning</strong>: for multi-instance isolation or CI, prefer <code>PCLOUD_ROOT</code>
+over hand-editing each field. That one env var re-roots everything
+(including the plugin dir) under a single tree.</p>
+<p><strong>Derived paths</strong> (not persisted, computed by helpers):</p>
+<ul>
+<li>IPC socket path = <code>runtime_dir/pcloud.sock</code>
+(<code>ManagedPaths::ipc_socket_path</code>).</li>
+<li>Auth-token vault = <code>config_dir/auth_token</code>
+(<code>ManagedPaths::auth_token_vault_path</code>).</li>
+</ul>
+<h3 id="profileapi"><a class="header" href="#profileapi"><code>profile.api</code></a></h3>
+<p>All six fields are required.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Purpose</th><th>Validation</th><th>Security</th></tr>
+</thead>
+<tbody>
+<tr><td><code>mode</code></td><td><code>"Development" | "Plaintext" | "Tls"</code></td><td>Tls in Prod, Development in Dev/Test</td><td>Transport mode</td><td>Production rejects <code>Plaintext</code>; <code>Development</code> skips host-level checks (mocks/fixtures)</td><td>TLS mandatory in production (<code>ApiEndpoint::validate</code>)</td></tr>
+<tr><td><code>host</code></td><td>string</td><td><code>"bineapi.pcloud.com"</code></td><td>DNS/IP of API endpoint</td><td>Must be non-empty in plaintext/TLS</td><td>Wrong value silently routes traffic</td></tr>
+<tr><td><code>port</code></td><td>u16 (0–65535)</td><td><code>443</code></td><td>TCP connect port</td><td>Must be non-zero in plaintext/TLS</td><td>Only 443/TLS is sane in Production</td></tr>
+<tr><td><code>server_name</code></td><td>string</td><td><code>"bineapi.pcloud.com"</code></td><td>TLS SNI + certificate verification name</td><td>Required non-empty in <code>Tls</code> mode</td><td>Setting to attacker-controlled value disables MITM protection</td></tr>
+<tr><td><code>connect_timeout_ms</code></td><td>u64</td><td><code>5000</code></td><td>TCP <code>connect()</code> timeout</td><td>Must be non-zero in plaintext/TLS</td><td>DoS bound — too high pins a worker on a stalled handshake</td></tr>
+<tr><td><code>read_timeout_ms</code></td><td>u64</td><td><code>15000</code></td><td>Per-read wait for framed data</td><td>Must be non-zero in plaintext/TLS</td><td>Caps slowloris-class hangs</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Interactions</strong>: <code>PCLOUD_API_MODE</code>, <code>PCLOUD_API_HOST</code>,
+<code>PCLOUD_API_PORT</code>, <code>PCLOUD_API_SERVER_NAME</code>,
+<code>PCLOUD_API_CONNECT_TIMEOUT_MS</code>, <code>PCLOUD_API_READ_TIMEOUT_MS</code>.</p>
+<p><strong>Runtime hint</strong>: the daemon’s handler for <code>set_api_server</code> calls
+<code>ApiEndpoint::apply_api_server_hint("host"|"host:port")</code>, which
+updates both <code>host</code> and <code>server_name</code>; a bare host leaves <code>port</code>
+untouched.</p>
+<p><strong>Tuning</strong>: default 5s/15s is intentionally tight — raise only for
+high-RTT scenarios and always pair with a higher breaker reset
+(<code>resilience.breaker_reset_timeout_ms</code>). <code>Development</code> mode is the
+only way to point at a mock server on <code>127.0.0.1:0</code>.</p>
+<h3 id="profileextensions"><a class="header" href="#profileextensions"><code>profile.extensions</code></a></h3>
+<p>Plugin loader policy. Secure default: everything off. Capability
+grants or trusted keys with <code>plugins_enabled = false</code> are rejected
+at validate time.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Purpose / Security</th></tr>
+</thead>
+<tbody>
+<tr><td><code>plugins_enabled</code></td><td>bool</td><td><code>false</code></td><td>Master switch. Loader skips the plugin dir entirely when off. Override: <code>PCLOUD_PLUGINS_ENABLED</code>.</td></tr>
+<tr><td><code>plugin_dir</code></td><td>absolute string</td><td><code>&lt;root&gt;/plugins</code></td><td>Directory holding trusted plugin binaries/manifests. Must be absolute. Loader does <strong>not</strong> re-check its mode — keep it under the <code>0700</code> <code>config_dir</code>.</td></tr>
+<tr><td><code>allow_network_capability</code></td><td>bool</td><td><code>false</code></td><td>Grants <code>network</code> capability (outbound sockets). Override: <code>PCLOUD_PLUGIN_ALLOW_NETWORK</code>.</td></tr>
+<tr><td><code>allow_sync_control_capability</code></td><td>bool</td><td><code>false</code></td><td>Grants sync-lifecycle commands. Override: <code>PCLOUD_PLUGIN_ALLOW_SYNC_CONTROL</code>.</td></tr>
+<tr><td><code>allow_crypto_capability</code></td><td>bool</td><td><code>false</code></td><td>Grants crypto-folder primitives. <strong>Most sensitive</strong> — plugin runs in-process and can read keys. Override: <code>PCLOUD_PLUGIN_ALLOW_CRYPTO</code>.</td></tr>
+<tr><td><code>trusted_plugin_keys</code></td><td>array of <code>[u8; 32]</code></td><td><code>[]</code></td><td>Ed25519 public keys authorized to sign manifests. Empty = “dev mode” (warn only). Non-empty makes signatures mandatory. No env override.</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Tuning</strong>: never enable <code>allow_network_capability</code> or
+<code>allow_crypto_capability</code> on an untrusted manifest. Populating
+<code>trusted_plugin_keys</code> is the only production-grade plugin posture;
+dev mode (empty list + <code>plugins_enabled=true</code>) logs a warning on every
+load.</p>
+<h3 id="profileruntime"><a class="header" href="#profileruntime"><code>profile.runtime</code></a></h3>
+<p>Unix modes applied to each managed directory. All four are required;
+all must satisfy <code>mode &amp; 0o077 == 0</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Default</th><th>Rejection</th></tr>
+</thead>
+<tbody>
+<tr><td><code>config_dir_mode</code></td><td><code>0o700</code> (decimal <code>448</code>)</td><td>any group/other bit → <code>ConfigError::InsecureMode</code></td></tr>
+<tr><td><code>socket_dir_mode</code></td><td><code>0o700</code></td><td>same</td></tr>
+<tr><td><code>state_dir_mode</code></td><td><code>0o700</code></td><td>same</td></tr>
+<tr><td><code>cache_dir_mode</code></td><td><code>0o700</code></td><td>same</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Security</strong>: these are the modes the daemon enforces via <code>chmod</code>
+before using each directory. No env override — modes are intentionally
+not tunable from the environment to prevent accidental relaxation.</p>
+<h3 id="profilefeatures"><a class="header" href="#profilefeatures"><code>profile.features</code></a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Purpose / Security</th></tr>
+</thead>
+<tbody>
+<tr><td><code>p2p_enabled</code></td><td>bool</td><td><code>false</code></td><td>Reserved for future P2P transfers. No runtime code reads this flag today; keep <code>false</code>.</td></tr>
+<tr><td><code>crypto_enabled</code></td><td>bool</td><td><code>true</code></td><td>Enables crypto-folder support (AES-256-GCM sectors, metadata filename encoding, temppass share flow). <strong>Do not disable</strong> to “just see files” — encrypted blobs simply won’t decrypt.</td></tr>
+<tr><td><code>durable_auth_tokens_enabled</code></td><td>bool</td><td><code>false</code></td><td>Opt-in to persist auth tokens to the <code>0600</code> vault at <code>config_dir/auth_token</code>. <strong>Passwords are never persisted regardless.</strong> Override: <code>PCLOUD_DURABLE_AUTH_TOKENS</code>.</td></tr>
+<tr><td><code>integrity_sweeper</code></td><td>object</td><td>off</td><td>Background-scrub block. See below.</td></tr>
+</tbody>
+</table>
+</div>
+<h4 id="profilefeaturesintegrity_sweeper"><a class="header" href="#profilefeaturesintegrity_sweeper"><code>profile.features.integrity_sweeper</code></a></h4>
+<p>Optional block (every field has a serde default so older envelopes
+load cleanly). Tracked under <code>bd-1du.4.6.1</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>enabled</code></td><td>bool</td><td><code>false</code></td><td>Master switch. While <code>false</code>, no worker is spawned and no I/O happens.</td></tr>
+<tr><td><code>schedule_cron</code></td><td><code>Option&lt;string&gt;</code></td><td><code>null</code></td><td>Reserved. An invalid cron expression will refuse to start the worker once the scheduler lands; today only on-demand runs are supported.</td></tr>
+<tr><td><code>rate_files_per_minute</code></td><td>u32</td><td><code>100</code></td><td>Token-bucket budget. Tokens accrue at <code>rate/60</code> per second, capped at the per-minute value. <code>0</code> permanently disables work.</td></tr>
+<tr><td><code>pause_on_battery</code></td><td>bool</td><td><code>true</code></td><td>Wired-but-inert flag — no battery facade exists yet. Default is fixed now so the safe posture cannot regress once detection lands.</td></tr>
+<tr><td><code>skip_list_path</code></td><td><code>Option&lt;string&gt;</code></td><td><code>null</code></td><td>Path to a newline-delimited glob file. Invalid globs return <code>io::ErrorKind::InvalidData</code> with a line number — never silently dropped.</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Honest status</strong>: the daemon worker is offline-triggered only; the
+scheduler loop is not wired yet. <code>pcloudc integrity run-once</code> is the
+end-to-end path today.</p>
+<h3 id="profilelimits"><a class="header" href="#profilelimits"><code>profile.limits</code></a></h3>
+<p>Safety caps, not performance knobs. All three fields required.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Default</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>max_concurrent_uploads</code></td><td><code>4</code></td><td>Caps uplink saturation and per-client memory. <code>0</code> halts uploads.</td></tr>
+<tr><td><code>max_concurrent_downloads</code></td><td><code>4</code></td><td>Same for downloads.</td></tr>
+<tr><td><code>max_parser_frame_bytes</code></td><td><code>8 * 1024 * 1024</code> (8 MiB)</td><td>Hard cap on a single wire-protocol frame. Checked <strong>before</strong> allocating, so a hostile server cannot coerce multi-GiB allocations via a forged length prefix.</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Tuning</strong>: raising concurrency past ~16 rarely helps; pCloud’s server
+side already rate-limits per-account. <code>max_parser_frame_bytes</code> should
+stay at 8 MiB — that is the documented API ceiling.</p>
+<h3 id="profilemount"><a class="header" href="#profilemount"><code>profile.mount</code></a></h3>
+<p>FUSE mount policy and cache tuning.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Default</th><th>Semantics</th></tr>
+</thead>
+<tbody>
+<tr><td><code>allow_other</code></td><td><code>false</code></td><td>Pass <code>allow_other</code> to FUSE. Requires <code>owner_only_by_default=false</code> or validate fails with <code>InvalidMountPolicy</code>. Also needs <code>user_allow_other</code> in <code>/etc/fuse.conf</code>.</td></tr>
+<tr><td><code>owner_only_by_default</code></td><td><code>true</code></td><td>Enforce owner-uid check + FUSE <code>default_permissions</code>. Secure default. Incompatible with <code>allow_other=true</code>.</td></tr>
+<tr><td><code>cache_size_mb</code></td><td><code>256</code></td><td>Maximum page-cache memory budget in MiB. Controls how much file content the FUSE adapter keeps in RAM. Overridden at runtime by <code>PCLOUD_CACHE_SIZE_GB</code> (env var takes precedence).</td></tr>
+<tr><td><code>page_cache_entries</code></td><td><code>4096</code></td><td>Maximum number of metadata-cache entries. Each entry caches one <code>getattr</code>/<code>lookup</code>/<code>readdir</code> result. LRU eviction applies.</td></tr>
+<tr><td><code>metadata_ttl_secs</code></td><td><code>60</code></td><td>Metadata-cache TTL in seconds. Controls how long <code>getattr</code>/<code>lookup</code>/<code>readdir</code> results are served from cache before re-querying the remote. <code>0</code> disables caching.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Valid combinations for access policy:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>allow_other</code></th><th><code>owner_only_by_default</code></th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>false</code></td><td><code>true</code></td><td>Default — owner-only mount.</td></tr>
+<tr><td><code>false</code></td><td><code>false</code></td><td>Owner-only relaxed, still no <code>allow_other</code>.</td></tr>
+<tr><td><code>true</code></td><td><code>false</code></td><td>Multi-user mount (explicit opt-in).</td></tr>
+<tr><td><code>true</code></td><td><code>true</code></td><td><strong>Rejected</strong> (<code>InvalidMountPolicy</code>).</td></tr>
+</tbody>
+</table>
+</div>
+<p>Environment-variable overrides for cache tuning:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Env var</th><th>Maps to</th></tr>
+</thead>
+<tbody>
+<tr><td><code>PCLOUD_MOUNT_CACHE_SIZE_MB</code></td><td><code>mount.cache_size_mb</code></td></tr>
+<tr><td><code>PCLOUD_MOUNT_PAGE_CACHE_ENTRIES</code></td><td><code>mount.page_cache_entries</code></td></tr>
+<tr><td><code>PCLOUD_MOUNT_METADATA_TTL_SECS</code></td><td><code>mount.metadata_ttl_secs</code></td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="profileobservability"><a class="header" href="#profileobservability"><code>profile.observability</code></a></h3>
+<p>Opt-in telemetry. Applied via <code>#[serde(default)]</code> so v1 envelopes load
+cleanly. No env overrides are wired today.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Default</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>structured_logs_enabled</code></td><td><code>true</code></td><td>JSON-lines logs to stderr. Redaction for <code>SecretString</code>/<code>SecretBytes</code> is always on regardless. Disabling falls back to unstructured stderr, not zero output.</td></tr>
+<tr><td><code>tracing_enabled</code></td><td><code>false</code></td><td>OTEL-compatible span emission. Attributes go through the <code>attr_redact</code> allow-list; no secrets ever cross the boundary.</td></tr>
+<tr><td><code>metrics_enabled</code></td><td><code>false</code></td><td>Prometheus text exposition on the owner-only IPC socket. Does not open any TCP port.</td></tr>
+<tr><td><code>audit_export_enabled</code></td><td><code>true</code></td><td>Export auth / crypto / admin events to the persistent audit store. Disabling removes the forensic trail.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="profileresilience"><a class="header" href="#profileresilience"><code>profile.resilience</code></a></h3>
+<p>Client-side rate limit + circuit breaker + retry policy used by
+<code>pcloud-proto::ResilientTransport</code>. Present via <code>#[serde(default)]</code>;
+existing direct-dispatch transports ignore this block.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Default</th><th>Tuning guidance</th></tr>
+</thead>
+<tbody>
+<tr><td><code>enabled</code></td><td><code>true</code></td><td>Master switch. Disabling removes both the limiter and breaker; prefer tuning fields below over flipping this off.</td></tr>
+<tr><td><code>rate_limit_capacity</code></td><td><code>16</code></td><td>Burst size per endpoint. Caps instantaneous rate.</td></tr>
+<tr><td><code>rate_limit_refill_per_sec</code></td><td><code>8.0</code></td><td>Sustained rate after burst drains. Positive finite <code>f64</code>.</td></tr>
+<tr><td><code>breaker_failure_threshold</code></td><td><code>5</code></td><td>Consecutive failures before opening. Lower = faster fail-fast.</td></tr>
+<tr><td><code>breaker_reset_timeout_ms</code></td><td><code>30000</code></td><td>Time Open before admitting a probe. Too short → thrash, too long → transient looks permanent.</td></tr>
+<tr><td><code>retry_max_attempts</code></td><td><code>3</code></td><td>Total attempts including first. <code>1</code> disables retries.</td></tr>
+<tr><td><code>retry_base_delay_ms</code></td><td><code>100</code></td><td>Initial delay before backoff.</td></tr>
+<tr><td><code>retry_factor</code></td><td><code>2.0</code></td><td>Exponential factor. <code>1.0</code> = constant delay; <code>&lt;1.0</code> is nonsensical and rejected by the transport.</td></tr>
+<tr><td><code>retry_max_delay_ms</code></td><td><code>5000</code></td><td>Single-retry delay cap.</td></tr>
+<tr><td><code>retry_jitter_seed</code></td><td><code>0x00C0_FFEE_F00D</code></td><td>Deterministic equal-jitter seed. Keeps tests reproducible while spreading retry storms across clients sharing the seed.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="profilerate_limit"><a class="header" href="#profilerate_limit"><code>profile.rate_limit</code></a></h3>
+<p>Per-category, per-session IPC admission limiter consumed by
+<code>pcloud-daemon::dispatch::handle_request</code>. Built from the validated
+profile once at bootstrap and checked <strong>before</strong> the backend is
+invoked. Over-budget callers receive
+<code>ResponseStatus::Conflict</code> with a message of the form
+<code>"rate limit exceeded: &lt;category&gt;, retry after Ns"</code> and the backend is
+not called — so a hostile or misbehaving client cannot drain daemon
+work budgets on expensive operations.</p>
+<p>The section is optional via <code>#[serde(default)]</code>; envelopes that omit
+it inherit the secure defaults below.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Default</th><th>Tuning guidance</th></tr>
+</thead>
+<tbody>
+<tr><td><code>enabled</code></td><td><code>true</code></td><td>Master switch. When <code>false</code>, every bucket degrades to “always allow”.</td></tr>
+<tr><td><code>cheap</code></td><td><code>{capacity: 0, refill_per_sec: 0.0}</code> (disabled)</td><td>Bucket for status / userinfo / field selectors. Zero capacity means “no limit”.</td></tr>
+<tr><td><code>medium</code></td><td><code>{capacity: 30, refill_per_sec: 0.5}</code> (≈ 30/min)</td><td>Bucket for list-style endpoints and single-item reads.</td></tr>
+<tr><td><code>expensive</code></td><td><code>{capacity: 6, refill_per_sec: 0.1}</code> (≈ 6/min)</td><td>Bucket for snapshot create, integrity run-once, bulk public-link operations, tree-link create, crypto password change.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Category assignment lives in <code>pcloud_daemon::rate_limit::categorize</code>
+and follows a conservative allow-list: only named cheap/expensive
+methods are elevated; everything else sits in <code>medium</code>. Setting a
+bucket’s <code>capacity</code> to <code>0</code> disables that category without removing the
+block.</p>
+<p><strong>Example — tighter posture on the <code>expensive</code> bucket</strong>:</p>
+<pre><code class="language-json">"rate_limit": {
+  "enabled": true,
+  "expensive": { "capacity": 3, "refill_per_sec": 0.05 }
+}
+</code></pre>
+<h3 id="profiledata_residency"><a class="header" href="#profiledata_residency"><code>profile.data_residency</code></a></h3>
+<p>Region allow-list enforced at <code>sync-root add</code>, <code>upload_create</code>, and
+<code>set_api_server</code> (live in <code>pcloud-backends::residency</code>). Optional block
+via <code>#[serde(default)]</code>. <strong>Empty allow-list = allow every region</strong>, so
+adding this block to an existing deployment is a no-op until populated.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>allowed_regions</code></td><td><code>Vec&lt;String&gt;</code></td><td><code>[]</code></td><td>Case-insensitive region tags (<code>"EU"</code>, <code>"US"</code>, …).</td></tr>
+<tr><td><code>strict</code></td><td>bool</td><td><code>false</code></td><td><code>true</code> → violations return <code>ResponseStatus::PolicyViolation { kind: "data_residency" }</code>. <code>false</code> → warning audit event, operation proceeds.</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>EU-only example</strong>:</p>
+<pre><code class="language-json">"data_residency": { "allowed_regions": ["EU"], "strict": true }
+</code></pre>
+<h2 id="environment-overrides"><a class="header" href="#environment-overrides">Environment overrides</a></h2>
+<p>Applied by <code>env::apply_env_overrides</code> <em>after</em> deserialize and <em>before</em>
+semantic validation. Unset or whitespace-only vars are ignored; any
+set-but-malformed value aborts the load with
+<code>ConfigError::InvalidEnvironmentValue</code>.</p>
+<p><strong>Boolean grammar</strong> (case-insensitive): <code>1</code>/<code>0</code>, <code>true</code>/<code>false</code>,
+<code>yes</code>/<code>no</code>, <code>on</code>/<code>off</code>.</p>
+<p><strong>Enum grammars</strong> (case-insensitive):</p>
+<ul>
+<li><code>PCLOUD_ENV</code>: <code>dev</code>/<code>development</code>, <code>test</code>, <code>prod</code>/<code>production</code>.</li>
+<li><code>PCLOUD_API_MODE</code>: <code>dev</code>/<code>development</code>, <code>plain</code>/<code>plaintext</code>/<code>tcp</code>,
+<code>tls</code>/<code>ssl</code>.</li>
+</ul>
+<p>Full mapping (everything else is not wired — previous drafts mentioned
+<code>PCLOUD_CACHE_SIZE_GB</code>, <code>PCLOUD_LOG_LEVEL</code>, <code>PCLOUD_METRICS_BIND_ALL</code>,
+<code>PCLOUD_CHAOS</code>, etc.; none of those are read by <code>env.rs</code> today, so do
+not rely on them).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Env var</th><th>Target field</th><th>Notes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>PCLOUD_CONFIG</code></td><td>loader input path</td><td>Mandatory JSON config path when set; not a profile field.</td></tr>
+<tr><td><code>PCLOUD_ROOT</code></td><td><code>paths.*</code>, <code>extensions.plugin_dir</code></td><td>Coarse override. Re-roots every managed path and the plugin dir under <code>&lt;root&gt;/{config,state,runtime,cache,plugins}</code>. Applied first; targeted vars below still win for their field.</td></tr>
+<tr><td><code>PCLOUD_ENV</code></td><td><code>environment</code></td><td>Also snaps <code>api.mode</code> to the env’s secure default when <code>PCLOUD_API_MODE</code> is not set.</td></tr>
+<tr><td><code>PCLOUD_API_MODE</code></td><td><code>api.mode</code></td><td>Wins over the <code>PCLOUD_ENV</code> snap. Production still rejects <code>Plaintext</code> at validate time.</td></tr>
+<tr><td><code>PCLOUD_API_HOST</code></td><td><code>api.host</code></td><td></td></tr>
+<tr><td><code>PCLOUD_API_PORT</code></td><td><code>api.port</code></td><td>Must parse as <code>u16</code>.</td></tr>
+<tr><td><code>PCLOUD_API_SERVER_NAME</code></td><td><code>api.server_name</code></td><td>TLS SNI / cert verification name.</td></tr>
+<tr><td><code>PCLOUD_API_CONNECT_TIMEOUT_MS</code></td><td><code>api.connect_timeout_ms</code></td><td><code>u64</code>; <code>0</code> fails validation in plaintext/TLS.</td></tr>
+<tr><td><code>PCLOUD_API_READ_TIMEOUT_MS</code></td><td><code>api.read_timeout_ms</code></td><td><code>u64</code>; <code>0</code> fails validation in plaintext/TLS.</td></tr>
+<tr><td><code>PCLOUD_PLUGINS_ENABLED</code></td><td><code>extensions.plugins_enabled</code></td><td></td></tr>
+<tr><td><code>PCLOUD_PLUGIN_ALLOW_NETWORK</code></td><td><code>extensions.allow_network_capability</code></td><td>Requires <code>plugins_enabled=true</code>.</td></tr>
+<tr><td><code>PCLOUD_PLUGIN_ALLOW_SYNC_CONTROL</code></td><td><code>extensions.allow_sync_control_capability</code></td><td>Requires <code>plugins_enabled=true</code>.</td></tr>
+<tr><td><code>PCLOUD_PLUGIN_ALLOW_CRYPTO</code></td><td><code>extensions.allow_crypto_capability</code></td><td>Requires <code>plugins_enabled=true</code>.</td></tr>
+<tr><td><code>PCLOUD_DURABLE_AUTH_TOKENS</code></td><td><code>features.durable_auth_tokens_enabled</code></td><td>Gates the on-disk auth-token vault.</td></tr>
+<tr><td><code>PCLOUD_MIGRATE_LEGACY_PATHS</code></td><td>(not a profile field)</td><td>When <code>=1</code>, enables opt-in copy of <code>~/.pcloud/</code> into the XDG layout on first-run migration.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="secret-bootstrap-environment"><a class="header" href="#secret-bootstrap-environment">Secret bootstrap environment</a></h3>
+<p>The following variables are consumed by daemon bootstrap before it starts
+serving IPC. They are not <code>ConfigProfile</code> fields and are not general
+configuration overrides.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Env var</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>PCLOUDRS_TOKEN_FILE</code></td><td>Path to a regular owner-only <code>0600</code> file containing an auth token for headless startup.</td></tr>
+<tr><td><code>PCLOUDRS_USERNAME_FILE</code> / <code>PCLOUDRS_PASSWORD_FILE</code></td><td>First-boot username/password files. They must be set together and follow the same owner/mode rules as token files.</td></tr>
+<tr><td><code>PCLOUDRS_TFA_CODE_FILE</code> / <code>PCLOUDRS_RECOVERY_CODE_FILE</code></td><td>Mutually exclusive second-factor files for non-interactive username/password login.</td></tr>
+<tr><td><code>PCLOUDRS_TRUST_DEVICE</code></td><td>Boolean. Requests a trusted-device login after successful TFA bootstrap.</td></tr>
+<tr><td><code>CREDENTIALS_DIRECTORY</code></td><td>systemd credential directory. When set, daemon bootstrap looks for <code>pcloud-rs-token</code>, <code>pcloud-rs-username</code>, <code>pcloud-rs-password</code>, <code>pcloud-rs-tfa-code</code>, and <code>pcloud-rs-recovery-code</code> as fallbacks for the matching <code>PCLOUDRS_*_FILE</code> variables.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Never place account passwords, TFA codes, recovery codes, or bearer tokens
+directly in <code>Environment=</code>. Use file-backed credentials or systemd
+<code>LoadCredential=</code> / <code>LoadCredentialEncrypted=</code> and keep files owner-only.</p>
+<h3 id="example-multi-instance-under-a-test-root"><a class="header" href="#example-multi-instance-under-a-test-root">Example: multi-instance under a test root</a></h3>
+<pre><code class="language-bash">export PCLOUD_ROOT=/tmp/pcloud-test-42
+export PCLOUD_ENV=test
+export PCLOUD_API_MODE=development
+pcloudd start
+</code></pre>
+<h3 id="example-production-with-explicit-api-endpoint-override"><a class="header" href="#example-production-with-explicit-api-endpoint-override">Example: production with explicit API endpoint override</a></h3>
+<pre><code class="language-bash">export PCLOUD_ENV=production
+export PCLOUD_API_HOST=bineapi-eu.pcloud.com
+export PCLOUD_API_SERVER_NAME=bineapi-eu.pcloud.com
+# PCLOUD_API_MODE intentionally unset — PCLOUD_ENV=production snaps to Tls.
+pcloudd start
+</code></pre>
+<h2 id="reload-semantics"><a class="header" href="#reload-semantics">Reload semantics</a></h2>
+<p>The daemon loads the profile <strong>once at start-up</strong> and snapshots it into
+the <code>RuntimeShell</code>. There is no atomic SIGHUP reload today: config
+changes require <code>pcloudc stop</code> + <code>pcloudd start</code>. Live-reload is
+tracked in a future wave and will preserve the validate-then-swap
+invariant — if the new file fails validation, the old profile stays
+active and an audit event is emitted.</p>
+<h2 id="troubleshooting"><a class="header" href="#troubleshooting">Troubleshooting</a></h2>
+<h3 id="insecureconfigpermissions"><a class="header" href="#insecureconfigpermissions"><code>InsecureConfigPermissions</code></a></h3>
+<pre><code>config file '/home/alice/.config/pcloud/config.json' has insecure
+permissions (mode 644): refusing to load. Pass --insecure-config to
+override in development.
+</code></pre>
+<p>Fix: <code>chmod 600 /home/alice/.config/pcloud/config.json</code> and confirm
+the parent directory is <code>0700</code> (<code>chmod 700 ~/.config/pcloud</code>). The
+<code>--insecure-config</code> flag is a dev-only escape hatch; Production still
+warns even when the flag is set.</p>
+<h3 id="schemaviolations"><a class="header" href="#schemaviolations"><code>SchemaViolations</code></a></h3>
+<p>Every violation carries a JSON pointer and (when locatable in the raw
+text) a line/column. Unknown properties are rejected with the
+<code>additionalProperties=false</code> phrase — use that as your grep key when
+bulk-fixing envelopes.</p>
+<h3 id="invalidapiendpoint"><a class="header" href="#invalidapiendpoint"><code>InvalidApiEndpoint</code></a></h3>
+<ul>
+<li><code>"production environment requires tls api mode"</code> — flip <code>api.mode</code>
+to <code>"Tls"</code> or change <code>environment</code> to <code>"Development"</code>/<code>"Test"</code>.</li>
+<li><code>"host must not be empty"</code> / <code>"server_name must not be empty in tls mode"</code> — self-explanatory.</li>
+<li><code>"connect_timeout_ms must be non-zero"</code> — <code>0</code> is never valid in
+plaintext/TLS; it would mean “give up before starting”.</li>
+</ul>
+<h2 id="see-also"><a class="header" href="#see-also">See also</a></h2>
+<ul>
+<li><a href="./cli.html">CLI Reference</a> — operator surface.</li>
+<li><a href="./ipc-protocol.html">IPC Protocol</a> — the daemon’s local wire format
+that the <code>runtime_dir</code> socket exposes.</li>
+<li><code>crates/pcloud-config/src/schema.rs</code> — authoritative JSON schema.</li>
+<li><code>crates/pcloud-config/src/env.rs</code> — authoritative env-var override
+table.</li>
+<li><code>crates/pcloud-config/src/loader.rs</code> — permission check + migration
+<ul>
+<li>validation pipeline.</li>
+</ul>
+</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../reference/metrics.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../reference/ipc-protocol.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../reference/metrics.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../reference/ipc-protocol.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

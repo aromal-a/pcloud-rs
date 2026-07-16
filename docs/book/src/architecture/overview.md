@@ -5,7 +5,7 @@ the crate map, before the request lifecycle, and before any deep dive. Its job
 is to answer four questions: what processes exist, how they talk, what state
 they touch on disk, and which abstractions make the whole thing portable.
 
-All file paths are relative to `` unless otherwise stated.
+All file paths are relative to the repository root unless otherwise stated.
 
 ## Processes
 
@@ -18,7 +18,10 @@ The deployment unit is three cooperating binaries plus an optional web UI:
 - **`pcloudd`** — the long-running daemon. It owns every remote connection,
   every cached credential, the SQLite store, the upload journal, the audit
   hash-chain, and the sync engine. All policy decisions happen here. It ships
-  as `crates/pcloud-daemon` on Unix and `crates/pcloud-daemon-win` on Windows.
+  from `crates/pcloud-daemon` on every supported platform. The separate
+  `pcloud-daemon-win` crate is an experimental, unshipped SCM host around this
+  same daemon runtime; the supported Windows package starts `pcloudd.exe`
+  per-user.
 - **`pcloud-web`** — an optional Axum-based HTTP facade that talks to the
   daemon over the same local IPC channel as the CLI and exposes a small
   browser/JSON API for operators. It ships as `crates/pcloud-web`.
@@ -220,8 +223,8 @@ for regression-gating the release.
 
 ## If you're new to this codebase
 
-The **thing to know** before anything else: there is exactly one process that
-ever speaks to pCloud's servers — `pcloudd`. Everything else (the `pcloudc`
+The **thing to know** before anything else on the supported public path: there
+is exactly one process that ever speaks to pCloud's servers — `pcloudd`. Everything else (the `pcloudc`
 CLI, the `pcloud-web` browser UI, any third-party consumer linking the
 `pcloud-sdk` crate) is a *client*. Clients construct a typed `Request`, hand
 it to a local IPC channel, and wait for a typed `Response`. They never hold
@@ -230,11 +233,10 @@ never touch the audit hash-chain. The trust boundary is the IPC socket.
 
 If you internalise that one rule, the rest of the architecture falls out:
 
-- **Why is there a `pcloud-backends` crate?** Because the daemon binary
-  (`pcloud-daemon` on Unix, `pcloud-daemon-win` on Windows) needs to share
-  backend code with the SDK (`pcloud-sdk`), which also wants an in-process
-  backend path. The trait lives in a shared crate so neither side can
-  short-circuit the other.
+- **Why is there a `pcloud-backends` crate?** Because the daemon's platform
+  compositions, mount/sync adapters, and the internal
+  `pcloud-embedded-sdk` compatibility path share a canonical implementation.
+  The public `pcloud-sdk` does not link backends; it reaches them through IPC.
 - **Why are there five and only five platform abstractions?** Because we
   promised ourselves that platform differences get named explicitly and
   boxed, not scattered as `cfg` blocks. If a new platform-dependent concept

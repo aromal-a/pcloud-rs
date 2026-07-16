@@ -33,17 +33,17 @@
   <screenshots>
     <screenshot type="default">
       <caption>pcloudc CLI showing sync status</caption>
-      <image>https://raw.githubusercontent.com/pcloudcom/console-client/main/packaging/flatpak/screenshots/cli.png</image>
+      <image>https://raw.githubusercontent.com/ezechiel203/pcloud-rs/main/packaging/flatpak/screenshots/cli.png</image>
     </screenshot>
     <screenshot>
       <caption>Mounted-drive view in a file manager</caption>
-      <image>https://raw.githubusercontent.com/pcloudcom/console-client/main/packaging/flatpak/screenshots/mount.png</image>
+      <image>https://raw.githubusercontent.com/ezechiel203/pcloud-rs/main/packaging/flatpak/screenshots/mount.png</image>
     </screenshot>
   </screenshots>
 
-  <url type="homepage">https://github.com/pcloudcom/console-client</url>
-  <url type="bugtracker">https://github.com/pcloudcom/console-client/issues</url>
-  <url type="vcs-browser">https://github.com/pcloudcom/console-client</url>
+  <url type="homepage">https://github.com/ezechiel203/pcloud-rs</url>
+  <url type="bugtracker">https://github.com/ezechiel203/pcloud-rs/issues</url>
+  <url type="vcs-browser">https://github.com/ezechiel203/pcloud-rs</url>
 
   <categories>
     <category>Network</category>

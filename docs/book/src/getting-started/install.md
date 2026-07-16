@@ -1,29 +1,31 @@
 # Installation
 
-> **TL;DR** — pick the install path for your OS, then run the same two
-> verification commands everywhere:
+> **Current availability (verified 2026-07-16).** This project has no public
+> GitHub release and no published binary package channel yet. Build from a
+> reviewed source commit, or build one of the in-tree package recipes locally.
+> Do not substitute the placeholder package-manager commands in older copies of
+> this guide: they cannot install this project. After a source build, run:
 >
 > ```bash
-> pcloudc --version     # prints build triple + git hash
+> pcloudc --version     # prints version + git hash + build profile
 > pcloudc doctor        # self-check probes, exit 0 when healthy
 > pcloudc doctor --strict   # promote WARN to FAIL (CI / hardened hosts)
 > ```
 >
-> When both succeed, jump to [First login](first-login.md). `pcloud-rs` is
-> **pre-alpha**: Linux is the flagship target; macOS, Windows and *BSD
-> packaging recipes are real, but mount surfaces on non-Linux are still
-> scaffolded (see `bd-1du.4`).
+> When the applicable probes succeed, jump to [First login](first-login.md). Workflow definitions
+> and packaging recipes are development assets, not proof that an installable
+> release exists or that a target has been qualified. NAS outputs remain Tier-2
+> candidates until their hardware matrices pass.
 
 ## What you'll learn
 
-- Which package channel ships which artefacts (CLI, daemon, service
-  unit, man pages, FUSE provider).
+- Which install path is usable now, which packaging assets can be built locally,
+  and which public channels do not yet exist.
 - How pCloud is architected at a glance, so you can tell *why* the
   installer creates a `0700` config dir, a user-scoped daemon, and a
   mode-`0600` socket.
-- The exact install commands for cargo-install, `.deb`, `.rpm`,
-  Homebrew, Nix/flake, AppImage, Flatpak, Snap, Docker, Windows
-  (winget / Chocolatey / Scoop / MSI), and the *BSDs.
+- The source-build commands and the intended package layout for future `.deb`,
+  `.rpm`, macOS, Windows, community-channel, and BSD releases.
 - How to verify the install end-to-end and how to read each probe in
   `pcloudc doctor --strict`.
 - The top five install failures and the one-line fix for each.
@@ -36,15 +38,16 @@
    IPC socket, and blocks until the daemon replies. It never talks to
    the network. It never stores secrets in its own address space any
    longer than one IPC round-trip.
-2. **`pcloud-daemon`** — the long-lived user-scoped service. It owns
+2. **`pcloudd`** — the long-lived service. It owns
    network I/O, the SQLite store, the optional auth-token vault, and
-   the sync/mount engines. It runs as **your user**, not as root, and
-   exposes its IPC socket at `~/.local/state/pcloud-rs/ipc.sock` with
+   the sync/mount engines. The in-tree native Linux package recipes install a
+   systemd system unit using `DynamicUser=yes`; source/user installs can run it
+   as your own UID with the user-unit compatibility drop-in. The IPC socket is
+   derived from the active `PCLOUD_ROOT` / XDG runtime layout and is
    mode `0600` inside a `0700` parent directory.
-3. **A native service unit** — a systemd user unit on Linux, a launchd
-   agent on macOS, a Windows Service on Windows, or an `rc.d` script
-   on *BSD. The unit lets your OS supervise the daemon the same way it
-   supervises every other service it knows about.
+3. **A lifecycle integration** — systemd on Linux, a per-user LaunchAgent on
+   macOS, per-user `pcloudc start` on Windows, or rc.d assets on supported
+   BSDs. The daemon identity must match the owner of IPC and secret storage.
 
 Why you see those permissions even before first login:
 
@@ -66,7 +69,7 @@ Why you see those permissions even before first login:
 - **Public links** share content outside the account via one-off URLs
   with optional password / expiry / upload quota.
 
-> **Expert sidebar (FAANG-ops angle).** Treat `pcloud-daemon` like any
+> **Expert sidebar (FAANG-ops angle).** Treat `pcloudd` like any
 > other per-user sidecar: scoped to one UID, no setuid bits, no root
 > capabilities, systemd `ProtectSystem=strict`, `PrivateTmp=yes`. All
 > state under `$XDG_STATE_HOME/pcloud-rs`. For fleet rollouts, the
@@ -76,42 +79,58 @@ Why you see those permissions even before first login:
 > AppImage / standalone `cargo install` does **not** — reserve those
 > for dev boxes.
 
-## What every install channel installs
+## Intended native-package layout
 
-Every channel lands the same three artefacts with the same on-disk
-shape. If your package manager refuses to ship these modes, file a
-bug — it is the hardening baseline, not a preference.
+No public channel currently installs these files. The in-tree native-package
+recipes are required to converge on this layout before the first release. If a
+locally built package differs, treat that as a packaging defect.
 
 | Artefact | Path (Linux) | Mode |
 |---|---|---|
 | CLI binary | `/usr/bin/pcloudc` | `0755` |
-| Daemon binary | `/usr/libexec/pcloud-rs/pcloud-daemon` | `0755` |
-| Systemd user unit | `/usr/lib/systemd/user/pcloud-daemon.service` | `0644` |
-| Config template | `~/.config/pcloud-rs/config.toml` (created on first run) | `0600` in `0700` |
-| Runtime state | `~/.local/state/pcloud-rs/` | `0700` |
-| Man pages | `pcloudc.1`, `pcloud-daemon.1`, `pcloud.conf.5` | `0644` |
+| Daemon binary | `/usr/bin/pcloudd` | `0755` |
+| Systemd unit | `/lib/systemd/system/pcloudd.service` | `0644` |
+| Env/config seed | `/etc/pcloud-rs/pcloudd.env.example` | `0644` |
+| Runtime/state root | operator-set `PCLOUD_ROOT`, commonly `/var/lib/pcloud-rs` for system services | `0700` |
+| Man pages | `pcloudc.1`, `pcloudd.1`, `pcloud.conf.5` | `0644` |
+<!-- man-page filenames verified against `packaging/man/` 2026-04-30 (CLAUDEREV iter-1 HIGH-3 fix). -->
 
 See [`packaging/README.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/packaging/README.md)
-for the per-channel truth table. The **honest status (2026-04-16)** from
-that file: Linux channels are wired end-to-end, Docker images are
-cosign-signed; macOS Developer ID notarisation is **pending a valid
-Apple Developer account**; Windows Authenticode EV signing is **a stub
-awaiting an EV hardware token**; *BSD mount runtime is **scaffolded
-only**.
+for the per-channel truth table. Linux raw/package jobs, strict signed macOS
+and Windows jobs, and candidate-only NAS jobs are defined, but the repository
+has no release to download today. Docker publishing and SLSA provenance remain
+unimplemented.
 
-## Step-by-step: pick your channel
+## Step-by-step: current install paths
 
-### Build from source (`cargo install`, any platform with a Rust toolchain)
+### Build from source (current cross-platform path)
+
+POSIX source install:
 
 ```bash
-# Rust 1.80+ — matches Cargo.toml `rust-version`
+# Rust 1.89+ — matches workspace Cargo.toml `rust-version`
 rustc --version
 git clone https://github.com/ezechiel203/pcloud-rs
 cd pcloud-rs/
 cargo build --workspace --release --locked          # 5–15 min on a laptop
 sudo install -m 0755 target/release/pcloudc        /usr/local/bin/
-sudo install -m 0755 target/release/pcloud-daemon  /usr/local/libexec/
+sudo install -m 0755 target/release/pcloudd        /usr/local/bin/
 ```
+
+Windows source build (keep both executables in the same directory on `PATH`):
+
+```powershell
+rustc --version
+git clone https://github.com/ezechiel203/pcloud-rs
+Set-Location pcloud-rs
+cargo build --workspace --release --locked
+New-Item -ItemType Directory -Force "$HOME\bin\pcloud-rs" | Out-Null
+Copy-Item target\release\pcloudc.exe,target\release\pcloudd.exe "$HOME\bin\pcloud-rs\"
+# Add $HOME\bin\pcloud-rs to the user PATH before opening a new shell.
+```
+
+`pcloudc start` searches for `pcloudd` beside the CLI and then on `PATH`; do not
+install the two binaries into unrelated directories.
 
 What each step does:
 
@@ -126,7 +145,7 @@ What each step does:
 Expected output (trimmed):
 
 ```
-Compiling pcloud-proto v0.9.0
+Compiling pcloud-proto v0.1.0
 ...
 Finished release [optimized] target(s) in 6m 42s
 ```
@@ -134,248 +153,102 @@ Finished release [optimized] target(s) in 6m 42s
 Common failures:
 
 - **`error: failed to download`** — proxy / offline environment. Add
-  `--frozen` and point `CARGO_HOME` at a pre-seeded vendor dir, or
-  use a native package.
+  `--frozen` and point `CARGO_HOME` at a pre-seeded vendor directory.
 - **`linking with cc failed`** — missing system libs (`libssl-dev`,
   `libsqlite3-dev`, `pkg-config`, `fuse3`). On Debian:
   `sudo apt install build-essential pkg-config libssl-dev libsqlite3-dev libfuse3-dev`.
 
 > **Expert tip.** `cargo install --path crates/pcloud-cli --locked`
-> lands **only** the CLI in `~/.cargo/bin` — handy on a workstation
-> where the daemon is already provided by the system package but you
-> want a bleeding-edge CLI for testing. Never ship this combo to
-> production; CLI and daemon must agree on the IPC protocol version.
+> lands **only** the CLI in `~/.cargo/bin`. Use it only when you have built and
+> installed the matching daemon yourself. CLI and daemon must agree on the IPC
+> protocol version.
 
-### Debian / Ubuntu (`.deb`)
+### Linux native-package recipes (`.deb` / `.rpm`)
 
-Supported: Debian 12+, Ubuntu 22.04+, x86_64 and aarch64.
-
-```bash
-curl -fsSL https://pkg.pcloud-rs.dev/gpg \
-  | sudo tee /etc/apt/keyrings/pcloud-rs.asc > /dev/null
-echo "deb [signed-by=/etc/apt/keyrings/pcloud-rs.asc] https://pkg.pcloud-rs.dev/deb stable main" \
-  | sudo tee /etc/apt/sources.list.d/pcloud-rs.list
-sudo apt update
-sudo apt install pcloud-rs
-```
-
-The `pcloud-rs` meta-package pulls in `pcloud-rs-cli`, `pcloud-rs-daemon`,
-the `fuse3` provider (recommended), and the man pages. The systemd
-user unit is **enabled but not started** — the installer never starts
-a service automatically. Start it yourself:
-
-```bash
-systemctl --user start pcloudd
-systemctl --user status pcloudd    # expect "active (running)"
-```
-
-> **Expert tip.** On Debian images managed by `apt-daily`, pin the
-> package to a specific version during a migration window:
-> `apt-mark hold pcloud-rs` then bump it through your configuration
-> manager. Avoid `apt install -y pcloud-rs` in a CI bootstrap without
-> a pinned version — fleet version skew across a soak window makes
-> parity bug triage painful.
-
-### Fedora / RHEL / Rocky / Alma (`.rpm`)
-
-Supported: Fedora 38+, RHEL 9+, Rocky 9+, AlmaLinux 9+.
-
-```bash
-sudo dnf config-manager --add-repo https://pkg.pcloud-rs.dev/rpm/pcloud-rs.repo
-sudo dnf install pcloud-rs
-rpm --checksig /var/cache/dnf/pcloud-rs-*.rpm     # expect: ... OK
-```
-
-RHEL 8 and derivatives need `dnf-plugins-core` first.
+The tag workflows define x86-64 `.deb` and `.rpm` outputs, but no tag has
+published them. There is no project APT, DNF/YUM, or zypper repository. Build a
+package locally only for development and inspect it with the validators in
+`packaging/scripts/` before installing it on a disposable host.
 
 ### Arch Linux (AUR)
 
-```bash
-paru -S pcloud-rs-bin        # release channel (what you want)
-# or
-yay -S pcloud-rs-bin
-# contributors tracking main:
-paru -S pcloud-rs-git
-```
-
-`pcloud-rs-bin` mirrors the upstream release tarball verbatim;
-`pcloud-rs-git` rebuilds from `main` on every upgrade.
-
-### openSUSE (Tumbleweed, Leap 15.5+)
-
-```bash
-sudo zypper addrepo https://pkg.pcloud-rs.dev/rpm/pcloud-rs.repo
-sudo zypper refresh
-sudo zypper install pcloud-rs
-```
+Neither `pcloud-rs-bin` nor `pcloud-rs-git` exists in the AUR. Build from source;
+do not run `paru -S` or `yay -S` for those names unless the packaging matrix is
+updated with a verified publication record.
 
 ### Nix / NixOS
 
 ```bash
-# one-off ad-hoc shell
-nix shell nixpkgs#pcloud-rs
-
-# permanent on NixOS — configuration.nix
-environment.systemPackages = [ pkgs.pcloud-rs ];
-services.pcloud-rs.enable    = true;           # enables the user unit
-
-# straight from this repo (flakes)
-nix profile install github:ezechiel203/pcloud-rs#pcloudc
+# from this repo (flakes)
+nix build .#pcloudc
+nix run .#pcloudc -- --version
+nix run .#pcloudd -- --help
 ```
 
-The flake exposes `packages.<system>.{pcloudc,pcloud-daemon}` and a
-`checks.<system>.integration` derivation that reproduces the CI smoke
-test. This is the only channel that currently delivers fully
-reproducible builds out of the box.
+The flake exposes `packages.<system>.{pcloud-rs,pcloud-rs-repro,pcloudc,pcloudd}`
+and `apps.<system>.{pcloudc,pcloudd}`. `default` runs `pcloudc`. Checks are
+`fmt`, `clippy`, `test`, and package builds. No `nixosModules.pcloud-rs`
+output exists yet.
 
 ### Docker / OCI
 
 ```bash
-docker pull ghcr.io/ezechiel203/pcloud-rs:stable
+docker build -f packaging/docker/Dockerfile -t pcloud-rs:dev .
 docker run --rm -it \
-  -v "$HOME/.config/pcloud-rs:/config" \
-  -v "$HOME/pCloud:/sync" \
-  ghcr.io/ezechiel203/pcloud-rs:stable pcloudc --version
+  -v pcloud-rs-state:/var/lib/pcloud-rs \
+  --entrypoint /usr/local/bin/pcloudc \
+  pcloud-rs:dev --version
 ```
 
-The image is **cosign-signed via keyless OIDC**. Verify before running
-in production:
-
-```bash
-cosign verify ghcr.io/ezechiel203/pcloud-rs:stable \
-  --certificate-identity-regexp 'github.com/ezechiel203/pcloud-rs' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com
-```
+No `.github/workflows/docker.yml` exists today, so no GHCR image or cosign
+OCI signature is published by this repository. Treat Docker as a local
+build/scanning recipe until a publish workflow lands.
 
 The image does **not** bundle FUSE. Container mount needs
 `--cap-add SYS_ADMIN --device /dev/fuse` plus a matching host kernel —
-we do not recommend it outside controlled CI. Classic `pcloudc sync-add`
+we do not recommend it outside controlled CI. `pcloudc sync add`
 works fine inside the container.
 
-### Flatpak
+### Community channels: unavailable
+
+AppImage, Flatpak (`com.pcloud.pcloud-rs`), Snap, Homebrew, winget,
+Chocolatey, and Scoop have in-tree scaffolding only. None is a supported public
+install channel. In particular, there is no `ezechiel203/homebrew-pcloud-rs`
+tap or `ezechiel203/scoop-bucket`, and the registry package names shown in old
+documentation are not published.
+
+### macOS `.pkg`: release pipeline only
+
+The strict workflow is designed to emit a signed, notarized, stapled package
+only after native fuse-t tests and Gatekeeper assessment. No such package has
+been published. Build from source on macOS for development; do not use a
+`releases/latest` URL until an actual qualified release exists.
+
+### Windows MSI/Burn: release pipeline only
+
+The strict workflow is designed to build Authenticode-signed binaries, MSI,
+and a signed WinFSP Burn bootstrapper. No installer has been published. Build
+from source on Windows for development; winget, Chocolatey, and Scoop cannot
+install this project today.
+
+### FreeBSD / NetBSD / OpenBSD / DragonFly BSD
 
 ```bash
-flatpak install flathub dev.pcloud-rs.Pcloudcc
-flatpak run dev.pcloud-rs.Pcloudcc --version
-```
-
-Flatpak's sandbox limits the paths the daemon can sync. The portal
-prompt lets you grant a host directory on first `sync add`.
-
-### AppImage (portable / rescue)
-
-```bash
-curl -fsSL -o pcloudc.AppImage \
-  https://github.com/ezechiel203/pcloud-rs/releases/latest/download/pcloudc-x86_64.AppImage
-chmod +x pcloudc.AppImage
-./pcloudc.AppImage --version
-```
-
-T2 channel: convenient for one-shot use, not the recommended daily
-install. Bundles `fuse3` statically; on older kernels without
-`/dev/fuse` the mount surface degrades gracefully.
-
-### Snap
-
-```bash
-sudo snap install pcloud-rs --classic
-```
-
-`--classic` is required because the daemon must see user-chosen paths
-outside the snap confinement. Tracks: `stable` / `candidate`.
-
-### macOS — Homebrew (recommended)
-
-```bash
-brew tap ezechiel203/pcloud-rs
-brew install pcloud-rs fuse-t                # fuse-t optional unless you plan to mount
-brew services start pcloud-rs
-```
-
-The Homebrew formula lays down a launchd agent at
-`~/Library/LaunchAgents/dev.pcloud-rs.daemon.plist`. `fuse-t` is the
-chosen FUSE provider on macOS; it uses NFSv4 under the hood and does
-not require a kernel extension.
-
-> **Honest status.** macOS mount is **scaffolded** today — the
-> packaging is wired, the runtime surface is behind `bd-1du.4`. CLI,
-> sync, transfers, shares, crypto, public links, and backup all work
-> on macOS right now.
-
-### macOS — direct `.pkg`
-
-```bash
-curl -fsSL -o pcloud-rs.pkg \
-  https://github.com/ezechiel203/pcloud-rs/releases/latest/download/pcloud-rs-universal.pkg
-sudo installer -pkg pcloud-rs.pkg -target /
-```
-
-The universal `.pkg` is arm64 + x86_64 fat. **Developer ID notarisation
-is pending a valid Apple Developer account**; until it lands, Gatekeeper
-may flag the package — verify the SHA-256 against the release page
-before `sudo installer`.
-
-### Windows — winget
-
-```powershell
-winget install pCloud.pcloud-rs
-```
-
-### Windows — Chocolatey
-
-```powershell
-choco install pcloud-rs
-```
-
-### Windows — Scoop
-
-```powershell
-scoop bucket add pcloud-rs https://github.com/ezechiel203/scoop-bucket
-scoop install pcloud-rs
-```
-
-### Windows — MSI (WiX)
-
-```powershell
-# unattended
-msiexec /i pcloud-rs-x64.msi /qn /norestart
-
-# interactive — double-click the MSI
-```
-
-The MSI registers `pcloud-daemon` as a **per-user Windows Service** and
-adds `pcloudc` to `PATH`. Uninstall via Control Panel or
-`msiexec /x`.
-
-> **Honest status.** Windows **Authenticode EV signing is a stub**
-> awaiting an EV hardware token. SmartScreen may prompt until the EV
-> key is in place. Windows **ProjFS / mounted-drive** surface is
-> gated behind `bd-1du.4`. The rest of the surface — CLI, sync,
-> transfers, shares, crypto, public links, backup — works today.
-
-### FreeBSD / NetBSD / OpenBSD
-
-```bash
-# FreeBSD pkg
-sudo pkg install pcloud-rs
-# FreeBSD ports
-cd /usr/ports/net/pcloud-rs && sudo make install clean
-
-# NetBSD / OpenBSD — build from source
+# Build from source; downstream binary packages are not published here.
 git clone https://github.com/ezechiel203/pcloud-rs
 cd pcloud-rs/
 cargo build --workspace --release --locked
 sudo install -m 0755 target/release/pcloudc         /usr/local/bin/
-sudo install -m 0755 target/release/pcloud-daemon   /usr/local/libexec/
+sudo install -m 0755 target/release/pcloudd         /usr/local/bin/
 ```
 
-Mount runtime on *BSD is **scaffolded only**. OpenBSD builds with the
-default feature set honour `unveil(2)` / `pledge(2)` — a security
-property the C client never had.
+Each explicitly supported BSD has a strict native workspace and live FUSE job.
+Those jobs must pass for the release commit; in-tree rc.d assets do not imply a
+published downstream package.
 
 ## Verification
 
-Every platform, every channel, the same two probes:
+Every locally built installation uses the same two probes:
 
 ```bash
 pcloudc --version
@@ -385,28 +258,30 @@ pcloudc doctor
 ### `pcloudc --version`
 
 ```
-pcloudc 0.9.x (commit abc1234, release)
+pcloudc 0.1.0 (commit abc1234, release)
 ```
 
 Field-selector extraction for scripting:
 
 ```bash
-pcloudc --version | awk '{ print $2 }'            # → 0.9.x
+pcloudc --version | awk '{ print $2 }'            # → 0.1.0
 pcloudc --version | grep -oP 'commit \K[0-9a-f]+' # → abc1234
 ```
 
 ### `pcloudc doctor`
 
-Typical healthy output:
+Representative categories from a healthy run:
 
 ```
-pcloudc 0.9.x (commit abc1234)
-config:     ~/.config/pcloud-rs/config.toml (mode 0600, ok)
-runtime:    ~/.local/state/pcloud-rs        (mode 0700, ok)
-socket:     not running (start with `pcloudc start`)
-tls:        production policy = mandatory
-fuse:       provider = fuse-t 1.x          (mount available)
+[OK]   daemon reachable
+[OK]   config and vault permissions
+[OK]   network reachable: binapi.pcloud.com:443
+[OK]   managed directories are owner-only
+[OK]   upload journal clean
+summary: 8 ok, 0 warn, 0 fail
 ```
+
+The exact count varies with configured mount roots and optional vault state.
 
 What each probe means:
 
@@ -431,11 +306,10 @@ echo "doctor exit: $?"                 # 0 only if everything clean
 pcloudc doctor --json | jq -r '.checks[] | select(.status!="ok") | .name'
 ```
 
-> **Expert tip.** `pcloudc doctor --json` is the integration with your
-> existing observability. The JSON schema is stable within a major
-> version — pipe it into Prometheus via `node_exporter`'s `textfile`
-> collector, or ingest it into your SIEM. Field `.version.commit` is
-> the supply-chain anchor you want for incident response.
+> **Expert tip.** `pcloudc doctor --json` can feed existing observability, but
+> the project is still version `0.1.0` and has not published a stable JSON
+> schema. Pin consumers to a reviewed commit until the SDK/CLI SemVer contract
+> is released.
 
 ## Troubleshooting — top five
 
@@ -451,12 +325,11 @@ pcloudc doctor --json | jq -r '.checks[] | select(.status!="ok") | .name'
    `sudo rm -rf ~/.local/state/pcloud-rs`, then run `pcloudc doctor`
    as your own user.
 4. **`fuse: provider not found`** — only matters if you intend to
-   mount. Install `fuse3` (Linux), `fuse-t` (macOS), or `fusefs-libs`
-   (FreeBSD). Mount is still being wired on macOS / Windows / BSD.
-5. **Windows service fails to start with error 5** — the per-user
-   service cannot write to `%LOCALAPPDATA%\pcloud-rs`. Check the ACL
-   on that directory; corporate images sometimes strip it. The MSI
-   sets the correct permissions — re-run it with `/qn` to reapply.
+   mount. Install FUSE3 (Linux/BSD), fuse-t (macOS), or the verified WinFSP
+   runtime (Windows).
+5. **Windows `pcloudc start` times out** — inspect the per-user
+   `daemon.log` under the pcloud-rs data directory. Do not create an SCM
+   service: its SID and DPAPI scope would not match the interactive user.
 
 ## Next steps
 

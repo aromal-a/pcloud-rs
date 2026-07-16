@@ -32,9 +32,6 @@
 //! human-readable preview/report formatters only acknowledge the
 //! presence of the token, never its value.
 
-// Linux/macOS only. The C pcloud-rs never ran on Windows, so we gate the
-// whole module at compile time rather than decorating every item.
-#![cfg(unix)]
 // The module doubles as a `#[path]`-included mini-library for the
 // `tests/migrate_fixture.rs` integration test. That build sees a subset
 // of the API surface (the test exercises `detect_with_targets` +
@@ -423,6 +420,7 @@ impl MigrationPlan {
                 remote_path: s.remote_path.clone(),
                 paused: false,
                 sync_type: s.sync_type,
+                exclude_globs: Vec::new(),
             })
             .collect();
         persist_profile(&profile)?;

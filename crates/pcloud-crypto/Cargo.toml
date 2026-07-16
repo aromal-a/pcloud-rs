@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 description = "Client-side crypto folder primitives (AES-256-GCM, Argon2, zeroized keys) for pcloud-rs."
 
 [dependencies]
@@ -26,14 +27,14 @@ zeroize.workspace = true
 # pclsync-v2 wire-compat deps (gated). RSA-4096 + RSAES-OAEP-SHA1 mirror the
 # mbedtls configuration used by the C client's pcryptofolder.c / pssl.c.
 rsa = { workspace = true, optional = true }
-pkcs1 = { workspace = true, optional = true }
+getrandom4 = { workspace = true, optional = true }
 sha1 = { workspace = true, optional = true }
 static_assertions = { workspace = true, optional = true }
 aes = { version = "0.8", optional = true }
 cbc = { version = "0.1", optional = true }
 ctr = { version = "0.9", optional = true }
 cipher = { version = "0.4", optional = true }
-rand_core = { version = "0.6", optional = true }
+rand_core = { version = "0.6", features = ["getrandom"], optional = true }
 
 [features]
 # OFF by default — enables legacy C-compat PBKDF2-HMAC-SHA-512 5000-iter
@@ -48,7 +49,7 @@ default = ["pclsync-v2", "crypto-provider-rustcrypto"]
 # pclsync C wire format (PBKDF2-HMAC-SHA512 KEK derivation, RSA-OAEP wrapping,
 # CBC-CS sector cipher, base32 filename encoding). OFF during Wave 1 so the
 # existing Argon2/GCM path keeps building unchanged.
-pclsync-v2 = ["dep:rsa", "dep:pkcs1", "dep:sha1", "dep:static_assertions", "dep:aes", "dep:cbc", "dep:cipher", "dep:rand_core", "dep:ctr"]
+pclsync-v2 = ["dep:rsa", "dep:getrandom4", "dep:sha1", "dep:static_assertions", "dep:aes", "dep:cbc", "dep:cipher", "dep:rand_core", "dep:ctr"]
 # Opt-in test-only helpers for downstream crates' integration tests.
 # Exposes `PclsyncCompatState::for_test` and `SymKeyVer1::duplicate` as
 # `#[doc(hidden)] pub` so sibling crates (e.g. pcloud-backends) can drive
@@ -70,10 +71,12 @@ test-helpers = []
 # compile-time `compile_error!` (see `crates/pcloud-crypto/src/lib.rs`)
 # that points at `docs/fips.md`, which documents the swap procedure
 # (replace primitive crates, rebuild against an externally-validated
-# module, re-vendor, gate runtime policy via `CryptoPolicy::fips_mode`).
-# The feature exists so downstream operators have a stable cargo flag to
-# wire CI against, and so a future PR can land the provider switch
-# without breaking existing build invocations.
+# module, re-vendor, and add a runtime-policy gate). No
+# `CryptoPolicy::fips_mode` field is implemented today; the swap
+# procedure in `docs/fips.md` introduces it. The feature exists so
+# downstream operators have a stable cargo flag to wire CI against,
+# and so a future PR can land the provider switch without breaking
+# existing build invocations.
 #
 # Both features are mutually exclusive at compile time. Do not flip the
 # default without a validated replacement and a CI gate.

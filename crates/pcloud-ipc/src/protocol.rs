@@ -27,6 +27,7 @@
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 use crate::methods::{Request, RequestEnvelope, Response};
 
@@ -64,8 +65,8 @@ pub const MAX_IPC_PAYLOAD_LEN: usize = 1024 * 1024;
 
 /// Wire tag for the top-level message classifier carried in the 8-byte
 /// frame header. Numeric values are stable across the protocol version;
-/// decoders reject unknown values by coercing them into [`Self::Event`]
-/// (reserved for future push notifications).
+/// decoders reject any tag that is not valid for the specific decode path
+/// before attempting JSON deserialization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MessageKind {
     /// Client-to-daemon request envelope. Wire tag: `1`.
@@ -148,6 +149,16 @@ pub enum ProtocolError {
         /// The version the peer advertised.
         actual: u16,
     },
+    /// The frame's message-kind tag is not valid for the decode path. For
+    /// example, [`decode_request`] requires kind `1` and rejects response or
+    /// event frames before parsing the payload as a request.
+    #[error("unexpected IPC message kind: expected {expected:?}, got {actual}")]
+    UnexpectedMessageKind {
+        /// Message kind required by the decoder.
+        expected: MessageKind,
+        /// Raw wire tag supplied by the peer.
+        actual: u16,
+    },
     /// Underlying `serde_json` encode/decode failure. Emitted when the
     /// body is valid-length but not a well-formed JSON representation
     /// of the expected `Request` / `Response` shape (unknown variant,
@@ -190,7 +201,7 @@ fn decode_header(bytes: &[u8]) -> Result<(u32, u16, u16), ProtocolError> {
 /// assert!(bytes.len() > 8);
 /// ```
 pub fn encode_request(envelope: &RequestEnvelope) -> Result<Vec<u8>, ProtocolError> {
-    let payload = serde_json::to_vec(envelope)?;
+    let payload = Zeroizing::new(serde_json::to_vec(envelope)?);
     encode_request_payload(payload)
 }
 
@@ -209,7 +220,7 @@ pub fn encode_request_bare(request: &Request) -> Result<Vec<u8>, ProtocolError> 
     encode_request(&RequestEnvelope::new(request.clone()))
 }
 
-fn encode_request_payload(payload: Vec<u8>) -> Result<Vec<u8>, ProtocolError> {
+fn encode_request_payload(payload: Zeroizing<Vec<u8>>) -> Result<Vec<u8>, ProtocolError> {
     if payload.len() > MAX_IPC_PAYLOAD_LEN {
         return Err(ProtocolError::PayloadTooLarge);
     }
@@ -284,6 +295,12 @@ pub fn decode_request(bytes: &[u8]) -> Result<Frame<RequestEnvelope>, ProtocolEr
              Please upgrade the client to avoid future compatibility breaks."
         );
     }
+    if message_type != MessageKind::Request as u16 {
+        return Err(ProtocolError::UnexpectedMessageKind {
+            expected: MessageKind::Request,
+            actual: message_type,
+        });
+    }
 
     let payload = &bytes[8..];
     if payload.len() > MAX_IPC_PAYLOAD_LEN || payload.len() != payload_len as usize {
@@ -291,16 +308,11 @@ pub fn decode_request(bytes: &[u8]) -> Result<Frame<RequestEnvelope>, ProtocolEr
     }
 
     let envelope = RequestEnvelope::try_from_wire(payload)?;
-    let kind = match message_type {
-        1 => MessageKind::Request,
-        2 => MessageKind::Response,
-        _ => MessageKind::Event,
-    };
 
     Ok(Frame {
         header: FrameHeader {
             version,
-            message_type: kind,
+            message_type: MessageKind::Request,
             payload_len,
         },
         payload: envelope,
@@ -334,6 +346,12 @@ pub fn decode_response(bytes: &[u8]) -> Result<Frame<Response>, ProtocolError> {
              current version is {IPC_PROTOCOL_VERSION}."
         );
     }
+    if message_type != MessageKind::Response as u16 {
+        return Err(ProtocolError::UnexpectedMessageKind {
+            expected: MessageKind::Response,
+            actual: message_type,
+        });
+    }
 
     let payload = &bytes[8..];
     if payload.len() > MAX_IPC_PAYLOAD_LEN || payload.len() != payload_len as usize {
@@ -341,16 +359,11 @@ pub fn decode_response(bytes: &[u8]) -> Result<Frame<Response>, ProtocolError> {
     }
 
     let response = serde_json::from_slice(payload)?;
-    let kind = match message_type {
-        1 => MessageKind::Request,
-        2 => MessageKind::Response,
-        _ => MessageKind::Event,
-    };
 
     Ok(Frame {
         header: FrameHeader {
             version,
-            message_type: kind,
+            message_type: MessageKind::Response,
             payload_len,
         },
         payload: response,

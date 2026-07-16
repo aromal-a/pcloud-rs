@@ -25,11 +25,13 @@ pub const SCHEMA_VERSION_V9: u32 = 9;
 pub const SCHEMA_VERSION_V10: u32 = 10;
 /// Adds the `file_metadata` table for local file/folder metadata cache.
 pub const SCHEMA_VERSION_V11: u32 = 11;
+/// Adds `sync_root_records.exclude_globs` for selective sync (T1.1).
+pub const SCHEMA_VERSION_V12: u32 = 12;
 
 /// Returns a stable diagnostic name for the current schema target, used in logs.
 #[must_use]
 pub fn schema_name() -> &'static str {
-    "store-schema-v11"
+    "store-schema-v12"
 }
 
 /// Apply schema version 1: creates `account`, `audit_events`, and `sync_roots`.
@@ -305,6 +307,25 @@ pub fn apply_schema_v11(conn: &Connection) -> Result<(), rusqlite::Error> {
         PRAGMA user_version = 11;
         ",
     )
+}
+
+/// Schema v12 adds `sync_root_records.exclude_globs` (T1.1 selective sync).
+///
+/// Stores a newline-separated list of glob patterns. Empty string means
+/// "no excludes" (the default for pre-v12 rows). Engine planners
+/// consult the patterns and skip matching files on the next pass.
+///
+/// Idempotent: the `ALTER TABLE` is guarded by a column-existence check
+/// so a partial migration that added the column but crashed before
+/// bumping `user_version` does not brick startup with a duplicate-column
+/// error.
+pub fn apply_schema_v12(conn: &Connection) -> Result<(), rusqlite::Error> {
+    if !column_exists(conn, "sync_root_records", "exclude_globs")? {
+        conn.execute_batch(
+            "ALTER TABLE sync_root_records ADD COLUMN exclude_globs TEXT NOT NULL DEFAULT '';",
+        )?;
+    }
+    conn.execute_batch("PRAGMA user_version = 12;")
 }
 
 fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, rusqlite::Error> {

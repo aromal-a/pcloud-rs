@@ -1,9 +1,10 @@
-# pcloudd.service drop-in override — required for --user (per-user) deployments
+# pcloudd.service drop-in override — legacy compatibility for --user deployments
 #
-# The shipped pcloudd.service uses DynamicUser=yes, PrivateUsers=yes, and several
-# other directives that systemd REJECTS in a user unit (per-user mode).  If you
-# install the base unit under ~/.config/systemd/user/ you MUST also install this
-# drop-in, which strips the system-only directives.
+# New installs should use packaging/systemd/pcloudd-user.service instead.
+# This drop-in exists only for operators who already copied the system unit
+# under ~/.config/systemd/user/ and need a migration bridge. The shipped
+# pcloudd.service uses DynamicUser=yes, PrivateUsers=yes, and several other
+# directives that systemd REJECTS in a user unit (per-user mode).
 #
 # Installation:
 #   mkdir -p ~/.config/systemd/user/pcloudd.service.d/

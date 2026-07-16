@@ -3,9 +3,10 @@
 This chapter documents the performance wins landed in **wave-1** of the Rust
 rewrite's optimisation pass. Each win is traceable to a plan item ID (`P1.1`,
 `P5.1`, `P1.5`, `P5.2` / `G8`, `C1`, `C4`). Numbers come from Criterion
-micro-benchmarks checked in under `crates/pcloud-bench/benches/` (landed as
-part of `C4`) and from `cargo test --release` soak runs. Where a number is
-absent, the bench is still warming up a baseline and the section is marked
+micro-benchmarks checked in under each owning crate's `benches/` directory
+and from `cargo test --release` soak runs. There is no aggregate
+`pcloud-bench` crate today. Where a number is absent, the bench is still
+warming up a baseline and the section is marked
 *(bench pending baseline)*.
 
 All paths are relative to `` unless otherwise stated.
@@ -29,11 +30,14 @@ All paths are relative to `` unless otherwise stated.
 Reproduce with:
 
 ```bash
-cargo bench -p pcloud-bench -- chunked_flush upload_session page_cache_evict
+cargo bench -p pcloud-fs --bench chunked_flush
+cargo bench -p pcloud-fs --bench page_cache
+cargo bench -p pcloud-embedded-sdk --bench upload_session
 ```
 
-The bench harness writes JSON summaries under `target/criterion/`; CI uploads
-these as artefacts so regressions are visible on every PR.
+Criterion writes summaries under `target/criterion/`. No benchmark workflow
+exists today, so release managers must run these manually until a CI gate is
+added.
 
 ## P1.1 — O(1) page-cache eviction
 
@@ -66,7 +70,7 @@ eliminates the hot-path scan entirely. Worst-case latency under a synthetic
 single-digit microseconds.
 
 See `crates/pcloud-fs/src/page_cache.rs` and
-`crates/pcloud-bench/benches/page_cache.rs`.
+`crates/pcloud-fs/benches/page_cache.rs`.
 
 ## P5.1 — `Arc<Vec<u8>>` hot-path
 
@@ -170,7 +174,7 @@ milliseconds because the callback returns as soon as the *first* chunk is
 durable. The remaining chunks drain in the background under back-pressure.
 
 See `crates/pcloud-daemon/src/write_path.rs` and
-`crates/pcloud-bench/benches/chunked_flush.rs`.
+`crates/pcloud-fs/benches/chunked_flush.rs`.
 
 ## C1 — `flush_latency_seconds` histogram
 
@@ -223,13 +227,16 @@ See `crates/pcloud-daemon/src/metrics.rs` for the registration site and
 
 ```bash
 cd .
-cargo bench -p pcloud-bench
+cargo bench -p pcloud-fs --bench chunked_flush
+cargo bench -p pcloud-fs --bench page_cache
+cargo bench -p pcloud-embedded-sdk --bench upload_session
 # JSON summaries land under target/criterion/
 ```
 
 The `development/release-checklist.md` file references these benches as a
-release gate: a regression > 10 % on any of `chunked_flush`,
-`upload_session`, or `page_cache_evict` blocks the release.
+manual release gate until a benchmark workflow exists: a regression > 10 %
+on any of `chunked_flush`, `upload_session`, or `page_cache` blocks the
+release.
 
 ## If you're new to performance work on this codebase
 
@@ -400,10 +407,9 @@ pcloud:flush_error_rate = sum(rate(
 
 ## Extension points
 
-- New bench: add a Criterion benchmark under
-  `crates/pcloud-bench/benches/` and wire it into
-  `development/release-checklist.md` as a release gate if the path is
-  hot.
+- New bench: add a Criterion benchmark under the owning crate's `benches/`
+  directory and wire it into `development/release-checklist.md` as a release
+  gate if the path is hot.
 - New metric: register in `crates/pcloud-daemon/src/metrics.rs` and
   document the bucket rationale here.
 - Alternative cache backend: the page cache is fronted by a
@@ -425,8 +431,8 @@ pcloud:flush_error_rate = sum(rate(
 
 - [Overview](./overview.md) — where performance sits in the larger
   architecture.
-- [Crate Map](./crate-map.md) — `pcloud-fs`, `pcloud-daemon`, and
-  `pcloud-bench` ownership.
+- [Crate Map](./crate-map.md) — `pcloud-fs`, `pcloud-daemon`, and the
+  crate-local benchmark ownership.
 - [Platform Support](./platform-support.md) — per-platform perf
   caveats (Windows flush semantics, macOS FUSE-t overheads).
 - [Operations → Runbook](../operations/runbook.md) — alert thresholds

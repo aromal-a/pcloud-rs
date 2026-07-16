@@ -1,0 +1,856 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Request Lifecycle - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/architecture/request-lifecycle.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="request-lifecycle"><a class="header" href="#request-lifecycle">Request Lifecycle</a></h1>
+<p>This page is a teaching-grade walkthrough for a new contributor. We pick one
+concrete command:</p>
+<pre><code>pcloudc sync add /local /remote
+</code></pre>
+<p>and trace every hop from the user’s terminal down to <code>binapi.pcloud.com</code> and
+back. The goal is that after reading this page you can open any of the files
+mentioned and know why that file is on the request path, not just that it is.</p>
+<p>All file paths are relative to ``. All line numbers reflect the tree
+at the time of writing; use them as starting points, not as contracts.</p>
+<h2 id="sequence-diagram"><a class="header" href="#sequence-diagram">Sequence diagram</a></h2>
+<pre><code>  user shell        pcloud-cli (client process)                 pcloud-daemon (server process)            pCloud API
+  ----------        ---------------------------                 ----------------------------------        ----------
+   |  argv                |                                            |                                    |
+   |---------------------&gt;| main()                                     |                                    |
+   |                      | GlobalFlags::extract                       |                                    |
+   |                      | app::parse_command                         |                                    |
+   |                      | Command::SyncAdd + inputs                  |                                    |
+   |                      | build Request::SyncRootAdd { local, remote}|                                    |
+   |                      | IpcClient::send                            |                                    |
+   |                      | protocol::encode_request (8B hdr + JSON)   |                                    |
+   |                      |--- UnixStream ----------------------------&gt;| accept()                           |
+   |                      |                                            | peer_identity (SO_PEERCRED)        |
+   |                      |                                            | read_framed_request (size-gated)   |
+   |                      |                                            | decode_request -&gt; Request enum     |
+   |                      |                                            | Runtime::handle_request            |
+   |                      |                                            |   catch_unwind { dispatch }        |
+   |                      |                                            |     add_sync_root                  |
+   |                      |                                            |       canonicalize local           |
+   |                      |                                            |       sync_runtime.validate_remote |
+   |                      |                                            |         listfolder (binary proto)  |
+   |                      |                                            |-----------------------------TLS---&gt;| binapi.pcloud.com:8398
+   |                      |                                            |&lt;------ result metadata ------------|
+   |                      |                                            |       persist SyncRootRecord       |
+   |                      |                                            | Response { Ok, "sync added ..." }  |
+   |                      |&lt;--- framed Response ------------------------| write_response                    |
+   |                      | parse_response                             |                                    |
+   |  exit code &lt;---------| map Response -&gt; ExitCode                   |                                    |
+</code></pre>
+<h2 id="1-the-cli-process-starts"><a class="header" href="#1-the-cli-process-starts">1. The CLI process starts</a></h2>
+<p>The binary entry point is <code>fn main</code> in
+<code>crates/pcloud-cli/src/main.rs:20</code>. It collects <code>argv</code>, hands it to <code>run</code>, and
+propagates the numeric exit code. <code>run</code> itself is the interesting function
+(<code>crates/pcloud-cli/src/main.rs:78</code>), because it is the one exercised by unit
+tests.</p>
+<p>The first job is to split global flags (<code>-q</code>, <code>-v</code>, <code>--json</code>, <code>--output</code>) from
+the subcommand. That happens in
+<code>GlobalFlags::extract</code> at <code>crates/pcloud-cli/src/globals.rs:145</code>. <code>extract</code>
+returns the flags plus a “reduced” argv with those global tokens removed.</p>
+<h2 id="2-command-parsing"><a class="header" href="#2-command-parsing">2. Command parsing</a></h2>
+<p>The reduced argv is fed into <code>app::parse_command</code> at
+<code>crates/pcloud-cli/src/app.rs:1009</code>. Parsing is a hand-written recursive-descent
+mapper rather than a derive macro so we can support legacy aliases like
+<code>s add</code>, <code>sync-add</code>, and abbreviations like <code>st</code> without a framework in the way.
+For our input <code>sync add</code>, it takes the first-token branch in the “sync” group
+(<code>app.rs:513</code>) and returns <code>Command::SyncAdd</code>.</p>
+<p><code>Command::SyncAdd</code> is a zero-payload variant. The two positional arguments
+(<code>/local</code> and <code>/remote</code>) are captured separately by <code>parse_inputs_for_command</code>
+(see the test at <code>app.rs:2091</code> for the canonical fixture).</p>
+<h2 id="3-building-the-typed-ipc-request"><a class="header" href="#3-building-the-typed-ipc-request">3. Building the typed IPC request</a></h2>
+<p>Once the command and its inputs are known, <code>app.rs:1088</code> selects the <code>SyncAdd</code>
+arm and constructs the IPC-level request. The concrete enum variant is
+<code>Request::SyncRootAdd { local_path, remote_path }</code>, declared in
+<code>crates/pcloud-ipc/src/methods.rs:150</code>.</p>
+<p>Two things to notice here:</p>
+<ol>
+<li>The variant carries plain paths, not secrets. Any secret fields across the
+whole <code>Request</code> enum (passwords, tokens, TFA codes) are wrapped in
+<code>SecretString</code> so they zeroize on drop. A sync-root add carries no secret
+payload.</li>
+<li>The variant name (<code>SyncRootAdd</code>) intentionally diverges from the CLI name
+(<code>SyncAdd</code>). The CLI names the user gesture; the IPC names the daemon
+operation. Keep that distinction when you add new methods.</li>
+</ol>
+<h2 id="4-encoding-and-sending-over-the-local-socket"><a class="header" href="#4-encoding-and-sending-over-the-local-socket">4. Encoding and sending over the local socket</a></h2>
+<p>The CLI hands the typed <code>Request</code> to <code>IpcClient::send</code> at
+<code>crates/pcloud-ipc/src/transport.rs:143</code>. <code>send</code> delegates the framing to
+<code>protocol::encode_request</code> at <code>crates/pcloud-ipc/src/protocol.rs:74</code>. The wire
+format is an 8-byte little-endian header
+(<code>u32 payload_len | u16 version | u16 kind</code>) followed by the JSON-serialized
+request body.</p>
+<p>Caps and invariants enforced on the way out:</p>
+<ul>
+<li><code>MAX_IPC_PAYLOAD_LEN</code> = 1 MiB (<code>protocol.rs:20</code>). Oversized requests fail
+before the socket is even touched.</li>
+<li><code>IPC_PROTOCOL_VERSION</code> is pinned at 1 (<code>protocol.rs:12</code>). An old client
+talking to a new daemon gets a clean <code>VersionMismatch</code>.</li>
+</ul>
+<p>The socket path itself comes from the bootstrap/runtime layer; it lives under
+a <code>0700</code> runtime directory and the socket is chmodded <code>0600</code>
+(<code>transport.rs:132</code>). That is our first line of defence: only the same UID can
+even try to connect.</p>
+<h2 id="5-server-accept-and-peer-authentication"><a class="header" href="#5-server-accept-and-peer-authentication">5. Server accept and peer authentication</a></h2>
+<p>On the daemon side, <code>pcloud-ipc/src/transport.rs</code> (search <code>fn run</code> in
+<code>IpcServer</code>) accepts the <code>UnixStream</code>, then immediately calls
+<code>peer_identity</code> at <code>transport.rs:233</code>. That function uses <code>SO_PEERCRED</code>
+(<code>transport.rs:248</code>) via <code>getsockopt</code> to read the peer’s <code>uid/gid/pid</code> out of
+the kernel.</p>
+<p>If the UID does not match the daemon’s own UID, the connection is dropped
+before any bytes are decoded. This is a hard authentication boundary: the
+daemon does not trust that “it’s a Unix socket” is enough, even with the
+<code>0600</code> permissions, because filesystem permissions can be surprising on
+shared mounts.</p>
+<p>After the peer check, <code>read_framed_request</code> (<code>transport.rs:159</code>) reads the
+8-byte header, checks the declared length against <code>MAX_REQUEST_BYTES</code>, then
+reads exactly that many body bytes. A too-large declaration aborts the
+connection without sending a response (<code>transport.rs:192</code>), because at that
+point the stream is not in a framed-recoverable state.</p>
+<h2 id="6-dispatch-with-a-panic-guard"><a class="header" href="#6-dispatch-with-a-panic-guard">6. Dispatch with a panic guard</a></h2>
+<p>The decoded <code>Request</code> lands in <code>Runtime::handle_request</code> at
+<code>crates/pcloud-daemon/src/runtime.rs:118</code>. This function wraps the actual
+dispatch in <code>std::panic::catch_unwind</code> (<code>runtime.rs:130</code>). If the dispatch
+panics, the guard converts it into a <code>Response { InternalError, ... }</code> instead
+of letting the daemon process die. The <code>metrics</code> feature increments a panic
+counter so the event is visible in Prometheus.</p>
+<p>Inside the guard, <code>handle_request_dispatch</code> (<code>runtime.rs:160</code>) is a large
+<code>match</code> on <code>Request</code>. Our variant takes the arm at <code>runtime.rs:342</code>:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>Request::SyncRootAdd { local_path, remote_path }
+    =&gt; self.add_sync_root(local_path, remote_path),
+<span class="boring">}</span></code></pre>
+<h2 id="7-backend-work"><a class="header" href="#7-backend-work">7. Backend work</a></h2>
+<p><code>Runtime::add_sync_root</code> starts at <code>runtime.rs:2813</code>. The interesting parts in
+order:</p>
+<ol>
+<li>Reject empty paths (<code>runtime.rs:2814</code>). Invalid input never leaves this
+layer.</li>
+<li>Canonicalize the local path (<code>runtime.rs:2820</code>). We store the canonical
+form so a user adding the same directory via a symlink does not register
+two roots.</li>
+<li>Reject duplicate or nested local roots (<code>runtime.rs:2832</code>). This is one of
+the places the Rust path is stricter than the C reference: we refuse to
+register <code>/a/b</code> when <code>/a</code> is already a root.</li>
+<li>Require an authenticated session (<code>runtime.rs:2845</code>). The auth token is
+cloned out of <code>SecretString</code> for the duration of the backend call.</li>
+<li>Validate the remote folder (<code>runtime.rs:2860</code>) by calling
+<code>sync_runtime.validate_remote_folder</code>, defined at
+<code>crates/pcloud-daemon/src/sync_backend.rs:375</code>. This is the hop that
+actually leaves the daemon.</li>
+</ol>
+<h2 id="8-protocol-call-listfolder"><a class="header" href="#8-protocol-call-listfolder">8. Protocol call: <code>listfolder</code></a></h2>
+<p><code>validate_remote_folder</code> asks the API whether the remote path exists and is a
+folder. It builds a <code>ListFolderByPathRequest</code> and invokes the <code>listfolder</code>
+method defined in <code>crates/pcloud-proto/src/methods/folder.rs:12</code>. The binary
+transport layer that actually writes the command and its params on the wire
+lives in <code>crates/pcloud-proto/src/binary_api.rs</code> (command assembly) plus
+<code>crates/pcloud-proto/src/folder_api.rs:8</code> (typed request/response wrappers).</p>
+<h2 id="9-tls-to-binapipcloudcom"><a class="header" href="#9-tls-to-binapipcloudcom">9. TLS to <code>binapi.pcloud.com</code></a></h2>
+<p>The underlying socket is a TLS-wrapped TCP stream set up in
+<code>crates/pcloud-proto/src/transport.rs</code>. <code>connect_socket</code> at <code>transport.rs:116</code>
+opens the raw TCP connection with a bounded <code>connect_timeout</code>
+(<code>transport.rs:27</code>); <code>StreamOwned::new</code> at <code>transport.rs:161</code> wraps it in
+<code>rustls</code>. Production configs reject downgrade away from TLS, which is enforced
+at config load time and is one of the non-negotiable security rules in
+<code>CLAUDE.md</code>.</p>
+<h2 id="10-response-path"><a class="header" href="#10-response-path">10. Response path</a></h2>
+<p>The listfolder reply flows back the same way in reverse:</p>
+<ul>
+<li><code>pcloud-proto</code> decodes the binary response and returns a <code>Result&lt;_, ProtoError&gt;</code>.</li>
+<li><code>sync_backend.rs</code> maps protocol errors into its own <code>ValidateRemoteError</code>.</li>
+<li><code>runtime.rs:2865</code> converts that into a <code>Response { Conflict, "remote sync root validation failed: ..." }</code> on failure, or on success continues to
+allocate a new <code>SyncId</code> and persist a <code>SyncRootRecord</code> (<code>runtime.rs:2872</code>).</li>
+<li><code>handle_request</code> frames the <code>Response</code> and <code>write_response</code>
+(<code>pcloud-ipc/src/transport.rs:221</code>) writes it back on the same stream.</li>
+<li><code>IpcClient::send</code> (<code>transport.rs:153</code>) reads the framed response to end,
+calls <code>parse_response</code>, and returns.</li>
+<li>The CLI maps <code>ResponseStatus</code> to a process exit code using the table in
+<code>crates/pcloud-cli/src/exit_code.rs</code>; see the rendered table at
+<code>reference/exit-codes.md</code>.</li>
+</ul>
+<p>Each hop has its own error type. That is deliberate: protocol errors don’t
+leak into IPC errors, IPC errors don’t leak into CLI exit codes, and each
+layer can log at the level where the information is useful. When you debug a
+failure, pick the layer that matches your symptom and grep for that error
+type; do not assume a single <code>Error</code> enum spans the whole stack.</p>
+<h2 id="where-to-add-a-new-method"><a class="header" href="#where-to-add-a-new-method">Where to add a new method</a></h2>
+<p>Adding a new daemon-mediated command is a fixed six-file change:</p>
+<ol>
+<li><code>crates/pcloud-ipc/src/methods.rs</code> - add the <code>Request</code> variant and any
+<code>Response</code> payload.</li>
+<li><code>crates/pcloud-cli/src/app.rs</code> - add a <code>Command</code> variant, parse it in
+<code>parse_command</code>, and build the <code>Request</code> in the <code>run_command</code> match.</li>
+<li><code>crates/pcloud-daemon/src/runtime.rs</code> - add the arm in
+<code>handle_request_dispatch</code> and a private method on <code>Runtime</code>.</li>
+<li><code>crates/pcloud-daemon/src/&lt;area&gt;_backend.rs</code> - implement the business logic
+against <code>pcloud-proto</code> and/or <code>pcloud-store</code>.</li>
+<li><code>crates/pcloud-proto/src/methods/&lt;area&gt;.rs</code> (+ <code>&lt;area&gt;_api.rs</code>) - if a new
+API call is needed, declare the request/response types and the binary
+command name.</li>
+<li><code>crates/pcloud-sdk-public/src/lib.rs</code> - expose a focused SDK helper with
+SDK-owned types when the operation belongs in the stable remote-drive
+contract. Broad first-party compatibility helpers belong in
+<code>crates/pcloud-sdk/src/lib.rs</code> (<code>pcloud-embedded-sdk</code>).</li>
+</ol>
+<p>Also write an integration test under
+<code>crates/pcloud-daemon/tests/</code> or a <code>#[cfg(test)]</code> block next to the backend,
+and update <code>C_FEATURE_PARITY_MATRIX.csv</code> if the new method is parity-relevant.</p>
+<h2 id="gotchas"><a class="header" href="#gotchas">Gotchas</a></h2>
+<p><strong>Peer authentication is platform-specific.</strong> Linux uses <code>SO_PEERCRED</code>, BSD
+and macOS use native peer-credential APIs, Solaris-family targets use
+<code>getpeerucred(3)</code>, and Windows verifies the named-pipe client’s token SID.
+Never replace these checks with socket/file permissions alone.</p>
+<p><strong>The panic guard is unconditional.</strong> The <code>catch_unwind</code> wrapper in
+<code>runtime.rs:130</code> runs in release builds as well as test builds. It exists so a
+buggy dispatch arm cannot take the whole daemon down, which means you must
+not rely on a panic to tear down shared state: assume the process keeps
+running after a panic, and make sure any partially-updated state is either
+rolled back or documented.</p>
+<p><strong><code>catch_unwind</code> does not catch all aborts.</strong> It catches panics. It does not
+catch stack overflow via <code>abort</code>, it does not catch <code>abort()</code> from FFI, and it
+does not catch a panic that hits <code>panic = "abort"</code> if we ever switch. The
+panic hook in the metrics path (<code>runtime.rs:152</code>) folds background-thread
+panics into a gauge so you still see them in Prometheus; never silence that
+hook.</p>
+<p><strong>JSON is the current IPC body encoding.</strong> The doc comment on the framing
+mentions CBOR in passing, but the shipping implementation uses
+<code>serde_json::to_vec</code> / <code>serde_json::from_slice</code> (<code>protocol.rs:75</code>). If you
+switch encodings, bump <code>IPC_PROTOCOL_VERSION</code> so old clients fail loudly.</p>
+<p><strong>Socket mode vs directory mode.</strong> Both must stay restrictive. The runtime
+directory is <code>0700</code>, the socket is <code>0600</code>. Weakening either one invalidates
+the <code>SO_PEERCRED</code> argument above, because a world-writable parent directory
+lets an attacker stage a replacement socket.</p>
+<h2 id="runnable-example"><a class="header" href="#runnable-example">Runnable example</a></h2>
+<p>For a full end-to-end demo you can run against a real account, see
+<code>crates/pcloud-sdk/examples/login_and_list.rs</code> from the internal
+<code>pcloud-embedded-sdk</code>. It exercises the same
+CLI -&gt; Request -&gt; daemon -&gt; <code>pcloud-proto</code> -&gt; TLS path end-to-end against
+<code>binapi.pcloud.com</code>, minus the CLI frontend, and is the fastest way to see
+each layer produce a real log line.</p>
+<h2 id="the-pcloud-backends-split-p61"><a class="header" href="#the-pcloud-backends-split-p61">The <code>pcloud-backends</code> split (P6.1)</a></h2>
+<p>The dispatch arms of <code>pcloud-daemon</code> used to own both the routing logic
+and the per-feature backend implementations. As the feature surface grew
+(auth, transfers, sync, public links, shares, backups, crypto, account,
+folder) that coupling made it hard to unit-test a backend without pulling
+the full daemon binary crate, and it made reuse across native compositions
+and the internal embedded compatibility API unnecessarily difficult.</p>
+<p>The <code>pcloud-backends</code> crate exists to break that coupling. It contains:</p>
+<ul>
+<li>the <code>Backend</code> trait that every per-feature backend implements;</li>
+<li>request routing types (<code>BackendRequest</code>, <code>BackendResponse</code>, dispatch
+keys) that are independent of the IPC wire format;</li>
+<li>backend composition utilities used by both <code>pcloud-daemon</code> (for the
+daemon dispatch path) and <code>pcloud-embedded-sdk</code> (for the embedded in-process
+path);</li>
+<li>shared test doubles and fixtures so each backend can be exercised in
+isolation.</li>
+</ul>
+<p>The practical consequence is that a backend no longer needs to know
+whether it is being driven by a real IPC socket, a mock IPC harness, or
+an in-process compatibility-SDK call. <code>pcloud-daemon::runtime::dispatch</code> becomes a
+pure translator between <code>pcloud-ipc::Request</code> and
+<code>pcloud-backends::BackendRequest</code>; the embedded SDK does the same translation
+on behalf of in-process callers. Neither path can short-circuit the other
+because they both go through the same trait surface.</p>
+<p>Invariants to preserve when touching this split:</p>
+<ul>
+<li>a backend must not depend on <code>pcloud-daemon</code> directly. If it needs a
+runtime service (store, crypto, observability), it takes it as a trait
+bound or a handle passed at construction time.</li>
+<li>the daemon dispatch arm stays <strong>thin</strong>. Any non-trivial logic belongs
+in the backend, not in the translation layer.</li>
+<li>the <code>catch_unwind</code> boundary lives on the daemon side of the
+translation. Backends assume panics propagate; the daemon catches them.</li>
+<li>backend tests live in <code>pcloud-backends</code> or the backend’s own crate,
+not in <code>pcloud-daemon</code>. If you find yourself writing a backend test in
+the daemon crate, you have probably skipped an abstraction.</li>
+</ul>
+<h2 id="windows-and-macos-peer-check-variations"><a class="header" href="#windows-and-macos-peer-check-variations">Windows and macOS peer-check variations</a></h2>
+<p>The lifecycle above describes the Linux path. The other supported
+platforms use different peer-authentication primitives for the same
+trust boundary. The <code>PlatformIpc</code> trait hides these behind one interface,
+but the details matter when you are debugging a permission denial or
+writing a new platform backend.</p>
+<pre><code>                +---------------------------------------+
+                |  client connects to local IPC endpoint|
+                +------------------+--------------------+
+                                   |
+            +----------------------+----------------------+
+            |                      |                      |
+            v                      v                      v
+    +---------------+      +---------------+      +-----------------+
+    |    Linux      |      |    macOS      |      |    Windows      |
+    |               |      |               |      |                 |
+    | Unix socket   |      | Unix socket   |      | Named pipe      |
+    | 0600 on 0700  |      | 0600 on 0700  |      | \\.\pipe\pcloudd|
+    | dir           |      | dir           |      | with explicit   |
+    |               |      |               |      | DACL            |
+    |      |        |      |      |        |      |        |        |
+    |      v        |      |      v        |      |        v        |
+    | getsockopt    |      | getsockopt    |      | GetNamedPipe-   |
+    | SO_PEERCRED   |      | LOCAL_PEERCRED|      | ClientProcessId |
+    | -&gt; ucred      |      | -&gt; xucred     |      | -&gt; PID          |
+    |      |        |      |      |        |      |        |        |
+    |      v        |      |      v        |      |        v        |
+    | compare uid   |      | compare uid   |      | OpenProcessToken|
+    | to geteuid()  |      | to geteuid()  |      | + compare SID   |
+    |               |      |               |      | to daemon SID   |
+    +-------+-------+      +-------+-------+      +--------+--------+
+            |                      |                       |
+            +----------------------+-----------------------+
+                                   |
+                                   v
+                   PlatformIpc::accept() returns a
+                   peer-verified framed channel
+                   to runtime::dispatch
+</code></pre>
+<p>Linux uses <code>SO_PEERCRED</code> on the accepted Unix socket, which returns a
+<code>struct ucred</code> (uid, gid, pid) captured at connect time. The daemon
+compares the returned uid to <code>geteuid()</code> and rejects any mismatch. The
+socket is <code>0600</code> on a <code>0700</code> parent directory so the kernel’s DAC check
+already filters obvious abuse; <code>SO_PEERCRED</code> is the defence-in-depth
+layer on top.</p>
+<p>macOS and the BSD family use <code>getpeereid(3)</code>. The comparison is the same
+(peer euid versus daemon euid) and the file permissions are the same.
+illumos/Solaris use <code>getpeerucred(3)</code>, which also yields the peer PID.</p>
+<p>Windows uses a named pipe at <code>\\.\pipe\pcloudd-&lt;session&gt;</code> created with
+an explicit DACL that grants <code>FILE_ALL_ACCESS</code> only to the daemon’s SID
+and the owning user’s SID. On accept, the daemon calls
+<code>GetNamedPipeClientProcessId</code>, opens the client process token with
+<code>OpenProcessToken</code>, and compares the token’s user SID against the
+expected SID. Mismatch or failure to open the token is treated the same
+as a uid mismatch on Unix: the connection is rejected before the first
+byte is read.</p>
+<p>All three branches converge on the same post-condition: the channel
+returned to <code>runtime::dispatch</code> has been peer-authenticated, and any
+request body read from it is known to come from the expected local user.
+The rest of the lifecycle — <code>catch_unwind</code>, backend dispatch, proto
+call, response framing — is platform-independent from that point on.</p>
+<h2 id="upload-chunk-lifecycle-and-daemon-restart-resume"><a class="header" href="#upload-chunk-lifecycle-and-daemon-restart-resume">Upload chunk lifecycle and daemon-restart resume</a></h2>
+<p>The lifecycle above covers synchronous control-plane commands. File
+uploads have a second lifecycle overlaid on it, because a single user
+intent (“upload this file”) maps to a <em>sequence</em> of protocol calls that
+must either all commit or be resumable across a daemon restart.</p>
+<p>The three-phase upload conversation is:</p>
+<ol>
+<li><code>upload_create</code> — the daemon allocates a server-side upload id.
+This is the only phase that mints new server state; its response
+carries the id that every subsequent call quotes.</li>
+<li><code>upload_write</code> — issued one or more times, each carrying a
+contiguous byte range at a specific offset. The server acknowledges
+each write after it is durably buffered.</li>
+<li><code>upload_save</code> — atomically materialises the accumulated bytes as a
+file inside the target folder. Only this phase makes the upload
+visible to the rest of the account.</li>
+</ol>
+<p>Between phases 1 and 3 the daemon maintains a per-inode NDJSON sidecar
+(<code>ino-&lt;inode&gt;.upload-progress</code>) under the staging directory. Each
+<code>upload_write</code> acknowledgement updates the sidecar’s <code>acked_offset</code>
+and <code>heartbeat_unix_secs</code> before the next write is issued; the update
+uses a write-temp + <code>fsync(file)</code> + rename + <code>fsync(dir)</code> sequence so
+that a crash never leaves a half-written sidecar.</p>
+<p>On daemon restart, <code>bootstrap.rs</code> runs <code>replay_upload_sidecars</code> (in
+<code>pcloud-fs::write_path</code>) before the mount is brought up. For each
+sidecar it calls the <code>upload_status</code> protocol method and classifies
+the outcome into one of seven variants — <code>Resumed</code>, <code>ServerAhead</code>,
+<code>SidecarTrimmed</code>, <code>Expired</code>, <code>Stalled</code>, <code>Unparseable</code>, <code>BackendError</code>
+— and either continues the upload from the agreed offset, re-sends
+trimmed bytes, retires the upload id, or leaves the sidecar for
+operator inspection. The mount runtime re-runs the same replay when a
+mount is (re)activated after startup.</p>
+<p>The full taxonomy, the 10-minute stall timeout, the
+<code>upload_status</code> semantics, and the companion download-side
+<code>fetch_download_resumable</code> design (with its <code>.part</code> prefix re-hash and
+206→200 fallback) are documented in
+<a href="../operations/partial-transfers.html">Operations → Partial Transfers</a>.
+Readers adding a new transfer call site should consult that page
+before choosing between <code>fetch_download_verified</code> and
+<code>fetch_download_resumable</code>.</p>
+<h2 id="variations-across-platforms"><a class="header" href="#variations-across-platforms">Variations across platforms</a></h2>
+<p>The same IPC → daemon → backend → proto pipeline runs on Linux, macOS,
+and Windows, but three stages of that pipeline have platform-specific
+branches. This section consolidates them so a reader can trace a single
+<code>pcloudc sync add /local /remote</code> end-to-end on any target and know
+exactly which module is in play.</p>
+<h3 id="the-macos-branch"><a class="header" href="#the-macos-branch">The macOS branch</a></h3>
+<p>On macOS the IPC transport is still a Unix domain socket, but peer
+identification does <em>not</em> use <code>SO_PEERCRED</code>, which is Linux-only. The
+<code>PlatformIpc</code> implementation in
+<code>crates/pcloud-daemon/src/platform/macos.rs</code> calls
+<a href="https://developer.apple.com/documentation/"><code>getpeereid(3)</code></a> on the
+accepted <code>UnixStream</code>’s raw fd. <code>getpeereid</code> returns the effective uid
+and gid of the peer process at the moment of <code>accept</code>, which is the
+correct instant (later <code>setuid</code> calls by the peer do not affect the
+already-authorized channel). The returned uid is compared against
+<code>geteuid()</code>; mismatch closes the socket before any body bytes are read,
+identical to the Linux path.</p>
+<p>The rest of the IPC frame handling — 8-byte length prefix, bounded body
+allocation, JSON decode — is shared code. From <code>runtime::dispatch</code>
+onward everything is literally the same module the Linux daemon uses,
+because the backends, the proto client, and the store are
+platform-neutral.</p>
+<p>The macOS branch diverges again only when the request touches the
+virtual drive. <code>PlatformMount</code> on macOS is backed by <code>fuse-t</code>, a
+user-space FUSE compatibility layer that does not require a kernel
+extension. <code>crates/pcloud-fs/src/platform/macos.rs</code> spawns the
+<code>fuse-t</code>-provided helper, hands it a unix socket, and exposes the same
+<code>mount</code>/<code>unmount</code>/<code>is_mounted</code> surface as the Linux FUSE backend. To a
+sync-backend or transfer-backend call, <code>fuse-t</code> and Linux FUSE are
+indistinguishable: both appear as a <code>PlatformMount</code> whose journal and
+staging directory are owned by the daemon.</p>
+<p>The <code>PlatformVault</code> on macOS is the Keychain. Instead of writing an
+owner-only file under <code>$XDG_DATA_HOME</code>, the daemon stores the auth
+envelope as a generic password item scoped to the daemon’s bundle id
+and the current login keychain. Keychain ACLs ensure only the daemon’s
+signed binary can read it back without a user prompt. The envelope
+format, the opt-in persistence rule, and the no-cleartext-password
+rule are identical to the Linux file-vault path.</p>
+<h3 id="the-windows-branch"><a class="header" href="#the-windows-branch">The Windows branch</a></h3>
+<p>On Windows the IPC transport is a <em>named pipe</em> rather than a Unix
+socket. The acceptor lives in
+<code>crates/pcloud-ipc/src/platform/windows.rs</code> and is consumed by the shared
+<code>pcloud-daemon</code> runtime.
+The pipe name is <code>\\.\pipe\pcloud-&lt;sid&gt;</code>, where <code>&lt;sid&gt;</code> is the current
+user’s SID formatted via <code>ConvertSidToStringSidW</code>. The pipe is created
+with an explicit security descriptor: a DACL built from
+<code>InitializeSecurityDescriptor</code> + <code>SetSecurityDescriptorDacl</code> that
+grants <code>FILE_ALL_ACCESS</code> to exactly two trustees — the daemon’s own
+SID and the user’s SID — and denies inheritance. There is no
+<code>Everyone</code> ACE. There is no fallback to <code>\\.\pipe\pcloud</code> without a
+SID qualifier.</p>
+<p>On <code>ConnectNamedPipe</code>, the daemon calls
+<code>GetNamedPipeClientProcessId</code> to learn the peer’s PID, opens that
+process with <code>PROCESS_QUERY_LIMITED_INFORMATION</code>, opens its token with
+<code>OpenProcessToken(TOKEN_QUERY)</code>, extracts the token’s user SID via
+<code>GetTokenInformation(TokenUser)</code>, and compares that SID against the
+expected user SID using <code>EqualSid</code>. Any failure along that path —
+missing PID, closed process, denied token query, mismatched SID — is
+treated exactly like a <code>SO_PEERCRED</code> uid mismatch on Linux: the pipe
+instance is disconnected before a frame is read. Once the SID check
+passes, the 8-byte length prefix, bounded body allocation, and JSON
+decode are the same code the Unix daemons run, because that layer lives
+in <code>pcloud-ipc</code>, not in the acceptor.</p>
+<p><code>PlatformMount</code> on Windows is WinFSP. <code>crates/pcloud-fs/src/platform/windows.rs</code>
+registers a WinFSP service for the session, binds it to a drive letter
+or a mount-point directory, and exposes the same trait the Linux and
+macOS backends do. WinFSP’s callback model is wrapped so that readdir,
+open, read, and write dispatch into the same backend code the FUSE
+path uses. Journal and staging live under <code>%LOCALAPPDATA%\pcloud</code>,
+resolved by <code>PcloudDirs</code>.</p>
+<p><code>PlatformVault</code> on Windows is DPAPI. The auth envelope is wrapped with
+<code>CryptProtectData</code> using the <code>CRYPTPROTECT_UI_FORBIDDEN</code> flag and
+stored under <code>%APPDATA%\pcloud\auth_token</code>. DPAPI ties the ciphertext
+to the user’s logon credential, so a file copied to another account
+cannot be decrypted even if it is world-readable on the source disk.
+The opt-in persistence rule and the no-cleartext-password rule hold on
+Windows exactly as they do on Linux and macOS.</p>
+<p>After peer authentication and mount/vault plumbing, the three
+platforms re-converge. <code>runtime::dispatch</code> reads the same <code>Request</code>
+enum, the same backend functions run the same validation and the same
+proto call, the same <code>Response</code> is written back through the same
+framing code. The net effect is that the bulk of the request lifecycle
+— every box in the sequence diagram except the first hop and the
+final filesystem side-effect — is single-source. The platform
+variations live in exactly the stages the <code>PlatformIpc</code>,
+<code>PlatformVault</code>, and <code>PlatformMount</code> traits name, and nowhere else.</p>
+<h2 id="requestenvelope-and-traceparent-wrapping"><a class="header" href="#requestenvelope-and-traceparent-wrapping"><code>RequestEnvelope</code> and traceparent wrapping</a></h2>
+<p>Every <code>Request</code> that the CLI builds is wrapped in a <code>RequestEnvelope</code>
+before framing. The envelope carries:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>struct RequestEnvelope {
+    request: Request,
+    trace_id: Option&lt;String&gt;,        // W3C traceparent: trace-id
+    span_id: Option&lt;String&gt;,         // W3C traceparent: span-id
+    origin: ClientOrigin,            // cli | web | sdk
+    correlation_id: Uuid,            // unique per envelope
+    ipc_protocol_version: u16,       // must match daemon
+}
+<span class="boring">}</span></code></pre>
+<p>The envelope is what the daemon decodes and what <code>Runtime::handle_request</code>
+consumes; the inner <code>Request</code> is never decoded in isolation. This gives us
+four properties at no per-call cost:</p>
+<ol>
+<li>A single <code>correlation_id</code> threads through CLI logs, daemon logs,
+proto logs, and backend logs — grep-once, find the whole story.</li>
+<li>Cross-process tracing works whether the upstream was another
+traced service (W3C <code>traceparent</code> propagates) or a user shell (a new
+trace is minted at the CLI).</li>
+<li>The daemon can reject an envelope with an unsupported IPC version
+cleanly without attempting a partial decode.</li>
+<li><code>origin</code> is observable at the audit-chain writer, so an operator can
+distinguish CLI, web UI, and SDK-originated privileged operations
+after the fact.</li>
+</ol>
+<p>The envelope-decoding contract is: if the outer envelope decode fails, the
+daemon returns <code>Response::VersionMismatch</code> and closes the connection. If
+the outer envelope decodes but the inner <code>Request</code> fails, the daemon
+returns <code>Response::BadRequest</code> and keeps the connection open so the client
+can retry with a corrected payload. This split prevents the common case of
+“malformed Request JSON” from tearing down an otherwise healthy session.</p>
+<p>Details on the observability tie-in, including how correlation ids and
+trace parents flow into the audit hash-chain, live in
+<a href="./security-model.html">Security Model</a> and in
+<code>crates/pcloud-observability/src/audit.rs</code>.</p>
+<h2 id="state-machine-view-of-the-lifecycle"><a class="header" href="#state-machine-view-of-the-lifecycle">State-machine view of the lifecycle</a></h2>
+<p>Five named states span the lifetime of a single daemon-mediated request.
+The state machine is implicit in the code but explicit in the audit log.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>State</th><th>Entered on</th><th>Guard</th><th>Exits to</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Accepted</code></td><td><code>accept()</code> returns</td><td>none</td><td><code>PeerChecked</code>, <code>Closed</code></td></tr>
+<tr><td><code>PeerChecked</code></td><td>peer uid/SID matches daemon</td><td>peer-cred returns ok</td><td><code>Framed</code>, <code>Closed</code></td></tr>
+<tr><td><code>Framed</code></td><td>8-byte header + body read ok</td><td><code>payload_len &lt;= MAX_IPC_PAYLOAD_LEN</code></td><td><code>Decoded</code>, <code>Closed</code></td></tr>
+<tr><td><code>Decoded</code></td><td>envelope + inner request parsed</td><td><code>ipc_protocol_version == IPC_PROTOCOL_VERSION</code></td><td><code>Dispatched</code>, <code>Closed</code></td></tr>
+<tr><td><code>Dispatched</code></td><td><code>handle_request_dispatch</code> entered</td><td><code>catch_unwind</code> boundary</td><td><code>Responded</code>, <code>Responded(panic)</code></td></tr>
+<tr><td><code>Responded</code></td><td>framed <code>Response</code> written</td><td>writer not disconnected</td><td>(terminal)</td></tr>
+</tbody>
+</table>
+</div>
+<p>A panic during <code>Dispatched</code> transitions into <code>Responded(panic)</code> via the
+<code>catch_unwind</code> guard, which synthesises <code>Response::InternalError</code> and
+increments a Prometheus counter. The transition is <em>observable</em>: audit
+logs emit one record per state exit, so reconstructing the lifecycle of a
+single correlation id is a straightforward log filter.</p>
+<h2 id="tradeoffs-and-design-decisions"><a class="header" href="#tradeoffs-and-design-decisions">Tradeoffs and design decisions</a></h2>
+<ul>
+<li><strong>Why decode envelope and inner request separately?</strong> Because IPC
+version skew is a recoverable condition — the client should be told to
+upgrade — while a malformed body is a bug in the specific request. One
+decode step would conflate them.</li>
+<li><strong>Why not pipeline requests on a single connection?</strong> Because the
+<code>catch_unwind</code> boundary is per-request and cleanup is simpler with
+one-request-per-connection. IPC connections are cheap; the daemon is
+not a web server.</li>
+<li><strong>Why synthesise a full <code>Response::InternalError</code> on panic rather than
+closing the socket?</strong> Because the CLI has a canonical exit-code table
+(see <code>reference/exit-codes.md</code>) and a clean response-based failure is
+easier to test against than a closed socket.</li>
+<li><strong>Why carry a correlation id in the envelope rather than mint one at
+the daemon?</strong> So that CLI logs, web-UI logs, and daemon logs share the
+same id — the id must exist <em>before</em> the request hits the socket.</li>
+</ul>
+<h2 id="concurrency-model-request-path"><a class="header" href="#concurrency-model-request-path">Concurrency model (request-path)</a></h2>
+<ul>
+<li>One OS thread per accepted connection. The <code>IpcServer::run</code> loop
+calls <code>accept()</code> on the listener, spawns a thread, and resumes. No
+tokio.</li>
+<li>Shared state touched by dispatch:
+<code>Runtime::state</code> (<code>parking_lot::RwLock</code>), vault handle
+(<code>parking_lot::Mutex</code>), engine queue (<code>crossbeam_channel</code>), proto
+client (stateless, cloned from <code>Arc</code>).</li>
+<li>The panic guard (<code>catch_unwind</code>) runs in the accepted thread; a
+panic inside the guard cannot poison the runtime lock because the
+lock is released before the guard boundary.</li>
+<li>Protocol HTTPS calls are blocking inside the dispatch thread; the TLS
+stack (<code>rustls</code> + <code>ureq</code>) is synchronous. This is the entire reason
+the daemon is thread-per-connection rather than tokio-first.</li>
+</ul>
+<h2 id="security-invariants-request-path"><a class="header" href="#security-invariants-request-path">Security invariants (request-path)</a></h2>
+<ul>
+<li>Peer identity is verified before the first body byte is read (tests:
+<code>crates/pcloud-ipc/tests/peer_cred_linux.rs</code>,
+<code>crates/pcloud-ipc/tests/peer_cred_macos.rs</code>,
+<code>crates/pcloud-ipc/tests/platform_ipc_crossplat.rs</code>).</li>
+<li>Body size is capped at <code>MAX_IPC_PAYLOAD_LEN</code> = 1 MiB before any
+allocation (test:
+<code>crates/pcloud-ipc/tests/frame_size_cap.rs</code>).</li>
+<li><code>catch_unwind</code> wraps every dispatch arm; a panic converts into
+<code>Response::InternalError</code> (test:
+<code>crates/pcloud-daemon/tests/panic_guard.rs</code>).</li>
+<li>Production configs refuse plaintext downgrade from TLS (test:
+<code>crates/pcloud-proto/tests/transport_tls_required.rs</code>).</li>
+<li>Secret-bearing request fields (<code>Request::Login { password, ... }</code>,
+<code>Request::TfaCode { code, ... }</code>) use <code>SecretString</code> (test:
+<code>crates/pcloud-ipc/tests/secret_redaction.rs</code>).</li>
+</ul>
+<h2 id="performance-notes"><a class="header" href="#performance-notes">Performance notes</a></h2>
+<ul>
+<li>The envelope decode is ~1 µs for a typical request (JSON, bounded by
+1 MiB cap); this is the <em>first</em> allocation the daemon makes per
+request.</li>
+<li>The panic guard (<code>catch_unwind</code>) costs a setjmp-equivalent on entry;
+measured &lt; 50 ns on Linux x86_64, lost in the noise against any real
+backend call.</li>
+<li>The dispatch <code>match</code> arm selection is O(#variants); the compiler
+generates a jump table for us.</li>
+</ul>
+<h2 id="extension-points"><a class="header" href="#extension-points">Extension points</a></h2>
+<ul>
+<li><strong>New method</strong>: six-file change enumerated in “Where to add a new
+method” above.</li>
+<li><strong>New IPC protocol version</strong>: bump <code>IPC_PROTOCOL_VERSION</code> in
+<code>crates/pcloud-ipc/src/protocol.rs:12</code>; the daemon’s
+<code>VersionMismatch</code> path is the forward/backward compatibility story.</li>
+<li><strong>Alternate transport</strong> (e.g. vsock for VM-hosted clients): implement
+<code>PlatformIpc::accept</code> for the new socket family; the request pipeline
+above is unchanged from <code>peer_identity</code> onward.</li>
+</ul>
+<h2 id="open-bd-trackers"><a class="header" href="#open-bd-trackers">Open <code>bd</code> trackers</a></h2>
+<ul>
+<li><strong><code>bd-1du</code></strong> — parity epic.</li>
+<li><strong><code>bd-1du.4</code></strong> — mount lifecycle interaction with the request path on
+non-Linux.</li>
+<li><strong><code>bd-1du.4.6.1</code></strong> — write-path daemon wiring (ADR-0010).</li>
+<li><strong><code>bd-1du.10</code></strong> — final parity proof gating docs.</li>
+</ul>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./overview.html">Overview</a> — the five platform abstractions and
+processes at play.</li>
+<li><a href="./crate-map.html">Crate Map</a> — where each step lives.</li>
+<li><a href="./performance.html">Performance</a> — hotpaths that live inside this
+lifecycle.</li>
+<li><a href="./platform-support.html">Platform Support</a> — per-platform variations
+in peer-check and mount.</li>
+<li><a href="./security-model.html">Security Model</a> — enumerated invariants and
+their test citations.</li>
+<li><a href="../operations/partial-transfers.html">Operations → Partial Transfers</a> —
+the upload-resume lifecycle overlay.</li>
+<li><a href="../adr/0002.html">ADR-0002</a>, <a href="../adr/0004.html">ADR-0004</a>,
+<a href="../adr/0010.html">ADR-0010</a> — related decisions.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../architecture/crate-map.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../architecture/performance.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../architecture/crate-map.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../architecture/performance.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

@@ -20,6 +20,7 @@ use pcloud_proto::{
     TransportConfig, TransportError, TwoFactorNotificationDelivery, TwoFactorSmsDelivery,
     auth_api::{ApiServerHintConsumer, ProtocolTransport},
     parse_response_frame,
+    resilient_transport::{ResilientError, ResilientTransport},
     response::Value,
 };
 use pcloud_secret::secret_string::SecretString;
@@ -159,6 +160,8 @@ impl ProtocolTransport for DevelopmentAuthTransport {
                             "email",
                             EncodedValue::OwnedString(self.expected_username.to_string()),
                         ),
+                        ("quota", EncodedValue::Number(10 * 1024 * 1024 * 1024)),
+                        ("usedquota", EncodedValue::Number(4 * 1024 * 1024 * 1024)),
                         ("auth", EncodedValue::String("auth-token-42-refreshed")),
                     ])
                 } else if username == Some(self.expected_username.as_ref())
@@ -203,12 +206,25 @@ pub enum AuthBackendError {
     #[error(transparent)]
     /// `Network` variant.
     Network(#[from] TransportError),
+    /// Resilient-wrapper-only condition (circuit-breaker open, rate-limit
+    /// exceeded, retry-budget exhausted) that does not have a clean
+    /// mapping back to a [`TransportError`]. CLAUDEREV deferred-set
+    /// D5.1 (fire 49). Carries the human-readable description from
+    /// [`ResilientError`].
+    #[error("resilient transport refused request: {0}")]
+    Resilient(String),
 }
 
 #[derive(Debug, Clone)]
 enum AuthTransportMode {
     Development(DevelopmentAuthTransport),
     Network(BinaryApiTransport),
+    /// Production network transport wrapped in a circuit-breaker /
+    /// rate-limiter / retry-budget envelope. CLAUDEREV deferred-set
+    /// D5.1 (fire 49) — auth backend is the canary backend that
+    /// adopts `ResilientTransport`. Other backends migrate in
+    /// subsequent fires (D5.2..D5.7).
+    ResilientNetwork(ResilientTransport<BinaryApiTransport>),
 }
 
 impl ProtocolTransport for AuthTransportMode {
@@ -220,6 +236,26 @@ impl ProtocolTransport for AuthTransportMode {
                 transport.execute(request).map_err(AuthBackendError::from)
             }
             Self::Network(transport) => transport.execute(request).map_err(AuthBackendError::from),
+            Self::ResilientNetwork(transport) => {
+                transport.execute(request).map_err(|err| match err {
+                    // The inner transport returned a permanent or
+                    // exhausted-retry error. Surface it as a regular
+                    // `Network` error so existing error-handling paths
+                    // (e.g. `pcloud_auth::AuthFlowError::network`) keep
+                    // working unchanged.
+                    ResilientError::Inner(transport_err) => {
+                        AuthBackendError::Network(transport_err)
+                    }
+                    // Resilient-wrapper-only conditions: the inner
+                    // transport never even ran, but the request was
+                    // refused by the circuit-breaker / rate-limiter /
+                    // retry-budget gates. Surface as a typed
+                    // `Resilient(String)` so callers can distinguish
+                    // "the network failed" from "the wrapper held the
+                    // request back".
+                    other => AuthBackendError::Resilient(other.to_string()),
+                })
+            }
         }
     }
 }
@@ -229,6 +265,13 @@ impl ApiServerHintConsumer for AuthTransportMode {
         match self {
             Self::Development(transport) => transport.apply_api_server_hint(api_server),
             Self::Network(transport) => transport.apply_api_server_hint(api_server),
+            // The inner `BinaryApiTransport` carries the
+            // `ApiServerHintConsumer` impl; reach it through the
+            // resilient wrapper's `inner_arc()` accessor (added in
+            // pcloud-proto for this fire).
+            Self::ResilientNetwork(transport) => {
+                transport.inner_arc().apply_api_server_hint(api_server)
+            }
         }
     }
 }
@@ -293,6 +336,25 @@ impl AuthRuntime {
 
         Self {
             flow: ProtocolAuthFlow::new(AuthApi::new(transport)),
+        }
+    }
+
+    /// Construct an `AuthRuntime` whose network transport is wrapped in
+    /// a [`ResilientTransport`]. CLAUDEREV deferred-set D5.1 (fire 49):
+    /// production-grade wrapping for the auth backend (canary). The
+    /// resilient wrapper enforces the workspace's circuit-breaker /
+    /// rate-limiter / retry-budget policy on every auth-bound RPC.
+    ///
+    /// Callers (typically the daemon bootstrap) build the resilient
+    /// transport via `pcloud-daemon::transport_factory::TransportFactory::wrap_binary`
+    /// and pass it here. Dev/test callers should keep using
+    /// [`Self::from_config`].
+    #[must_use]
+    pub fn from_resilient_transport(resilient: ResilientTransport<BinaryApiTransport>) -> Self {
+        Self {
+            flow: ProtocolAuthFlow::new(AuthApi::new(AuthTransportMode::ResilientNetwork(
+                resilient,
+            ))),
         }
     }
 

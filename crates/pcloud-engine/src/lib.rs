@@ -313,7 +313,7 @@ pub struct EngineShell {
     /// [`Self::evict_sync_root`] and drained by the sync loop runtime
     /// after each cycle via [`Self::drain_watcher_evictions`].
     ///
-    /// The engine itself does not own [`pcloud_fs::fs_watcher::FsWatcher`]
+    /// The engine itself does not own `pcloud_fs::fs_watcher::FsWatcher`
     /// handles — those live on the sync loop runtime — but the engine is
     /// the single place where a sync root is semantically evicted. This
     /// queue closes the gap where a code path that goes through
@@ -771,10 +771,7 @@ impl EngineShell {
             })
             .ok_or_else(|| {
                 if let Some(id) = sync_id {
-                    format!(
-                        "no queued conflict at sync_id={} path: {path}",
-                        id.get()
-                    )
+                    format!("no queued conflict at sync_id={} path: {path}", id.get())
                 } else {
                     format!("no queued conflict at path: {path}")
                 }
@@ -819,7 +816,7 @@ impl EngineShell {
     /// batch (which may be empty if all work is now in-flight or the
     /// queue was empty).
     ///
-    /// Uses [`Scheduler::next_batch`] which enforces per-root fairness
+    /// Uses `Scheduler::next_batch` which enforces per-root fairness
     /// so that a single high-throughput sync root cannot monopolize the
     /// batch window and starve siblings. Items are removed from the
     /// queue atomically by `next_batch`.
@@ -898,7 +895,7 @@ impl EngineShell {
     ///
     /// pcloud-rs-774: also records `sync_id` in the pending-watcher-
     /// eviction queue so the embedding runtime can drop the associated
-    /// [`pcloud_fs::fs_watcher::FsWatcher`] handle on its next cycle
+    /// `pcloud_fs::fs_watcher::FsWatcher` handle on its next cycle
     /// tick. The engine does not own the watcher directly; see
     /// [`Self::drain_watcher_evictions`].
     pub fn evict_sync_root(&mut self, sync_id: SyncId) {
@@ -916,7 +913,7 @@ impl EngineShell {
     /// Drain the pending-watcher-eviction queue. The embedding runtime
     /// should call this after each cycle (or whenever it processes
     /// engine-driven eviction notifications) and drop the corresponding
-    /// [`pcloud_fs::fs_watcher::FsWatcher`] handles.
+    /// `pcloud_fs::fs_watcher::FsWatcher` handles.
     ///
     /// pcloud-rs-774.
     ///
@@ -1114,7 +1111,9 @@ mod tests {
         diff_poller::RemoteDiffEntry,
         fs_events::{FsEvent, FsEventKind},
         local_scan::LocalScanEntry,
+        probe_case_insensitive_fs,
         recovery::RecoveryFailure,
+        warn_if_case_insensitive,
     };
 
     #[test]
@@ -1617,6 +1616,43 @@ mod tests {
             batch
                 .iter()
                 .any(|op| op.sync_id() == SyncId::new(2) && op.path() == "b/remote.bin")
+        );
+    }
+
+    /// CLAUDEREV iter-1 SYNC-H-04-4 fix (fire 22, 2026-04-30): the
+    /// `probe_case_insensitive_fs` helper had been dead code in the
+    /// public API. This test exercises both the probe and the
+    /// `warn_if_case_insensitive` wrapper to lock the activation
+    /// contract — the latter must (a) tolerate any FS the host can
+    /// throw at it, (b) never panic, (c) return a bool whose value
+    /// matches the underlying probe outcome.
+    #[test]
+    fn warn_if_case_insensitive_matches_probe_outcome() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let probe = probe_case_insensitive_fs(tmp.path()).expect("probe");
+        let warn = warn_if_case_insensitive(tmp.path());
+        assert_eq!(probe, warn, "wrapper return must match probe outcome");
+    }
+
+    /// `probe_case_insensitive_fs` must surface I/O errors as `Err`
+    /// rather than panic on a non-existent / unwritable directory.
+    /// `warn_if_case_insensitive` swallows the error and returns
+    /// `false` (advisory only); the test pins both contracts.
+    #[test]
+    fn probe_case_insensitive_handles_missing_directory_gracefully() {
+        let nonexistent = std::path::Path::new(
+            "/this/path/does/not/exist/pcloud-claudereveltesting-i4-sync-h-04-4",
+        );
+        let probe_result = probe_case_insensitive_fs(nonexistent);
+        assert!(
+            probe_result.is_err(),
+            "probe must surface I/O error on missing dir, got {probe_result:?}"
+        );
+        // Wrapper must NOT panic and MUST return false (advisory only).
+        let warn_result = warn_if_case_insensitive(nonexistent);
+        assert!(
+            !warn_result,
+            "wrapper must return false on probe error (advisory only)"
         );
     }
 }

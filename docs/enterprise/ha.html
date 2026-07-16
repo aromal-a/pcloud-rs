@@ -1,0 +1,670 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>High Availability - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/../../enterprise/ha.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <blockquote>
+<p><strong>Pre-alpha scaffold — not live / not production-verified.</strong> This document
+describes design and unit-tested code that has not been validated against a
+real production deployment. Do not treat it as a shippable capability.
+See <code>CLAUDE.md</code> and <code>docs/enterprise/README.md</code> for the honesty rules.</p>
+</blockquote>
+<h1 id="high-availability-for-pcloud-rs"><a class="header" href="#high-availability-for-pcloud-rs">High Availability for pcloud-rs</a></h1>
+<blockquote>
+<p><strong>Status:</strong> Tier 1 <strong>landed</strong> (per-UID isolation via XDG + <code>SO_PEERCRED</code>).
+Tier 2 <strong>landed</strong> as of 2026-04-16 — active-passive file-lock
+handoff via <code>&lt;state_dir&gt;/daemon.lease</code> (<code>flock(LOCK_EX | LOCK_NB)</code>),
+config block <code>[ha]</code> (<code>enabled</code>, <code>mode = "refuse" | "passive"</code>,
+heartbeat / poll cadence), IPC probe <code>Method::HaStatus</code>, CLI
+surface <code>pcloudc ha status</code>, and integration tests
+<code>ha_two_daemon_contention.rs</code>. Source:
+<code>crates/pcloud-daemon/src/ha_lease.rs</code>,
+<code>crates/pcloud-config/src/ha.rs</code>. Tier 3 (Windows SCM),
+Tier 4 (nginx Web UI front-door), and the legacy systemd
+<code>failover_restart.rs</code> test remain <strong>design-only</strong> — do not cite
+this document as evidence of those shipped.</p>
+</blockquote>
+<p>Audience: Enterprise IT, SRE, packagers.
+Scope: <code>pcloudd</code> daemon, optional Web UI, Windows SCM wrapper.</p>
+<h2 id="1-purpose"><a class="header" href="#1-purpose">1. Purpose</a></h2>
+<p>pcloud-rs is a <strong>per-user sync client</strong>, not a shared service.
+Classical active-active HA — redundant nodes behind a load
+balancer, shared state, quorum election — is the wrong model.
+Applying it would be cargo-culting patterns from distributed
+databases onto a single-user desktop agent.</p>
+<p>This document defines HA in terms appropriate to the actual
+workload:</p>
+<ol>
+<li><strong>Tier 1 — Per-UID isolation.</strong> Multiple <code>pcloudd</code> instances
+coexist safely on the same host, one per logical user.
+Already enforced.</li>
+<li><strong>Tier 2 — Service fail-over (Linux).</strong> A single user’s
+daemon recovers automatically from crashes in &lt;5s without
+losing in-flight upload or mount state.</li>
+<li><strong>Tier 3 — Windows SCM auto-restart.</strong> Same as Tier 2 in
+Windows vocabulary.</li>
+<li><strong>Tier 4 — Web UI front-door.</strong> Optional reverse-proxy recipe
+so a shared host can expose N users’ Web UIs behind one TLS
+listener.</li>
+</ol>
+<h2 id="2-threat-model"><a class="header" href="#2-threat-model">2. Threat model</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Threat</th><th>Tier / Mitigation</th></tr>
+</thead>
+<tbody>
+<tr><td>One user reads another user’s sync state</td><td>Tier 1: XDG dirs 0700, vault 0600, UID-checked, <code>SO_PEERCRED</code> on IPC</td></tr>
+<tr><td>One user escalates through shared IPC socket</td><td>Tier 1: IPC socket mode 0600 per UID, <code>SO_PEERCRED</code> at accept</td></tr>
+<tr><td>Daemon crash loses in-flight uploads</td><td>Tier 2: writeback journal replay (<code>bd-1du.4</code> P1.2)</td></tr>
+<tr><td>Daemon crash leaves stale FUSE mount</td><td>Tier 2/3: <code>/proc/self/mountinfo</code> sniff + <code>umount -l</code> + remount</td></tr>
+<tr><td>Crash-loop amplifies a bad state</td><td>Tier 2: <code>StartLimitBurst=5/60s</code> + monitoring alert</td></tr>
+<tr><td>Dual-boot user syncs same root from two OSes</td><td>§7: <code>.pcloud/.lock</code> refuses second mount until stale lock cleared</td></tr>
+<tr><td>TLS termination of Web UI on raw TCP</td><td>Tier 4: Unix-socket upstream only; TLS always at nginx</td></tr>
+<tr><td>Multiple users’ Web UIs sharing one port without auth</td><td>Tier 4: <code>auth_request</code> SSO/OIDC in front; UID-scoped socket routing</td></tr>
+<tr><td>Single misbehaving user starves the host</td><td>§5: <code>MemoryMax=512M</code>, <code>TasksMax=256</code> per user unit</td></tr>
+<tr><td>Operator installs as system unit (one daemon, all users)</td><td>Explicit non-goal (§6); <code>packaging/check.sh</code> lint flags it</td></tr>
+</tbody>
+</table>
+</div>
+<p>Explicit non-threats: cross-host data loss, cross-host fail-over,
+active-active replication. See §6.</p>
+<h2 id="3-scope"><a class="header" href="#3-scope">3. Scope</a></h2>
+<p>In scope, shipped as enforced invariants:</p>
+<ul>
+<li>Tier 1 isolation (already end-to-end enforced).</li>
+</ul>
+<p>In scope, documented and shipped as config but <strong>not yet
+test-verified</strong>:</p>
+<ul>
+<li>Tier 2 systemd restart policy on Linux,</li>
+<li>Tier 3 SCM failure actions on Windows,</li>
+<li><code>.pcloud/.lock</code> sync-root ownership lock,</li>
+<li>Tier 4 nginx recipe.</li>
+</ul>
+<p>Out of scope, permanent non-goals (§6):</p>
+<ul>
+<li>one daemon serving multiple users,</li>
+<li>cross-host fail-over,</li>
+<li>active-active clustering,</li>
+<li>fleet management (<code>bd-B3</code>, separate page).</li>
+</ul>
+<h2 id="4-design"><a class="header" href="#4-design">4. Design</a></h2>
+<h3 id="41-tier-1--per-uid-isolation"><a class="header" href="#41-tier-1--per-uid-isolation">4.1 Tier 1 — Per-UID isolation</a></h3>
+<p>Each UID on a host runs its own fully independent <code>pcloudd</code>. No
+shared process, socket, store, or vault. Enforcement table:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Resource</th><th>Path / mechanism</th><th>Enforcement</th></tr>
+</thead>
+<tbody>
+<tr><td>IPC socket</td><td><code>$XDG_RUNTIME_DIR/pcloudd.sock</code> (mode 0600)</td><td><code>SO_PEERCRED</code> + owner-only mode</td></tr>
+<tr><td>SQLite store</td><td><code>$XDG_DATA_HOME/pcloud-rs/store.db</code></td><td>Dir 0700, file 0600</td></tr>
+<tr><td>Auth vault</td><td><code>$XDG_DATA_HOME/pcloud-rs/vault.json</code></td><td>Dir 0700, file 0600, UID-checked</td></tr>
+<tr><td>Audit log</td><td><code>$XDG_STATE_HOME/pcloud-rs/audit.log</code></td><td>Dir 0700, append-only per UID</td></tr>
+<tr><td>Config</td><td><code>$XDG_CONFIG_HOME/pcloud-rs/config.toml</code></td><td>Dir 0700</td></tr>
+<tr><td>Mount point</td><td>User-owned path, checked at mount time</td><td><code>user_allow_other</code> not required</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Formal guarantee:</strong> two users cannot read, write, or influence
+each other’s pcloudd state through any daemon-managed path. A
+user cannot escalate to another user’s session via the IPC
+socket — <code>SO_PEERCRED</code> at accept time rejects any peer whose
+effective UID differs from the daemon’s own.</p>
+<p><strong>Packaging invariant:</strong> distro packages must ship
+<code>pcloudd.service</code> as a <strong>user unit</strong>, not a system unit.
+Installing as a system unit violates the isolation boundary and
+is flagged by the packaging lint <code>packaging/check.sh</code>.</p>
+<h3 id="42-tier-2--active-passive-handoff--systemd-restart"><a class="header" href="#42-tier-2--active-passive-handoff--systemd-restart">4.2 Tier 2 — Active-passive handoff + systemd restart</a></h3>
+<blockquote>
+<p><strong>Landed 2026-04-16.</strong> Implementation:
+<code>crates/pcloud-daemon/src/ha_lease.rs</code> +
+<code>crates/pcloud-config/src/ha.rs</code>. Tests:
+<code>crates/pcloud-daemon/tests/ha_two_daemon_contention.rs</code>
+(5 cases: primary acquires, refuse-mode blocks second daemon
+with a named-primary diagnostic, passive-mode rejects
+non-probe requests, takeover-after-release promotes a fresh
+bootstrap, and <code>HaRuntime::Disabled</code> is the default). The
+passive poll loop and end-to-end systemd <code>failover_restart.rs</code>
+integration test remain tracked under <code>bd-1du.10</code>.</p>
+</blockquote>
+<h4 id="421-file-lock-lease-state_dirdaemonlease"><a class="header" href="#421-file-lock-lease-state_dirdaemonlease">4.2.1 File-lock lease (<code>&lt;state_dir&gt;/daemon.lease</code>)</a></h4>
+<p>When <code>[ha].enabled = true</code> the daemon tries a non-blocking
+<code>flock(LOCK_EX | LOCK_NB)</code> on <code>&lt;state_dir&gt;/daemon.lease</code> during
+bootstrap. The file is mode <code>0600</code>; the parent directory is
+already provisioned <code>0700</code>. Lease metadata (hostname, pid,
+<code>start_ts_unix</code>, <code>instance_id</code>, <code>last_heartbeat_unix</code>) is
+re-written on every 30s heartbeat so observers can see a rolling
+liveness signal. The kernel releases the <code>flock</code> automatically
+on process exit, so a crashed primary is trivially recoverable.</p>
+<p>Configuration lives under <code>[ha]</code>:</p>
+<pre><code class="language-toml">[ha]
+enabled = true
+# refuse  - fail bootstrap with a named-primary diagnostic
+# passive - bind IPC, reject non-probe requests with Unavailable
+mode = "passive"
+heartbeat_interval_secs = 30
+passive_poll_interval_secs = 10
+</code></pre>
+<p>Defaults are backwards-compatible: <code>[ha].enabled = false</code> makes
+the daemon behave identically to the pre-HA model.</p>
+<h4 id="422-passive-mode-behaviour"><a class="header" href="#422-passive-mode-behaviour">4.2.2 Passive-mode behaviour</a></h4>
+<p>A secondary daemon with <code>mode = "passive"</code> <strong>still binds its IPC
+socket</strong> so supervisors and the CLI probe reach it, but every
+non-probe request is answered with
+<code>ResponseStatus::Unavailable</code> and a message that names the
+primary:</p>
+<pre><code>this daemon is passive; primary is workstation-7/pid=12345
+  (age=12s, instance=/var/lib/pcloud/state)
+</code></pre>
+<p>Requests that stay available in passive mode:</p>
+<ul>
+<li><code>Method::HaStatus</code> (status probe)</li>
+<li><code>Method::GetHealth</code>, <code>Method::Health</code> (supervisor probes)</li>
+<li><code>Method::Shutdown</code> (operator-initiated graceful stop)</li>
+</ul>
+<p>All other variants are rejected. Operators can inspect posture
+via <code>pcloudc ha status</code>, which returns the
+<code>HaStatusPayload</code> JSON <code>{mode, lease_owner, lease_age_s, lease_path}</code> — <code>mode</code> is one of <code>"disabled" | "primary" | "passive"</code>.</p>
+<h4 id="423-systemd-restart-policy"><a class="header" href="#423-systemd-restart-policy">4.2.3 systemd restart policy</a></h4>
+<p>User unit ships with:</p>
+<pre><code class="language-ini">[Service]
+Restart=on-failure
+RestartSec=2s
+StartLimitIntervalSec=60
+StartLimitBurst=5
+TimeoutStopSec=10
+</code></pre>
+<p>Clean <code>SIGTERM</code> (user-initiated stop) does <strong>not</strong> trigger
+restart. A crash, OOM, or non-zero exit does. The burst limit
+prevents crash-loop amplification; if tripped, systemd refuses
+further restarts and the §9 monitoring alert fires.</p>
+<p>State recovery on restart:</p>
+<ul>
+<li><strong>Auth:</strong> token reloaded from the vault. No user interaction.</li>
+<li><strong>Sync roots:</strong> reloaded from <code>store.db</code>, re-validated against
+the server.</li>
+<li><strong>In-flight uploads:</strong> writeback journal replayed. Chunks
+whose <code>upload_save</code> succeeded pre-crash are not re-uploaded;
+chunks whose <code>upload_write</code> partially completed resume from
+the last confirmed offset.</li>
+<li><strong>Mount:</strong> stale FUSE mount detected via
+<code>/proc/self/mountinfo</code>, lazily unmounted (<code>umount -l</code>), then
+remounted. Open file handles held by user processes receive
+<code>EIO</code> on next I/O — the same failure mode as a network blip.</li>
+</ul>
+<h3 id="43-tier-3--windows-scm-auto-restart"><a class="header" href="#43-tier-3--windows-scm-auto-restart">4.3 Tier 3 — Windows SCM auto-restart</a></h3>
+<p>MSI configures failure actions at install:</p>
+<pre><code>sc failure pcloudd reset= 300 actions= restart/60000/restart/60000/restart/60000
+sc failureflag pcloudd 1
+</code></pre>
+<ul>
+<li><code>reset= 300</code>: failure counter resets after 300s healthy
+runtime.</li>
+<li>Three consecutive restart actions, 60s apart. After the third,
+SCM stops attempting and logs Event ID 7034; §9 monitoring
+covers this.</li>
+<li><code>failureflag 1</code>: treat any non-zero exit as failure, matching
+Linux <code>Restart=on-failure</code> semantics.</li>
+</ul>
+<p>State recovery identical to Tier 2. Windows journal lives under
+<code>%LOCALAPPDATA%\pcloud-rs\journal\</code> with ACLs restricted to the
+owning user SID.</p>
+<h3 id="44-active-passive-across-hosts-no"><a class="header" href="#44-active-passive-across-hosts-no">4.4 Active-passive across hosts? No.</a></h3>
+<p>Two pcloudd instances on two hosts syncing the same pCloud
+account to the same local path would corrupt state. The pCloud
+<strong>service</strong> is HA; the <strong>client</strong> is not meant to be clustered.
+Quorum, leader election, and shared-state fail-over are all
+non-goals — they would require a privilege boundary and
+shared-state architecture the current design does not have. See
+§6.</p>
+<h2 id="5-interfaces"><a class="header" href="#5-interfaces">5. Interfaces</a></h2>
+<h3 id="51-systemd-user-unit"><a class="header" href="#51-systemd-user-unit">5.1 systemd user unit</a></h3>
+<p>Shipped under <code>packaging/systemd/user/pcloudd.service</code>. Key
+directives covered in §4.2. Operators override with a drop-in
+under <code>~/.config/systemd/user/pcloudd.service.d/override.conf</code>.</p>
+<h3 id="52-windows-service"><a class="header" href="#52-windows-service">5.2 Windows service</a></h3>
+<p>Installed by MSI; failure actions per §4.3. Unregistered via
+<code>sc delete pcloudd</code> during uninstall.</p>
+<h3 id="53-sync-root-ownership-lock"><a class="header" href="#53-sync-root-ownership-lock">5.3 Sync-root ownership lock</a></h3>
+<p><code>&lt;root&gt;/.pcloud/.lock</code> created with <code>O_EXCL | O_CLOEXEC</code>, holding
+an <code>flock(LOCK_EX | LOCK_NB)</code> for the daemon’s lifetime.
+Contents:</p>
+<pre><code>pid=12345
+uid=1001
+hostname=workstation-7
+started_at=2026-04-15T10:12:33Z
+</code></pre>
+<p>Any second daemon attempting to register the same local root
+calls <code>flock(LOCK_EX | LOCK_NB)</code> first, receives <code>EWOULDBLOCK</code>,
+reads the lock file, and fails <code>sync-add</code> with a structured
+error naming the holder. This is the dual-boot safety net: a
+user who dual-boots into a second OS on the same disk and opens
+the same sync root is <strong>refused</strong> until the stale lock is
+manually cleared.</p>
+<p>Stale lock recovery: if the recorded PID is dead <strong>and</strong> the
+hostname matches, the lock is auto-reaped. Cross-hostname stale
+locks require manual intervention, by design.</p>
+<h3 id="54-shared-host-multi-user-properties"><a class="header" href="#54-shared-host-multi-user-properties">5.4 Shared-host multi-user properties</a></h3>
+<ul>
+<li><strong>No cross-user state</strong> (verified by Tier 1 isolation).</li>
+<li><strong>No cross-user audit.</strong> Each user’s audit log is confined to
+their XDG state dir. Admins who need cross-user audit must
+aggregate at the OS layer (e.g. ship auditd records, not
+pcloud-rs’s own log).</li>
+<li><strong>Independent update/rollback.</strong> A user can downgrade without
+affecting others (binary is in a system path; state is
+per-user).</li>
+<li><strong>Resource bounds.</strong> <code>MemoryMax=512M</code>, <code>TasksMax=256</code> per user
+unit.</li>
+</ul>
+<h3 id="55-web-ui-front-door-tier-4-optional-nginx-recipe"><a class="header" href="#55-web-ui-front-door-tier-4-optional-nginx-recipe">5.5 Web UI front-door (Tier 4, optional nginx recipe)</a></h3>
+<p>Each user’s pcloudd exposes its Web UI on a UID-scoped Unix
+socket in <code>$XDG_RUNTIME_DIR</code>, <strong>never on a TCP port</strong>. nginx
+terminates TLS, applies SSO/OIDC via <code>auth_request</code>, then routes
+to the right socket:</p>
+<pre><code class="language-nginx">map $http_x_pcloud_user $pcloud_socket {
+    default                "/run/user/1000/pcloudd-ui.sock";
+    "alice"                "/run/user/1001/pcloudd-ui.sock";
+    "bob"                  "/run/user/1002/pcloudd-ui.sock";
+}
+
+server {
+    listen 443 ssl http2;
+    server_name pcloud.internal.example.com;
+
+    ssl_certificate     /etc/ssl/pcloud.pem;
+    ssl_certificate_key /etc/ssl/pcloud.key;
+
+    auth_request /_authz;
+
+    location / {
+        proxy_pass http://unix:$pcloud_socket:;
+        proxy_set_header X-Forwarded-User $remote_user;
+    }
+}
+</code></pre>
+<p>pcloud-rs <strong>does not bundle</strong> nginx, does not configure it, does
+not manage its lifecycle. This is a <strong>recipe</strong>, not a product.
+Reference topology in <code>docs/enterprise/lab/</code>.</p>
+<h2 id="6-configuration"><a class="header" href="#6-configuration">6. Configuration</a></h2>
+<p>HA behaviour is not primarily config-driven; it is infrastructure
+and packaging shape. The relevant levers are:</p>
+<ul>
+<li>packaging mode (user unit vs system unit — must be user),</li>
+<li><code>Restart=</code>, <code>RestartSec=</code>, <code>StartLimit*</code> in the systemd unit,</li>
+<li><code>sc failure</code> actions on Windows,</li>
+<li>nginx vhost config for Tier 4,</li>
+<li><code>MemoryMax=</code>, <code>TasksMax=</code> per user unit on shared hosts.</li>
+</ul>
+<p>Explicit non-goals, <strong>permanently out of scope</strong>:</p>
+<ul>
+<li><strong>Single daemon, multiple users.</strong> Would require a privilege
+boundary — capability tokens, per-RPC UID tagging, mandatory
+encrypted per-user stores inside one process. None of these
+exist today. Adding them would be a rewrite, not a feature.</li>
+<li><strong>Automatic fail-over to a different host.</strong> pcloud-rs’s state
+is inherently local (mount point, FUSE kernel handle, sync
+roots tied to local paths). Moving it to another host is a
+migration, not a fail-over.</li>
+<li><strong>Active-active across hosts.</strong> Single-writer by design.</li>
+</ul>
+<p>Fleet management (central policy push, inventory, remote
+kill-switch) is tracked separately under <code>bd-B3</code> and is
+complementary to, not part of, this document.</p>
+<h2 id="7-onboarding"><a class="header" href="#7-onboarding">7. Onboarding</a></h2>
+<p><strong>Minimal operator checklist:</strong></p>
+<ol>
+<li>Install pcloud-rs with the <strong>user unit</strong> (never system). On
+Debian/Ubuntu, the packaging lint <code>packaging/check.sh</code> will
+refuse to package a system unit.</li>
+<li>Enable the user unit per-user:
+<code>systemctl --user enable --now pcloudd.service</code>.</li>
+<li>On shared hosts, verify <code>MemoryMax=512M</code> and <code>TasksMax=256</code>
+are set. Override via a drop-in if not.</li>
+<li>Confirm <code>$XDG_RUNTIME_DIR</code> lives on a user-owned tmpfs.</li>
+<li>Ship the §9 Prometheus alerts.</li>
+<li>Never expose pcloudd Web UI on raw TCP — always via the §5.5
+nginx recipe.</li>
+<li>Investigate every <code>PCloudSyncRootLockContention</code> alert as a
+potential dual-sync event.</li>
+</ol>
+<h2 id="8-verification"><a class="header" href="#8-verification">8. Verification</a></h2>
+<p>Tier 1 isolation is verified today by code review and by the
+existing XDG / <code>SO_PEERCRED</code> unit tests.</p>
+<p>Tier 2 / Tier 3 pass criteria (intended; enforced by
+<code>failover_restart.rs</code>, <strong>not yet landed</strong> — tracked under
+<code>bd-1du.10</code>):</p>
+<ol>
+<li>systemd respawns pcloudd in &lt;5s p99 on reference hardware.</li>
+<li>IPC socket accepts within 2s of process start.</li>
+<li>No journaled upload is lost (verified by hashing source and
+remote object after recovery).</li>
+<li>Mount point, if previously active, is remounted within 10s.</li>
+<li>No secret is written to stderr, stdout, or the journal during
+recovery.</li>
+</ol>
+<p>Until that test lands, Tier 2 is <em>designed</em>, not <em>demonstrated</em>.</p>
+<h2 id="9-failure-modes"><a class="header" href="#9-failure-modes">9. Failure modes</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Failure</th><th>Behaviour</th></tr>
+</thead>
+<tbody>
+<tr><td>Clean <code>SIGTERM</code> (user stop)</td><td>No restart; <code>Restart=on-failure</code> excludes clean exits</td></tr>
+<tr><td>Crash (SIGSEGV, SIGKILL, OOM)</td><td>Restart per Tier 2/3 policy</td></tr>
+<tr><td>Crash loop (&gt;5 in 60s)</td><td>systemd refuses further restarts; <code>PCloudDaemonRestartStorm</code> alert fires</td></tr>
+<tr><td>Stale FUSE mount after crash</td><td>Detected via <code>/proc/self/mountinfo</code>; <code>umount -l</code> + remount</td></tr>
+<tr><td>Dual-sync attempt on same root</td><td>Second daemon refused via <code>flock</code>; structured error names the holder</td></tr>
+<tr><td>Dead-PID, same-host stale lock</td><td>Auto-reaped on next <code>sync-add</code></td></tr>
+<tr><td>Cross-hostname stale lock (dual-boot)</td><td>Manual intervention required — intentional</td></tr>
+<tr><td>Web UI reached on raw TCP</td><td>Misconfiguration; pcloudd does not open TCP listeners</td></tr>
+<tr><td>One user starves host memory</td><td><code>MemoryMax=512M</code> slices the per-user unit; other users unaffected</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="10-honest-limitations"><a class="header" href="#10-honest-limitations">10. Honest limitations</a></h2>
+<p>pre-alpha reality check:</p>
+<ul>
+<li><strong>Design-only in parts.</strong> Tier 1 is enforced; Tier 2/3 policy
+is shipped as packaging config but <strong>not yet test-verified</strong>
+in-tree. <code>failover_restart.rs</code> is tracked but unshipped.</li>
+<li><strong>Nginx recipe is a recipe</strong>, not a bundled product. Operators
+run nginx on their own.</li>
+<li><strong>Dual-boot stale lock is intentionally refused.</strong> The safe
+default is “require human review”; there is no heuristic that
+can distinguish a stale lock from a live lock across
+hostnames.</li>
+<li><strong>No cross-host anything.</strong> By design. Do not try to engineer
+around it.</li>
+<li><strong>Monitoring rules are guidance</strong>, not shipped into a canonical
+Prometheus rules directory — operators drop them in by hand.</li>
+</ul>
+<h2 id="11-extension-points"><a class="header" href="#11-extension-points">11. Extension points</a></h2>
+<ul>
+<li><strong>Custom restart policy</strong> — override via systemd drop-in
+without modifying the packaged unit.</li>
+<li><strong>Aggregated audit across users</strong> — ship auditd records at the
+OS layer; pcloud-rs does not provide cross-user audit.</li>
+<li><strong>Alternate fronting</strong> — nginx is a recipe; Caddy or Traefik
+with a matching <code>map</code>+<code>proxy_pass</code> works too.</li>
+<li><strong>Capacity classes</strong> — bump <code>MemoryMax</code> on dedicated hosts;
+lower <code>TasksMax</code> on locked-down hosts.</li>
+</ul>
+<h2 id="12-cross-refs"><a class="header" href="#12-cross-refs">12. Cross-refs</a></h2>
+<p>Code:</p>
+<ul>
+<li><code>packaging/systemd/user/pcloudd.service</code> — Tier 2 unit.</li>
+<li><code>packaging/windows/msi/</code> — Tier 3 failure actions.</li>
+<li><code>packaging/check.sh</code> — packaging lint (user-unit only).</li>
+<li><code>crates/pcloud-daemon/src/sync_backend.rs</code> — <code>.pcloud/.lock</code>
+handling.</li>
+<li><code>crates/pcloud-daemon/tests/failover_restart.rs</code> — pass-criteria
+test (tracked, not yet landed).</li>
+</ul>
+<p>Related docs:</p>
+<ul>
+<li><code>docs/enterprise/fleet.md</code> — central policy push (distinct
+track, <code>bd-B3</code>).</li>
+<li><code>docs/enterprise/disaster-recovery.md</code> — snapshot/restore that
+Tier 2/3 assume as the last line of defence.</li>
+<li><code>docs/enterprise/tracing.md</code> — restart paths preserve ambient
+thread traceparent when tracing is enabled.</li>
+<li><code>docs/enterprise/data-residency.md</code> — evaluator runs on every
+post-restart sync-root re-validation.</li>
+<li><code>CLAUDE.md</code> §IPC and local security — Tier 1 invariants.</li>
+</ul>
+<h2 id="13-summary-table"><a class="header" href="#13-summary-table">13. Summary table</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Tier</th><th>Failure mode</th><th>Mechanism</th><th>SLO</th></tr>
+</thead>
+<tbody>
+<tr><td>1</td><td>User-to-user interference</td><td>XDG + <code>SO_PEERCRED</code> + 0600</td><td>Invariant</td></tr>
+<tr><td>2</td><td>Daemon crash (Linux)</td><td>systemd <code>Restart=on-failure</code></td><td>&lt;5s restart</td></tr>
+<tr><td>3</td><td>Daemon crash (Windows)</td><td>SCM failure actions</td><td>&lt;5s restart</td></tr>
+<tr><td>4</td><td>TLS termination / SSO front</td><td>nginx Unix-socket upstream</td><td>Optional</td></tr>
+<tr><td>—</td><td>Host failure</td><td>Out of scope (§6)</td><td>N/A</td></tr>
+<tr><td>—</td><td>Shared-account dual sync</td><td><code>.pcloud/.lock</code> file lock</td><td>Invariant</td></tr>
+</tbody>
+</table>
+</div>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../enterprise/dlp.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../enterprise/kms.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../enterprise/dlp.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../enterprise/kms.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

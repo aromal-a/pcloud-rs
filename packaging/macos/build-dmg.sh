@@ -35,7 +35,7 @@ mkdir -p "$DMG_STAGE"
 mkdir -p "$PKG_OUT"
 
 echo "Building release binaries..."
-cargo build --release -p pcloud-cli -p pcloud-daemon
+cargo build --release --locked -p pcloud-cli -p pcloud-daemon
 
 cp "$ROOT_DIR/target/release/pcloudc" "$DMG_STAGE/pcloudc"
 cp "$ROOT_DIR/target/release/pcloudd" "$DMG_STAGE/pcloudd"

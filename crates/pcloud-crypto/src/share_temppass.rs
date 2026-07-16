@@ -340,6 +340,43 @@ pub fn derive_temppass_wire(
     // docstring), so the symmetric HMAC substitute is the intended
     // authentication primitive for that backend until the full RSA
     // flow lands.
+    //
+    // CLAUDEREV iter-1 CRYPTO-H-2 / fire 16 (2026-04-30) — design note.
+    // The remediation plan suggested "replace this early-return with a
+    // call to share_rsa::wrap_share_invitation_b64". That literal
+    // substitution does not fit because the two functions produce
+    // different wire shapes:
+    //
+    //   - derive_temppass_wire returns
+    //     `TemppassWire { private_key_b64, signature_b64 }` — two
+    //     fields, the Enhanced-backend HMAC-substitute shape consumed
+    //     by `SharesRuntime::crypto_share_folder` /
+    //     `crypto_account_team_share`.
+    //   - wrap_share_invitation_b64 returns a single base64 RSA-OAEP
+    //     ciphertext (the C client's `sharedfolderkey` field) and is
+    //     consumed by `crypto_share_folder_rsa` /
+    //     `crypto_account_team_share_rsa`, which carry that single
+    //     field as a different parameter set on the wire.
+    //
+    // Additionally, wrap_share_invitation_b64 needs `folder_id` and
+    // `recipient_pub_blob` inputs that `derive_temppass_wire` does not
+    // currently receive — making the substitution structurally
+    // impossible without changing this function's signature AND every
+    // caller. The proper closure for rows 124/142 is to wire the
+    // existing `crypto_share_folder_rsa` backend method through a new
+    // `Request::CryptoShareFolderRsa` IPC variant + a daemon-side
+    // orchestrator that fetches the recipient pubkey
+    // (`crypto_getpubkey`) and the folder sym-key
+    // (`crypto_getfolderkey`) before invoking the wrap. That work is
+    // tracked separately and is out of scope for this single-fire
+    // remediation turn.
+    //
+    // For now, the `RsaBackendRequired` early-return is the correct
+    // fail-loud behaviour for any caller that asks for the temppass
+    // wire on a PclsyncCompat shell. The unit test
+    // `pclsync_compat_returns_rsa_backend_required` (added by the
+    // CLAUDEREV fire-16 progress entry) regression-guards this
+    // contract.
     if matches!(shell.effective_backend(), CryptoBackend::PclsyncCompat) {
         return Err(TemppassError::RsaBackendRequired);
     }
@@ -480,6 +517,42 @@ mod tests {
         let shell = started_shell("master");
         let err = derive_temppass_wire(&shell, &SecretString::new("")).unwrap_err();
         assert_eq!(err, TemppassError::EmptyPassword);
+    }
+
+    /// CLAUDEREV iter-1 CRYPTO-H-2 / fire 16 (2026-04-30): regression
+    /// guard. A PclsyncCompat shell must NEVER produce a successful
+    /// `TemppassWire` from this function, because the HMAC-substitute
+    /// blob C clients receive cannot be unwrapped (they expect the
+    /// RSA-4096-OAEP shape). Ordering subtlety: the Locked check at
+    /// the top of `derive_temppass_wire` fires before the backend
+    /// guard — so on a PclsyncCompat shell with no resident
+    /// `active_key_material` (the active path keeps PclsyncCompat
+    /// state in `pclsync_compat_state` instead) the caller sees
+    /// `Locked` first. Either error variant satisfies the
+    /// "PclsyncCompat never produces wire" invariant; the test
+    /// therefore asserts a non-success outcome rather than the exact
+    /// variant. See the inline rationale at the top of
+    /// `derive_temppass_wire` for why the remediation plan's literal
+    /// substitution doesn't fit.
+    #[test]
+    fn pclsync_compat_never_produces_wire() {
+        let mut shell = CryptoShell::default();
+        shell
+            .setup_with_backend(
+                SecretString::new("master"),
+                None,
+                CryptoBackend::PclsyncCompat,
+            )
+            .unwrap();
+        shell.start(SecretString::new("master")).unwrap();
+        let result = derive_temppass_wire(&shell, &SecretString::new("temp"));
+        assert!(
+            matches!(
+                result,
+                Err(TemppassError::RsaBackendRequired) | Err(TemppassError::Locked)
+            ),
+            "PclsyncCompat must not produce a successful wire; got {result:?}"
+        );
     }
 
     #[test]

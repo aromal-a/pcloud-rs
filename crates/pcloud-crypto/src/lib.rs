@@ -64,8 +64,9 @@ compile_error!(
     "pcloud-crypto: feature `crypto-provider-aws-lc-fips` is a forward-compat \
      seam only. No FIPS-validated provider is wired in this build. See \
      `docs/fips.md` for the swap procedure (vendoring an externally-validated \
-     primitive crate, rebuilding, and gating runtime policy via \
-     `CryptoPolicy::fips_mode`). To unblock the build, re-enable the default \
+     primitive crate, rebuilding, and adding a runtime-policy gate — no \
+     `CryptoPolicy::fips_mode` field is implemented today; the swap procedure \
+     introduces it). To unblock the build, re-enable the default \
      `crypto-provider-rustcrypto` feature."
 );
 #[cfg(all(
@@ -111,6 +112,7 @@ pub mod password_scorer;
 ///
 /// Per ADR-0007 `persist_master_key` must stay `false`; the daemon rejects
 /// any config that flips it.
+pub mod folder_policy;
 pub mod policy;
 
 /// Crypto-folder sharing via temporary-password key-rewrap.
@@ -3023,7 +3025,7 @@ impl CryptoShell {
     /// has `auth_tag: None` and its `ciphertext` is the monolithic
     /// AES-GCM frame.
     ///
-    /// PclsyncCompat call sites: pass [`SectorContext::for_file(file_id)`].
+    /// PclsyncCompat call sites: pass `SectorContext::for_file(file_id)`.
     /// The shell looks up `SymKeyVer1` for that `file_id` in the
     /// PclsyncCompat sym-key cache and invokes
     /// [`pclsync_sector::seal_sector`]. The returned

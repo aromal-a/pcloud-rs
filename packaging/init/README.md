@@ -35,6 +35,10 @@ The scripts in this directory cover:
 - `FreeBSD rc.d`
 - `NetBSD rc.d`
 - `OpenBSD rc.d`
+- `DragonFly BSD rc.d`
+- illumos / Oracle Solaris SMF
 
-DragonFly BSD uses the same `rc.d` model as FreeBSD for this daemon; the
-FreeBSD script is the intended starting point there.
+The canonical BSD assets live in `packaging/{freebsd,netbsd,openbsd,dragonfly}`;
+the copies in this cross-init directory use the same lifecycle contract.
+Solaris-family assets live in `packaging/solarish`. Candidate archives are
+built and validated by `packaging/unix`.

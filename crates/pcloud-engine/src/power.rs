@@ -2,7 +2,7 @@
 //!
 //! ## Purpose
 //!
-//! Provides a small, dependency-free [`PowerSource`] trait that the sync
+//! Provides a small, dependency-free `PowerSource` trait that the sync
 //! loop consumer (currently `pcloud_daemon::sync_loop`) can poll to skip
 //! a cycle while the host is running on battery. This addresses audit
 //! finding M-4.1 — the sync engine had `pause_sync_root`/`resume_sync_root`
@@ -17,7 +17,7 @@
 //!   deployments are unaffected.
 //! - **No network or privileged I/O.** The platform reader only opens
 //!   files under `/sys/class/power_supply/*` (Linux) or returns
-//!   [`PowerState::Unknown`] (other platforms). Servers, VMs, and
+//!   `PowerState::Unknown` (other platforms). Servers, VMs, and
 //!   containers without a battery facade are treated as
 //!   `Unknown` → "do not pause" so a missing battery never freezes a
 //!   headless deployment.

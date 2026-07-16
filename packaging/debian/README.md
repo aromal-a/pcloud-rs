@@ -3,33 +3,37 @@
 This directory contains `.deb` (and cross-distro RPM) packaging assets
 for the Rust rewrite of `pcloud-rs`.
 
-## Recommended: nfpm
+## Optional: nfpm
 
 [nfpm](https://nfpm.goreleaser.com/) can build `.deb`, `.rpm`, `.apk`,
 and `.ipk` packages from a single YAML descriptor without Debian tooling.
+The public release workflow uses `cargo-deb` and `cargo-generate-rpm`; this
+descriptor is a manually validated alternative and is not release evidence by
+itself.
 
 ```sh
 # 1. Build release binaries from :
 cd . && cargo build --release --workspace
 
-# 2. Validate the nfpm config:
-nfpm --config packaging/debian/nfpm.yaml check
+# 2. Validate the workspace/package version contract and the nfpm config:
+scripts/check-versions.sh
+VERSION=0.1.0 nfpm --config packaging/debian/nfpm.yaml check
 
 # 3. Build a .deb:
 mkdir -p dist
-nfpm pkg --config packaging/debian/nfpm.yaml \
+VERSION=0.1.0 nfpm pkg --config packaging/debian/nfpm.yaml \
          --packager deb --target dist/
 
 # 4. (Optional) RPM too:
-nfpm pkg --config packaging/debian/nfpm.yaml \
+VERSION=0.1.0 nfpm pkg --config packaging/debian/nfpm.yaml \
          --packager rpm --target dist/
 ```
 
-## Alternative: cargo-deb
+## Public release path: cargo-deb and cargo-generate-rpm
 
-See `cargo-deb.toml` in this directory for a ready-to-paste
-`[package.metadata.deb]` snippet. It is not wired into the crate
-`Cargo.toml` files by default to keep source untouched.
+The active metadata lives in `crates/pcloud-daemon/Cargo.toml`; see
+`.github/workflows/release-packaging.yml` for the authoritative build and
+qualification commands. `cargo-deb.toml` is retained as reference material.
 
 ## Files
 

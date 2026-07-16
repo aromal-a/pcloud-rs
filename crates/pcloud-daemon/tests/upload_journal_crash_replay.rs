@@ -21,6 +21,8 @@ fn entry(id: u64, chunks: u64, bytes: u64) -> JournalEntry {
         chunks_done: chunks,
         bytes,
         sha_partial: Some(format!("sha-{id}")),
+        descriptor: None,
+        committed: false,
     }
 }
 

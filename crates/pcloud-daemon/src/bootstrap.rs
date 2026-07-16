@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 
 use pcloud_auth::SessionManager;
 use pcloud_cache::CacheShell;
-use pcloud_config::{ConfigProfile, Environment, env::apply_env_overrides};
+use pcloud_config::{ConfigProfile, Environment, LoadOptions, env::apply_env_overrides};
 use pcloud_crypto::CryptoShell;
 use pcloud_engine::EngineShell;
 use pcloud_fs::FilesystemShell;
@@ -30,18 +30,14 @@ use thiserror::Error;
 use zeroize::Zeroize;
 
 use crate::account_backend::AccountRuntime;
+use crate::account_scope::AccountScope;
 use crate::auth_backend::AuthRuntime;
 use crate::auth_vault::{AuthVaultError, clear_token};
-use crate::backup_backend::BackupRuntime;
 use crate::crypto_backend::CryptoRuntime;
 use crate::folder_backend::FolderRuntime;
 use crate::notifications_backend::NotificationsRuntime;
-use crate::public_link_backend::PublicLinkRuntime;
 use crate::runtime::RuntimeControlState;
 use crate::runtime::RuntimeShell;
-use crate::shares_backend::SharesRuntime;
-use crate::sync_backend::SyncRuntime;
-use crate::transfer_backend::TransferRuntime;
 use crate::transport_factory::TransportFactory;
 use crate::vault::{PlatformVault, select_vault};
 
@@ -224,7 +220,295 @@ fn sync_bootstrap_auth_state(
     Ok(())
 }
 
-#[cfg(test)]
+/// Build the [`AuthRuntime`] for daemon bootstrap, opting into the
+/// production-grade `ResilientTransport` wrap when `factory.decision()`
+/// is [`crate::transport_factory::WrapDecision::Wrap`]. Dev/test
+/// environments fall through to `AuthRuntime::from_config` and use the
+/// bare [`pcloud_proto::transport::BinaryApiTransport`] so existing
+/// determinism contracts hold.
+///
+/// CLAUDEREV deferred-set D5.1 (fire 49): the auth backend is the
+/// canary that adopts `ResilientTransport`. Other backends (transfer,
+/// public-link, shares, sync, backup, account) follow the same pattern
+/// in subsequent fires (D5.2..D5.7).
+fn build_auth_runtime(config: &ConfigProfile, factory: &TransportFactory) -> AuthRuntime {
+    use pcloud_config::api::ApiMode;
+    use pcloud_proto::TransportConfig;
+    use pcloud_proto::transport::BinaryApiTransport;
+    // Dev / TLS-disabled paths: keep the bare-transport flow exactly
+    // as `from_config` would have produced.
+    if !matches!(config.api.mode, ApiMode::Plaintext | ApiMode::Tls) {
+        return AuthRuntime::from_config(config);
+    }
+    // Production: build a fresh BinaryApiTransport, hand it to the
+    // factory; if the factory wraps, route through the resilient
+    // constructor; otherwise fall back to the bare path.
+    let inner = BinaryApiTransport::new(TransportConfig::with_tls(
+        matches!(config.api.mode, ApiMode::Tls),
+        config.api.host.clone(),
+        config.api.port,
+        config.api.server_name.clone(),
+        std::time::Duration::from_millis(config.api.connect_timeout_ms),
+        std::time::Duration::from_millis(config.api.read_timeout_ms),
+    ));
+    match factory.wrap_binary(inner) {
+        Ok(Some(resilient)) => AuthRuntime::from_resilient_transport(resilient),
+        // Dev/Test environment: factory returned `None`. Fall through
+        // to bare transport (we already built one but discarding it
+        // is cheap; the alternative would be to thread it back into
+        // `from_config` and that's unnecessary churn).
+        Ok(None) => AuthRuntime::from_config(config),
+        // Rate-limit config error: log and fall back to bare transport
+        // so the daemon still boots. The operator should fix the
+        // config; surfacing a hard error here would block startup
+        // for what is recoverable degradation.
+        Err(err) => {
+            log::error!(
+                "auth: resilient-transport rate-limit config rejected ({err}); \
+                 falling back to bare transport — circuit-breaker / retry-budget \
+                 not in effect for auth-bound RPCs"
+            );
+            AuthRuntime::from_config(config)
+        }
+    }
+}
+
+/// Build the `TransferRuntime` for daemon bootstrap, opting into the
+/// production-grade `ResilientTransport` wrap when `factory.decision()`
+/// is [`crate::transport_factory::WrapDecision::Wrap`]. CLAUDEREV
+/// deferred-set D5.2 (fire 50): every byte of every upload/download
+/// flows through the transfer backend, so the resilient wrap has more
+/// material impact than the auth canary.
+///
+/// `network_transport()` (used by the mount runtime to compose
+/// `PcloudFsShim`) keeps returning the bare inner `BinaryApiTransport`
+/// — only the API request path benefits from resilient wrapping;
+/// raw byte I/O is intentionally unchanged so the existing FUSE
+/// bandwidth profile is preserved.
+fn build_transfer_runtime(
+    config: &ConfigProfile,
+    factory: &TransportFactory,
+) -> crate::transfer_backend::TransferRuntime {
+    use pcloud_config::api::ApiMode;
+    use pcloud_proto::TransportConfig;
+    use pcloud_proto::transport::BinaryApiTransport;
+    if !matches!(config.api.mode, ApiMode::Plaintext | ApiMode::Tls) {
+        return crate::transfer_backend::TransferRuntime::from_config(config);
+    }
+    let inner = BinaryApiTransport::new(TransportConfig::with_tls(
+        matches!(config.api.mode, ApiMode::Tls),
+        config.api.host.clone(),
+        config.api.port,
+        config.api.server_name.clone(),
+        std::time::Duration::from_millis(config.api.connect_timeout_ms),
+        std::time::Duration::from_millis(config.api.read_timeout_ms),
+    ));
+    match factory.wrap_binary(inner) {
+        Ok(Some(resilient)) => {
+            crate::transfer_backend::TransferRuntime::from_resilient_transport(config, resilient)
+        }
+        Ok(None) => crate::transfer_backend::TransferRuntime::from_config(config),
+        Err(err) => {
+            log::error!(
+                "transfer: resilient-transport rate-limit config rejected ({err}); \
+                 falling back to bare transport — circuit-breaker / retry-budget \
+                 not in effect for transfer-bound RPCs"
+            );
+            crate::transfer_backend::TransferRuntime::from_config(config)
+        }
+    }
+}
+
+/// Build the [`AccountRuntime`] for daemon bootstrap, opting into the
+/// production-grade `ResilientTransport` wrap when the factory decides
+/// to wrap. CLAUDEREV deferred-set D5.7 (fire 55): **final** per-backend
+/// migration. After this helper lands the daemon's full production API
+/// surface (auth, transfer, public-link, shares, sync, backup, account)
+/// goes through the workspace-shared `GlobalRetryBudget` +
+/// per-endpoint circuit-breakers.
+fn build_account_runtime(config: &ConfigProfile, factory: &TransportFactory) -> AccountRuntime {
+    use pcloud_config::api::ApiMode;
+    use pcloud_proto::TransportConfig;
+    use pcloud_proto::transport::BinaryApiTransport;
+    if !matches!(config.api.mode, ApiMode::Plaintext | ApiMode::Tls) {
+        return AccountRuntime::from_config(config);
+    }
+    let inner = BinaryApiTransport::new(TransportConfig::with_tls(
+        matches!(config.api.mode, ApiMode::Tls),
+        config.api.host.clone(),
+        config.api.port,
+        config.api.server_name.clone(),
+        std::time::Duration::from_millis(config.api.connect_timeout_ms),
+        std::time::Duration::from_millis(config.api.read_timeout_ms),
+    ));
+    match factory.wrap_binary(inner) {
+        Ok(Some(resilient)) => AccountRuntime::from_resilient_transport(resilient),
+        Ok(None) => AccountRuntime::from_config(config),
+        Err(err) => {
+            log::error!(
+                "account: resilient-transport rate-limit config rejected ({err}); \
+                 falling back to bare transport — circuit-breaker / retry-budget \
+                 not in effect for account-bound RPCs"
+            );
+            AccountRuntime::from_config(config)
+        }
+    }
+}
+
+/// Build the [`crate::backup_backend::BackupRuntime`] for daemon
+/// bootstrap, opting into the production-grade `ResilientTransport`
+/// wrap when the factory decides to wrap. CLAUDEREV deferred-set D5.6
+/// (fire 54): sixth of 7 per-backend migrations.
+fn build_backup_runtime(
+    config: &ConfigProfile,
+    factory: &TransportFactory,
+) -> crate::backup_backend::BackupRuntime {
+    use pcloud_config::api::ApiMode;
+    use pcloud_proto::TransportConfig;
+    use pcloud_proto::transport::BinaryApiTransport;
+    if !matches!(config.api.mode, ApiMode::Plaintext | ApiMode::Tls) {
+        return crate::backup_backend::BackupRuntime::from_config(config);
+    }
+    let inner = BinaryApiTransport::new(TransportConfig::with_tls(
+        matches!(config.api.mode, ApiMode::Tls),
+        config.api.host.clone(),
+        config.api.port,
+        config.api.server_name.clone(),
+        std::time::Duration::from_millis(config.api.connect_timeout_ms),
+        std::time::Duration::from_millis(config.api.read_timeout_ms),
+    ));
+    match factory.wrap_binary(inner) {
+        Ok(Some(resilient)) => {
+            crate::backup_backend::BackupRuntime::from_resilient_transport(resilient)
+        }
+        Ok(None) => crate::backup_backend::BackupRuntime::from_config(config),
+        Err(err) => {
+            log::error!(
+                "backup: resilient-transport rate-limit config rejected ({err}); \
+                 falling back to bare transport — circuit-breaker / retry-budget \
+                 not in effect for backup-bound RPCs"
+            );
+            crate::backup_backend::BackupRuntime::from_config(config)
+        }
+    }
+}
+
+/// Build the [`crate::sync_backend::SyncRuntime`] for daemon bootstrap,
+/// opting into the production-grade `ResilientTransport` wrap when the
+/// factory decides to wrap. CLAUDEREV deferred-set D5.5 (fire 53):
+/// fifth of 7 per-backend migrations.
+fn build_sync_runtime(
+    config: &ConfigProfile,
+    factory: &TransportFactory,
+) -> crate::sync_backend::SyncRuntime {
+    use pcloud_config::api::ApiMode;
+    use pcloud_proto::TransportConfig;
+    use pcloud_proto::transport::BinaryApiTransport;
+    if !matches!(config.api.mode, ApiMode::Plaintext | ApiMode::Tls) {
+        return crate::sync_backend::SyncRuntime::from_config(config);
+    }
+    let inner = BinaryApiTransport::new(TransportConfig::with_tls(
+        matches!(config.api.mode, ApiMode::Tls),
+        config.api.host.clone(),
+        config.api.port,
+        config.api.server_name.clone(),
+        std::time::Duration::from_millis(config.api.connect_timeout_ms),
+        std::time::Duration::from_millis(config.api.read_timeout_ms),
+    ));
+    match factory.wrap_binary(inner) {
+        Ok(Some(resilient)) => {
+            crate::sync_backend::SyncRuntime::from_resilient_transport(resilient)
+        }
+        Ok(None) => crate::sync_backend::SyncRuntime::from_config(config),
+        Err(err) => {
+            log::error!(
+                "sync: resilient-transport rate-limit config rejected ({err}); \
+                 falling back to bare transport — circuit-breaker / retry-budget \
+                 not in effect for sync-bound RPCs"
+            );
+            crate::sync_backend::SyncRuntime::from_config(config)
+        }
+    }
+}
+
+/// Build the [`crate::shares_backend::SharesRuntime`] for daemon bootstrap,
+/// opting into the production-grade `ResilientTransport` wrap when the
+/// factory decides to wrap. CLAUDEREV deferred-set D5.4 (fire 52):
+/// fourth of 7 per-backend migrations.
+fn build_shares_runtime(
+    config: &ConfigProfile,
+    factory: &TransportFactory,
+) -> crate::shares_backend::SharesRuntime {
+    use pcloud_config::api::ApiMode;
+    use pcloud_proto::TransportConfig;
+    use pcloud_proto::transport::BinaryApiTransport;
+    if !matches!(config.api.mode, ApiMode::Plaintext | ApiMode::Tls) {
+        return crate::shares_backend::SharesRuntime::from_config(config);
+    }
+    let inner = BinaryApiTransport::new(TransportConfig::with_tls(
+        matches!(config.api.mode, ApiMode::Tls),
+        config.api.host.clone(),
+        config.api.port,
+        config.api.server_name.clone(),
+        std::time::Duration::from_millis(config.api.connect_timeout_ms),
+        std::time::Duration::from_millis(config.api.read_timeout_ms),
+    ));
+    match factory.wrap_binary(inner) {
+        Ok(Some(resilient)) => {
+            crate::shares_backend::SharesRuntime::from_resilient_transport(resilient)
+        }
+        Ok(None) => crate::shares_backend::SharesRuntime::from_config(config),
+        Err(err) => {
+            log::error!(
+                "shares: resilient-transport rate-limit config rejected ({err}); \
+                 falling back to bare transport — circuit-breaker / retry-budget \
+                 not in effect for shares-bound RPCs"
+            );
+            crate::shares_backend::SharesRuntime::from_config(config)
+        }
+    }
+}
+
+/// Build the `PublicLinkRuntime` for daemon bootstrap, opting into
+/// the production-grade `ResilientTransport` wrap when the factory
+/// decides to wrap. CLAUDEREV deferred-set D5.3 (fire 51): third of
+/// 7 per-backend migrations. Same pattern as `build_auth_runtime` /
+/// `build_transfer_runtime`.
+fn build_public_link_runtime(
+    config: &ConfigProfile,
+    factory: &TransportFactory,
+) -> crate::public_link_backend::PublicLinkRuntime {
+    use pcloud_config::api::ApiMode;
+    use pcloud_proto::TransportConfig;
+    use pcloud_proto::transport::BinaryApiTransport;
+    if !matches!(config.api.mode, ApiMode::Plaintext | ApiMode::Tls) {
+        return crate::public_link_backend::PublicLinkRuntime::from_config(config);
+    }
+    let inner = BinaryApiTransport::new(TransportConfig::with_tls(
+        matches!(config.api.mode, ApiMode::Tls),
+        config.api.host.clone(),
+        config.api.port,
+        config.api.server_name.clone(),
+        std::time::Duration::from_millis(config.api.connect_timeout_ms),
+        std::time::Duration::from_millis(config.api.read_timeout_ms),
+    ));
+    match factory.wrap_binary(inner) {
+        Ok(Some(resilient)) => {
+            crate::public_link_backend::PublicLinkRuntime::from_resilient_transport(resilient)
+        }
+        Ok(None) => crate::public_link_backend::PublicLinkRuntime::from_config(config),
+        Err(err) => {
+            log::error!(
+                "public_link: resilient-transport rate-limit config rejected ({err}); \
+                 falling back to bare transport — circuit-breaker / retry-budget \
+                 not in effect for public-link RPCs"
+            );
+            crate::public_link_backend::PublicLinkRuntime::from_config(config)
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
 pub(crate) fn apply_bootstrap_credentials(
     config: &ConfigProfile,
     store: &mut pcloud_store::StoreProfile,
@@ -388,8 +672,27 @@ pub fn bootstrap_shell() -> Result<RuntimeShell, BootstrapError> {
             p
         }
     };
+    let config_path = match env::var_os("PCLOUD_CONFIG").map(PathBuf::from) {
+        Some(path) => Some(path),
+        None => {
+            let default_path = config.paths.config_dir.join("config.json");
+            default_path.exists().then_some(default_path)
+        }
+    };
+    if let Some(path) = config_path.as_ref() {
+        let loaded = ConfigProfile::load_with_validation(
+            path,
+            LoadOptions::enforcing(Environment::Production),
+        )?;
+        for warning in &loaded.warnings {
+            log::warn!("pcloudd bootstrap: {warning}");
+        }
+        config = loaded.profile;
+    }
     config = apply_env_overrides(config)?;
-    bootstrap_with_config(config)
+    let mut shell = bootstrap_with_config(config)?;
+    shell.config_path = config_path;
+    Ok(shell)
 }
 
 /// Bootstrap a [`RuntimeShell`] from an explicit, already-validated
@@ -412,6 +715,77 @@ pub fn bootstrap_shell() -> Result<RuntimeShell, BootstrapError> {
 /// Returns a [`BootstrapError`] on config-validation, directory
 /// provisioning, store, vault, or credential bootstrap failure.
 pub fn bootstrap_with_config(config: ConfigProfile) -> Result<RuntimeShell, BootstrapError> {
+    bootstrap_with_config_and_account(config, None)
+}
+
+/// Account-scoped variant of [`bootstrap_with_config`].
+///
+/// When `scope` is `Some`, the daemon's on-disk roots are nested
+/// under per-account subdirectories so two `pcloudd` instances driven
+/// by the `pcloud_supervisor::SupervisorRegistry` can run side-by-
+/// side without colliding on store, vault, or IPC socket. Concretely,
+/// for `AccountScope { id, label }`:
+///
+/// - `paths.state_dir`  → `<state_dir>/account-{id}`
+/// - `paths.runtime_dir` → `<runtime_dir>/account-{id}`
+/// - `paths.config_dir`  → `<config_dir>/account-{id}`
+///
+/// All path helpers downstream (`store_path`, `auth_token_vault_path`,
+/// `ipc_socket_path`) automatically pick up the scoped roots, so
+/// store, vault, and socket land under the per-account subtree.
+/// The per-account directories are provisioned with the same `0700`
+/// permissions enforced for the single-tenant roots.
+///
+/// Passing `None` is the legacy, single-tenant bootstrap and is
+/// byte-for-byte equivalent to calling [`bootstrap_with_config`].
+///
+/// The optional `scope` is also threaded into the daemon's log prefix
+/// via [`AccountScope::log_prefix`] so multi-account log streams
+/// are operator-distinguishable.
+///
+/// This function does **not** spawn sub-daemons; it only makes
+/// bootstrap aware of an account scope. Sub-daemon spawning is the
+/// load-bearing follow-up.
+///
+/// # Errors
+///
+/// Same conditions as [`bootstrap_with_config`].
+pub fn bootstrap_with_config_and_account(
+    config: ConfigProfile,
+    scope: Option<AccountScope>,
+) -> Result<RuntimeShell, BootstrapError> {
+    let config = if let Some(scope) = scope.as_ref() {
+        apply_account_scope(config, scope)
+    } else {
+        config
+    };
+    if let Some(scope) = scope.as_ref() {
+        log::info!(
+            "{} pcloud-daemon: bootstrap entered account scope (id={}, state_dir={})",
+            scope.log_prefix(),
+            scope.id,
+            config.paths.state_dir.display()
+        );
+    }
+    bootstrap_with_config_inner(config)
+}
+
+/// Rewrite `paths.state_dir` / `paths.runtime_dir` / `paths.config_dir`
+/// to nest under a per-account `account-{id}` subdirectory so the
+/// per-account store, vault, and IPC socket sit beside the single-
+/// tenant ones rather than overwriting them. `cache_dir` is left
+/// untouched: cache state can be safely shared across accounts (the
+/// FUSE staging tree is keyed by mountpoint id, and the page cache by
+/// content hash) and isolating it would force every account to repopulate
+/// from scratch on first run.
+fn apply_account_scope(mut config: ConfigProfile, scope: &AccountScope) -> ConfigProfile {
+    config.paths.state_dir = scope.state_subdir(&config.paths.state_dir);
+    config.paths.runtime_dir = scope.runtime_subdir(&config.paths.runtime_dir);
+    config.paths.config_dir = config.paths.config_dir.join(scope.subdir_name());
+    config
+}
+
+fn bootstrap_with_config_inner(config: ConfigProfile) -> Result<RuntimeShell, BootstrapError> {
     // TODO(bd-1du.sec-sandbox): Apply Linux landlock + seccomp-BPF syscall
     // filtering immediately after directory provisioning so the daemon is
     // confined to pCloud-relevant syscalls for its lifetime. See audit-04
@@ -494,23 +868,30 @@ pub fn bootstrap_with_config(config: ConfigProfile) -> Result<RuntimeShell, Boot
         }
     }
     let mut auth = SessionManager::new();
-    let auth_runtime = AuthRuntime::from_config(&config);
-    let account_runtime = AccountRuntime::from_config(&config);
-    let backup_runtime = BackupRuntime::from_config(&config);
+
+    // CLAUDEREV deferred-set D5.1 (fire 49): transport factory is
+    // constructed BEFORE the auth runtime so the auth backend (canary)
+    // can opt into the wrapped transport when production-classified.
+    // Other backends still use the bare-transport `from_config` path
+    // until D5.2..D5.7 fan the same pattern out.
+    let transport_factory = TransportFactory::new(config.environment, config.resilience.clone());
+    let auth_runtime = build_auth_runtime(&config, &transport_factory);
+    let account_runtime = build_account_runtime(&config, &transport_factory);
+    let backup_runtime = build_backup_runtime(&config, &transport_factory);
     let crypto_runtime = CryptoRuntime::from_config(&config);
     let folder_runtime = FolderRuntime::from_config(&config);
     let notifications_runtime = NotificationsRuntime::from_config(&config);
-    let public_link_runtime = PublicLinkRuntime::from_config(&config);
-    let shares_runtime = SharesRuntime::from_config(&config);
-    let sync_runtime = SyncRuntime::from_config(&config);
-    let transfer_runtime = TransferRuntime::from_config(&config);
+    let public_link_runtime = build_public_link_runtime(&config, &transport_factory);
+    let shares_runtime = build_shares_runtime(&config, &transport_factory);
+    let sync_runtime = build_sync_runtime(&config, &transport_factory);
+    let transfer_runtime = build_transfer_runtime(&config, &transport_factory);
     // Resilience: in production, transports produced by the factory are
     // wrapped in `ResilientTransport` with real `SystemClock` +
     // `ThreadSleepWaiter`. In development/test the factory returns the
-    // bare transport so existing tests stay deterministic. This does not
-    // touch per-backend transport wiring (FUSE/crypto/shares/backup/sync/
-    // public-link/notifications remain unchanged).
-    let transport_factory = TransportFactory::new(config.environment, config.resilience.clone());
+    // bare transport so existing tests stay deterministic. As of D5.1
+    // (fire 49) the auth backend consumes the wrapped transport when
+    // available (`build_auth_runtime` above); other backends still
+    // use bare transports and migrate in subsequent fires.
     let token_vault_path = config.paths.auth_token_vault_path();
 
     // Select the auth-token vault backend based on `config.auth.backend`.
@@ -572,7 +953,7 @@ pub fn bootstrap_with_config(config: ConfigProfile) -> Result<RuntimeShell, Boot
     // transport is available, so it enumerates and logs only. The live
     // server reconcile (trim up / trim down / NotFound / Stalled) is
     // driven by [`mount_runtime::pcloud_shim_adapter_factory`] at mount
-    // time, which does have a `ProtoUploadBackend` wired. See
+    // time, which composes the canonical RemoteFs-backed writer. See
     // `pcloud_fs::write_path::replay_upload_sidecars`.
     {
         use pcloud_fs::write_path::{ResumeOutcome, enumerate_upload_sidecars};
@@ -647,6 +1028,93 @@ pub fn bootstrap_with_config(config: ConfigProfile) -> Result<RuntimeShell, Boot
             Err(err) => {
                 log::error!("pcloud-daemon bootstrap: upload_resume scan failed: {err}");
             }
+        }
+    }
+
+    // Reconcile the fsync upload journal into SQLite before accepting work.
+    // The journal is deliberately written first on every chunk, so it may be
+    // one acknowledgement ahead of SQLite after SIGKILL. Additive descriptor
+    // fields let us reconstruct the complete row instead of merely logging it.
+    {
+        use pcloud_backends::upload_journal::UploadJournal;
+        use pcloud_store::repositories::upload_resume::{
+            ConflictHint, UploadResumeRecord, UploadResumeRepository,
+        };
+        match UploadJournal::open(&config.paths.runtime_dir).and_then(|journal| {
+            let report = journal.replay()?;
+            let rejected_lines = report.rejected_lines;
+            let conn = rusqlite::Connection::open(&store_path).map_err(|error| {
+                pcloud_backends::upload_journal::JournalError::Io(std::io::Error::other(
+                    error.to_string(),
+                ))
+            })?;
+            let mut committed_ids = std::collections::BTreeSet::new();
+            for entry in &report.entries {
+                let Some(descriptor) = entry.descriptor.as_ref() else {
+                    continue;
+                };
+                if entry.committed {
+                    committed_ids.insert(entry.upload_id);
+                    UploadResumeRepository::delete(&conn, &descriptor.resume_key).map_err(
+                        |error| {
+                            pcloud_backends::upload_journal::JournalError::Io(
+                                std::io::Error::other(error.to_string()),
+                            )
+                        },
+                    )?;
+                    continue;
+                }
+                let conflict = if descriptor.if_new {
+                    ConflictHint::IfNew
+                } else if let Some(hash) = descriptor.if_hash {
+                    ConflictHint::IfHash(hash)
+                } else {
+                    ConflictHint::None
+                };
+                UploadResumeRepository::put(
+                    &conn,
+                    &UploadResumeRecord {
+                        local_path: descriptor.resume_key.clone(),
+                        parent_folder_id: descriptor.parent_folder_id,
+                        file_name: descriptor.file_name.clone(),
+                        upload_id: entry.upload_id,
+                        offset: entry.bytes.min(descriptor.total_size),
+                        total_size: descriptor.total_size,
+                        prefix_sha1: entry.sha_partial.clone(),
+                        conflict,
+                        updated_at: std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_secs()
+                            .min(i64::MAX as u64) as i64,
+                    },
+                )
+                .map_err(|error| {
+                    pcloud_backends::upload_journal::JournalError::Io(std::io::Error::other(
+                        error.to_string(),
+                    ))
+                })?;
+            }
+            if !committed_ids.is_empty() {
+                let retained: Vec<_> = report
+                    .entries
+                    .into_iter()
+                    .filter(|entry| !committed_ids.contains(&entry.upload_id))
+                    .collect();
+                journal.rewrite_atomic(&retained)?;
+            }
+            if rejected_lines > 0 {
+                log::warn!(
+                    "pcloud-daemon bootstrap: upload journal recovered {} malformed/torn line(s)",
+                    rejected_lines
+                );
+            }
+            Ok(())
+        }) {
+            Ok(()) => {}
+            Err(error) => log::error!(
+                "pcloud-daemon bootstrap: upload journal reconciliation failed: {error}"
+            ),
         }
     }
 
@@ -739,7 +1207,7 @@ pub fn bootstrap_with_config(config: ConfigProfile) -> Result<RuntimeShell, Boot
     // lives at `<state_dir>/mount_pid`.
     let mount_state_dir: std::path::PathBuf = config.paths.state_dir.clone();
 
-    Ok(RuntimeShell {
+    let mut shell = RuntimeShell {
         config,
         store,
         integrity,
@@ -873,5 +1341,242 @@ pub fn bootstrap_with_config(config: ConfigProfile) -> Result<RuntimeShell, Boot
         // ncx.54: populated by `dispatch::dispatch_with_peer` for the
         // lifetime of a single IPC request; `None` at bootstrap.
         current_peer_pid: None,
-    })
+        // T2.4.b — per-folder crypto opt-in registry. Empty at
+        // bootstrap; the snapshot is hydrated below from the
+        // `value_kv` row at `crypto.folder_policy.v1` if present.
+        // A missing or malformed row falls back to "empty registry"
+        // so a corrupted preference cannot block daemon startup;
+        // operators can re-opt folders in via the IPC mutators.
+        folder_crypto_policy: pcloud_crypto::folder_policy::FolderCryptoPolicy::new(),
+        // T2.4.c — runtime-only per-folder unlock state. Empty at
+        // bootstrap; populated on a successful `unlock_crypto` by
+        // walking `folder_crypto_policy.folders`. Never persisted.
+        folder_unlock_state: pcloud_crypto::folder_policy::FolderUnlockState::new(),
+    };
+    shell.bootstrap_integrity_sweeper();
+    // T2.4.b — hydrate the per-folder crypto opt-in registry from the
+    // `value_kv` snapshot persisted by `Request::CryptoFolderEnable` /
+    // `CryptoFolderDisable`. A missing key is the common path on first
+    // run (an empty registry); a malformed JSON payload is logged and
+    // discarded so a corrupted preference cannot block startup.
+    match pcloud_store::value_kv::get_string(
+        &shell.store.db_path,
+        crate::runtime::FOLDER_CRYPTO_POLICY_KEY,
+    ) {
+        Ok(Some(raw)) => {
+            match serde_json::from_str::<pcloud_crypto::folder_policy::FolderCryptoPolicy>(&raw) {
+                Ok(policy) => {
+                    shell.folder_crypto_policy = policy;
+                }
+                Err(err) => {
+                    log::warn!(
+                        "T2.4.b: discarding malformed folder_crypto_policy snapshot ({err}); \
+                     starting with an empty registry"
+                    );
+                }
+            }
+        }
+        Ok(None) => {}
+        Err(err) => {
+            log::warn!(
+                "T2.4.b: failed to read folder_crypto_policy snapshot ({err}); \
+                 starting with an empty registry"
+            );
+        }
+    }
+    Ok(shell)
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_env_vars<T>(vars: &[(&str, Option<&std::ffi::OsStr>)], f: impl FnOnce() -> T) -> T {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let old: Vec<(&str, Option<std::ffi::OsString>)> = vars
+            .iter()
+            .map(|(key, _)| (*key, std::env::var_os(key)))
+            .collect();
+        // SAFETY (test-only): Rust 2024 marked `std::env::set_var` /
+        // `remove_var` as unsafe because they mutate process-wide
+        // environment in a way that races with libc readers in other
+        // threads. We hold `ENV_LOCK` across the entire save → swap →
+        // run → restore window so no other test thread can observe an
+        // inconsistent intermediate state. No FFI consumer of getenv()
+        // runs concurrently in this single-threaded test scope.
+        // SAFETY: see paragraph above.
+        unsafe {
+            for (key, value) in vars {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+        let result = f();
+        // SAFETY (test-only): same lock-protected window as above; the
+        // restoration phase runs while ENV_LOCK is still held.
+        // SAFETY: see paragraph above.
+        unsafe {
+            for (key, value) in old {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+        result
+    }
+
+    fn write_config_envelope(path: &Path, profile: &ConfigProfile) {
+        let envelope = serde_json::json!({
+            "version": pcloud_config::migrate::CURRENT_VERSION,
+            "profile": profile,
+        });
+        fs::write(path, serde_json::to_vec_pretty(&envelope).unwrap()).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+    }
+
+    #[test]
+    fn bootstrap_shell_loads_pcloud_config_and_preserves_reload_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let root = tmp.path().join("profile-root");
+        let config_path = tmp.path().join("config.json");
+        let profile = ConfigProfile::secure_defaults(root, Environment::Development);
+        write_config_envelope(&config_path, &profile);
+
+        let runtime = with_env_vars(
+            &[
+                ("PCLOUD_CONFIG", Some(config_path.as_os_str())),
+                ("PCLOUD_ROOT", None),
+                ("PCLOUD_ENV", None),
+                ("PCLOUD_API_MODE", None),
+                ("PCLOUD_API_HOST", None),
+                ("PCLOUD_API_PORT", None),
+                ("PCLOUD_API_SERVER_NAME", None),
+                ("PCLOUD_API_CONNECT_TIMEOUT_MS", None),
+                ("PCLOUD_API_READ_TIMEOUT_MS", None),
+                ("PCLOUD_PLUGINS_ENABLED", None),
+                ("PCLOUD_PLUGIN_ALLOW_NETWORK", None),
+                ("PCLOUD_PLUGIN_ALLOW_SYNC_CONTROL", None),
+                ("PCLOUD_PLUGIN_ALLOW_CRYPTO", None),
+                ("PCLOUD_DURABLE_AUTH_TOKENS", None),
+                ("PCLOUD_VAULT", None),
+                ("PCLOUD_MOUNT_CACHE_SIZE_MB", None),
+                ("PCLOUD_MOUNT_PAGE_CACHE_ENTRIES", None),
+                ("PCLOUD_MOUNT_METADATA_TTL_SECS", None),
+                ("PCLOUD_AUTO_MOUNT_PATH", None),
+            ],
+            || bootstrap_shell().expect("bootstrap_shell should load PCLOUD_CONFIG"),
+        );
+
+        assert_eq!(runtime.config_path.as_deref(), Some(config_path.as_path()));
+        assert_eq!(runtime.config.paths.state_dir, profile.paths.state_dir);
+    }
+
+    /// T2.8.b acceptance: two distinct [`AccountScope`] ids share a
+    /// single root yet land on disjoint store / vault / socket paths
+    /// so two per-account daemon instances can run concurrently
+    /// without colliding.
+    #[test]
+    fn bootstrap_with_account_scope_uses_isolated_paths() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let mk_profile =
+            || ConfigProfile::secure_defaults(tmp.path().to_path_buf(), Environment::Development);
+
+        let scope_a = AccountScope::new(7, "work");
+        let scope_b = AccountScope::new(11, "home");
+
+        let shell_a = bootstrap_with_config_and_account(mk_profile(), Some(scope_a.clone()))
+            .expect("bootstrap with scope A should succeed");
+        let shell_b = bootstrap_with_config_and_account(mk_profile(), Some(scope_b.clone()))
+            .expect("bootstrap with scope B should succeed");
+
+        // Per-account roots are distinct.
+        assert_ne!(
+            shell_a.config.paths.state_dir, shell_b.config.paths.state_dir,
+            "scoped state_dir must differ between accounts"
+        );
+        assert_ne!(
+            shell_a.config.paths.runtime_dir, shell_b.config.paths.runtime_dir,
+            "scoped runtime_dir must differ between accounts"
+        );
+
+        // Derived store / vault / socket paths are also disjoint.
+        let store_a = shell_a.config.paths.state_dir.join("store.sqlite3");
+        let store_b = shell_b.config.paths.state_dir.join("store.sqlite3");
+        assert_ne!(store_a, store_b, "store paths must differ");
+
+        let vault_a = shell_a.config.paths.auth_token_vault_path();
+        let vault_b = shell_b.config.paths.auth_token_vault_path();
+        assert_ne!(vault_a, vault_b, "vault paths must differ");
+
+        let socket_a = shell_a.config.paths.ipc_socket_path();
+        let socket_b = shell_b.config.paths.ipc_socket_path();
+        assert_ne!(socket_a, socket_b, "ipc socket paths must differ");
+
+        // Per-account state subdirs nest under the original root.
+        assert!(
+            shell_a
+                .config
+                .paths
+                .state_dir
+                .ends_with(scope_a.subdir_name())
+        );
+        assert!(
+            shell_b
+                .config
+                .paths
+                .state_dir
+                .ends_with(scope_b.subdir_name())
+        );
+
+        // Per-account directories were provisioned 0700 (matches the
+        // existing single-tenant security posture).
+        let mode = fs::metadata(&shell_a.config.paths.state_dir)
+            .expect("scoped state_dir exists")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode & 0o077, 0, "scoped state_dir must be owner-only");
+    }
+
+    /// T2.8.b regression: passing `None` reproduces the legacy
+    /// single-tenant layout — `state_dir` is **not** rewritten and
+    /// the store / vault / socket land at the historical paths.
+    #[test]
+    fn bootstrap_without_account_scope_uses_legacy_paths() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let profile =
+            ConfigProfile::secure_defaults(tmp.path().to_path_buf(), Environment::Development);
+        let expected_state_dir = profile.paths.state_dir.clone();
+        let expected_runtime_dir = profile.paths.runtime_dir.clone();
+        let expected_vault = profile.paths.auth_token_vault_path();
+        let expected_socket = profile.paths.ipc_socket_path();
+
+        let shell = bootstrap_with_config_and_account(profile, None)
+            .expect("legacy bootstrap (no scope) should succeed");
+
+        assert_eq!(shell.config.paths.state_dir, expected_state_dir);
+        assert_eq!(shell.config.paths.runtime_dir, expected_runtime_dir);
+        assert_eq!(shell.config.paths.auth_token_vault_path(), expected_vault);
+        assert_eq!(shell.config.paths.ipc_socket_path(), expected_socket);
+
+        // No `account-*` subdir is auto-created on the legacy path.
+        let entries: Vec<_> = fs::read_dir(&shell.config.paths.state_dir)
+            .expect("state_dir exists")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("account-"))
+            .collect();
+        assert!(
+            entries.is_empty(),
+            "legacy bootstrap must not create account-* subdirs"
+        );
+    }
 }

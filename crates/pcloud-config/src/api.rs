@@ -38,10 +38,9 @@ use crate::{ConfigError, Environment};
 ///   revocation before CRLs are mounted or before stapling is confirmed
 ///   would cause every production client to refuse to connect.
 ///
-/// The shipped implementation honors this knob only by validating a
-/// stapled OCSP response if the server sends one AND `StapledPermissive`
-/// is selected; otherwise revocation is not checked. See the rustdoc on
-/// `pcloud_proto::tls` for the wire-level hook points.
+/// The shipped transport does not enforce this knob yet. Config validation
+/// therefore rejects every non-disabled mode until the rustls verifier is
+/// wired to fail closed for the selected revocation source.
 ///
 /// Stored as a string in the envelope (`"Disabled"`, `"StapledPermissive"`,
 /// `"StapledStrict"`, `"CrlFile"`). Overridden at runtime by
@@ -225,6 +224,8 @@ impl ApiEndpoint {
     /// - Non-zero `port` in plaintext/TLS modes.
     /// - Non-empty `server_name` in TLS mode.
     /// - Non-zero `connect_timeout_ms` and `read_timeout_ms`.
+    /// - Disabled TLS revocation mode until CRL/OCSP enforcement is
+    ///   implemented.
     ///
     /// [`ApiMode::Development`] skips all host-level checks by design
     /// (used for mocks and fixtures).
@@ -237,6 +238,11 @@ impl ApiEndpoint {
         if environment == Environment::Production && matches!(self.mode, ApiMode::Plaintext) {
             return Err(ConfigError::InvalidApiEndpoint(
                 "production environment requires tls api mode",
+            ));
+        }
+        if !self.tls_revocation_check.is_disabled() {
+            return Err(ConfigError::InvalidApiEndpoint(
+                "tls revocation checks are configurable but not implemented; use Disabled",
             ));
         }
 
@@ -409,7 +415,7 @@ fn parse_api_server_hint(api_server: &str) -> (String, Option<u16>) {
 mod tests {
     use crate::{ConfigError, Environment};
 
-    use super::{ApiEndpoint, ApiMode};
+    use super::{ApiEndpoint, ApiMode, TlsRevocationCheck};
 
     #[test]
     fn apply_api_server_hint_updates_endpoint() {
@@ -493,6 +499,25 @@ mod tests {
         // surprise.
         let empty = super::TlsRevocationCheck::CrlFile(String::new());
         assert!(empty.is_disabled());
+    }
+
+    #[test]
+    fn tls_revocation_modes_are_rejected_until_enforced() {
+        for mode in [
+            TlsRevocationCheck::StapledPermissive,
+            TlsRevocationCheck::StapledStrict,
+            TlsRevocationCheck::CrlFile("/var/lib/pcloud/revoked.crl".to_owned()),
+        ] {
+            let mut endpoint = ApiEndpoint::secure_defaults(Environment::Production);
+            endpoint.tls_revocation_check = mode;
+            let err = endpoint
+                .validate(Environment::Production)
+                .expect_err("unenforced revocation mode must fail closed");
+            assert!(matches!(
+                err,
+                ConfigError::InvalidApiEndpoint(msg) if msg.contains("revocation")
+            ));
+        }
     }
 
     #[test]

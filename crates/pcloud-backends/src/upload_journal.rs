@@ -62,6 +62,39 @@ pub struct JournalEntry {
     /// Hex-encoded SHA-1 of the prefix `[0, bytes)`.  `None` until a full
     /// chunk boundary has been hashed.
     pub sha_partial: Option<String>,
+    /// Descriptor needed to reconstruct a missing SQLite resume row after
+    /// a crash between journal fsync and database commit. Older lines omit
+    /// this additive field and remain readable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub descriptor: Option<UploadJournalDescriptor>,
+    /// Whether `upload_save` returned success for this upload. This marker is
+    /// fsynced before SQLite cleanup so restart never re-uploads a known
+    /// committed file.
+    #[serde(default)]
+    pub committed: bool,
+}
+
+/// Durable identity of one resumable local-file upload.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UploadJournalDescriptor {
+    /// Stable SQLite resume key (source plus remote destination).
+    pub resume_key: String,
+    /// Canonical local source path.
+    pub local_path: PathBuf,
+    /// Canonical absolute remote destination path.
+    pub remote_path: String,
+    /// Remote parent folder id.
+    pub parent_folder_id: u64,
+    /// Remote leaf name.
+    pub file_name: String,
+    /// Expected source size.
+    pub total_size: u64,
+    /// Full source SHA-1 captured before upload.
+    pub local_sha1: String,
+    /// Conditional-overwrite hash, when requested.
+    pub if_hash: Option<u64>,
+    /// Whether create-if-new behavior was requested.
+    pub if_new: bool,
 }
 
 /// Errors surfaced by the journal.
@@ -289,6 +322,8 @@ mod tests {
             chunks_done: chunks,
             bytes,
             sha_partial: Some(format!("sha-{id}-{chunks}")),
+            descriptor: None,
+            committed: false,
         }
     }
 

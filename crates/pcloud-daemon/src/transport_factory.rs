@@ -96,7 +96,7 @@ impl TransportFactory {
     /// Build a factory for the given environment and resilience policy.
     ///
     /// In production a [`GlobalRetryBudget`] with
-    /// [`DEFAULT_RETRY_BUDGET_CAPACITY`] tokens is created and shared
+    /// `DEFAULT_RETRY_BUDGET_CAPACITY` tokens is created and shared
     /// across all transports produced by this factory. In dev/test the
     /// budget is `None` because no `ResilientTransport` wrapper is created.
     #[must_use]

@@ -1,0 +1,589 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Disaster Recovery - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/../../enterprise/disaster-recovery.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <blockquote>
+<p><strong>Pre-alpha scaffold — not live / not production-verified.</strong> This document
+describes design and unit-tested code that has not been validated against a
+real production deployment. Do not treat it as a shippable capability.
+See <code>CLAUDE.md</code> and <code>docs/enterprise/README.md</code> for the honesty rules.</p>
+</blockquote>
+<h1 id="disaster-recovery-snapshots"><a class="header" href="#disaster-recovery-snapshots">Disaster-Recovery Snapshots</a></h1>
+<blockquote>
+<p><strong>Status:</strong> <strong>LANDED</strong> (tracker waves H12a–H12d) — snapshot /
+restore / verify / prune are wired through <code>pcloud-cli</code>,
+<code>pcloud-daemon</code>, <code>pcloud-plugin-api</code> (destination plugins), and
+<code>pcloud-observability</code> (audit chain). No new crates.
+<strong>Honest runtime dependency:</strong> the daemon shells out to the host
+<code>gpg(1)</code> binary for encrypt/decrypt/sign/verify; there is <strong>no</strong>
+in-tree OpenPGP implementation. If <code>gpg</code> is missing, snapshot
+operations fail <strong>closed</strong> at daemon start.</p>
+</blockquote>
+<p>Landed waves:</p>
+<ul>
+<li><strong>H12a</strong> — IPC request/response variants + CLI token parse for
+<code>backup snapshot-create|snapshot-verify|snapshot-restore|snapshot-prune</code>.</li>
+<li><strong>H12b</strong> — snapshot builder: <code>BackupGuard</code>, SQLite online backup,
+reproducible tarball, BLAKE3 manifest.</li>
+<li><strong>H12c</strong> — GPG encrypt + restore + grandfather-father-son prune.</li>
+<li><strong>H12d</strong> — daemon dispatch + CLI handlers (<code>--yes</code>,
+<code>--gpg-recipient</code>, <code>--retention-days</code>) + audit events
+(<code>PluginAuditEvent::SnapshotCreated</code> /
+<code>PluginAuditEvent::SnapshotRestored</code>).</li>
+<li><strong>Post-H12</strong> — top-level <code>pcloudc snapshot</code> surface with zstd +
+SHA3-256 sidecar as the default pipeline and GPG as an optional
+outer envelope. <code>--zstd-level 1..=22</code> (default 3) tunes the
+compression ratio. The legacy <code>backup snapshot-*</code> aliases remain
+accepted for one release cycle and emit a one-line stderr
+deprecation warning.</li>
+</ul>
+<h2 id="1-purpose"><a class="header" href="#1-purpose">1. Purpose</a></h2>
+<p>Enterprise operators need a documented, automatable way to:</p>
+<ul>
+<li>capture a <strong>consistent point-in-time snapshot</strong> of daemon state
+before a risky upgrade, migration, or GA rollout,</li>
+<li>restore that snapshot on a different host or after a data-loss
+event,</li>
+<li>satisfy BCP / DR controls (ISO 27001 A.5.29, SOC 2 CC 7.5,
+NIS2 Annex I.2.c) requiring <strong>periodic tested recovery
+procedures</strong> — not just “we have backups”.</li>
+</ul>
+<p>Before this landed, restoring a <code>pcloud-rs</code> deployment meant
+manually copying the state directory and hoping the schema
+aligned. There was no integrity check, no cadence, no retention
+policy, and no cross-region replication story. H12 replaces that
+with a thin, opinionated snapshot/restore tool.</p>
+<p>Snapshots contain secrets (auth vault, encrypted store rows).
+Everything downstream treats the artifact as <strong>equivalent to the
+vault itself</strong>.</p>
+<h2 id="2-threat-model"><a class="header" href="#2-threat-model">2. Threat model</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Threat</th><th>Mitigation</th></tr>
+</thead>
+<tbody>
+<tr><td>Snapshot artifact stolen at rest</td><td>GPG asymmetric encryption to <code>gpg_recipient</code>; snapshot host holds public key only; private key never on production host</td></tr>
+<tr><td>Snapshot artifact tampered in transit</td><td>GPG signature; restore refuses unsigned snapshots unless explicit <code>--allow-unsigned</code></td></tr>
+<tr><td>SQLite inconsistency from <code>cp</code> during live write</td><td>SQLite <strong>online backup API</strong> (<code>sqlite3_backup_init</code>), not filesystem copy; guaranteed transaction-consistent</td></tr>
+<tr><td>Audit-chain truncation hides past events</td><td>Tail hash embedded in manifest; restore re-plays and refuses mismatched chains</td></tr>
+<tr><td>Snapshot leaks plaintext to a temp directory</td><td>Daemon writes staging only under its own 0700 state tmp dir; staging is <code>shred</code>-then-unlinked on success</td></tr>
+<tr><td>Cross-major-version restore corrupts schema</td><td>Explicitly refused (§11); operator must roll forward via normal migration path</td></tr>
+<tr><td>Destination bucket outside residency boundary</td><td>Config validation refuses destination regions outside <code>data_residency.allowed_regions</code> (see <code>data-residency.md</code>)</td></tr>
+<tr><td><code>gpg(1)</code> binary missing on production host</td><td>Daemon refuses to start the backup subsystem at launch time; no snapshots “silently succeed” into unencrypted tarballs</td></tr>
+<tr><td>Retention policy deletes last known-good snapshot</td><td>Prune refuses to drop any snapshot younger than the most recent <strong>verified</strong> snapshot, and enforces a <code>minimum_keep</code> floor</td></tr>
+</tbody>
+</table>
+</div>
+<p>Explicit <strong>non-threats</strong> (non-goals, §11): continuous
+replication, per-file restore from pCloud, and cross-major-version
+restore.</p>
+<h2 id="3-scope"><a class="header" href="#3-scope">3. Scope</a></h2>
+<p>In scope, landed:</p>
+<ul>
+<li>tarball packager with reproducible byte-order + fixed mtime,</li>
+<li>SQLite online backup,</li>
+<li>BLAKE3 per-entry manifest + audit-tail hash,</li>
+<li>GPG encrypt + sign,</li>
+<li><code>local</code> / <code>s3</code> / <code>sftp</code> built-in destinations,</li>
+<li>grandfather-father-son retention,</li>
+<li><code>pcloudc backup {snapshot-create,snapshot-verify,snapshot-restore, snapshot-prune}</code> CLI,</li>
+<li><code>[backup]</code> config schema + validation,</li>
+<li>nightly CI job exercising <code>create → verify → restore</code> into a
+scratch state dir.</li>
+</ul>
+<p>Out of scope:</p>
+<ul>
+<li>continuous replication (use a block-level DR stack for that),</li>
+<li>per-file restore from pCloud (use pCloud’s server-side file
+history),</li>
+<li>cross-major-version restore (forbidden),</li>
+<li>in-tree OpenPGP (runtime dependency on <code>gpg(1)</code> is intentional).</li>
+</ul>
+<h2 id="4-design"><a class="header" href="#4-design">4. Design</a></h2>
+<h3 id="41-snapshot-contents"><a class="header" href="#41-snapshot-contents">4.1 Snapshot contents</a></h3>
+<p>A snapshot is a tarball containing:</p>
+<ul>
+<li><code>manifest.json</code> — version, daemon build id, timestamp, host id,
+schema versions, BLAKE3 of each payload entry, audit chain tail
+hash.</li>
+<li><code>vault/auth_vault.bin</code> — the existing owner-only vault (it is
+already encrypted at rest; copied byte-for-byte).</li>
+<li><code>store/store.sqlite3</code> — produced via <code>sqlite3_backup_init</code>,
+<strong>not</strong> <code>cp</code>. Transaction-consistent even with the daemon
+running.</li>
+<li><code>audit/audit.log</code> + <code>audit/audit.idx</code> — append-only audit
+chain. Tail hash embedded in manifest so truncation is
+detectable across generations.</li>
+<li><code>config/config.toml</code> — operator config with secrets redacted to
+<code>keyring:*</code> refs (never raw material).</li>
+<li><code>plugins/registry.json</code> — plugin manifests and signatures;
+plugin <strong>binaries</strong> are not snapshotted (operator manages them
+like any other package).</li>
+</ul>
+<p>The tarball is then GPG-encrypted (<code>--encrypt --sign --recipient $RECIP</code>) producing an asymmetric artifact: snapshot host needs
+only the public key, restore needs the private key — exactly the
+DR posture you want.</p>
+<h3 id="42-destinations"><a class="header" href="#42-destinations">4.2 Destinations</a></h3>
+<p>Destinations are plugin-driven. Two new <code>PluginOperation</code>
+variants:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>PluginOperation::BackupPut { blob_id, bytes }     // streaming
+PluginOperation::BackupGet { blob_id }            // streaming
+<span class="boring">}</span></code></pre>
+<p>Capability: <code>PluginCapability::BackupDestination</code>. Built-in
+internal plugins:</p>
+<ul>
+<li><code>local</code> — filesystem path, 0600 artifact, parent 0700.</li>
+<li><code>s3</code> — <code>aws-sdk-s3</code>; honours SSE-KMS, bucket residency.</li>
+<li><code>sftp</code> — <code>russh</code>.</li>
+</ul>
+<p>Third-party (GCS, Azure Blob, Backblaze B2) arrive as signed
+external plugins without touching daemon code.</p>
+<h3 id="43-retention-grandfather-father-son"><a class="header" href="#43-retention-grandfather-father-son">4.3 Retention (grandfather-father-son)</a></h3>
+<p>Default: <code>daily 14 / weekly 8 / monthly 12</code>. Evaluated by
+<code>pcloudc backup snapshot-prune</code>, which is idempotent and safe to
+re-run. Prune never deletes a snapshot younger than the most
+recent <strong>verified</strong> snapshot, and always keeps at least
+<code>minimum_keep</code> (default 3) snapshots regardless of other rules.</p>
+<h2 id="5-interfaces"><a class="header" href="#5-interfaces">5. Interfaces</a></h2>
+<h3 id="51-ipc-surface"><a class="header" href="#51-ipc-surface">5.1 IPC surface</a></h3>
+<pre><code>backup snapshot-create  --label  --destination  --gpg-recipient  --yes
+backup snapshot-verify  &lt;artifact&gt;
+backup snapshot-restore &lt;artifact&gt; --state-dir  [--allow-unsigned]
+backup snapshot-prune   [--retention-days N]
+backup list
+backup destinations     # configured destinations + health check
+</code></pre>
+<p>CLI aliases: older <code>create-snapshot</code> / <code>restore</code> / <code>verify</code> /
+<code>prune</code> verbs are aliased to the canonical <code>snapshot-*</code> tokens.</p>
+<h3 id="52-audit-events"><a class="header" href="#52-audit-events">5.2 Audit events</a></h3>
+<p>Landed variants:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>PluginAuditEvent::SnapshotCreated  { label, destination, size, digest }
+PluginAuditEvent::SnapshotRestored { source, host, audit_tail_before, audit_tail_after }
+<span class="boring">}</span></code></pre>
+<p>Chain links cover each record so post-hoc edits are detectable.
+Quarantine events additionally record the quarantine path and
+the sidecar digest.</p>
+<h2 id="6-configuration"><a class="header" href="#6-configuration">6. Configuration</a></h2>
+<pre><code class="language-toml">[backup]
+enabled = true
+destination = "s3://dr-bucket/pcloud-rs/$(hostname)/"
+gpg_recipient = "dr-team@example.com"
+gpg_signer = "host-key@example.com"   # optional
+retention_days = 14                    # shorthand for [backup.retention].daily
+verify_on_create = true
+max_artifact_bytes = 1073741824        # 1 GiB sanity cap
+
+[backup.retention]
+daily = 14
+weekly = 8
+monthly = 12
+minimum_keep = 3
+
+[backup.s3]
+region = "eu-central-1"
+sse = "aws:kms"
+kms_key_id = "alias/pcloud-rs-dr"
+</code></pre>
+<p>Validation (fail-closed):</p>
+<ul>
+<li><code>gpg_recipient</code> must resolve to a non-expired public key on the
+daemon host’s keyring.</li>
+<li><code>destination</code> region must satisfy
+<code>data_residency.allowed_regions</code> when residency is enabled.</li>
+<li><code>verify_on_create = true</code> (default) makes every successful
+<code>snapshot-create</code> run <code>snapshot-verify</code> against the produced
+artifact before reporting success — <strong>DR you haven’t tested is
+DR you don’t have.</strong></li>
+<li><code>gpg(1)</code> must be on <code>PATH</code>. If missing, the backup subsystem
+refuses to start and logs
+<code>backup.subsystem.disabled.gpg_missing</code>. Packaging manifests
+must list <code>gpg</code> as a declared runtime dependency.</li>
+</ul>
+<h2 id="7-onboarding"><a class="header" href="#7-onboarding">7. Onboarding</a></h2>
+<p><strong>Minimal operator walkthrough:</strong></p>
+<ol>
+<li>Install <code>gpg(1)</code> on the daemon host; confirm with
+<code>gpg --version</code>.</li>
+<li>Generate or import the DR recipient public key into the daemon
+user’s keyring. Never copy the private key onto the production
+host.</li>
+<li>Set <code>[backup]</code> per §6, pointing <code>destination</code> at a bucket/
+directory satisfying the residency policy.</li>
+<li>Run <code>pcloudc backup snapshot-create --label smoke</code> once
+manually. Confirm a <code>PluginAuditEvent::SnapshotCreated</code> lands
+in the audit log.</li>
+<li>Run <code>pcloudc backup snapshot-verify &lt;artifact&gt;</code>. This is the
+moment you prove you can restore — don’t skip it.</li>
+<li>Install the systemd timer / launchd job / Windows Task
+Scheduler unit from <code>docs/enterprise/examples/</code>.</li>
+</ol>
+<h3 id="71-systemd-timer"><a class="header" href="#71-systemd-timer">7.1 systemd timer</a></h3>
+<pre><code class="language-ini"># /etc/systemd/system/pcloud-rs-backup.service
+[Service]
+Type=oneshot
+User=pcloud-rs
+ExecStart=/usr/bin/pcloudc backup snapshot-create --label "$(date -u +%%F)"
+
+# /etc/systemd/system/pcloud-rs-backup.timer
+[Timer]
+OnCalendar=*-*-* 02:15:00
+RandomizedDelaySec=15m
+Persistent=true
+</code></pre>
+<h3 id="72-launchd-macos"><a class="header" href="#72-launchd-macos">7.2 launchd (macOS)</a></h3>
+<pre><code class="language-xml">&lt;key&gt;Label&lt;/key&gt;&lt;string&gt;ai.pcloud.backup&lt;/string&gt;
+&lt;key&gt;ProgramArguments&lt;/key&gt;
+&lt;array&gt;
+  &lt;string&gt;/usr/local/bin/pcloudc&lt;/string&gt;
+  &lt;string&gt;backup&lt;/string&gt;&lt;string&gt;snapshot-create&lt;/string&gt;
+&lt;/array&gt;
+&lt;key&gt;StartCalendarInterval&lt;/key&gt;
+&lt;dict&gt;&lt;key&gt;Hour&lt;/key&gt;&lt;integer&gt;2&lt;/integer&gt;&lt;key&gt;Minute&lt;/key&gt;&lt;integer&gt;15&lt;/integer&gt;&lt;/dict&gt;
+</code></pre>
+<h3 id="73-windows-task-scheduler"><a class="header" href="#73-windows-task-scheduler">7.3 Windows Task Scheduler</a></h3>
+<p>Sample XML shipped under <code>docs/enterprise/examples/</code>. The daemon
+runs per-user as <code>pcloudd.exe</code>, normally started by <code>pcloudc start</code>; the task
+invokes <code>pcloudc.exe backup snapshot-create</code>. The public package deliberately
+does not install the experimental <code>pcloud-daemon-win</code> SCM host because the
+named-pipe, DPAPI, and WinFSP security boundary is the interactive user SID.</p>
+<h2 id="8-verification"><a class="header" href="#8-verification">8. Verification</a></h2>
+<p>Landed tests:</p>
+<ul>
+<li><strong>Integration tests</strong> (H12b/c/d) using <code>pcloud-mockserver</code> and
+a local GPG keyring fixture cover: create, verify,
+round-trip restore, tamper detection, retention pruning.</li>
+<li><strong>Nightly CI</strong> exercises full <code>create → verify → restore</code> into
+a scratch state-dir on every main-branch push.</li>
+<li><strong>Tamper-detection</strong> test mutates one byte in a packed
+artifact; <code>snapshot-verify</code> returns non-zero.</li>
+<li><strong>Reproducible tarball</strong> test runs snapshot twice against
+identical state and checks byte-equal artifacts (minus GPG
+salt).</li>
+</ul>
+<p>The pre-flight invariant for every production deployment is that
+<code>snapshot-verify</code> runs <strong>nightly</strong> against the latest artifact
+and alerts on failure. An untested snapshot is not a backup.</p>
+<h2 id="9-failure-modes"><a class="header" href="#9-failure-modes">9. Failure modes</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Failure</th><th>Behaviour</th></tr>
+</thead>
+<tbody>
+<tr><td><code>gpg(1)</code> missing at startup</td><td>Backup subsystem disabled; daemon logs <code>backup.subsystem.disabled.gpg_missing</code>; other functionality unaffected</td></tr>
+<tr><td><code>gpg</code> returns non-zero during create</td><td>Snapshot aborted; staging <code>shred</code>-ed; no partial upload to destination</td></tr>
+<tr><td>SQLite online backup busy-loops</td><td>Retries with backoff; after configured deadline, snapshot aborts with <code>BackupBusy</code></td></tr>
+<tr><td>Destination plugin returns error mid-stream</td><td>Snapshot aborted; destinations receive the full artifact or nothing (no partial artifacts land)</td></tr>
+<tr><td>Manifest BLAKE3 mismatch during verify/restore</td><td>Verify fails non-zero; restore refuses and preserves the existing state dir</td></tr>
+<tr><td>Audit-tail hash mismatch on restore</td><td>Restore refuses; operator must reconcile the chain manually</td></tr>
+<tr><td>Restore target schema too old</td><td>Restore refused (<code>SchemaTooOld</code>); operator rolls forward the snapshot on a newer host</td></tr>
+<tr><td>Restore target daemon major version differs</td><td>Restore refused (<code>MajorVersionMismatch</code>); intentional</td></tr>
+<tr><td>Daemon fails to start after restore</td><td>Operator runs <code>pcloudc backup rollback</code> to swap in the <code>state-dir.pre-restore.&lt;ts&gt;</code> directory created atomically during restore</td></tr>
+<tr><td>Prune would drop the only verified snapshot</td><td>Refused; <code>minimum_keep</code> and “no younger than last verified” floors apply</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="10-honest-limitations"><a class="header" href="#10-honest-limitations">10. Honest limitations</a></h2>
+<p>pre-alpha reality check:</p>
+<ul>
+<li><strong><code>gpg(1)</code> is a hard runtime dep.</strong> No in-tree OpenPGP. This is
+intentional — the security boundary is the OS gpg-agent — but
+packagers must ship <code>gpg</code> as a declared dependency.</li>
+<li><strong>No continuous replication.</strong> Point-in-time DR only.</li>
+<li><strong>No per-file restore from pCloud.</strong> Out of scope; use
+pCloud’s server-side file history.</li>
+<li><strong>Cross-major-version restore forbidden.</strong> Operators must roll
+forward through normal migration.</li>
+<li><strong>Plugin binaries not snapshotted.</strong> Operators manage plugin
+binaries like any other package; the registry manifest is
+snapshotted so the expected set is reproducible.</li>
+<li><strong>GPG private key workflow is on the operator.</strong> Daemon never
+reads a private key; decryption runs under the invoking user’s
+gpg-agent during restore/verify.</li>
+</ul>
+<h2 id="11-extension-points"><a class="header" href="#11-extension-points">11. Extension points</a></h2>
+<ul>
+<li><strong>New destinations</strong> — implement <code>BackupPut</code> / <code>BackupGet</code> in a
+signed external plugin with <code>PluginCapability:: BackupDestination</code>. Built-ins are the reference implementation.</li>
+<li><strong>New retention policies</strong> — the GFS selector is a pure
+function of <code>(snapshots, now, policy)</code>; swap the policy
+closure.</li>
+<li><strong>Alternate signing</strong> — today: GPG. The tarball format is
+signing-agnostic; a Sigstore/Cosign signer could be added
+without touching the packager.</li>
+<li><strong>Alternate hash</strong> — BLAKE3 is the manifest hash; upgrading is
+a manifest-schema change, not an artifact-format change.</li>
+<li><strong>KMS-owned encryption key</strong> — swap the GPG recipient for a
+KMS-backed key (see <code>kms.md</code>). Not landed.</li>
+</ul>
+<h2 id="12-cross-refs"><a class="header" href="#12-cross-refs">12. Cross-refs</a></h2>
+<p>Code:</p>
+<ul>
+<li><code>crates/pcloud-daemon/src/backup/</code> — snapshot builder, GPG
+driver, prune selector.</li>
+<li><code>crates/pcloud-daemon/src/auth_vault.rs</code> — vault copied into
+snapshots.</li>
+<li><code>crates/pcloud-store/</code> — <code>store.sqlite3</code> source of truth.</li>
+<li><code>crates/pcloud-observability/</code> — audit chain; tail hash
+embedded in manifest.</li>
+<li><code>crates/pcloud-secret/</code> — secret refs redacted in snapshotted
+config.</li>
+<li><code>crates/pcloud-config/</code> — <code>[backup]</code> section + validation.</li>
+</ul>
+<p>Related docs:</p>
+<ul>
+<li><code>docs/book/src/operations/runbook.md</code> — runbook with step-by-
+step restore.</li>
+<li><code>docs/book/src/operations/backup-snapshots.md</code> — operator
+reference.</li>
+<li><code>docs/book/src/reference/cli.md</code> — <code>backup</code> subcommands.</li>
+<li><code>docs/enterprise/data-residency.md</code> — destination region
+enforcement.</li>
+<li><code>docs/enterprise/dlp.md</code> — audit-chain invariants that restore
+must preserve.</li>
+<li><code>docs/enterprise/ha.md</code> — Tier 2/3 fail-over assumes the store
+is restorable via this mechanism if the journal is lost.</li>
+<li><code>docs/enterprise/kms.md</code> — future swap of GPG recipient for
+KMS-wrapped key.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../enterprise/data-residency.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../enterprise/dlp.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../enterprise/data-residency.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../enterprise/dlp.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

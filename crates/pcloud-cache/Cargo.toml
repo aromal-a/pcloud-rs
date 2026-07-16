@@ -4,15 +4,28 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 description = "In-memory caching primitives for pcloud-rs metadata and transfer state."
 
 [dependencies]
-parking_lot = "0.12"
-# P5.1: we need the `rc` feature to (de)serialize `Arc<Vec<u8>>` inside the
-# page cache. `rc` is additive and safe because entries are replaced, not
-# shared identity-preserving, across serialize/deserialize round trips.
-serde = { workspace = true, features = ["rc"] }
-linked-hash-map = { version = "0.5", features = ["serde_impl"] }
+serde = { workspace = true }
+# T2.3.a — CacheCipher: AES-256-GCM with HKDF-SHA256 key derivation
+# and getrandom-based nonces. All three are already in the workspace
+# (no new transitive deps).
+aes-gcm = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+getrandom = { workspace = true }
+thiserror = { workspace = true }
+# CLAUDEREV deferred-set D1.1b/D1.3 (fires 38, 43): the canonical string-
+# keyed page cache lives in `page_cache_generic`, shares the LRU machinery
+# with `pcloud_fs::page_cache::PageCache`, and pins the same workspace `lru`
+# rev so eviction semantics stay byte-identical when the unification (D1.2)
+# lands. Replaces the legacy `linked-hash-map` + `parking_lot` stack used
+# by the now-deleted `page_cache.rs`. The serde `rc` feature was needed
+# only by the legacy module's `Arc<Vec<u8>>` serialize impl; the generic
+# unwraps to bare `Vec<u8>` on the wire so `rc` is no longer required.
+lru.workspace = true
 
 [dev-dependencies]
 serde_json = "1"

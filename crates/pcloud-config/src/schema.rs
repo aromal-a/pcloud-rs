@@ -283,14 +283,6 @@ pub const CONFIG_SCHEMA_JSON: &str = r#"{
             "passive_poll_interval_secs": { "type": "integer", "minimum": 1 }
           }
         },
-        "file_history": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [],
-          "properties": {
-            "revision_url": { "type": ["string", "null"] }
-          }
-        },
         "upgrade": {
           "type": "object"
         },
@@ -306,8 +298,12 @@ pub const CONFIG_SCHEMA_JSON: &str = r#"{
             "full_scan_interval_secs": { "type": "integer" },
             "conflict_policy": { "type": "string" },
             "upload_chunk_size": { "type": "integer" },
-            "pause_on_battery": { "type": "boolean" }
+            "pause_on_battery": { "type": "boolean" },
+            "differential_threshold_bytes": { "type": "integer", "minimum": 0 }
           }
+        },
+        "bandwidth_schedule": {
+          "type": "object"
         }
       }
     }
@@ -778,27 +774,21 @@ static CRYPTO_NODE: Node = Node::Object {
     properties: &[("mode", &CRYPTO_MODE_NODE), ("kms", &CRYPTO_KMS_NODE)],
 };
 
-// Revision-history provider wiring for `log` / `diff` / `restore`.
-// Optional; absence of this block (or a `null` `revision_url`) yields
-// the `NullRevisionProvider` and a structured
-// `{"status":"not_configured",…}` daemon response.
-static FILE_HISTORY_NODE: Node = Node::Object {
-    required: &[],
-    properties: &[
-        // `revision_url` is `Option<String>` in Rust, so the on-disk
-        // value can be either a string or JSON `null`. `Node::Any`
-        // accepts both; structural validation ("https:// in production")
-        // happens in `FileHistoryConfig::validate`.
-        ("revision_url", &Node::Any),
-    ],
-};
-
 // Optional upgrade policy section. Schema kept permissive
 // (`Node::Any`) because the concrete shape is evolving alongside
 // `pcloud_config::upgrade`; the Rust type still enforces validation
 // via serde. Required here so loader tests with older/newer
 // envelopes that carry this key load without a schema error.
 static UPGRADE_NODE: Node = Node::Any;
+
+// T1.4 — `[bandwidth.schedule]`. Validated by serde + the typed
+// `BandwidthScheduleConfig::validate` so the schema can stay loose
+// here. Older envelopes predating T1.4 simply omit the field and the
+// `#[serde(default)]` on the profile struct restores the disabled
+// default. `Node::Any` lets the loader accept the section without
+// also having to rewrite this static every time a rule field is
+// added.
+static BANDWIDTH_SCHEDULE_NODE: Node = Node::Any;
 
 // Background sync loop configuration. All fields optional — the
 // default is `enabled = true, poll_interval_secs = 30`.
@@ -844,6 +834,13 @@ static SYNC_LOOP_NODE: Node = Node::Object {
             },
         ),
         ("pause_on_battery", &Node::Bool),
+        (
+            "differential_threshold_bytes",
+            &Node::Integer {
+                min: Some(0),
+                max: None,
+            },
+        ),
     ],
 };
 
@@ -920,13 +917,13 @@ static PROFILE_NODE: Node = Node::Object {
         // Tier-2 HA policy. Optional; default is disabled. See
         // `docs/enterprise/ha.md` §4.2.
         ("ha", &HA_NODE),
-        // Revision-history provider config. Optional; absent or empty
-        // yields the NullRevisionProvider at runtime.
-        ("file_history", &FILE_HISTORY_NODE),
         // Optional upgrade policy (evolving schema; validated via serde).
         ("upgrade", &UPGRADE_NODE),
         // Optional sync loop configuration. All fields optional.
         ("sync_loop", &SYNC_LOOP_NODE),
+        // T1.4 bandwidth schedule. Optional; absent or empty yields a
+        // disabled schedule at runtime.
+        ("bandwidth_schedule", &BANDWIDTH_SCHEDULE_NODE),
     ],
 };
 

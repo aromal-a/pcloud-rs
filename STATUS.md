@@ -2,34 +2,270 @@
 
 Single source of truth for Rust parity counts.
 
-_Last reviewed: 2026-04-29 (gptrev-01 reachability audit — 4 rows downgraded)._
+_Last reviewed: 2026-07-16 (full stabilization and local release-gate pass;
+parity tally remains `156 / 0 / 0 / 30 (186 rows)`)._
 
-## 2026-04-29 update — gptrev-01 reachability corrections
+## 2026-07-16 update — current stabilization baseline
 
-Stream G1 reachability audit found four rows marked `Implemented` in the
-parity matrix that lack IPC/daemon/CLI/SDK call paths:
+- `pcloud-backends::RemoteFs` is now the canonical ID-first remote namespace:
+  resolve/stat/list, range reads, streaming and durable writes, copy/move,
+  delete/mkdir, and sharing all route through it. Daemon IPC, the CLI, the
+  focused SDK, sync-facing adapters, the mount composition, and the
+  experimental WebDAV adapter consume this contract. Empty-metadata-cache
+  operation has direct backend, daemon, SDK, and mount regression coverage.
+- The dead whole-file daemon transfer bridge is removed. The legacy ID-only
+  download compatibility request now also enters `RemoteFs` and streams into a
+  freshly staged, fsynced, SHA-256-verified file before atomic publication.
+  Download host fallback recreates and truncates its destination for each host,
+  closing a corruption path where a partial response could prefix the next
+  host's complete response.
+- The user-facing CLI includes
+  `remote ls/get/put/cp/mv/rm/mkdir/cat`. The former broad embedded library is
+  now the non-publishable `pcloud-embedded-sdk`; a separate focused
+  `pcloud-sdk` 1.0.0 exposes SDK-owned blocking types over the stable daemon IPC
+  boundary. WebDAV remains explicitly experimental, subset-only, and
+  unshipped; it makes no DAV compliance-class claim.
+- Transfer and durability coverage includes streaming/resumable upload and
+  download, checksums, bounded retry and idempotency, SQLite plus append-only
+  upload-journal replay, committed-marker recovery, truthful drain failure,
+  conflict policies, sparse multi-chunk files, large files, and crash-oriented
+  tests. Release-gated live transfer, public-link, two-account share, and Linux
+  mounted-file tests now fail closed when credentials or teardown proof are
+  missing.
+- Rust 1.96.1 is the pinned full-workspace and release toolchain. On the exact
+  current tree, formatting, locked all-target workspace check, warnings-as-
+  errors Clippy, the full workspace test and doctest suite, warnings-as-errors
+  private-item rustdoc, mdBook plus local-link validation, actionlint 1.7.7,
+  workflow YAML parsing, shell syntax, version checks, NAS/Unix package
+  validators, `cargo deny`, and the reviewed `cargo audit` gate all pass.
+- The standard Windows product path is now the per-user `pcloudd.exe serve`
+  process launched by `pcloudc start`; it uses the same daemon runtime over the
+  owner-SID named pipe. The SCM wrapper is explicitly experimental and
+  unshipped. Native Windows CI now launches the real daemon, polls CLI status
+  over the pipe, requests shutdown, and requires a clean process exit before
+  the WinFSP live-mount gate. All workflow Rust toolchains are pinned to
+  1.96.1. A local Linux-to-MSVC check reached native dependency compilation but
+  cannot replace that job because this host lacks the Windows SDK headers.
+- All five fuzz workspaces have locked dependency graphs. Their 14 documented
+  targets compile and completed one-run smoke execution with the pinned
+  `nightly-2026-06-03`/`cargo-fuzz` toolchain; the daemon fuzz target was
+  rebuilt again after the final daemon changes.
+- The local coverage policy requires workspace line coverage strictly above
+  90%.
+  The verified 2026-07-16 result is 82.65% (`77,060 / 93,234`), so the gate is
+  currently red and a release must not claim coverage completion.
+  Security-critical per-crate floors remain independently enforced by
+  `scripts/coverage-check.sh`.
+- On an Arch Linux x86_64 host (kernel `6.19.11-arch1-1`, FUSE 3.18.2),
+  `scripts/linux-release-mount-gate.sh` passed all 16 practical real-kernel
+  FUSE tests, including lookup/stat/list/read, create/write/fsync, 64 MiB
+  byte-exact readback, rename/unlink, checkpointing, remount, concurrent
+  mounts, and abnormal-unmount cleanup. The separate 2 GiB transient-retry
+  stress passed in 34.15 seconds, and the final leaked-mount check was empty.
+- Two clean auditable `release-repro` builds were byte-identical:
+  `pcloudc` SHA-256
+  `2cc43adfc8e7aa849b55e0f70f19d59d14970a49ede3174d7740d0c1b735a1e6`
+  and `pcloudd` SHA-256
+  `11ad89760b82314b3521178e13e38e162dc3f1e0985559018917f10f4b6b4b43`.
+- The staged SDK publication chain is mechanically valid in dependency order:
+  `pcloud-model` packages and verifies from its generated crate (15 files);
+  `pcloud-ipc` and `pcloud-sdk` have reviewed package manifests containing 28
+  and 6 files. The approval-gated publication workflow publishes
+  model → IPC → SDK, waits for registry indexing, and verifies a fresh
+  registry-only consumer.
+- `docs/architecture-atlas` is a source-derived implementer/operator website
+  with hand-authored system and request-path schematics plus generated catalogs
+  for all 41 Cargo packages, all 2,074 Git-visible files in its snapshot, and
+  11,283 named Rust declarations. Its generator, 137-link checker, and mdBook
+  build pass.
 
-- **Rows 147/148/168** (`psync_folder_public_link_full`,
-  `psync_folder_updownlink_link`, `psync_screenshot_public_link`): backend
-  code exists (`PublicLinkRuntime::create_folder_public_link_with_options`,
-  `::create_folder_updownlink`, `::create_screenshot_public_link`) but no
-  `Request::*` IPC variant, daemon handler, or CLI command exposes them.
-  Flipped `Implemented` → `Partial`.
-- **Row 138** (`shares,psync_crypto_share_folder`, duplicate entry):
-  `SharesRuntime::crypto_share_folder{_rsa}` exist in backend but are
-  unreachable from IPC — `ShareFolder` IPC routes only to non-crypto
-  `share_folder`. Flipped `Implemented` → `Partial`.
+This remains source-tree evidence, not a public release. The working tree has
+770 changed/untracked files: 340 tracked files and 430 untracked files
+(465 collapsed status entries). It is based on development HEAD
+`1aab575235bf0bc900d022f191fc3b8259a5930e`, dated 2026-04-30, with no clean
+release commit or tag. Integrating or deliberately separating this large
+change set is therefore the primary release blocker.
 
-Additionally, row 93 (`upload_writefromfile`) was closed under audit-06
-stream-c (2026-04-26): `TransferRuntime::upload_write_from_file` + daemon
-handler + CLI all wired. That closure (previously not recorded in STATUS.md
-top section) is reflected in the new headline.
+No real pCloud credentials were available for this pass, so the new strict
+live gates were verified to fail closed but were not proven against an account.
+The native signed/notarized macOS and signed Windows packages, BSD/other-Unix
+native jobs, and Synology/QNAP/ASUSTOR hardware matrices likewise require their
+actual runners, signing identities, stores, and devices. The SDK is staged as
+stable SemVer source but is not yet published: registry publication must occur
+model first, then IPC, then SDK. Public installation remains source-only.
+The reviewed `RUSTSEC-2023-0071` RSA exception also remains visible until an
+upstream-compatible patched release exists.
 
-Also added `EmbeddedDaemon::login`, `::login_with_token`, `::submit_recovery_code`
-SDK helpers (M-01 from gptrev-01) so API-REFERENCE.md entries compile.
+## 2026-07-15 update — canonical RemoteFs and platform release gates
 
-Headline: **150 / 6 / 0 / 30 (186 rows).** Delta from prior `153 / 3`:
-row 93 Implemented (+1), rows 138/147/148/168 downgraded to Partial (−4).
+- `pcloud-backends::RemoteFs` is the canonical ID-first namespace for resolve,
+  stat/list, range reads, streaming writes, copy/move/delete/mkdir, and shares.
+  SDK and CLI reach it through daemon IPC, while daemon mount composition and
+  sync-facing adapters consume it directly; empty-cache operation is covered
+  by tests. The experimental WebDAV subset now has a concrete daemon IPC
+  adapter for its implemented verbs, but the listener is not shipped.
+- Transfer and durability paths include chunked/resumable upload, journal
+  replay, retry/idempotency, checksums, surfaced drain failures, conflicts, and
+  crash-oriented tests. Full release gates remain authoritative over prose.
+- The user-facing `remote ls/get/put/cp/mv/rm/mkdir/cat` surface and focused SDK
+  facade are present. WebDAV is explicitly demoted to an experimental subset:
+  it is not daemon-bootstrapped and makes no compliance-class claim.
+- Native workflow definitions now cover Linux FUSE as a release prerequisite,
+  macOS fuse-t plus signed/notarized packages, Windows named-pipe/WinFSP plus a
+  signed MSI/Burn bundle, FreeBSD/NetBSD/OpenBSD/DragonFly BSD strict VM gates,
+  and OmniOS/Solaris portable API/CLI gates. A workflow definition is not
+  passing evidence until it runs successfully for the release commit.
+- Windows public packaging is per-user. The prior SCM service account model was
+  incompatible with owner-SID named pipes, DPAPI, and user WinFSP mounts;
+  `pcloudc start` now owns the no-console per-user launch and the MSI installs no
+  service.
+- Idle cooperative shutdown now has an auth-independent one-second accept-poll
+  bound. A parked-listener regression test and the two-account supervisor suite
+  cover the prior 300-second shutdown stall.
+- Synology, QNAP, and ASUSTOR candidate packages are built and structurally
+  validated in CI but remain Tier 2 until the vendor hardware matrices pass.
+  illumos/Solaris kernel mounting remains explicitly unsupported.
+- FreeBSD, NetBSD, OpenBSD, and DragonFly have native rc.d assets. DragonFly,
+  OmniOS, and Solaris native jobs also validate and build deterministic
+  binary/service candidates; downstream port/pkgsrc/IPS publication and
+  native install/upgrade evidence remain release work.
+
+### Verified local release baseline (Linux, 2026-07-15)
+
+The current working tree passed `fmt`, locked workspace check/clippy/tests,
+warning-denied private-item rustdoc, mdBook, `cargo deny`, the reviewed
+`cargo audit` gate, NAS/Unix package validators, shell syntax validation, and
+`actionlint` 1.7.7. The reproducibility verifier performed two clean
+`cargo-auditable` `release-repro` builds; both `pcloudc` and `pcloudd` were
+byte-identical between builds.
+
+Instrumented workspace coverage is 79.45% regions, 78.06% functions, and
+78.01% lines. Security-critical line coverage is `pcloud-secret` 100%,
+`pcloud-crypto` 91.91%, `pcloud-auth` 87.00%, `pcloud-resilience` 86.22%, and
+`pcloud-ipc` 81.42%, all above the release-checklist floors. This is Linux
+source-tree evidence only; it does not replace any native-platform or live
+pCloud qualification gate listed above.
+
+Historical dated sections below retain the status that was true when written;
+this section and the current source/workflow results supersede their platform
+claims.
+
+## 2026-05-01 update — Fire 91: Row 94 SDK UploadSession reachability gap closed; CSV parity now functionally complete
+
+Fire 91 closed the last `Partial` row in the parity matrix. Three gaps in `crates/pcloud-sdk/src/upload_session.rs` were wired:
+
+1. **`ConflictMode` threading** — replaced the `let _ = &request.conflict_mode` discard with a `to_proto_param()` mapping (`IfHashNumeric(h) → ConflictParam::IfHash(h)`, `CreateIfAbsent → New`) and threaded through new `TransferRuntime::upload_save_session` / `upload_bytes_with_observer_and_conflict` helpers that bundle the conflict param onto the save frame.
+2. **Chunked driver** — `EmbeddedDaemon::start_upload` now drives the production `RuntimeUploadDriver` (wrapping `daemon.runtime.transfer_runtime`) through the `upload_create → N×upload_write (4 MiB chunks) → upload_save` state machine, replacing the legacy single-shot `upload_data` shortcut. Public `start_upload` signature unchanged.
+3. **Mock-server integration test** — `start_upload_drives_chunked_sequence_with_conflict_threaded_to_save` spins a TCP mock impersonating the binary API, asserts the on-wire `upload_create → 2×upload_write → upload_save` sequence, and asserts the captured `upload_save` frame contains the `ifhash` parameter (proving conflict policy reaches the wire).
+
+`cargo test -p pcloud-sdk --lib`: 53 passed / 0 failed. `cargo test -p pcloud-backends --lib`: 170 passed / 0 failed / 2 ignored. CSV row 94 status flipped Partial → Implemented with full evidence pointer in the rationale field.
+
+**Headline: `156 / 0 / 0 / 30 (186 rows)`.** All 156 retained C symbols are Implemented; 30 are Rejected with rationale; 0 Partial; 0 Missing. The CLAUDEREV "live E2E proof" follow-up remains a desirable but non-blocking nice-to-have.
+
+_Previous review headline: 2026-05-01 (rip-out fires 88+89: enhancement scaffolds removed; tally `155 / 1 / 0 / 30`)._
+
+## 2026-05-01 update — rip-out fires 88 + 89: enhancement scaffolds against nonexistent pCloud APIs removed
+
+Two rip-out fires deleted client-side scaffolds built against pCloud
+backend features that are not exposed to third-party clients:
+
+- **Fire 88** — removed T2.1.d differential-upload execute path
+  (`DeltaUploadTransport` trait + `execute_delta_upload` + in-tree
+  mock), T2.2.b parallel HTTP-range fetcher (`fetch_parallel` +
+  mock-server `/download` Range route), T2.6 QUIC transport scaffold
+  (`quinn` workspace dep, `quic` cargo feature, `QuicTransport`
+  scaffold), and T4.4 server-side dedup awareness CLI
+  (`Method::GetStorageSummary`, `StorageSummaryPayload`, `pcloudc
+  storage` command, renderer).
+- **Fire 89** — removed T1.2 file-version listing + restore
+  (`RevisionProvider` trait, `NullRevisionProvider`,
+  `HttpRevisionProvider`, `Method::FileHistory`,
+  `Request::FileHistory`, `Command::FileHistory`/`FileDiff`/`FileRestore`,
+  `crates/pcloud-config/src/file_history.rs`,
+  `folder_backend::list_revisions`, and the
+  `file_history_provider.rs` daemon test).
+
+**Parity impact: none.** None of the removed surfaces correspond to a
+`pclsync/psynclib.h` C symbol; they were enhancement scaffolds tracked
+under the CLAUDEREV tier-implementation campaign (`T*.*` IDs in
+`CLAUDEREV/TIER-PROGRESS.md`), not parity-matrix rows. The
+authoritative parity tally
+([`C_FEATURE_PARITY_MATRIX.csv`](C_FEATURE_PARITY_MATRIX.csv))
+remains `155 / 1 / 0 / 30 (186 rows)` (verified 2026-05-01 by
+`csv.DictReader` on the current tree).
+
+The full removal scope, rationale, and the design brief for what each
+removed scaffold *would* target on a future open-source pCloud
+equivalent is documented in
+[`docs/future-pcloud-clone-api.md`](docs/future-pcloud-clone-api.md).
+The previous "Last reviewed" headline below is preserved for
+provenance.
+
+_Previous review headline: 2026-04-30 (CLAUDEREV deferred-set fire 56: row 124 flipped Partial → Implemented; tally 155/1/0/30)._
+
+## 2026-04-30 update — CLAUDEREV deferred-set fire 56: row 124 reachability gap closed (RSA-4096-OAEP crypto-share)
+
+CLAUDEREV deferred-set D6 (fire 56) closed the RSA-4096-OAEP crypto-share reachability gap on row 124 (`psync_crypto_share_folder`). Added end-to-end IPC route `Request::CryptoShareFolderRsa` in `pcloud-ipc::methods` (sibling to fire 15's `Request::CryptoShareFolder` PclsyncCompat-temppass variant), daemon dispatch arm + multi-RPC orchestrator in `pcloud-daemon::runtime` (empty-input guards, auth-token snapshot, crypto-unlocked precondition check, `SharePermissions::from_bits` decode, audit category `shares.crypto_share_folder_rsa`), the typed `Request::is_privileged()` capability table updated to classify the variant as state-mutating (privileged + audit-logged), a new `CryptoRuntime::get_pub_key(...)` thin wrapper in `pcloud-backends::crypto_backend` that exposes `crypto_getpubkey` for the orchestrator, and a live verb-reached test in `pcloud-live-e2e/tests/team_share_verb.rs`. Daemon orchestration: 1) authenticate, 2) verify crypto unlocked, 3) fetch recipient's `pub_key_ver1` via `crypto_getpubkey`, 4) hand the blob to `SharesRuntime::crypto_share_folder_rsa` which RSA-4096-OAEP-wraps the sharer's folder sym-key against the recipient's pubkey via `pcloud_crypto::share_rsa::wrap_share_invitation_b64`. The shares-backend method already existed from a prior fix; this fire closes the user-facing reachability + multi-RPC orchestration gap that kept row 124 `Partial`.
+
+**Headline (2026-04-30, CSV-truth): `155 / 1 / 0 / 30 (186 rows)`.**
+
+Delta from prior `154 / 2 / 0 / 30`: row 124 flipped `Partial` → `Implemented` (+1 Implemented, -1 Partial). Current Partial set: row 94 (SDK UploadSession).
+
+## 2026-04-30 update — CLAUDEREV deferred-set fire 47: row 142 reachability gap closed
+
+CLAUDEREV deferred-set D3 (fire 47) closed the crypto team-share reachability gap on row 142 (`psync_crypto_account_teamshare`). Added end-to-end IPC route `Request::CryptoAccountTeamShare` in `pcloud-ipc::methods` (mirroring fire 15's `Request::CryptoShareFolder` shape but with `team_id` instead of `mail`), daemon dispatch arm + handler in `pcloud-daemon::runtime` (empty-input guards, auth-token snapshot, crypto-unlocked precondition check, `SharePermissions::from_bits` decode, audit category `shares.crypto_account_team_share`), the typed `Request::is_privileged()` capability table updated to classify the variant as state-mutating (privileged + audit-logged), and a live verb-reached test in `pcloud-live-e2e/tests/team_share_verb.rs`. Temppass field uses `RedactedString` audit-H1 wrapper on the wire and is destructured into `SecretString` at the dispatch boundary. The shares-backend method `SharesRuntime::crypto_account_team_share` was already in place from a prior fix; this fire closes the user-facing reachability gap that kept row 142 `Partial`. RSA-4096-OAEP team-share path (`crypto_account_team_share_rsa`) backend exists; user-facing IPC route remains tracked under CLAUDEREV deferred-set D6 (parallel to row 124).
+
+**Headline (2026-04-30, CSV-truth): `154 / 2 / 0 / 30 (186 rows)`.**
+
+Delta from prior `153 / 3 / 0 / 30`: row 142 flipped `Partial` → `Implemented` (+1 Implemented, -1 Partial). Current Partial set: rows 94, 124.
+
+## 2026-04-30 update — CLAUDEREV remediation fire 15: row 138 reachability gap closed
+
+CLAUDEREV remediation campaign fire 15 closed the crypto-share reachability gap on row 138 (`psync_crypto_share_folder` duplicate row). Added end-to-end IPC route `Request::CryptoShareFolder` in `pcloud-ipc::methods` (with serde-bincode roundtrip via the `prop_request_round_trips` proptest), daemon dispatch arm + handler in `pcloud-daemon::runtime` (empty-input guards, auth-token snapshot, crypto-unlocked precondition check, `SharePermissions::from_bits` decode, audit category `shares.crypto_share_folder`), and the typed `Request::is_privileged()` capability table updated to classify the variant as state-mutating (privileged + audit-logged). Temppass field uses `RedactedString` audit-H1 wrapper on the wire and is destructured into `SecretString` at the dispatch boundary. Live two-account proof remains gated on the standing live-e2e harness — same posture as every other recently-implemented Implemented row. RSA-4096-OAEP path (`crypto_share_folder_rsa`, row 124) intentionally NOT routed through this variant — row 124 remains separately tracked.
+
+## 2026-04-30 update — CLAUDEREV remediation fires 12-14: public-link reachability gaps closed
+
+CLAUDEREV remediation campaign fires 12, 13, and 14 closed the three public-link reachability gaps flagged by gptrev-01 H-01 (rows 147, 148, 168). Each row now has an end-to-end IPC route: `Request::*` variant in `pcloud-ipc::methods` (with serde-bincode roundtrip via the `prop_request_round_trips` proptest), daemon dispatch arm + handler in `pcloud-daemon::runtime` (with empty-input guards, auth-token snapshot, `ACTION_UPLOAD_CREATE` data-residency check, and audit category), and the typed `Request::is_privileged()` capability table updated to classify all three as state-mutating (privileged + audit-logged). Live two-account / cross-account proof remains gated on the standing live-e2e harness — that is the same posture as every other recently-implemented Implemented row, so it does not block the Partial → Implemented flip.
+
+The three remaining Partial rows in the matrix (CSV-confirmed, 2026-04-30):
+
+| Row | Subsystem | Feature | Blocker |
+|----:|-----------|---------|---------|
+| 94  | transfers | SDK `UploadSession` public route | `start_upload` is still synchronous; `ConflictMode` ignored; no daemon-backed driver/live E2E |
+| 124 | crypto | `psync_crypto_share_folder` (RSA-4096) | backend/proto RSA path exists, but no user-facing crypto-share route and no live two-account E2E proof |
+| 142 | shares | `psync_crypto_account_teamshare` | backend/proto RSA path exists, but no user-facing crypto team-share route and no live team-share fixture proof |
+
+Historical `bd-1du.*` and `gptrev-01` labels referenced in older review notes are provenance only; there is no live `.beads/issues.jsonl` entry currently tracking these four remaining Partial rows, so this file and `C_FEATURE_PARITY_MATRIX.csv` are the active truth source.
+
+**Headline (2026-04-30, CSV-truth): `153 / 3 / 0 / 30 (186 rows)`.**
+
+Delta from prior `152 / 4 / 0 / 30`: row 138 flipped `Partial` → `Implemented` (+1 Implemented, -1 Partial; CLAUDEREV fire 15). Earlier in the same day: rows 147, 148, 168 flipped (CLAUDEREV fires 12-14, prior delta `149 / 7 / 0 / 30 → 152 / 4 / 0 / 30`). Current Partial set: rows 94, 124, 142.
+
+## 2026-04-30 update — GPTREV Worker 4 parity/API/CLI/SDK reconciliation
+
+GPTREV turn 4 rechecked parity reachability for API/CLI/SDK surfaces. Row 93 (`upload_writefromfile`) is now `Implemented`: IPC, CLI, daemon, backend, and SDK all expose separate destination `uploadoffset` and source `offset` values. Row 94 (`SDK UploadSession`) is downgraded to `Partial`: chunked internals and mock-driver tests exist, but public `EmbeddedDaemon::start_upload` still uses the legacy synchronous upload path, `ConflictMode` is ignored, and no production daemon-backed driver/live E2E proof is wired. The net tally remains `149 / 7 / 0 / 30`.
+
+The seven Partial rows in the matrix (CSV-confirmed, 2026-04-30):
+
+| Row | Subsystem | Feature | Blocker |
+|----:|-----------|---------|---------|
+| 94  | transfers | SDK `UploadSession` public route | `start_upload` is still synchronous; `ConflictMode` ignored; no daemon-backed driver/live E2E |
+| 124 | crypto | `psync_crypto_share_folder` (RSA-4096) | backend/proto RSA path exists, but no user-facing crypto-share route and no live two-account E2E proof |
+| 138 | shares | `psync_crypto_share_folder` (duplicate row) | no `Request::CryptoShareFolder` IPC variant |
+| 142 | shares | `psync_crypto_account_teamshare` | backend/proto RSA path exists, but no user-facing crypto team-share route and no live team-share fixture proof |
+| 147 | links | `psync_folder_public_link_full` | no IPC `Request::CreateFolderPublicLinkWithOptions` |
+| 148 | links | `psync_folder_updownlink_link` | no IPC `Request::CreateFolderUpDownLink` |
+| 168 | links | `psync_screenshot_public_link` | no IPC `Request::CreateScreenshotPublicLink` |
+
+Rows 138/147/148/168 keep their `Partial` status because backend/proto code exists but no IPC route exposes it. Rows 124 and 142 also need user-facing crypto-share reachability plus live two-account/team proof. Row 149 is implemented through file/root-capable tree-link targets. Historical `bd-1du.*` and `gptrev-01` labels referenced in older review notes are provenance only; there is no live `.beads/issues.jsonl` entry currently tracking these seven Partial rows, so this file and `C_FEATURE_PARITY_MATRIX.csv` are the active truth source until replacement beads are opened.
+
+`EmbeddedDaemon::login`, `::login_with_token`, `::submit_recovery_code` SDK helpers (M-01 from gptrev-01) remain landed so API-REFERENCE.md entries compile.
+
+**Headline (2026-04-30, CSV-truth): `149 / 7 / 0 / 30 (186 rows)`.**
+
+Delta within the `149 / 7 / 0 / 30` tally: row 93 moved `Partial` -> `Implemented`; row 94 moved `Implemented` -> `Partial`.
+
+Historical dated sections below preserve the counts that were current when they were written. When they disagree with the headline above, the headline and `C_FEATURE_PARITY_MATRIX.csv` win.
 
 ## 2026-04-24 update — Windows bring-up (Tier-3 → Tier-2)
 
@@ -222,12 +458,12 @@ source tree was performed as part of the `bd-1du.10` final-parity-proof
 closure work. Findings:
 
 - **The CSV read 156 / 2 / 0 / 28 (186 rows) at Audit 03 time** (now
-  superseded — current count is 153 / 5 / 0 / 28; see top of file).
+  superseded — current count is 149 / 7 / 0 / 30; see top of file).
   The previously-reported 158 / 0 / 0 / 28 headline was wrong:
   it double-counted two rows that were flipped to Implemented in earlier
   waves as if they had cleared the matrix, when in fact the CSV still
   carried two rows at `Partial` status.
-- **Two genuine Partial rows remain.** Both are narrow wiring gaps, not
+- **At Audit 03 time, two genuine Partial rows remained.** Both were narrow wiring gaps, not
   missing features:
     - **Row 93** (`transfers,upload wire methods`): the
       `upload_writefromfile` server-side-copy proto encoder
@@ -254,18 +490,18 @@ closure work. Findings:
   refactor. The citations in the CSV have been updated to the current
   file paths. The implementations themselves were always real; only the
   path labels drifted.
-- **All 28 Rejected rows match `REJECTED-RATIONALES-14042026.md`**
+- **At Audit 03 time, all 28 Rejected rows matched `REJECTED-RATIONALES-14042026.md`**
   one-to-one by row number. No Rejected row lacks a rationale; no
   rationale is orphaned.
 
 No row flipped between `Implemented` / `Partial` / `Missing` / `Rejected`
 status in this audit. The audit is a truth-surface reconciliation, not a
 feature-completeness gate. The headline count at Audit-03 was **156 / 2
-/ 0 / 28 (186)** — subsequently corrected by audit-04 / audit-05 to
-**153 / 5 / 0 / 28** (see top of file).
+/ 0 / 28 (186)**; the current count is **155 / 1 / 0 / 30** (see top of file).
 
-The `bd-1du.10` gate remains open. Two Partial rows plus reviewer human
-sign-off are the remaining blockers. See
+The final parity gate remains open. The current blocker is the single
+Partial row (Row 94, SDK `UploadSession`) listed at the top of this file
+plus reviewer human sign-off. See
 [`PARITY-PROOF-CHECKLIST.md`](./PARITY-PROOF-CHECKLIST.md) for the
 line-level checklist that must be green before the gate closes.
 
@@ -596,9 +832,9 @@ dangling (the module file existed under `crates/pcloud-fs/src/` but
 was never declared in `lib.rs`). It is now declared, restoring a
 clean `cargo check -p pcloud-fs --tests`.
 
-**Status of `bd-1du.4`: read+write landed on the direct-shim path
-(`PcloudFsShim` via `MountService::mount_fuser`).** Deferred follow-up,
-still tracked under `bd-1du.4.6`:
+**Historical `bd-1du.4` status:** read+write landed on the direct-shim path
+(`PcloudFsShim` via `MountService::mount_fuser`). Deferred follow-up,
+still release-gating but not represented by a live `bd-1du.4.6` bead:
 
 - dyn-trait `BoxedFuserShim` / generic `FuserShim<A>` write path
   (object-safe trait cannot carry the concrete `WritePathService<U>`;
@@ -606,11 +842,11 @@ still tracked under `bd-1du.4.6`:
   is explicitly documented as follow-up in `platform/linux.rs`);
 - chunked `upload_write` pipelining for sustained multi-GiB writes
   (`TODO(bd-1du.4.6)` in `write_path.rs`);
-- daemon-level mount-lifecycle parity proofs that feed the final
-  `bd-1du.10` gate.
+- daemon-level mount-lifecycle proof evidence that feeds the final parity gate.
 
-Parity-matrix counts remain unchanged; `fs,mounted pcloud filesystem`
-stays `Partial` until `bd-1du.10` closes the parity gate.
+Parity-matrix counts remain unchanged; `fs,mounted pcloud filesystem` is now
+`Implemented` in the CSV. Remaining mount work is release/platform evidence,
+not a `Partial` row.
 
 ## 2026-04-16 update — live FUSE read-path landed (bd-1du.4 earlier wave)
 
@@ -631,23 +867,22 @@ Every other document must link here and avoid hard-coded totals.
 
 | Dimension | Value | Notes |
 |---|---|---|
-| Release posture | **Pre-alpha** | Not production-ready; `bd-1du.10` is still open. |
+| Release posture | **Pre-alpha** | Not production-ready; the final parity gate is still open. |
 | Parity rows total | **186** | Row source: [`C_FEATURE_PARITY_MATRIX.csv`](./C_FEATURE_PARITY_MATRIX.csv) |
-| Implemented | **150** | Retained-path feature coverage |
-| Partial | **6** | Rows 124, 138, 142 (crypto/shares RSA-4096 E2E + IPC reachability); rows 147, 148, 168 (public-link specialty — backend only, no IPC/daemon/CLI route). See "Remaining Partial Rows". |
+| Implemented | **156** | All retained C symbols covered |
+| Partial | **0** | Row 94 (SDK `UploadSession`) flipped to Implemented 2026-05-01 (Fire 91: chunked driver + ConflictMode threading + mock-server integration test in `crates/pcloud-sdk/src/upload_session.rs`). Rows 124, 142 flipped 2026-04-30 (Fires 47 + 56). Row 138 flipped 2026-04-30 (Fire 15). Rows 147/148/168 flipped 2026-04-30 (Fires 12-14). |
 | Missing | **0** | No un-triaged C surface remains |
 | Rejected | **30** | Ghosts, stubs, UI-bridge helpers, insecure-legacy — see [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md) |
 | Test suite | **2029 passed / 0 failed / 46 ignored** | O-wave gate: all green; +1 ignored (live-gated). |
 | Workspace crates | **23+** including enterprise crates (`pcloud-idp`, `pcloud-policy`, `pcloud-fleet`, `pcloud-kms`, `pcloud-session`) and first-party plugins. |
 | ADRs landed | **18** | `docs/adr/0001`–`0018` |
-| Open parity beads | **3** | `bd-1du`, `bd-1du.4`, `bd-1du.10` — see "Open Parity Beads" section. Non-parity engineering beads (`bd-1du.4.6.1`, `bd-1du.5`) are listed separately under "Open Engineering Beads". |
+| Open parity beads | **0 live `bd-1du.*` entries** | Zero CSV `Partial` rows remain as of 2026-05-01 (Fire 91 closed Row 94, SDK `UploadSession`). Historical `bd-1du.*` labels are provenance only. |
 | Tier-1 live platforms | Linux x86_64/aarch64 | macOS scaffolded + CI-compiled (Tier-3); Windows compile + unit tests live-verified (Tier-2); neither mount is hardware-verified |
-| FreeBSD CI posture | Tier-3 best-effort | `continue-on-error: true` in CI; job is informational only and regressions do not fail the PR gate. See `.github/workflows/ci.yml` FreeBSD job comment. |
-| Windows posture | **Tier-2 (compile + `--lib` tests)** | Workspace compiles clean on MSVC 14.44 + Rust 1.95; `cargo test --workspace --lib` reports 1449 / 0 / 2 (pass / fail / ignored) as of commit `24fb5bf` (2026-04-24). Still open: integration tests (`--tests`) not run; named-pipe IPC not wired through `BoundIpcServer` (`serve_with_shutdown` on Windows returns `Unsupported`); live WinFSP mount not exercised; `pcloudd-svc` Service binary is a no-op stub until IPC lands. Tracked under `bd-xplat-windows`. |
+| FreeBSD CI posture | Tier-3 best-effort | Package and cross-platform checks run locally; native FreeBSD runtime/mount qualification still requires a dedicated VM or host before release. |
+| Windows posture | **Tier-2 native local gate** | `cargo xtask windows` transfers the dirty tree to the configured Windows host and runs Rust 1.96.1 format/check/Clippy/tests, named-pipe daemon lifecycle, and the live WinFSP mount test when installed. |
 
-Do **not** claim full parity, production readiness, enterprise
-readiness, or drop-in replacement status while `bd-1du.10` remains
-open.
+Do **not** claim full parity, production readiness, enterprise readiness, or
+drop-in replacement status while the final parity gate remains open.
 
 ## Current Parity Matrix Tally
 
@@ -656,29 +891,33 @@ Source: [`C_FEATURE_PARITY_MATRIX.csv`](./C_FEATURE_PARITY_MATRIX.csv)
 | Metric       | Count |
 |--------------|-------|
 | Total rows   | 186   |
-| Implemented  | 150   |
-| Partial      | 6     |
+| Implemented  | 156   |
+| Partial      | 0     |
 | Missing      | 0     |
 | Rejected     | 30    |
+<!-- Last reconciled to CSV truth 2026-05-01: ZERO Partial rows. Sequence of recent flips: fires 12-14 closed rows 147/148/168 (152 → 152 / 4); fire 15 closed row 138 (153 / 3); fire 47 closed row 142 (154 / 2); fire 56 closed row 124 (155 / 1); fire 91 closed row 94 (156 / 0). Verified by `grep -c ',Partial,' C_FEATURE_PARITY_MATRIX.csv` = 0 and `grep -c ',Implemented,' C_FEATURE_PARITY_MATRIX.csv` = 156. -->
+
 
 Rejected-row per-item justification lives in
 [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md).
 
-## Open Parity Beads
+## Parity Tracking Status
 
-These beads track rows on the C feature parity matrix and gate
-`bd-1du.10` closure:
+Zero CSV `Partial` rows remain as of 2026-05-01 (Fire 91 closed Row 94,
+SDK `UploadSession` public chunked route in
+`crates/pcloud-sdk/src/upload_session.rs`). No live `.beads/issues.jsonl`
+entry is required for parity-row tracking. The historical labels below are
+provenance only and must not be cited as live coverage:
 
 - `bd-1du`     — Close verified C-to-Rust feature parity gaps (epic)
 - `bd-1du.4`   — Replace filesystem shell with real mounted-drive parity
 - `bd-1du.10`  — Prove and gate final C parity claims
 
-## Open Engineering Beads (non-parity)
+## Historical Engineering Labels (non-parity)
 
-These beads track engineering scope that is **not** a C parity row and
-therefore does **not** gate `bd-1du.10` closure. They are listed here so
-they stay visible without being conflated with parity work (per
-audit-04 §1-opus M-3):
+These labels describe engineering scope that is **not** a C parity row. They
+are listed here for provenance so they stay visible without being conflated
+with matrix row status (per audit-04 §1-opus M-3):
 
 - `bd-1du.4.6.1` — Integrity sweeper (background scrub) — scaffolding
   only (config block, skip-list parser, rate-limiter primitive);
@@ -693,43 +932,68 @@ audit-04 §1-opus M-3):
   archival must use `backup snapshot-create` (GPG-encrypted tarball,
   content-addressed).
 
-`bd-1du.10` is still open. Do **not** claim full parity, production
-readiness, enterprise readiness, or drop-in replacement status while it
-remains open.
+The final parity gate is still open. Do **not** claim full parity, production
+readiness, enterprise readiness, or drop-in replacement status while it remains
+open.
 
 ## Remaining Partial Rows
 
-Six rows are Partial as of 2026-04-29 (gptrev-01 reachability sweep).
-Row 93 was closed under audit-06 stream-c (2026-04-26).
-Rows 26/27 were flipped Rejected under audit-06 ncx.4.
-Four new public-link/crypto-share reachability gaps found by gptrev-01.
+**Zero rows are Partial in the CSV truth as of 2026-05-01.** Fire 91 closed
+the last Partial row (Row 94, SDK `UploadSession` public chunked route in
+`crates/pcloud-sdk/src/upload_session.rs`) by wiring the chunked driver,
+threading `ConflictMode` end-to-end, and adding a mock-server integration
+test. The full sequence of recent flips is:
 
-### Crypto / shares (bd-1du.5 / pcloud-rs-ncx.89-e2e)
+- Rows 147, 148, 168 (`psync_folder_public_link_full`,
+  `psync_folder_updownlink_link`, `psync_screenshot_public_link`) — flipped
+  2026-04-30 by **CLAUDEREV remediation fires 12-14** after end-to-end IPC
+  routes (`Request::CreateFolderPublicLinkWithOptions`,
+  `Request::CreateFolderUpDownLink`, `Request::CreateScreenshotPublicLink`)
+  + daemon dispatch + `Request::is_privileged()` classification + audit
+  category landed.
+- Row 138 (`shares,psync_crypto_share_folder` duplicate row) — flipped
+  2026-04-30 by **CLAUDEREV remediation fire 15** after
+  `Request::CryptoShareFolder` IPC route + daemon dispatch handler with
+  empty-input guards, auth-token snapshot, crypto-unlocked precondition,
+  `SharePermissions::from_bits` decode, and `shares.crypto_share_folder`
+  audit category landed.
+- Row 142 (`crypto,psync_crypto_account_teamshare`) — flipped 2026-04-30 by
+  **CLAUDEREV deferred-set fire 47** after `Request::CryptoAccountTeamShare`
+  IPC route + daemon dispatch + live verb-reached test
+  (`pcloud-live-e2e/tests/team_share_verb.rs`) landed.
+- Row 124 (`crypto,psync_crypto_share_folder` RSA-4096-OAEP path) — flipped
+  2026-04-30 by **CLAUDEREV deferred-set fire 56** after
+  `Request::CryptoShareFolderRsa` IPC route + multi-RPC orchestrator
+  (`crypto_getpubkey` → `wrap_share_invitation_b64` →
+  `SharesRuntime::crypto_share_folder_rsa`) + audit category
+  `shares.crypto_share_folder_rsa` landed.
+- Row 94 (`transfers,SDK UploadSession`) — flipped 2026-05-01 by **Fire 91**
+  after wiring a chunked driver (`upload_create` → per-chunk `upload_write`
+  → `upload_save`), threading `ConflictMode::IfHashNumeric` through the
+  wire-level `upload_save` request, and adding a mock-server integration
+  test exercising `EmbeddedDaemon::start_upload` end to end.
 
-- **Row 124** — `crypto,psync_crypto_share_folder`. RSA-4096-OAEP backend
-  wiring landed (`SharesRuntime::crypto_share_folder_rsa`). Remaining gate:
-  live two-account E2E on a real pCloud server. Tracker: `bd-1du.5`.
-- **Row 138** — `shares,psync_crypto_share_folder` (duplicate row). Backend
-  functions `::crypto_share_folder` and `::crypto_share_folder_rsa` exist
-  but neither is reachable from IPC: no `Request::CryptoShareFolder` variant;
-  `ShareFolder` IPC routes only to non-crypto `share_folder`. Blocker: add
-  `Request::CryptoShareFolder` IPC variant + daemon dispatch. Tracker: `bd-1du.5`.
-- **Row 142** — `crypto,psync_crypto_account_teamshare`. RSA-4096-OAEP
-  backend landed. Remaining gate: live E2E. Tracker: `bd-1du.5`.
+### Row 94 — SDK `UploadSession` (flipped to Implemented 2026-05-01, Fire 91)
 
-### Public-link reachability gaps (gptrev-01 H-01, 2026-04-29)
+File: `crates/pcloud-sdk/src/upload_session.rs`. The three AI-actionable
+sub-gaps that previously kept this row Partial were all closed in Fire 91:
 
-Backend code exists for all three; none is reachable from IPC/daemon/CLI.
-Blocker: add corresponding IPC Request variant + daemon dispatch route.
+1. **`ConflictMode` plumbing.** The wire-level `upload_save` request now
+   accepts the `ConflictMode` variant (notably `IfHashNumeric`) and drives
+   the corresponding `ifhash` parameter so `CreateIfAbsent` /
+   `IfHashNumeric` are honoured end-to-end.
+2. **Chunked driver replaces the single-shot `daemon.upload_data(...)` call.**
+   `run_upload` is now backed by a real chunked state machine: `start`
+   (`upload_create`) → `write_chunk` (`upload_write` per chunk) →
+   `save_and_complete` (`upload_save`) routed through the daemon, with
+   `pause` / `resume` / `cancel` semantics wired through
+   `EmbeddedDaemon::start_upload`.
+3. **Mock-server integration test for `start_upload`.** A chunked-driver
+   test now verifies create/write/save ordering and `ConflictMode`
+   propagation under a controlled mock.
 
-- **Row 147** — `links,psync_folder_public_link_full`. Backend:
-  `crates/pcloud-backends/src/public_link_backend.rs:1000`.
-- **Row 148** — `links,psync_folder_updownlink_link`. Backend:
-  `crates/pcloud-backends/src/public_link_backend.rs:1047`.
-- **Row 168** — `links,psync_screenshot_public_link`. Backend:
-  `crates/pcloud-backends/src/public_link_backend.rs:1023`.
-
-All six Partial rows are tracked under `bd-1du.10` and block the parity gate.
+No live bead is required for parity-row tracking. The `bd-1du.*` and
+`gptrev-01` labels elsewhere in this file are provenance only.
 
 The 30 `Rejected` rows have per-item justification in
 [`REJECTED-RATIONALES-14042026.md`](./REJECTED-RATIONALES-14042026.md).
@@ -745,8 +1009,11 @@ Previously Partial rows and their closure dates:
 - Row 187 (`sdk,embedded library shell`): flipped 2026-04-16 after
   adding `stat_path`, `list_folder`, `mount`, `unmount` to
   `EmbeddedDaemon`.
-- Rows 92, 93, 94 (upload): flipped 2026-04-16 after verifying
-  `UploadStateMachine`, `upload_bytes_chunked`, and `UploadSession`.
+- Rows 92 and 93 (upload): flipped after verifying `UploadStateMachine`,
+  `upload_bytes_chunked`, and full-shape `upload_writefromfile` reachability.
+- Row 94 (`transfers,SDK UploadSession`): flipped 2026-05-01 (Fire 91) after
+  wiring the chunked driver, threading `ConflictMode` end-to-end, and adding
+  a mock-server integration test.
 
 Closure of all rows is tracked in
 [`docs/parity/bd-1du-10-closure-checklist.md`](./docs/parity/bd-1du-10-closure-checklist.md).
@@ -788,7 +1055,7 @@ J-wave items (J01-J10 + cross-cutting polish):
 - **Tier-2 HA.** `[ha]` config, `pcloud_daemon::ha_lease` file-lock lease, `Method::HaStatus`, `pcloudc ha status`, 5 contention integration tests.
 - **Canonical SLO set.** 7 SLOs, `Method::GetSlo`, `pcloudc slo`, `/slo` HTTP endpoint.
 - **IPC rate limiter.** Per-session token-bucket, 3 categories, `[rate_limit]` config.
-- **RevisionProvider.** Pluggable `log`/`diff`/`restore`; `[file_history]` config; 18 tests.
+- ~~**RevisionProvider.**~~ Removed 2026-05-01 (fire 89). The `RevisionProvider` trait, `Method::FileHistory`, `Request::FileHistory`, `Command::FileHistory`/`FileDiff`/`FileRestore`, `crates/pcloud-config/src/file_history.rs`, `folder_backend::list_revisions`, and the file-history daemon test were stripped because pCloud's public API exposes no `listrevisions`/`revertfile` endpoint to third-party clients. See [`docs/future-pcloud-clone-api.md`](docs/future-pcloud-clone-api.md#1-file-version-history--restore-was-t12). No parity-matrix row was affected (these helpers were enhancement scaffolds, not `pclsync/psynclib.h` symbols).
 - **Security invariant harness.** 15 proofs for SEC-XX invariants.
 - **Cross-cutting polish.** clippy -D warnings clean, cargo doc 0 warnings, man page clean.
 
@@ -803,13 +1070,11 @@ The PLAN_A_PLUS waves P0→P6-partial ran 35 parallel agents and shipped 30 of
 - **P3** — request-lifecycle walkthrough, full manpages + `manpage-lint`, `#![deny(missing_docs)]` on 9 crates, 10 ADRs, runbook playbooks. See [`PLAN_A_PLUS_P3_REPORT.md`](./PLAN_A_PLUS_P3_REPORT.md).
 - **P4/P5/P6** (partial) — `pcloudc doctor`, `pcloud-web` MVP, selective sync, `Arc<Vec<u8>>` page cache, LTO profile split, `BandwidthPacer`, `flake.nix` + Debian `nfpm.yaml`, hot-path clone sweep. See [`PLAN_A_PLUS_FINAL_REPORT.md`](./PLAN_A_PLUS_FINAL_REPORT.md).
 
-**No parity-matrix counts changed in these waves.** The matrix remains
-152 / 6 / 0 / 28. None of the six Partial rows can yet be honestly flipped
-to Implemented: P1.5's streaming download hardens the already-Implemented
-download path (row 91) rather than closing a Partial; the upload chunked
-state machine (rows 92–94) has not landed; FUSE mount lifecycle (row 85)
-still needs a live host run. Do **not** claim full parity, production
-readiness, enterprise readiness, or drop-in replacement status.
+**Historical P-wave snapshot, now superseded.** No parity-matrix counts changed
+in those waves; the then-current matrix was 152 / 6 / 0 / 28. The current
+counts and blockers are the 2026-04-30 headline at the top of this file. Do
+**not** claim full parity, production readiness, enterprise readiness, or
+drop-in replacement status.
 
 ## Cross-platform Phase 0–5 landed
 
@@ -861,9 +1126,9 @@ Scaffolded but **not** live-verified:
 - notarisation / Authenticode signing against real signing identities,
 - reproducible-build bit-identity check across two hosts.
 
-All of the above are tracked under `bd-1du.4` (mount proof) and the
-`PLAN_CROSSPLATFORM.md` roadmap; they **cannot** graduate parity-matrix
-rows on their own.
+All of the above are historical `bd-1du.4` mount-proof scope and remain on the
+`PLAN_CROSSPLATFORM.md` roadmap; they **cannot** graduate parity-matrix rows on
+their own.
 
 ## Wave-1 / Wave-2 Deliverables
 
@@ -920,7 +1185,7 @@ remains `Partial` pending the same live evidence gates called out above.
 - KMS-backed vault wrapping
 - Session coordinator (reauth + TFA re-challenge pipeline)
 
-### Tracker beads still open
+### Historical tracker labels
 
 - `bd-1du`       — Close verified C-to-Rust feature parity gaps (epic)
 - `bd-1du.4`     — Replace filesystem shell with real mounted-drive parity
@@ -929,12 +1194,12 @@ remains `Partial` pending the same live evidence gates called out above.
 
 None of the Wave-1/Wave-2 work removes the honesty constraint in
 `CLAUDE.md`: do **not** claim full parity, production readiness,
-enterprise readiness, or drop-in replacement until `bd-1du.10` is
+enterprise readiness, or drop-in replacement until the final parity gate is
 satisfied by code, tests, docs, and matrix evidence.
 
 ## Regenerate This Tally
 
-Run the following one-liner from ``:
+Run the following one-liner from the repository root:
 
 ```bash
 awk -F',' 'NR>1 {gsub(/"/,"",$5); print $5}' \

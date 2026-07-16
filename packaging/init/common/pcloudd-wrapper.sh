@@ -4,6 +4,22 @@ umask 077
 
 : "${PCLOUDRS_DAEMON_BIN:=/usr/local/bin/pcloudd}"
 
+# Platforms whose service manager starts the wrapper after dropping
+# privileges can ask it to load the non-secret environment file itself.
+# Credential values remain in the referenced owner-only files, never here.
+if [ -n "${PCLOUDRS_ENV_FILE:-}" ]; then
+  if [ ! -f "${PCLOUDRS_ENV_FILE}" ] || [ ! -r "${PCLOUDRS_ENV_FILE}" ]; then
+    echo "pcloudd-wrapper: environment file is absent or unreadable: ${PCLOUDRS_ENV_FILE}" >&2
+    exit 1
+  fi
+  # Administrator/package-owned shell assignments.
+  # shellcheck disable=SC1090
+  . "${PCLOUDRS_ENV_FILE}"
+fi
+
+# The environment file may override the binary location.
+: "${PCLOUDRS_DAEMON_BIN:=/usr/local/bin/pcloudd}"
+
 if [ ! -x "${PCLOUDRS_DAEMON_BIN}" ]; then
   echo "pcloudd-wrapper: daemon binary not executable: ${PCLOUDRS_DAEMON_BIN}" >&2
   exit 1

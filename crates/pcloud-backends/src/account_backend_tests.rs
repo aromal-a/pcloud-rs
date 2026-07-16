@@ -91,6 +91,9 @@ mod tests {
             )
             .expect("change password should succeed");
 
-        assert_eq!(changed.auth_token, "rotated-auth-token");
+        assert_eq!(
+            pcloud_secret::ExposeSecret::expose_secret(&changed.auth_token),
+            "rotated-auth-token"
+        );
     }
 }

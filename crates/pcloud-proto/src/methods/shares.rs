@@ -104,7 +104,7 @@ pub struct ShareFolderRequest {
     /// folder `sym_key_ver1` against the recipient's public key. Mirrors
     /// the `sharedfolderkey` parameter of the C client's crypto share
     /// path (`pclsync/psynclib.c:1322` / `pssl.c:718..740`). Wired by
-    /// [`pcloud_crypto::share_rsa::wrap_share_invitation_b64`].
+    /// `pcloud_crypto::share_rsa::wrap_share_invitation_b64` (intra-doc link disabled — cross-crate path resolution is unreliable from `pcloud-proto`; the symbol is `pub` and wired through `crypto_share_folder_rsa` / `crypto_account_team_share_rsa`; the gate flagged by `CLAUDEREV/03-crypto.md` HIGH-2 is on the temppass-style `derive_temppass_wire` path, not on this symbol).
     pub shared_folder_key: Option<String>,
 }
 
@@ -340,7 +340,7 @@ pub struct AccountTeamShareRequest {
     /// folder `sym_key_ver1` against the team's shared public key.
     /// Mirrors the `teamshare_key` parameter of the C client's crypto
     /// account_teamshare path (`pclsync/psynclib.c:1372`). Wired by
-    /// [`pcloud_crypto::share_rsa::wrap_share_invitation_b64`].
+    /// `pcloud_crypto::share_rsa::wrap_share_invitation_b64` (intra-doc link disabled — cross-crate path resolution is unreliable from `pcloud-proto`; the symbol is `pub` and wired through `crypto_share_folder_rsa` / `crypto_account_team_share_rsa`; the gate flagged by `CLAUDEREV/03-crypto.md` HIGH-2 is on the temppass-style `derive_temppass_wire` path, not on this symbol).
     pub team_share_key: Option<String>,
 }
 

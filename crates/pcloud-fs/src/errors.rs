@@ -19,6 +19,8 @@ pub const EACCES: i32 = 13;
 pub const ENOTDIR: i32 = 20;
 /// `libc::EINVAL` — invalid argument.
 pub const EINVAL: i32 = 22;
+/// `libc::ENOSPC` — no space left on device or configured staging budget.
+pub const ENOSPC: i32 = 28;
 /// `libc::EROFS` — read-only file system. Used by write-op trait stubs
 /// whose backing transport does not (yet) support the mutation, so the
 /// kernel reports the filesystem as read-only rather than hanging or
@@ -131,5 +133,10 @@ mod tests {
     #[test]
     fn transport_is_eio() {
         assert_eq!(FsError::transport("boom").to_errno(), EIO);
+    }
+
+    #[test]
+    fn enospc_constant_matches_posix() {
+        assert_eq!(ENOSPC, libc::ENOSPC);
     }
 }

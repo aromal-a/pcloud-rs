@@ -1,21 +1,16 @@
-//! **PLATFORM: FreeBSD, NetBSD, OpenBSD.**
+//! **PLATFORM: FreeBSD, NetBSD, OpenBSD, DragonFlyBSD.**
 //! **GATING: `#[cfg(any(target_os = "freebsd", target_os = "netbsd",
-//! target_os = "openbsd"))]`** -- gated at the `mod bsd;` line in
+//! target_os = "openbsd", target_os = "dragonfly"))]`** -- gated at the `mod bsd;` line in
 //! `platform/mod.rs`.
 //!
-//! - FreeBSD (tier 2): libfuse2 via the `fuser` crate (mount path is
-//!   tracked under `bd-xplat-bsd`). `MountinfoReader` wraps `getmntinfo(3)`.
-//! - OpenBSD / NetBSD (tier 3): community-maintained; no first-party
-//!   mount implementation planned. `getmntinfo(3)` is still available
-//!   and is used here for orphan detection.
+//! All four targets use their native libfuse/refuse ABI through `fuser`.
+//! `MountinfoReader` wraps `getmntinfo(3)` for live mount discovery and
+//! orphan cleanup.
 //!
-//! This module implements the non-FFI portions of `PlatformMount` on
-//! BSD: mountpoint validation (stat + getmntinfo cross-check), runtime
-//! probe (presence of `/dev/fuse` on FreeBSD/NetBSD; intentional
-//! kext-needed error on OpenBSD), and conservative defaults.
-//!
-//! The kernel (un)mount path itself is **not** implemented here --
-//! tracked under `bd-xplat-bsd`.
+//! This module implements mountpoint validation (stat + getmntinfo
+//! cross-check), runtime
+//! probe (presence of each OS's native FUSE device), conservative defaults,
+//! the native `fuser` session lifecycle, and signal-driven cleanup.
 
 use std::io;
 use std::path::Path;
@@ -41,10 +36,7 @@ type GetmntinfoStat = libc::statvfs;
 #[cfg(not(target_os = "netbsd"))]
 type GetmntinfoStat = libc::statfs;
 
-/// BSD platform-mount implementation (validation-only; no kernel mount).
-///
-/// TODO(bd-xplat-bsd): on FreeBSD, wire `fuser` (libfuse2) with BSD mount
-/// flags. On OpenBSD/NetBSD this may remain unimplemented.
+/// Native BSD platform-mount implementation.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct BsdPlatformMount;
 
@@ -66,7 +58,7 @@ impl PlatformMount for BsdPlatformMount {
     fn validate_mountpoint(&self, mountpoint: &Path) -> Result<(), MountError> {
         use std::os::unix::fs::MetadataExt;
 
-        let meta = match std::fs::metadata(mountpoint) {
+        let meta = match std::fs::symlink_metadata(mountpoint) {
             Ok(m) => m,
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 return Err(MountError::MountpointMissing(mountpoint.to_path_buf()));
@@ -74,21 +66,32 @@ impl PlatformMount for BsdPlatformMount {
             Err(e) => return Err(MountError::Io(e)),
         };
 
+        if meta.file_type().is_symlink() {
+            return Err(MountError::MountpointSymlink(mountpoint.to_path_buf()));
+        }
+
         if !meta.is_dir() {
             return Err(MountError::MountpointNotDirectory(mountpoint.to_path_buf()));
         }
 
-        // Fail fast: only peek at the first 3 entries. If any are
-        // present we reject; we do not enumerate the whole directory.
+        // Fail fast on the first entry; we do not enumerate the directory.
         let mut rd = std::fs::read_dir(mountpoint)?;
-        for _ in 0..3 {
-            match rd.next() {
-                Some(Ok(_)) => {
-                    return Err(MountError::MountpointNotEmpty(mountpoint.to_path_buf()));
-                }
-                Some(Err(e)) => return Err(MountError::Io(e)),
-                None => break,
+        match rd.next() {
+            Some(Ok(_)) => {
+                return Err(MountError::MountpointNotEmpty(mountpoint.to_path_buf()));
             }
+            Some(Err(e)) => return Err(MountError::Io(e)),
+            None => {}
+        }
+
+        // A per-user mount must remain owned by the invoking effective UID.
+        let current_uid = unsafe { libc::geteuid() };
+        if meta.uid() != current_uid {
+            return Err(MountError::MountpointNotOwned {
+                path: mountpoint.to_path_buf(),
+                owner: meta.uid(),
+                current: current_uid,
+            });
         }
 
         let mode = meta.mode();
@@ -118,28 +121,48 @@ impl PlatformMount for BsdPlatformMount {
 
     /// Runtime probe.
     ///
-    /// - FreeBSD / NetBSD: succeed when `/dev/fuse` is present (the
-    ///   kernel fuse module is loaded and the device node exists).
-    ///   When absent, return `Unsupported("load fuse kernel module ...")`.
-    /// - OpenBSD: no first-party fuse module ships by default. Return
-    ///   `Unsupported("KEXT_NEEDED: ...")` so callers can distinguish
-    ///   the platform-policy case from a transient probe failure.
+    /// Succeeds when the native userspace-filesystem device exists:
+    /// `/dev/fuse` (FreeBSD), `/dev/puffs` or the perfuse compatibility
+    /// endpoint (NetBSD), `/dev/fuse0` (OpenBSD), and `/dev/fuse`
+    /// (DragonFlyBSD).
     fn probe_supported(&self) -> Result<(), MountError> {
-        #[cfg(any(target_os = "freebsd", target_os = "netbsd"))]
+        #[cfg(target_os = "freebsd")]
         {
             if Path::new("/dev/fuse").exists() {
                 return Ok(());
             }
             return Err(MountError::Unsupported(
-                "/dev/fuse missing; load the fuse kernel module (kldload fuse / modload fuse)"
-                    .to_string(),
+                "/dev/fuse missing; load the fusefs kernel module (kldload fusefs)".to_string(),
+            ));
+        }
+
+        #[cfg(target_os = "netbsd")]
+        {
+            if Path::new("/dev/puffs").exists() || Path::new("/dev/fuse").exists() {
+                return Ok(());
+            }
+            return Err(MountError::Unsupported(
+                "/dev/puffs and /dev/fuse are missing; enable PUFFS/refuse or perfused".to_string(),
             ));
         }
 
         #[cfg(target_os = "openbsd")]
         {
+            if Path::new("/dev/fuse0").exists() {
+                return Ok(());
+            }
             return Err(MountError::Unsupported(
-                "KEXT_NEEDED: OpenBSD ships no fuse kernel module by default".to_string(),
+                "/dev/fuse0 missing; boot a kernel with the FUSE pseudo-device enabled".to_string(),
+            ));
+        }
+
+        #[cfg(target_os = "dragonfly")]
+        {
+            if Path::new("/dev/fuse").exists() {
+                return Ok(());
+            }
+            return Err(MountError::Unsupported(
+                "/dev/fuse missing; load the DragonFly FUSE kernel module".to_string(),
             ));
         }
 
@@ -162,13 +185,107 @@ impl PlatformMount for BsdPlatformMount {
     fn default_options(&self) -> MountOptions {
         MountOptions {
             read_only: false,
-            fs_name: Some("pcloud".to_string()),
+            fs_name: Some("pcloud-rs".to_string()),
             allow_other: false,
             attr_timeout_secs: 1.0,
             entry_timeout_secs: 1.0,
             max_readahead: 128 * 1024,
         }
     }
+
+    fn mount_adapter(
+        &self,
+        adapter: Box<dyn crate::fuse_adapter::FuseAdapter>,
+        mountpoint: &Path,
+        options: MountOptions,
+    ) -> Result<crate::mount_service::MountHandle, MountError> {
+        let shim = crate::platform::fuser_shim::BoxedFuserShim::new(adapter);
+        mount_fuser_filesystem(mountpoint, shim, options)
+    }
+}
+
+// -----------------------------------------------------------------------------
+// BSD kernel mount lifecycle.
+// -----------------------------------------------------------------------------
+
+/// RAII owner for a live BSD `fuser` background session.
+///
+/// Dropping the session asks libfuse to unmount. Explicit teardown verifies
+/// the kernel mount table for up to two seconds and reports a lingering mount
+/// instead of silently claiming success.
+#[cfg(any(
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+pub struct BsdMountHandle {
+    mountpoint: std::path::PathBuf,
+    session: Option<fuser::BackgroundSession>,
+}
+
+#[cfg(any(
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+impl BsdMountHandle {
+    /// Drop the userspace session and verify that `getmntinfo(3)` no longer
+    /// contains the mountpoint.
+    pub fn unmount(mut self) -> Result<(), MountError> {
+        drop(self.session.take());
+
+        let result = (|| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            while std::time::Instant::now() < deadline {
+                if !path_is_current_mount(&self.mountpoint)? {
+                    return Ok(());
+                }
+                std::thread::sleep(std::time::Duration::from_millis(25));
+            }
+
+            Err(MountError::Io(io::Error::other(format!(
+                "BSD FUSE mount still present after session teardown: {}",
+                self.mountpoint.display()
+            ))))
+        })();
+        reaper::unregister_mount(&self.mountpoint);
+        result
+    }
+}
+
+/// Mount a fully composed filesystem using the native BSD libfuse/refuse
+/// bridge exposed through `fuser`.
+#[cfg(any(
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+pub fn mount_fuser_filesystem<F>(
+    mountpoint: &Path,
+    filesystem: F,
+    options: MountOptions,
+) -> Result<crate::mount_service::MountHandle, MountError>
+where
+    F: fuser::Filesystem + Send + 'static,
+{
+    BsdPlatformMount.probe_supported()?;
+    BsdPlatformMount.validate_mountpoint(mountpoint)?;
+    reaper::install_bsd_signal_reaper();
+
+    let fuse_options = crate::platform::fuser_shim::build_fuse_options(&options);
+
+    let session = fuser::spawn_mount2(filesystem, mountpoint, &fuse_options)
+        .map_err(|error| MountError::Fuser(error.to_string()))?;
+    reaper::register_mount(mountpoint);
+    Ok(crate::mount_service::MountHandle::from_bsd(
+        BsdMountHandle {
+            mountpoint: mountpoint.to_path_buf(),
+            session: Some(session),
+        },
+    ))
 }
 
 /// Return `Ok(true)` if `path` currently appears as a mountpoint in
@@ -206,15 +323,9 @@ fn path_is_current_mount(path: &Path) -> io::Result<bool> {
 ///
 /// Enumerates the kernel mount table and emits a
 /// `/proc/self/mountinfo`-shaped payload containing only FUSE-backed
-/// entries (those where `f_fstypename` contains `"fuse"`, which covers
-/// `fusefs` on FreeBSD and the various FUSE subtypes on NetBSD/OpenBSD).
-///
-/// Each emitted line is normalized to advertise `fuse.pcloud` as the
-/// filesystem type so the cross-platform parser in
-/// [`crate::mount_orphan::parse_pcloud_mounts`] treats the entry as a
-/// pCloud-owned FUSE mount. The daemon then reconciles against its own
-/// known-mount set; this module does not make ownership claims on its
-/// own.
+/// entries whose filesystem type is FUSE-backed and whose filesystem source
+/// identifies pCloud. Foreign sshfs/rclone/other FUSE mounts are deliberately
+/// omitted so orphan cleanup can never claim them.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct BsdMountinfoReader;
 
@@ -252,6 +363,15 @@ pub(crate) fn read_getmntinfo() -> io::Result<String> {
         if !fstype.contains("fuse") {
             continue;
         }
+        let src = cstr_to_string(entry.f_mntfromname.as_ptr());
+        let identity = format!(
+            "{} {}",
+            fstype.to_ascii_lowercase(),
+            src.to_ascii_lowercase()
+        );
+        if !identity.contains("pcloud-rs") {
+            continue;
+        }
         let mountpoint = cstr_to_string(entry.f_mntonname.as_ptr());
         if mountpoint.is_empty() {
             continue;
@@ -265,8 +385,7 @@ pub(crate) fn read_getmntinfo() -> io::Result<String> {
         // Fields: id parent_id major:minor root mountpoint - fstype src opts
         out.push_str("0 0 0:0 / ");
         out.push_str(&escape_mountinfo(&mountpoint));
-        out.push_str(" - fuse.pcloud ");
-        let src = cstr_to_string(entry.f_mntfromname.as_ptr());
+        out.push_str(" - fuse.pcloud-rs ");
         if src.is_empty() {
             out.push_str("pcloud");
         } else {
@@ -310,42 +429,21 @@ fn escape_mountinfo(input: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// M-5.1: Signal-driven reaper stub for BSD.
-//
-// TIER-3 STATUS (pcloud-rs-ncx.29, audit-06): BSD signal-driven mount
-// cleanup is **scaffolded but not live-verified**. The signal handler
-// (sigaction SIGTERM/SIGINT) is installed and sets an AtomicBool
-// (async-signal-safe), and a reaper thread observes the flag and logs
-// a warning. However, the reaper does **not** drain an ACTIVE_MOUNTS
-// registry nor issue `unmount(MNT_FORCE)` because the BSD kernel mount
-// path itself is not wired in this fork (tracked under `bd-xplat-bsd`).
-//
-// Consistent with the Windows IPC Tier-3 disposition documented in
-// `CLAUDE.md`, BSD mount cleanup is accepted as Tier-3 / best-effort:
-// - Compile-tested across tier-2 CI (FreeBSD continue-on-error).
-// - Not live-verified on real hardware.
-// - Will not panic, will not silently swallow failures — the reaper
-//   logs when a signal arrives so operators see the event.
-//
-// When `bd-xplat-bsd` lands a real FreeBSD mount, the reaper here must
-// be upgraded to drain ACTIVE_MOUNTS and call `unmount(mnt, MNT_FORCE)`
-// (see `libc::unmount`) mirroring the Linux `umount2(MNT_DETACH)` path
-// in `platform/linux.rs::reap_all_mounts`.
-//
-// On Linux, `platform/linux.rs` registers a `sigaction(SIGTERM/SIGINT)`
-// handler and spawns a "pcloudfs-reaper" thread that drains ACTIVE_MOUNTS
-// on shutdown. BSD has no equivalent yet (tracked under `bd-xplat-bsd`).
-//
-// This stub mirrors the public entry points so that code calling
-// `install_bsd_signal_reaper()` compiles on BSD without landing dead code
-// silently. The implementation is intentionally minimal: it installs a
-// `sigaction`-based handler that sets an `AtomicBool` (async-signal-safe)
-// and logs a warning so operators know the full reaper is not yet active.
-// The kernel (un)mount path itself is still unimplemented on BSD
-// (see `bd-xplat-bsd`), so the reaper is advisory only.
+// M-5.1: Signal-driven BSD reaper. The signal handler performs only an
+// atomic store; a worker thread drains ACTIVE_MOUNTS with unmount(2).
 // ---------------------------------------------------------------------------
 
-#[cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd"))]
+/// Signal-safe shutdown coordination and active-mount registry for BSD.
+///
+/// The signal trampoline only flips an atomic flag; a normal worker thread
+/// drains registered mounts with `unmount(2)`, keeping unsafe work outside
+/// the signal context.
+#[cfg(any(
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 pub mod reaper {
     use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
@@ -364,11 +462,8 @@ pub mod reaper {
     /// entry so a process abort or service stop does not leave a stale
     /// kernel mount that the operator must clean up by hand.
     ///
-    /// Audit-06 stream E (bd-xplat-bsd, CLAUDE.md "Signal-driven mount
-    /// cleanup posture"): until a real FreeBSD libfuse2 mount path
-    /// lands the registry stays empty in production, but the wiring
-    /// is now in place so the moment the mount path lands, register
-    /// + reap come for free without a second audit pass.
+    /// Every successful native BSD mount is registered here and removed
+    /// during explicit RAII teardown.
     static ACTIVE_MOUNTS: OnceLock<Mutex<BTreeSet<PathBuf>>> = OnceLock::new();
 
     fn registry() -> &'static Mutex<BTreeSet<PathBuf>> {
@@ -456,13 +551,9 @@ pub mod reaper {
 
     /// Install BSD signal handler and reaper thread.
     ///
-    /// Audit-06 stream E (bd-xplat-bsd): the reaper now drains a
-    /// process-wide [`ACTIVE_MOUNTS`] registry and issues
+    /// Drains a process-wide [`ACTIVE_MOUNTS`] registry and issues
     /// `libc::unmount(path, MNT_FORCE)` per entry, mirroring the Linux
-    /// `umount2(MNT_DETACH)` reaper. Production effect is gated on
-    /// the registry being populated by a real BSD mount path
-    /// (`bd-xplat-bsd`); the wiring is in place so it activates the
-    /// moment that lands.
+    /// `umount2(MNT_DETACH)` reaper.
     ///
     /// M-5.1.
     pub fn install_bsd_signal_reaper() {
@@ -472,7 +563,7 @@ pub mod reaper {
             // an AtomicBool, which is async-signal-safe.
             unsafe {
                 let mut sa: libc::sigaction = std::mem::zeroed();
-                sa.sa_sigaction = signal_trampoline as usize;
+                sa.sa_sigaction = signal_trampoline as *const () as usize;
                 sa.sa_flags = libc::SA_RESTART;
                 libc::sigemptyset(&mut sa.sa_mask);
                 let _ = libc::sigaction(libc::SIGTERM, &sa, std::ptr::null_mut());
@@ -510,8 +601,6 @@ pub mod reaper {
     /// continues draining so a single hung mount cannot hold up the
     /// rest of the process exit.
     ///
-    /// Note: live-verified `unmount(2)` semantics on real BSD hardware
-    /// are out of scope (hardware-bound, tracked under bd-xplat-bsd).
     /// The unit test in this module simulates a registered mount and
     /// asserts the registry empties after `force_reap_for_tests`; the
     /// `unmount(2)` syscall itself returns `ENOENT` for the simulated
@@ -563,7 +652,12 @@ pub mod reaper {
 
 #[cfg(all(
     test,
-    any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd")
+    any(
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    )
 ))]
 mod tests {
     use super::*;

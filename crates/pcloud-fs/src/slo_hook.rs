@@ -42,13 +42,13 @@ use pcloud_observability::metrics::{HistogramHandle, register_histogram};
 use pcloud_observability::slo::Slo;
 
 /// Default histogram buckets (in seconds) for `flush_latency_seconds`,
-/// emitted on every successful FUSE flush by [`observe_flush_latency`].
+/// emitted on every successful FUSE flush by [`observe_flush`].
 /// Buckets span 50 ms .. 60 s to cover both small synchronous writes and
 /// multi-GiB staged flushes.
 const FLUSH_LATENCY_BUCKETS: &[f64] = &[0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0];
 
 /// Default histogram buckets (in bytes) for `flush_bytes`, the
-/// per-flush payload size distribution emitted by [`observe_flush_bytes`].
+/// per-flush payload size distribution emitted by [`observe_flush`].
 /// Ranges from 4 KiB up to 1 GiB to capture both small overwrites and
 /// large chunked flushes.
 const FLUSH_BYTES_BUCKETS: &[f64] = &[

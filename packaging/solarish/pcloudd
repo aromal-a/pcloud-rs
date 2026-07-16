@@ -1,0 +1,43 @@
+#!/bin/sh
+# SMF start method for illumos and Oracle Solaris.
+
+set -eu
+umask 077
+
+. /lib/svc/share/smf_include.sh
+
+case "${1:-}" in
+    start) ;;
+    *)
+        echo "usage: $0 start" >&2
+        exit "$SMF_EXIT_ERR_CONFIG"
+        ;;
+esac
+
+ENV_FILE=${PCLOUDRS_ENV_FILE:-/etc/pcloud-rs/pcloudd.env}
+if [ -r "${ENV_FILE}" ]; then
+    # The file is administrator-owned configuration, not user input.
+    # shellcheck disable=SC1090
+    . "${ENV_FILE}"
+fi
+
+: "${PCLOUD_ROOT:=/var/lib/pcloud-rs}"
+: "${PCLOUD_ENV:=production}"
+: "${PCLOUD_API_MODE:=tls}"
+: "${PCLOUD_DURABLE_AUTH_TOKENS:=1}"
+: "${PCLOUDRS_DAEMON_BIN:=/usr/local/bin/pcloudd}"
+
+if [ ! -d "${PCLOUD_ROOT}" ] || [ ! -w "${PCLOUD_ROOT}" ]; then
+    echo "pcloudd: state directory is absent or not writable: ${PCLOUD_ROOT}" >&2
+    exit "$SMF_EXIT_ERR_PERM"
+fi
+
+export PCLOUD_ROOT PCLOUD_ENV PCLOUD_API_MODE PCLOUD_DURABLE_AUTH_TOKENS
+export PCLOUDRS_TOKEN_FILE PCLOUDRS_USERNAME_FILE PCLOUDRS_PASSWORD_FILE
+export PCLOUDRS_TFA_CODE_FILE PCLOUDRS_RECOVERY_CODE_FILE PCLOUDRS_TRUST_DEVICE
+export PCLOUDRS_DAEMON_BIN
+
+# Persistent children must not inherit SMF's method-only environment.
+smf_clear_env
+
+exec /usr/local/libexec/pcloudd-wrapper.sh

@@ -1,28 +1,28 @@
 # **PLATFORM MATRIX:**
 # - Linux: full support (tier 1) — UNIX sockets + SO_PEERCRED peer checks.
-# - FreeBSD: tier 2 — UNIX sockets + LOCAL_PEERCRED source-level cfg.
-# - macOS: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.4 (LOCAL_PEERCRED).
-# - Windows: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.5 (Named Pipes + SID checks).
+# - BSD/macOS: AF_UNIX + getpeereid(3).
+# - illumos/Solaris: AF_UNIX + getpeerucred(3).
+# - Windows: named pipes + exact TokenUser SID checks.
 
 [package]
 name = "pcloud-ipc"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
-description = "Local IPC codec and transport (owner-only UNIX sockets) for pcloud-rs daemon/CLI."
+publish = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+description = "Peer-authenticated local IPC over Unix sockets or Windows named pipes."
 
 [dependencies]
 libc = "0.2"
 log.workspace = true
-pcloud-model = { path = "../pcloud-model" }
+pcloud-model = { version = "0.1.0", path = "../pcloud-model" }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 zeroize = "1.8"
-
-[target.'cfg(target_os = "macos")'.dependencies]
-# Planned (bd-xplat-macos): LOCAL_PEERCRED via libc (already unconditional).
 
 [target.'cfg(windows)'.dependencies]
 # bd-xplat-windows: Named Pipes + SID-based peer authentication.
@@ -46,10 +46,6 @@ windows = { version = "0.58", features = [
 [dev-dependencies]
 proptest = "1.5"
 criterion = { version = "0.5", default-features = false, features = ["plotters", "cargo_bench_support"] }
-# Security-invariant integration test (`tests/security_invariants.rs`)
-# exercises the secret wrappers and the zeroize contract alongside IPC
-# surfaces; neither is a runtime dependency of pcloud-ipc itself.
-pcloud-secret = { path = "../pcloud-secret" }
 zeroize = "1.8"
 
 [[bench]]

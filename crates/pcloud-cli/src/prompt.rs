@@ -184,6 +184,8 @@ fn masked_tty_read() -> Result<String, PromptError> {
         // Fall back to plain read when we can't get termios (pipe-ish).
         return Ok(rpassword::read_password()?);
     }
+    // SAFETY: `tcgetattr` returned success, so libc fully initialized the
+    // `termios` value at `original`.
     let original = unsafe { original.assume_init() };
 
     // Build a raw-ish variant: disable canonical mode + echo.
@@ -191,6 +193,8 @@ fn masked_tty_read() -> Result<String, PromptError> {
     raw.c_lflag &= !(libc::ICANON | libc::ECHO);
     raw.c_cc[libc::VMIN] = 1;
     raw.c_cc[libc::VTIME] = 0;
+    // SAFETY: `raw` is a valid `termios` value copied from `tcgetattr`; the
+    // pointer is valid for the duration of this syscall and fd 0 is stdin.
     if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) } != 0 {
         return Ok(rpassword::read_password()?);
     }

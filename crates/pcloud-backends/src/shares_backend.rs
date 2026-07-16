@@ -160,6 +160,12 @@ pub enum SharesBackendError {
     #[error(transparent)]
     /// `Network` variant.
     Network(#[from] TransportError),
+    /// Resilient-wrapper-only condition (circuit-breaker open, rate-limit
+    /// exceeded, retry-budget exhausted). CLAUDEREV deferred-set D5.4
+    /// (fire 52). Carries the human-readable description from
+    /// `pcloud_proto::resilient_transport::ResilientError`.
+    #[error("resilient transport refused request: {0}")]
+    Resilient(String),
 }
 
 /// Error surface for the two crypto-share entry points. Kept distinct
@@ -219,15 +225,27 @@ impl From<TemppassError> for CryptoShareError {
 enum SharesTransportMode {
     Development(DevelopmentSharesTransport),
     Network(BinaryApiTransport),
+    /// Production network transport wrapped in a circuit-breaker /
+    /// rate-limiter / retry-budget envelope. CLAUDEREV deferred-set
+    /// D5.4 (fire 52) — fourth of 7 per-backend `ResilientTransport`
+    /// migrations.
+    ResilientNetwork(
+        Box<pcloud_proto::resilient_transport::ResilientTransport<BinaryApiTransport>>,
+    ),
 }
 
 impl ProtocolTransport for SharesTransportMode {
     type Error = SharesBackendError;
 
     fn execute(&self, request: &EncodedRequest) -> Result<Value, Self::Error> {
+        use pcloud_proto::resilient_transport::ResilientError;
         match self {
             Self::Development(t) => t.execute(request).map_err(SharesBackendError::from),
             Self::Network(t) => t.execute(request).map_err(SharesBackendError::from),
+            Self::ResilientNetwork(t) => t.execute(request).map_err(|err| match err {
+                ResilientError::Inner(transport_err) => SharesBackendError::Network(transport_err),
+                other => SharesBackendError::Resilient(other.to_string()),
+            }),
         }
     }
 }
@@ -237,6 +255,7 @@ impl ApiServerHintConsumer for SharesTransportMode {
         match self {
             Self::Development(t) => t.apply_api_server_hint(api_server),
             Self::Network(t) => t.apply_api_server_hint(api_server),
+            Self::ResilientNetwork(t) => t.inner_arc().apply_api_server_hint(api_server),
         }
     }
 }
@@ -286,6 +305,19 @@ impl SharesRuntime {
         };
         Self {
             api: SharesApi::new(transport),
+        }
+    }
+
+    /// Construct a `SharesRuntime` whose transport is wrapped in
+    /// `pcloud_proto::resilient_transport::ResilientTransport`. CLAUDEREV
+    /// deferred-set D5.4 (fire 52). Same pattern as the auth (D5.1),
+    /// transfer (D5.2), and public-link (D5.3) backends.
+    #[must_use]
+    pub fn from_resilient_transport(
+        resilient: pcloud_proto::resilient_transport::ResilientTransport<BinaryApiTransport>,
+    ) -> Self {
+        Self {
+            api: SharesApi::new(SharesTransportMode::ResilientNetwork(Box::new(resilient))),
         }
     }
 

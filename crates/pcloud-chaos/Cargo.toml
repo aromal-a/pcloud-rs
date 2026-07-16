@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 description = "Chaos test harness for pcloud-rs (P1.6). Scripted fault-injection scenarios with predicted outcomes."
 
 # This crate intentionally has no library surface. It exists purely to host

@@ -1,8 +1,17 @@
-// TODO(bd-sweep-unwrap): This file contains ~50 `.unwrap()` / `.expect()`
-// call sites in non-test code paths. The sweeper scheduler thread and
-// Mutex-guarded state accesses are the primary targets. Full sweep deferred
-// to a dedicated hardening pass; scheduler thread panics are logged and the
-// sweeper silently disables itself on the next bootstrap.
+// CLAUDEREV iter-1 SYNC-H-04-6 audit (closed in the iter-5 remediation
+// loop, fire 24): the original "~50 `.unwrap()` / `.expect()`" header
+// claim was inaccurate — the audited file held 0 production `.unwrap()`
+// (every `Mutex::lock()` already used `unwrap_or_else(|poisoned| { log;
+// poisoned.into_inner() })`) and exactly 2 production `.expect()` sites,
+// both on `thread::Builder::spawn` results. Both have been refactored:
+//   - `IntegritySweeperShell::spawn_worker` now logs the spawn `io::Error`
+//     and gracefully degrades to "sweeper disabled" instead of panicking
+//     the entire daemon at startup.
+//   - `IntegritySweeperShell::start_schedule` now propagates the spawn
+//     `io::Error` via the new `ScheduleError::ThreadSpawn` variant
+//     (the function already returned `Result<(), ScheduleError>`).
+// Test-module unwrap/expect calls are intentional and idiomatic; they are
+// not part of the daemon's runtime panic surface.
 
 //! Background-integrity-sweeper daemon service (H14d).
 //!
@@ -142,6 +151,12 @@ pub trait DaemonChecksumFetcher: Send + Sync + std::fmt::Debug {
     /// Return the remote SHA-256 hex digest for `remote_path`, or an
     /// error when the object does not exist or the lookup fails.
     fn fetch_sha256_hex(&self, remote_path: &str) -> Result<String, DaemonCheckError>;
+
+    /// Whether this fetcher is the built-in placeholder that cannot
+    /// verify production remote state.
+    fn is_noop(&self) -> bool {
+        false
+    }
 }
 
 /// Errors from a [`DaemonChecksumFetcher`] call.
@@ -203,6 +218,10 @@ pub struct NoOpChecksumFetcher;
 impl DaemonChecksumFetcher for NoOpChecksumFetcher {
     fn fetch_sha256_hex(&self, _remote_path: &str) -> Result<String, DaemonCheckError> {
         Err(DaemonCheckError::NotFound)
+    }
+
+    fn is_noop(&self) -> bool {
+        true
     }
 }
 
@@ -607,6 +626,14 @@ pub enum ScheduleError {
     /// `start_schedule` call is made without a schedule.
     #[error("no schedule_cron configured")]
     NoSchedule,
+    /// The OS refused to spawn the scheduler thread (typically `EAGAIN`
+    /// from `pthread_create` under thread-limit / VM exhaustion). Closes
+    /// the iter-1 SYNC-H-04-6 finding that the previous `.expect()` panic
+    /// crashed the daemon at startup on resource exhaustion. The caller
+    /// should log the error and either retry later or run with the
+    /// sweeper disabled.
+    #[error("failed to spawn integrity sweeper scheduler thread: {0}")]
+    ThreadSpawn(#[source] std::io::Error),
 }
 
 /// Internal wake-condition used by the scheduler thread. A `Condvar`
@@ -798,22 +825,35 @@ impl IntegritySweeperShell {
             return;
         }
         let (tx, rx) = mpsc::channel::<IntegrityEvent>();
-        self.sender = Some(tx);
         let shared = Arc::clone(&self.shared);
         let stop_flag = Arc::clone(&self.stop_flag);
         let audit_drops = Arc::clone(&self.audit_drop_count);
-        let handle = thread::Builder::new()
+        match thread::Builder::new()
             .name("pcloudd-integrity-sweeper".into())
             .spawn(move || {
                 worker_loop(rx, &shared, &stop_flag, &audit_drops, &mut audit_sink);
-            })
-            // INVARIANT: thread spawn failure is an OS-level resource exhaustion
-            // (EAGAIN / thread-limit) that is unrecoverable at daemon startup;
-            // panic with a clear message is the intended behaviour. A future
-            // refactor to surface as `Err` is tracked under pcloud-rs-lyy
-            // (mass unwrap/expect sweep epic).
-            .expect("spawn integrity sweeper thread");
-        self.worker = Some(handle);
+            }) {
+            Ok(handle) => {
+                self.sender = Some(tx);
+                self.worker = Some(handle);
+            }
+            Err(err) => {
+                // Closes iter-1 SYNC-H-04-6: previously a `.expect()` here
+                // crashed the daemon at startup on `EAGAIN` / thread-limit
+                // exhaustion. The integrity sweeper is opt-in feature work,
+                // so falling back to "sweeper-disabled" is strictly safer
+                // than panicking the entire daemon. The dropped `tx` closes
+                // the channel; the runtime can retry by calling
+                // `spawn_worker` again later, or restart with the sweeper
+                // disabled.
+                drop(tx);
+                self.sender = None;
+                log::error!(
+                    "integrity sweeper worker thread spawn failed: {err}; sweeper disabled \
+                     until next runtime startup"
+                );
+            }
+        }
     }
 
     /// Replace the sweep roots the walker visits on each `run_once`
@@ -834,6 +874,46 @@ impl IntegritySweeperShell {
         }) = fetcher;
     }
 
+    /// Return the reason an enabled sweeper cannot perform a real
+    /// production verification, if any.
+    ///
+    /// Disabled sweepers are considered not applicable and return
+    /// `None`.
+    #[must_use]
+    pub fn readiness_error(&self) -> Option<String> {
+        if !self.config.enabled {
+            return None;
+        }
+        let roots_empty = self
+            .sweep_roots
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                log::error!("integrity sweeper mutex poisoned — recovering");
+                poisoned.into_inner()
+            })
+            .is_empty();
+        if roots_empty {
+            return Some(
+                "integrity sweeper is enabled but has no sweep roots configured".to_owned(),
+            );
+        }
+        let fetcher_is_noop = self
+            .checksum_fetcher
+            .lock()
+            .unwrap_or_else(|poisoned| {
+                log::error!("integrity sweeper mutex poisoned — recovering");
+                poisoned.into_inner()
+            })
+            .is_noop();
+        if fetcher_is_noop {
+            return Some(
+                "integrity sweeper is enabled but no real remote checksum fetcher is wired"
+                    .to_owned(),
+            );
+        }
+        None
+    }
+
     /// Synchronously trigger one sweep cycle and update the progress
     /// counters. Returns the [`SweepProgress`] snapshot taken **after**
     /// the cycle completes so IPC callers can render a meaningful
@@ -846,6 +926,10 @@ impl IntegritySweeperShell {
     /// worker thread picks them up and audits any mismatches.
     pub fn run_once(&self) -> SweepProgress {
         if !self.config.enabled {
+            return self.progress_snapshot();
+        }
+        if let Some(reason) = self.readiness_error() {
+            log::error!(r#"{{"event":"integrity_sweeper.not_ready","detail":"{reason}"}}"#);
             return self.progress_snapshot();
         }
         self.shared.sweep_in_flight.store(true, Ordering::Relaxed);
@@ -881,6 +965,10 @@ impl IntegritySweeperShell {
     /// the zero-progress snapshot (no lines written).
     pub fn run_once_ndjson(&self, ndjson_sink: &mut dyn Write) -> SweepProgress {
         if !self.config.enabled {
+            return self.progress_snapshot();
+        }
+        if let Some(reason) = self.readiness_error() {
+            log::error!(r#"{{"event":"integrity_sweeper.not_ready","detail":"{reason}"}}"#);
             return self.progress_snapshot();
         }
         self.shared.sweep_in_flight.store(true, Ordering::Relaxed);
@@ -1074,12 +1162,7 @@ impl IntegritySweeperShell {
                     &tick_notify,
                 );
             })
-            // INVARIANT: thread spawn failure is an OS-level resource exhaustion
-            // (EAGAIN / thread-limit) that is unrecoverable at daemon startup;
-            // panic with a clear message is the intended behaviour. A future
-            // refactor to surface as `Err` is tracked under pcloud-rs-lyy
-            // (mass unwrap/expect sweep epic).
-            .expect("spawn integrity sweeper scheduler thread");
+            .map_err(ScheduleError::ThreadSpawn)?;
         self.scheduler_handle = Some(handle);
         Ok(())
     }
@@ -1266,6 +1349,18 @@ fn run_sweep_cycle_with_ndjson(
             poisoned.into_inner()
         })
         .clone();
+    if roots.is_empty() {
+        log::error!(
+            r#"{{"event":"integrity_sweeper.not_ready","detail":"enabled but no sweep roots configured"}}"#
+        );
+        return;
+    }
+    if fetcher.is_noop() {
+        log::error!(
+            r#"{{"event":"integrity_sweeper.not_ready","detail":"enabled but no real remote checksum fetcher is wired"}}"#
+        );
+        return;
+    }
     let skip_patterns: Vec<String> = skip_globs
         .lock()
         .unwrap_or_else(|poisoned| {
@@ -1672,6 +1767,28 @@ mod tests {
     }
 
     #[test]
+    fn schedule_error_thread_spawn_carries_the_io_source() {
+        // Closes iter-1 SYNC-H-04-6: the new `ScheduleError::ThreadSpawn`
+        // variant must surface the underlying io::Error rather than
+        // panicking. We can't easily provoke a real thread::spawn failure
+        // in a unit test (it requires OS thread-limit exhaustion), so we
+        // construct the variant directly and assert the round-trip + the
+        // `#[source]` chain via std::error::Error.
+        use std::error::Error;
+        let io_err = std::io::Error::new(std::io::ErrorKind::WouldBlock, "EAGAIN");
+        let err = ScheduleError::ThreadSpawn(io_err);
+        assert!(
+            err.to_string().contains("scheduler thread"),
+            "Display must mention which thread failed to spawn",
+        );
+        let source = err.source().expect("ThreadSpawn must carry a #[source]");
+        assert!(
+            source.to_string().contains("EAGAIN"),
+            "source chain must propagate the io::Error",
+        );
+    }
+
+    #[test]
     fn start_schedule_rejects_invalid_cron_when_config_mutated_post_build() {
         // Defensive: even if a caller mutates the config between
         // from_config and start_schedule, start_schedule re-parses and
@@ -1961,6 +2078,10 @@ mod tests {
             "no roots means no events, got {}",
             evts.len()
         );
+        assert!(
+            shell.readiness_error().unwrap().contains("no sweep roots"),
+            "enabled sweeper with no roots must report not-ready"
+        );
     }
 
     #[test]
@@ -1986,6 +2107,7 @@ mod tests {
             f.fetch_sha256_hex("/any/path"),
             Err(DaemonCheckError::NotFound)
         ));
+        assert!(f.is_noop());
     }
 
     #[test]
@@ -2009,6 +2131,13 @@ mod tests {
             remote_prefix: "/remote".to_owned(),
         }]);
         // Default fetcher is NoOp — no explicit set needed.
+        assert!(
+            shell
+                .readiness_error()
+                .unwrap()
+                .contains("no real remote checksum fetcher"),
+            "enabled sweeper with NoOp fetcher must report not-ready"
+        );
 
         let _progress = shell.run_once();
         std::thread::sleep(Duration::from_millis(50));

@@ -83,9 +83,11 @@ impl ManagedPaths {
     /// IPC listener.
     ///
     /// ```
-    /// use std::path::PathBuf;
     /// use pcloud_config::{ConfigProfile, Environment};
-    /// let p = ConfigProfile::secure_defaults(PathBuf::from("/tmp/x"), Environment::Development);
+    /// let p = ConfigProfile::secure_defaults(
+    ///     std::env::temp_dir().join("pcloud-ipc-path"),
+    ///     Environment::Development,
+    /// );
     /// assert!(p.paths.ipc_socket_path().ends_with("pcloud.sock"));
     /// ```
     #[must_use]
@@ -96,9 +98,11 @@ impl ManagedPaths {
     /// Path of the owner-only auth-token vault file used by the daemon.
     ///
     /// ```
-    /// use std::path::PathBuf;
     /// use pcloud_config::{ConfigProfile, Environment};
-    /// let p = ConfigProfile::secure_defaults(PathBuf::from("/tmp/x"), Environment::Development);
+    /// let p = ConfigProfile::secure_defaults(
+    ///     std::env::temp_dir().join("pcloud-vault-path"),
+    ///     Environment::Development,
+    /// );
     /// assert!(p.paths.auth_token_vault_path().ends_with("auth_token"));
     /// ```
     #[must_use]

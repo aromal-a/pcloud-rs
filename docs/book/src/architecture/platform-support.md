@@ -1,264 +1,190 @@
-# Platform Support
+# Platform support
 
-This page is the **per-platform capability matrix** for the five core
-abstractions the Rust rewrite exposes: mount layer (FUSE), local IPC,
-peer authentication, vault / secret storage, user-facing integration
-(clipboard, notifications). For the tiered policy (T1 / T2 / T3) and
-engineering effort estimates see
-[`PLAN_CROSSPLATFORM.md`](../../../PLAN_CROSSPLATFORM.md). For
-the packaging-side view see
-[Operations → Packaging Matrix](../operations/packaging-matrix.md).
+This is the authoritative capability and qualification matrix for the native
+library, CLI, daemon, IPC, secret vault, and mounted-drive adapters. Packaging
+status is tracked separately in the
+[packaging matrix](../operations/packaging-matrix.md).
 
-> **Honesty note (2026-04-16).** Only the **Linux** mount path is
-> currently live-tested on hardware. macOS fuse-t, Windows WinFSP, and
-> *BSD `fusefs` mounts are scaffolded (abstraction + binding layer) but
-> have not been verified end-to-end on target hardware. Packaging and
-> IPC paths are independent of the mount runtime and are further along.
+> **Evidence rule (2026-07-16).** Source code and workflow definitions prove
+> that a path exists; they do not prove that a native job or device test has
+> passed. A platform may be advertised as supported only after its listed gate
+> has completed successfully for the release commit. NAS packages remain Tier
+> 2 candidates until the hardware matrix passes.
+
+## Product tiers
+
+- **Tier 1 target:** Linux, macOS, Windows, FreeBSD, NetBSD, OpenBSD,
+  DragonFly BSD, illumos/OmniOS, and Oracle Solaris. The portable library,
+  `RemoteFs`, CLI, daemon, transfer, sharing, and API surfaces are expected to
+  work on every Tier 1 target.
+- **Tier 1 mount target:** Linux, macOS, Windows, FreeBSD, NetBSD, OpenBSD,
+  and DragonFly BSD.
+- **Tier 1 without a kernel mount:** illumos and Solaris currently return
+  `MountError::UnsupportedPlatform`. This is deliberate: `fuser 0.16` does not
+  implement the Solaris-family mount/unmount ABI. API, CLI, copy, transfer,
+  and share operations are not coupled to a kernel mount. The WebDAV crate is
+  experimental and unshipped; its implemented subset has a daemon/`RemoteFs`
+  IPC adapter but no compliance-class claim.
+- **Tier 2 target:** Synology DSM, QNAP QTS/QuTS hero, and ASUSTOR ADM native
+  packages. These use Linux binaries and a shared durable supervisor, but each
+  appliance family requires its own hardware qualification.
 
 ## Capability matrix
 
-| Capability              | Linux (T1)                    | macOS 12+ (T1)                          | Windows 10/11 (T1)                           | FreeBSD 13+ (T2)              | OpenBSD 7.x (T3)              | NetBSD 10 (T3)                |
-|-------------------------|-------------------------------|-----------------------------------------|----------------------------------------------|-------------------------------|-------------------------------|-------------------------------|
-| **Mount backend**       | `fuser` → libfuse3            | **fuse-t** via direct `libfuse-t.dylib` FFI (scaffolded) | **WinFSP 2.x** via `winfsp` crate (scaffolded) | `fuser` → fusefs (scaffolded) | `fuser` → fusefs (scaffolded) | `fuser` → refuse (scaffolded) |
-| **Mount live-verified** | **yes**                       | no (hardware-bound)                     | no (hardware-bound)                          | no                            | no                            | no                            |
-| **Local IPC transport** | `AF_UNIX` (abstract → fallback to filesystem) | `AF_UNIX` under `~/Library/Application Support/pcloud-rs/` | **Named pipe** (`\\.\pipe\pcloud-rs`), AF_UNIX fallback on Win10 1803+ | `AF_UNIX`                    | `AF_UNIX`                     | `AF_UNIX`                     |
-| **Peer-cred check**     | `SO_PEERCRED` (uid/gid/pid)   | `LOCAL_PEERCRED` + `getpeereid(3)`      | `GetNamedPipeClientProcessId` + `OpenProcessToken` → SID match | `getpeereid(3)`              | `getpeereid(3)`              | `getpeereid(3)`              |
-| **Socket ACL**          | `0600`, owner-only dir `0700` | `0600`, owner-only dir                  | Named-pipe SD: owner + `SYSTEM` only         | `0600`, owner-only dir        | `0600`, owner-only dir        | `0600`, owner-only dir        |
-| **Vault backend**       | **libsecret** (Secret Service) → file fallback (`0600`) | **Keychain Services** (`SecItem*`)      | **DPAPI** (`CryptProtectData`, user scope)   | file fallback (`0600`)        | file fallback (`0600`)        | file fallback (`0600`)        |
-| **Keyring crate path**  | `pcloud-secret` + `secret-service` | `pcloud-secret` + `security-framework` | `pcloud-secret` + `windows-sys` DPAPI        | `pcloud-secret` (file)        | `pcloud-secret` (file)        | `pcloud-secret` (file)        |
-| **Supervisor**          | systemd (user + system)       | launchd (LaunchDaemon / LaunchAgent)    | Windows Service Control Manager (SCM)        | rc.d                          | rc.d                          | rc.d                          |
-| **Config dir**          | `$XDG_CONFIG_HOME/pcloud-rs/` (`~/.config/pcloud-rs/`) | `~/Library/Application Support/pcloud-rs/` | `%APPDATA%\pCloud\`                          | `~/.config/pcloud-rs/`         | `~/.config/pcloud-rs/`         | `~/.config/pcloud-rs/`         |
-| **Data dir**            | `$XDG_DATA_HOME/pcloud-rs/`    | `~/Library/Application Support/pcloud-rs/` | `%LOCALAPPDATA%\pCloud\`                     | `~/.local/share/pcloud-rs/`    | `~/.local/share/pcloud-rs/`    | `~/.local/share/pcloud-rs/`    |
-| **Log dir**             | `journald` (syslog fallback)  | `~/Library/Logs/pcloud-rs/`              | Windows Event Log (Application channel)      | `/var/log/pcloud-rs/`          | `/var/log/pcloud-rs/`          | `/var/log/pcloud-rs/`          |
-| **Clipboard**           | `wl-clipboard` / `xclip` via `arboard` | `NSPasteboard` via `arboard`    | Win32 clipboard via `arboard`                | X11 via `arboard` (optional)  | X11 via `arboard` (optional)  | X11 via `arboard` (optional)  |
-| **Notification channel**| `notify-rust` → D-Bus (FDO)   | `UserNotifications` framework (bridged) | Windows Toast (WinRT)                        | D-Bus (FDO) if desktop        | D-Bus (FDO) if desktop        | D-Bus (FDO) if desktop        |
-| **Signal handling**     | `SIGTERM`/`SIGINT` via `tokio::signal` | same; also launchd stop events   | `SetConsoleCtrlHandler` + SCM stop; named-pipe shutdown | POSIX signals                 | POSIX signals                 | POSIX signals                 |
-| **Mount probe**         | `/proc/self/mountinfo`        | `getmntinfo(3)`, `struct statfs`        | `GetVolumeInformation` + `QueryDosDevice` + WinFSP control API | `getmntinfo(3)`               | `getmntinfo(3)`               | `getmntinfo(3)`               |
+| Target | Mount adapter | Local peer authentication | Default/automatic vault | Native qualification path |
+|---|---|---|---|---|
+| Linux | `fuser` / FUSE | AF_UNIX + `SO_PEERCRED` | Secret Service when available, owner-only file fallback | strict local `/dev/fuse` aggregate plus release-commit live mount/package gates |
+| macOS | direct fuse-t FFI | AF_UNIX + `getpeereid(3)` | Keychain | hosted portable tests plus labelled fuse-t mount and signed/notarized package job |
+| Windows 10/11 | direct WinFSP FFI | named pipe + exact TokenUser SID comparison | DPAPI | hosted named-pipe tests plus checksum-pinned WinFSP live mount and signed Burn/MSI job |
+| FreeBSD | `fuser` / `fusefs` | AF_UNIX + `getpeereid(3)` | owner-only file vault | strict native VM workspace and live FUSE job |
+| NetBSD | `fuser` / native FUSE device | AF_UNIX + `getpeereid(3)` | owner-only file vault | strict native VM workspace and live FUSE job |
+| OpenBSD | `fuser` / `fusefs` | AF_UNIX + `getpeereid(3)` | owner-only file vault | strict native VM workspace and live FUSE job |
+| DragonFly BSD | `fuser` / `fusefs` | AF_UNIX + `getpeereid(3)` | owner-only file vault | strict native VM workspace and live FUSE job |
+| OmniOS/illumos | explicit unsupported mount | AF_UNIX + `getpeerucred(3)` | owner-only file vault | native OmniOS workspace/API/CLI job |
+| Oracle Solaris 11.4 | explicit unsupported mount | AF_UNIX + `getpeerucred(3)` | owner-only file vault | native Solaris workspace/API/CLI job |
+| Synology/QNAP/ASUSTOR | firmware-dependent `/dev/fuse`; never auto-mounted | package-local Unix IPC | package-local owner-only file vault | package validation plus per-vendor hardware matrix |
+
+The table describes intended release gates. Consult the GitHub Actions result
+for the exact commit before making a release claim.
+
+The current local evidence is narrower than the target matrix. On 2026-07-16,
+16 practical ignored mount/probe tests passed on Arch Linux x86_64 with a real
+kernel FUSE device and left no mount behind. This did not authenticate against
+a live pCloud account, install a package, or run from a clean release commit.
+It is therefore kernel-adapter qualification evidence, not proof that Linux or
+any other target is ready for public release.
+
+## Why `RemoteFs` is platform-neutral
+
+`pcloud_backends::RemoteFs` is the canonical ID-first facade for remote
+folder, transfer, and share operations. It resolves paths through the live
+remote API and treats the metadata cache only as an optimization. The CLI and
+SDK reach this facade through daemon IPC, while sync and mount adapters consume
+it inside the daemon. An empty or stale local cache therefore cannot create a
+second interpretation of the remote tree. The experimental WebDAV crate is
+intentionally demoted: its concrete adapter routes implemented verbs through
+the daemon's `RemoteFs` IPC surface, but the listener is not bootstrapped or
+shipped and makes no compliance claim.
+
+This separation is important on platforms where a kernel mount is unavailable:
+all production remote operations remain available through the library, CLI,
+or API. The OS-specific mount adapter is only another consumer of `RemoteFs`;
+it is not the owner of remote state.
 
 ## Crate ownership
 
-| Abstraction              | Crate                         | Platform-conditional sub-crates / features |
-|--------------------------|-------------------------------|---------------------------------------------|
-| Mount runtime            | `pcloud-fs`                   | `pcloud-fs-linux`, `pcloud-fs-mac` (fuse-t FFI), `pcloud-fs-win` (WinFSP), `pcloud-fs-bsd` |
-| Local IPC                | `pcloud-ipc`                  | `cfg(windows)` named-pipe module; `cfg(unix)` AF_UNIX module |
-| Peer-cred                | `pcloud-ipc::peer`            | Platform-specific implementations gated by `cfg`           |
-| Secret vault             | `pcloud-secret`, `auth_vault` | `secret-service`, `security-framework`, DPAPI via `windows-sys` |
-| Service supervision      | packaging assets (see [matrix](../operations/packaging-matrix.md)) | units ship with OS-native packages |
+| Concern | Owner | Platform seam |
+|---|---|---|
+| Canonical remote namespace and operations | `pcloud-backends::RemoteFs` | none; ID-first and portable |
+| SDK facade | `pcloud-sdk` | portable wrapper over `RemoteFs` |
+| CLI | `pcloud-cli` | portable IPC client |
+| Experimental WebDAV adapter | `pcloud-webdav::RemoteFsIpcBackend` | portable owner-authenticated IPC client; listener unshipped |
+| Kernel mount | `pcloud-fs::platform` | `LinuxPlatformMount`, `MacosPlatformMount`, `WindowsPlatformMount`, `BsdPlatformMount`, or `UnsupportedPlatformMount` |
+| Mount discovery/orphan cleanup | `pcloud-fs::MountinfoReader` | `/proc/self/mountinfo`, `getmntinfo(3)`, or Windows volume APIs |
+| Local IPC | `pcloud-ipc::platform` | `SO_PEERCRED`, `getpeereid`, `getpeerucred`, or named-pipe SID |
+| Secret storage | `pcloud-daemon::vault` | Secret Service/file, Keychain, DPAPI, or file |
+| Service lifecycle | `packaging/` and CLI | systemd, launchd, per-user Windows start, rc.d, or NAS package hooks |
 
-## Residual honest gaps
+There are no `pcloud-fs-mac`, `pcloud-fs-win`, or `pcloud-fs-bsd`
+sub-crates. Platform implementations live under
+`crates/pcloud-fs/src/platform/` and are selected at compile time.
 
-1. **Mount parity proof** (`bd-1du.4`): until fuse-t, WinFSP, and
-   *BSD `fusefs` are live-tested on hardware, this document describes
-   *scaffolded* capabilities for those targets — not verified ones.
-2. **Notification / clipboard** on headless servers: degrades to no-op;
-   tests assert graceful degradation, not feature parity.
-3. **Vault fallback** on platforms without a native keyring (headless
-   Linux, all *BSD): file-backed vault at `0600` with owner-only parent
-   directory. Raw password persistence is **not** mirrored from the C
-   client (see
-   [ADR 0007](../adr/0007.md)).
+## Mount lifecycle
 
-## If you're new to platform support
+All implemented adapters uphold the same lifecycle:
 
-The **thing to know**: the Rust codebase is intended to compile unchanged
-on all T1 and T2 targets. Platform differences are concentrated in five
-trait implementations (see [Overview](./overview.md) — "Five core platform
-abstractions"), and nothing outside those traits may name an OS. When you
-see a `#[cfg(target_os = "…")]` block in a non-platform crate, that is a
-bug report.
+| From | Event | To | Required behavior |
+|---|---|---|---|
+| Absent | `mount()` | Mounting | validate path and reject an existing mount |
+| Mounting | native backend ready | Online | replay durable journal before accepting writes |
+| Mounting | error | Failed | release all partially initialized native state |
+| Online | `unmount()` or service stop | Unmounting | stop new work and drain in-flight writes |
+| Unmounting | success | Absent | native mount discovery confirms removal |
+| Unmounting | timeout/error | Failed | return a surfaced error; never claim success |
 
-Today, the honest status is:
+RAII handles own ordinary teardown. Linux/BSD signal handling, macOS fuse-t
+cleanup, and the Windows active-mount reaper provide bounded abnormal-stop
+paths. A process kill or kernel failure can still require native recovery
+tooling; release qualification must exercise these cases.
 
-- **Linux** is the daily-driver target and the only hardware-verified
-  mount backend.
-- **macOS** and **Windows** are scaffolded and compile green, but mount
-  paths await hardware verification (`bd-1du.4`).
-- **FreeBSD / OpenBSD / NetBSD** are best-effort T2/T3, IPC and packaging
-  work, mount is untested on hardware.
+## Platform details
 
-## Per-platform deep walkthrough
+### Linux
 
-### Linux (T1)
+Linux uses `fuser`, `/dev/fuse`, `/proc/self/mountinfo`, AF_UNIX sockets with
+kernel `SO_PEERCRED`, and a systemd user or system unit. `VaultBackend::Auto`
+uses Secret Service when a session service is reachable and otherwise returns
+an explicit warning while selecting the owner-only file vault.
 
-The mount backend uses `fuser`, which wraps libfuse3 in a safe Rust
-binding. The daemon opens `/dev/fuse`, hands the fd to a worker thread,
-and drives the FUSE wire protocol from
-`crates/pcloud-fs/src/platform/linux.rs`. Unmount is a RAII `Drop` impl
-on the mount handle that sends `fusermount3 -u` and waits for the kernel
-mount to disappear from `/proc/self/mountinfo`.
+### macOS
 
-IPC uses a Unix domain socket under `$XDG_RUNTIME_DIR/pcloud/ipc.sock`
-(typically `/run/user/<uid>/pcloud/ipc.sock`). Peer cred comes from
-`SO_PEERCRED`, which returns `struct ucred { pid, uid, gid }` captured at
-the kernel level at accept time (so a later `setuid` by the peer does not
-retroactively promote it). The parent directory is `0700`, the socket
-`0600`; both are checked at accept time to defend against
-`/tmp`-style replacement attacks.
+macOS loads fuse-t through direct FFI and discovers mounts with
+`getmntinfo(3)`. IPC uses `getpeereid(3)`, not Linux `SO_PEERCRED` or
+`LOCAL_PEERCRED`. Automatic token storage uses Keychain. The public package
+job is intentionally strict: it requires Apple credentials, passes native
+fuse-t read/write/unmount tests, signs the binaries and installer, notarizes,
+staples, and assesses the resulting package. The installed per-user
+LaunchAgent is materialized without running the daemon as root.
 
-The vault is `libsecret` via the Secret Service D-Bus API when a desktop
-session is detected; otherwise it falls back to an integrity-checked
-owner-only file under `$XDG_DATA_HOME/pcloud/auth_token`. The integrity
-check uses BLAKE3; a tampered file is *not* recovered but treated as
-absent, forcing a fresh login.
+### Windows
 
-Supervisor: `systemd` user unit by default (`pcloudd.service`), or system
-unit on headless servers. Signals are handled by `tokio::signal` only in
-`pcloud-web`; the daemon uses `signal-hook-registry` to install a
-SIGTERM/SIGINT handler that sets an `AtomicBool`.
+Windows uses WinFSP through a small audited direct-FFI layer. Local IPC is an
+owner-specific named pipe whose DACL and accepted client TokenUser SID must
+match the daemon owner. There is no AF_UNIX fallback. Automatic token storage
+uses user-scope DPAPI. The public installer job requires signing credentials,
+signs binaries and the MSI, verifies a pinned vendor-signed WinFSP MSI, and
+produces a final signed WiX Burn bootstrapper.
 
-### macOS (T1, hardware-verified for IPC and vault, mount scaffolded)
+### BSD family
 
-Mount uses `fuse-t`, a user-space FUSE compatibility layer that does
-*not* require a kernel extension. The `pcloud-fs-mac` sub-crate loads
-`libfuse-t.dylib` via FFI and drives the same callback surface as Linux
-FUSE. The key difference is mount-point ownership: fuse-t mounts under
-`/Volumes/pcloud-<uuid>` and registers with the Finder via the
-standard `fuse-t` IPC.
+FreeBSD, NetBSD, OpenBSD, and DragonFly BSD share the `BsdPlatformMount` and
+`getpeereid(3)` IPC implementation while using their native FUSE device and
+mount table. Each explicitly supported BSD has its own strict native VM gate
+and in-tree rc.d asset. The DragonFly job additionally builds and retains a
+deterministic native binary/service candidate. These assets still require a
+successful release-commit run and native install/upgrade testing.
 
-IPC uses `AF_UNIX` under `~/Library/Application Support/pcloud-rs/ipc.sock`.
-Peer cred is `LOCAL_PEERCRED` via `getsockopt` returning `xucred`;
-comparison is against `geteuid()`. The socket permissions and parent
-directory rules are identical to Linux.
+### illumos and Solaris
 
-Vault uses Keychain Services. The envelope is stored as a `kSecClassGenericPassword`
-with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` so an iCloud
-backup cannot lift the secret off-device. ACLs are scoped to the daemon's
-bundle id; a re-signed binary triggers a user prompt rather than a silent
-read.
+The portable library, daemon, SDK, CLI, and IPC compile for these targets.
+`SolarishIpc` uses `getpeerucred(3)` and frees the returned credential object
+after extracting effective UID and PID. Kernel mounting is deliberately
+unsupported until a native adapter with a correct mount and unmount ABI lands.
+The native CI jobs are portability gates, not mount gates. Both jobs validate
+the in-tree SMF definition, build release binaries, assemble deterministic
+native candidates, and retain them as workflow artifacts.
 
-Supervisor: `launchd`. A LaunchAgent runs the daemon in the user's login
-session; a LaunchDaemon is used for device-scope deployments in the
-enterprise plist.
+### NAS appliances
 
-### Windows (T1, IPC and vault verified, mount scaffolded)
+Synology, QNAP, and ASUSTOR packages contain the same `pcloudc` and `pcloudd`
+binaries plus a common supervisor. They do not auto-mount, do not run the
+daemon as root to bypass FUSE permissions, and keep state in the vendor's
+persistent package directory. See `packaging/nas/README.md` for the hardware
+matrix and package-specific roots.
 
-Mount uses WinFSP 2.x via the `winfsp` crate. The mount point is either a
-drive letter (`P:\`) or a directory junction
-(`C:\Users\<user>\pCloud\`). The WinFSP user-mode service translates
-Windows FS callbacks into the same per-file operations Linux FUSE
-exposes; the adapter in `crates/pcloud-fs/src/platform/windows.rs`
-normalises the differences (path separators, case-insensitive lookups,
-ACL translation).
+## Remaining release blockers
 
-IPC uses a named pipe at `\\.\pipe\pcloud-<sid>`. The pipe security
-descriptor is an explicit DACL built from `InitializeSecurityDescriptor`
-plus `SetSecurityDescriptorDacl`; it grants `FILE_ALL_ACCESS` to exactly
-two trustees (daemon SID, user SID) and denies inheritance. Peer check:
-`GetNamedPipeClientProcessId` → `OpenProcessToken` → `TokenUser` → `EqualSid`.
-On mismatch the pipe is disconnected before the first byte is read.
+- The development worktree must be separated into reviewable commits and all
+  gates repeated from a clean release candidate. A dirty local pass is not a
+  reproducible release baseline.
+- Linux still needs release-commit CI, install/upgrade/uninstall testing of the
+  actual packages, and a credentialed pCloud transfer/share/mount smoke test.
+- The focused `pcloud-sdk` source contract is version 1.0.0 and packageable
+  after its registry dependencies exist. It has been split from the broad
+  unpublished `pcloud-embedded-sdk` compatibility API and exposes only
+  SDK-owned types over daemon IPC. No stable SDK release has been published;
+  the required registry order is `pcloud-model`, `pcloud-ipc`, then
+  `pcloud-sdk`, followed by install-from-registry verification.
+- A newly added native workflow is not passing evidence until it has run on
+  the release commit.
+- macOS and Windows public packages require real signing/notarization secrets
+  and successful native jobs.
+- BSD and Solaris-family service/package candidates still need retained
+  release-commit runs plus native install, start/stop, upgrade, and uninstall
+  evidence; no downstream ports, pkgsrc, or IPS repository is published yet.
+- illumos/Solaris kernel mounts remain explicitly unsupported.
+- Every NAS family needs install, upgrade, start/stop, reboot,
+  uninstall/reinstall, and live transfer testing on representative hardware.
 
-Windows 10 1803+ also supports `AF_UNIX`; the IPC module probes for this
-and will use a Unix socket path under `%LOCALAPPDATA%\pcloud\ipc.sock`
-when available, falling back to the named pipe on older builds.
-
-Vault is DPAPI via `CryptProtectData` with `CRYPTPROTECT_UI_FORBIDDEN`.
-The envelope is stored under `%APPDATA%\pcloud\auth_token`. DPAPI binds
-the ciphertext to the user's logon credential, so a stolen disk image
-from another account cannot recover the token.
-
-Supervisor: Windows SCM. The service manifest is in
-`packaging/windows/pcloudd-service.xml`.
-
-### FreeBSD (T2), OpenBSD / NetBSD (T3)
-
-Mount is scaffolded on top of `fusefs` (FreeBSD), `fusefs` (OpenBSD), and
-`refuse` (NetBSD) via `fuser`. No hardware verification.
-
-IPC is `AF_UNIX` with `getpeereid(3)` on all three; socket and directory
-permissions are identical to Linux. Vault falls back to the integrity-checked
-owner-only file path. Supervisor is `rc.d`.
-
-## State machine: mount lifecycle across platforms
-
-The state machine is identical on every platform; the per-platform
-implementation lives in `crates/pcloud-fs/src/platform/<os>.rs`.
-
-| From       | Event           | To          | Notes                                          |
-|------------|-----------------|-------------|------------------------------------------------|
-| Absent     | `mount()`       | Mounting    | Reject if mount point is already a mount.      |
-| Mounting   | ready           | Online      | Journal replay runs before accepting IO.       |
-| Mounting   | error           | Failed      | Cleanup partial kernel state.                  |
-| Online     | `unmount()`     | Unmounting  | Drain in-flight writes under back-pressure.    |
-| Online     | SIGTERM/SIGINT  | Unmounting  | Signal-aware RAII handle fires the same path.  |
-| Online     | OOM/panic       | Unmounting  | Panic guard drives the unmount via `Drop`.     |
-| Unmounting | success         | Absent      | `MountinfoReader` confirms absence.            |
-| Unmounting | timeout         | Failed      | Operator intervention required.                |
-| Failed     | `unmount()`     | Absent      | Force unmount (`umount -l` on Linux).          |
-
-## Tradeoffs and design decisions
-
-- **Why fuse-t on macOS instead of macFUSE?** macFUSE requires a signed
-  kernel extension and third-party KEXT load policy. fuse-t runs entirely
-  in user space, simplifies distribution, and works on Apple Silicon
-  without kext loading. Cost: slightly higher per-IO overhead, which is
-  acceptable for a network-bound client.
-- **Why WinFSP instead of Dokan?** WinFSP has the stronger security story
-  (explicit DACL on the mount, no kernel-mode token impersonation) and a
-  more active maintenance cycle.
-- **Why a Unix-socket fallback on Windows?** Because pipe DACLs are
-  painful to audit at scale; an AF_UNIX socket under
-  `%LOCALAPPDATA%` on Win10 1803+ gives us Unix-style permission checks
-  and the same `SO_PEERCRED`-equivalent.
-- **Why require the Secret Service D-Bus API on Linux desktops instead
-  of rolling our own?** Because a broken desktop keyring is the user's
-  problem, not ours, and forcing integration reveals environment issues
-  early.
-
-## Concurrency model (platform-specific)
-
-- Linux: FUSE callbacks run on a dedicated `fuser` thread pool (bounded,
-  sized to the number of cores); each callback posts into the daemon's
-  sync request path via a `crossbeam_channel`.
-- macOS: fuse-t callbacks arrive over a Unix socket from the fuse-t
-  helper; the adapter owns a small dispatch thread that translates
-  them into the same channel.
-- Windows: WinFSP callbacks run on the WinFSP service's threadpool; the
-  adapter translates them into IPC-style requests into the daemon.
-
-Peer-check threads are always single-shot per connection on every
-platform.
-
-## Security invariants (platform-specific)
-
-- Linux: `SO_PEERCRED` returns kernel-captured credentials; test at
-  `crates/pcloud-ipc/tests/peer_cred_linux.rs`.
-- macOS: `LOCAL_PEERCRED` returns kernel-captured `xucred`; test at
-  `crates/pcloud-ipc/tests/peer_cred_macos.rs`.
-- Windows: SID-DACL must deny `Everyone`; test at
-  `crates/pcloud-daemon-win/tests/pipe_dacl.rs`.
-- All platforms: vault file (when used) is `0600` on a `0700` parent;
-  test at `crates/pcloud-daemon/tests/vault_perms.rs`.
-
-## Extension points
-
-- New platform: implement the five traits (`PlatformMount`,
-  `PlatformIpc`, `PlatformVault`, `MountinfoReader`, `PcloudDirs`) in a
-  new sub-crate under `crates/pcloud-fs-<os>` (for mount) and inside
-  `pcloud-ipc` / `pcloud-secret` for the other four. Register the new
-  target in the CI matrix.
-- Alternative vault: implement `PlatformVault` against an enterprise KMS
-  via `pcloud-kms::KmsProvider`.
-- Alternative mount backend: implement `PlatformMount` against any FS
-  binding that exposes readdir/open/read/write; the daemon dispatch does
-  not care which backend it is driving.
-
-## Open `bd` trackers
-
-- **`bd-1du`** — parity epic.
-- **`bd-1du.4`** — mounted-drive parity: proves fuse-t, WinFSP, and
-  *BSD `fusefs` on hardware.
-- **`bd-1du.4.6.1`** — enterprise readiness surface (KMS, IDP, policy).
-- **`bd-1du.10`** — parity proof gates the release wording that lives in
-  this matrix.
-
-## Cross-references
-
-- [Overview](./overview.md) for the five platform traits in context.
-- [Crate Map](./crate-map.md) for which crates are platform-conditional.
-- [Operations → Platforms](../operations/platforms/linux.md) for
-  operator-facing platform info.
-- [Operations → Packaging Matrix](../operations/packaging-matrix.md) for
-  packaging-side ownership.
-- [Security Model](./security-model.md) for the security invariants.
-- [Request Lifecycle](./request-lifecycle.md) — the end-to-end platform
-  variations section.
+These gaps must remain visible in release notes and marketing copy; none may
+be converted into a support claim by documentation alone.

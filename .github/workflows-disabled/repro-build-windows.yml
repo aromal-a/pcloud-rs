@@ -1,0 +1,136 @@
+# Windows reproducible-build gate (T3.5).
+#
+# Mirrors the existing Linux `reproducible-build` job in `.github/workflows/ci.yml`
+# (lines 138-187) for windows-latest, using the `release-repro` profile. Two
+# independent runner contexts build; if the two SHA-256 manifests over
+# `pcloudc.exe` / `pcloudd.exe` differ, the merge job fails.
+#
+# AI-scope: this workflow + scripts/diff-repro-builds.sh. The actual
+# windows-latest runners are user-provided.
+#
+# PE-format reproducibility traps (Windows-specific):
+#   - PE COFF header carries a `TimeDateStamp` field. By default `link.exe`
+#     stamps the current wall clock — every build differs.
+#   - Resource compiler (`rc.exe`) embeds version info that includes a
+#     timestamp when the resource lacks an explicit FileVersion stamp.
+#   - Debug directory `TimeDateStamp` is stamped per-link.
+#
+# Mitigation (documented in
+# `docs/book/src/development/reproducible-builds.md` §9):
+#   - Pass `/Brepro` to `link.exe` via RUSTFLAGS link-arg. MSVC link.exe
+#     replaces the timestamp with `0xFFFFFFFF` (sentinel "reproducible"
+#     value) and zeroes the debug directory timestamp. This is the
+#     analogue of GNU ld's `--build-id=none` for our purposes.
+#   - We do NOT need `SOURCE_DATE_EPOCH` for `link.exe` itself, but rustc
+#     and `cargo-auditable` still honour it for embedded crate metadata,
+#     so we set it identically to the macOS job.
+
+name: repro-build-windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [development, main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/**"
+      - ".github/workflows/repro-build-windows.yml"
+      - "scripts/diff-repro-builds.sh"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/**"
+      - ".github/workflows/repro-build-windows.yml"
+      - "scripts/diff-repro-builds.sh"
+
+env:
+  SOURCE_DATE_EPOCH: "1700000000"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+
+jobs:
+  build:
+    name: windows repro build (slot ${{ matrix.slot }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [a, b]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Windows tooling is sensitive to CRLF line endings; the repo
+          # `.gitattributes` pins eol=lf for source files but workflow YAML
+          # is consumed by Actions either way. Leave default.
+          fetch-depth: 1
+
+      - uses: dtolnay/rust-toolchain@1.96.1
+
+      - name: Install cargo-auditable
+        shell: bash
+        run: cargo install cargo-auditable --version 0.7.5 --locked
+
+      - name: Build pcloudc.exe + pcloudd.exe via release-repro profile
+        # bash here (provided by git-bash on windows-latest) so the same
+        # quoting works as on Linux/macOS.
+        shell: bash
+        run: |
+          set -euo pipefail
+          # /Brepro: MSVC link.exe writes the reproducibility sentinel
+          # (0xFFFFFFFF) into PE TimeDateStamp + debug-directory timestamp.
+          # --remap-path-prefix scrubs absolute checkout paths from debuginfo
+          # / panic strings (rustc, identical mechanism to the Linux job).
+          export RUSTFLAGS="-C link-arg=/Brepro --remap-path-prefix=${GITHUB_WORKSPACE}="
+          CARGO_PROFILE_RELEASE_REPRO_ACTIVE=1 \
+            cargo auditable build \
+              --locked \
+              --profile release-repro \
+              -p pcloud-cli --bin pcloudc \
+              -p pcloud-daemon --bin pcloudd
+
+      - name: Snapshot binaries + emit SHA-256 manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p repro-out
+          cp -p target/release-repro/pcloudc.exe repro-out/pcloudc.exe
+          cp -p target/release-repro/pcloudd.exe repro-out/pcloudd.exe
+          # git-bash ships sha256sum via msys2.
+          (cd repro-out && sha256sum pcloudc.exe pcloudd.exe) | tee repro-out/SHA256SUMS
+
+      - name: Upload binaries (90-day retention for failed-diff investigation)
+        uses: actions/upload-artifact@v4
+        with:
+          name: repro-windows-${{ github.run_id }}-${{ matrix.slot }}
+          path: repro-out/
+          retention-days: 90
+
+  diff:
+    name: windows repro diff (compare slots a/b)
+    runs-on: windows-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download slot-a artefact
+        uses: actions/download-artifact@v4
+        with:
+          name: repro-windows-${{ github.run_id }}-a
+          path: dir-a
+
+      - name: Download slot-b artefact
+        uses: actions/download-artifact@v4
+        with:
+          name: repro-windows-${{ github.run_id }}-b
+          path: dir-b
+
+      - name: Diff SHA-256 manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/diff-repro-builds.sh
+          scripts/diff-repro-builds.sh dir-a dir-b pcloudc.exe pcloudd.exe

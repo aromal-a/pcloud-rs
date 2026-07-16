@@ -9,31 +9,14 @@
   Install: use packaging/macos/install.sh — it substitutes {{USER_HOME}}
   and {{BIN_DIR}}, creates ~/Library/Logs/pcloud-rs, and loads the agent.
 
-  Signing & notarization (hardened runtime required for Gatekeeper):
-
-    TEAM_ID="<your-10-char-Apple-Team-ID>"
-    IDENTITY="Developer ID Application: Your Name ($TEAM_ID)"
-    BINARY="$BIN_DIR/pcloudd"   # or pcloudc
-
-    # 1. Sign each binary with the hardened runtime + entitlements plist.
-    codesign --force --options runtime \
-        --entitlements packaging/macos/entitlements.plist \
-        --sign "$IDENTITY" \
-        "$BINARY"
-
-    # 2. Notarize the disk image / pkg that wraps the signed binary.
-    xcrun notarytool submit pcloud-rs.dmg \
-        --apple-id "$APPLE_ID" \
-        --team-id  "$TEAM_ID" \
-        --password "$APP_SPECIFIC_PASSWORD" \
-        --wait
-
-    # 3. Staple so offline Gatekeeper passes.
-    xcrun stapler staple pcloud-rs.dmg
+  Signing & notarization: see packaging/macos/README.md and
+  packaging/signing/README.md. XML comments cannot contain command-line
+  double-dash flags, so the concrete codesign/notarytool commands live in
+  those Markdown files rather than in this plist template.
 
   Entitlements summary (see packaging/macos/entitlements.plist):
     com.apple.security.network.client          — outbound HTTPS to pCloud API
-    com.apple.security.cs.disable-library-validation — false until fuse-t lands
+    com.apple.security.cs.disable-library-validation — true for fuse-t loading
     com.apple.security.cs.allow-jit            — false (pinned off)
     com.apple.security.cs.allow-unsigned-executable-memory — false (pinned off)
     com.apple.security.cs.allow-dyld-environment-variables — false (pinned off)
@@ -109,12 +92,6 @@
         <string>production</string>
         <key>PCLOUD_LOG_LEVEL</key>
         <string>info</string>
-        <key>PCLOUD_API_HOST</key>
-        <string>api.pcloud.com</string>
-        <key>PCLOUD_API_SERVER_NAME</key>
-        <string>api.pcloud.com</string>
-        <key>PCLOUD_CONFIG</key>
-        <string>{{USER_HOME}}/.config/pcloud-rs/config.toml</string>
         <!-- Set to 1 to persist auth tokens to the macOS Keychain -->
         <key>PCLOUD_DURABLE_AUTH_TOKENS</key>
         <string>1</string>

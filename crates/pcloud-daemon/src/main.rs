@@ -8,6 +8,7 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
+#[cfg(unix)]
 use pcloud_ipc::{IpcServer, current_effective_uid};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,19 +80,18 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("{}", runtime.summary());
             Ok(())
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         Mode::Serve => {
-            // Unix-socket IPC + flock-lease + setsid-daemonise path.
-            // The Windows Service host lives in `pcloud-daemon-win`
-            // (pcloudd-svc binary); running the Linux-style `pcloudd serve`
-            // on Windows is not supported (bd-xplat-windows tracks
-            // named-pipe IPC + Service-controlled serve loop).
-            return Err(
-                "`pcloudd serve` is Unix-only; on Windows use the `pcloudd-svc` \
-                 Service binary (bd-xplat-windows)."
-                    .to_string(),
-            );
+            // The public Windows package is deliberately per-user: pcloudc
+            // starts this exact binary without a console, and the portable
+            // IPC transport binds an owner-SID named pipe. The cooperative
+            // flag is driven by the normal IPC shutdown/drain path.
+            let shutdown = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            pcloud_daemon::serve_with_shutdown(shutdown)
+                .map_err(|err| format!("daemon request handling failed: {err}"))
         }
+        #[cfg(not(any(unix, windows)))]
+        Mode::Serve => Err("`pcloudd serve` is unsupported on this target family".to_owned()),
         #[cfg(unix)]
         Mode::Serve => {
             // Install signal handlers BEFORE bootstrapping subsystems so

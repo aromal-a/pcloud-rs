@@ -4,7 +4,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "MVP Web UI scaffold for the pcloud-rs daemon (P4.5). Axum-based localhost-only HTTP surface; read-only status views wired through the IPC client. Not the final Leptos SSR app."
+rust-version.workspace = true
+description = "MVP Web UI scaffold for the pcloud-rs daemon (P4.5). Axum-based HTTP surface with loopback defaults and IPC-backed status views. Not the final Leptos SSR app."
 
 [dependencies]
 axum = { version = "0.7", features = ["form"] }
@@ -20,9 +21,11 @@ getrandom.workspace = true
 subtle.workspace = true
 zeroize.workspace = true
 log.workspace = true
+libc.workspace = true
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util"] }
+tempfile = "3"
 
 [lints]
 workspace = true

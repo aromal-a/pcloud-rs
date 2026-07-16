@@ -40,7 +40,7 @@ error() { echo "  [err!]  $*" >&2; }
 if [[ "$DO_BUILD" == true ]]; then
     info "Building release binaries..."
     cd "$ROOT_DIR"
-    cargo build --release -p pcloud-cli -p pcloud-daemon
+    cargo build --release --locked -p pcloud-cli -p pcloud-daemon
     ok "Build complete"
 fi
 

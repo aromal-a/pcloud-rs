@@ -291,10 +291,11 @@ mounts on startup.
 
 On macOS, `/proc` does not exist. The `MacosMountinfoReader` struct
 (in `crates/pcloud-fs/src/platform/macos.rs`) calls `getmntinfo(3)` to
-enumerate the kernel mount table. It filters entries whose `f_fstypename`
-contains `"fuse"` (which covers both `macfuse` and `fuse-t`) and emits a
-`/proc/self/mountinfo`-shaped payload so the shared orphan-detection parser
-can consume it without a separate code path.
+enumerate the kernel mount table. pcloud-rs mounts carry the private
+`fsname=pcloud-rs` source identity. The reader requires both a FUSE-family
+filesystem type and that pCloud source identity, then emits a
+`/proc/self/mountinfo`-shaped payload. It therefore cannot claim an unrelated
+sshfs, rclone, or generic macFUSE volume during orphan recovery.
 
 ### Daemon management: launchd vs systemd
 
@@ -734,9 +735,9 @@ Keychain item class and hardware). Crypto master keys are held in
   as no-ops (the reply returns a refreshed attribute snapshot but does not
   forward the change to the remote). Full `setattr` coverage lands with
   `bd-1du.4.6`.
-- `statfs` replies with zero capacity (`f_blocks = 0`, `f_bfree = 0`).
-  Real pCloud quota reporting via the `FuseAdapter::statfs` hook is tracked
-  alongside the write-path work.
+- `statfs` reports live pCloud account quota through the canonical backend.
+  If the quota RPC fails, the filesystem call fails with `EIO`; local staging
+  capacity and synthetic cloud capacity are never substituted.
 
 ### Performance
 

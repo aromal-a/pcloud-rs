@@ -1,0 +1,19 @@
+[package]
+name = "pcloud-rsync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+description = "Rolling-hash + strong-hash block signatures and delta encoder for differential sync. T2.1 — only the modified blocks of an edit travel over the wire."
+
+[dependencies]
+sha2 = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+serde_json = "1"
+
+[lints]
+workspace = true

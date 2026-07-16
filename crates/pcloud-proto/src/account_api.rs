@@ -27,6 +27,7 @@
 //!
 //! Portable; no platform gating.
 
+use pcloud_secret::secret_string::SecretString;
 use thiserror::Error;
 
 use crate::{
@@ -94,10 +95,18 @@ pub struct ApiServerInfo {
 }
 
 /// `PasswordChangeResult` — password change result.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// CLAUDEREV iter-1 SEC-H fix: `auth_token` is `SecretString` so it
+/// zeroizes on drop, redacts in `Debug`, and never transits as a raw
+/// `String`. The struct drops `Clone` because `SecretString` is
+/// intentionally not `Clone` (use `clone_secret()` for explicit
+/// duplication); `PartialEq` / `Eq` are retained because `SecretString`
+/// already provides constant-time `PartialEq + Eq`.
+#[derive(Debug, PartialEq, Eq)]
 pub struct PasswordChangeResult {
-    /// The `auth_token` field (auth token).
-    pub auth_token: String,
+    /// The `auth_token` field (auth token). `SecretString` per
+    /// CLAUDEREV iter-1 SEC-H fix.
+    pub auth_token: SecretString,
     /// The `api_server` field (api server).
     pub api_server: Option<ApiServerHint>,
 }
@@ -341,10 +350,11 @@ where
         ))?;
         expect_ok_result(hash)?;
         let result = PasswordChangeResult {
-            auth_token: hash
-                .get_string("auth")
-                .ok_or(AccountApiError::Malformed("changepassword missing auth"))?
-                .to_owned(),
+            auth_token: SecretString::new(
+                hash.get_string("auth")
+                    .ok_or(AccountApiError::Malformed("changepassword missing auth"))?
+                    .to_owned(),
+            ),
             api_server: extract_api_server_hint(hash),
         };
         if let Some(hint) = result.api_server.as_ref() {
@@ -578,7 +588,10 @@ mod tests {
             .change_password("auth", "old", "new", "Desktop")
             .expect("change password should parse");
 
-        assert_eq!(result.auth_token, "new-auth-token");
+        assert_eq!(
+            pcloud_secret::ExposeSecret::expose_secret(&result.auth_token),
+            "new-auth-token"
+        );
     }
 
     #[test]

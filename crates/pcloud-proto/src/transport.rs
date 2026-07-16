@@ -33,7 +33,7 @@
 
 use std::{
     io::{self, Read, Write},
-    net::{TcpStream, ToSocketAddrs},
+    net::{IpAddr, TcpStream, ToSocketAddrs},
     sync::{Arc, RwLock},
     thread,
     time::{Duration, Instant},
@@ -406,6 +406,15 @@ impl BinaryApiTransport {
         body: &[u8],
     ) -> Result<Value, TransportError> {
         let config = self.config();
+        if !config.use_tls() && !is_loopback_host(&config.host) {
+            return Err(TransportError::Io(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                format!(
+                    "plaintext binary API transport is only permitted for loopback hosts, got '{}'",
+                    config.host
+                ),
+            )));
+        }
         let stream = connect_socket(&config)?;
         if config.use_tls() {
             execute_tls(stream, &config, request, body)
@@ -462,6 +471,15 @@ impl ApiServerHintConsumer for BinaryApiTransport {
 /// check because they never call `apply_api_server_hint`.
 fn is_known_safe_host(host: &str) -> bool {
     pcloud_config::api::is_known_safe_host(host)
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let trimmed = host.trim_matches(['[', ']']);
+    trimmed.eq_ignore_ascii_case("localhost")
+        || trimmed
+            .parse::<IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
 }
 
 /// Attempt a TCP connect to each resolved address in turn, returning
@@ -553,7 +571,7 @@ fn send_and_receive<S>(
 where
     S: Read + Write,
 {
-    write_all_with_deadline(stream, &request.bytes, timeout, interrupt_delay)?;
+    write_all_with_deadline(stream, request.bytes.as_slice(), timeout, interrupt_delay)?;
     if !body.is_empty() {
         write_all_with_deadline(stream, body, timeout, interrupt_delay)?;
     }
@@ -753,6 +771,28 @@ mod tests {
         let hash = response.as_hash().expect("response should be a hash");
         assert_eq!(hash.get_number("result"), Some(0));
         server.join().expect("server thread should finish");
+    }
+
+    #[test]
+    fn plaintext_transport_rejects_non_loopback_host() {
+        let request = encode_request("noop", &[], None).expect("request should encode");
+        let transport = BinaryApiTransport::new(TransportConfig::dev_plaintext(
+            "example.com",
+            80,
+            "example.com",
+        ));
+
+        let err = transport
+            .execute(&request)
+            .expect_err("plaintext transport to non-loopback host must fail");
+
+        match err {
+            super::TransportError::Io(io) => {
+                assert_eq!(io.kind(), std::io::ErrorKind::PermissionDenied);
+                assert!(io.to_string().contains("example.com"));
+            }
+            other => panic!("expected permission-denied Io error, got {other:?}"),
+        }
     }
 
     #[test]

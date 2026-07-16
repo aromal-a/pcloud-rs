@@ -1,15 +1,17 @@
 //! # Local IPC transport
 //!
-//! **PLATFORM: Unix (Linux, FreeBSD, OpenBSD, NetBSD, macOS) + Windows.**
+//! **PLATFORM: Unix (Linux, BSD, macOS, illumos, Solaris) + Windows.**
 //!
 //! ## Backend selection (cfg-gated)
 //!
 //! * `#[cfg(unix)]` — `BoundIpcServer` wraps a [`UnixListener`] and
 //!   dispatches peer-credential recovery through [`crate::platform`]:
 //!   Linux uses `SO_PEERCRED` (see `platform::linux`), BSD/macOS use
-//!   `getpeereid(3)` (see `platform::unix`).
+//!   `getpeereid(3)` (see `platform::unix`), while illumos/Solaris use
+//!   `getpeerucred(3)` (see `platform::solarish`).
 //! * `#[cfg(windows)]` — `BoundIpcServer` wraps a
-//!   [`crate::platform::windows::WindowsListener`] and dispatches peer
+//!   `crate::platform::windows::WindowsListener` (cfg(windows)-only;
+//!   intra-doc link disabled per CLAUDEREV P1.3) and dispatches peer
 //!   authentication through `GetNamedPipeClientProcessId` +
 //!   `TokenUser` SID comparison.
 //!
@@ -17,9 +19,10 @@
 //!
 //! The same framed-JSON protocol and the same connection-cap / slow-
 //! client isolation discipline apply to both transports. Per-request
-//! I/O is dispatched through the internal [`IpcStream`] trait so the
-//! [`BoundIpcServer::serve_once_with_peer`] body is identical on Unix
-//! and Windows.
+//! I/O is dispatched through the internal `IpcStream` trait (private
+//! implementation detail; intra-doc link disabled per CLAUDEREV P1.3)
+//! so the [`BoundIpcServer::serve_once_with_peer`] body is identical
+//! on Unix and Windows.
 //!
 //! ## Windows-specific behaviour differences
 //!
@@ -59,12 +62,16 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 use crate::{
     IpcClient, IpcServer,
     auth::PeerIdentity,
     methods::{Request, RequestEnvelope, Response},
-    protocol::ProtocolError,
+    protocol::{
+        IPC_PROTOCOL_VERSION, MAX_IPC_PAYLOAD_LEN, MIN_ACCEPTED_IPC_PROTOCOL_VERSION, MessageKind,
+        ProtocolError,
+    },
     server::{IpcError, MAX_REQUEST_BYTES},
 };
 
@@ -211,7 +218,7 @@ pub enum IpcTransportError {
 
 /// Minimal trait abstracting the stream operations the serve loop
 /// needs. Implemented on `UnixStream` (via its std I/O traits) and
-/// [`crate::platform::windows::WindowsStream`] (via its inherent
+/// `crate::platform::windows::WindowsStream` (via its inherent
 /// Win32-backed methods).
 trait IpcStream {
     fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()>;
@@ -295,7 +302,8 @@ impl BoundIpcServer {
     /// Absolute path of the Unix socket (Unix) or the recorded
     /// bind-target path (Windows — the actual pipe name is derived from
     /// the current TokenUser SID and is accessible via the inner
-    /// [`crate::platform::windows::WindowsListener::pipe_path`]).
+    /// `crate::platform::windows::WindowsListener::pipe_path`
+    /// (cfg(windows)-only; intra-doc link disabled per CLAUDEREV P1.3)).
     #[must_use]
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
@@ -349,8 +357,8 @@ impl BoundIpcServer {
             let fd = listener.as_raw_fd();
             let tv = match timeout {
                 Some(d) => libc::timeval {
-                    tv_sec: d.as_secs() as libc::time_t,
-                    tv_usec: d.subsec_micros() as libc::suseconds_t,
+                    tv_sec: d.as_secs() as _,
+                    tv_usec: d.subsec_micros() as _,
                 },
                 None => libc::timeval {
                     tv_sec: 0,
@@ -702,8 +710,9 @@ impl IpcServer {
     ///
     /// Windows: `socket_path` is retained for diagnostics; the actual
     /// named-pipe path is derived from the current TokenUser SID by
-    /// [`crate::platform::windows::WindowsIpc::bind_listener`]. The
-    /// DACL restricts access to the owner SID only (implicit "empty
+    /// `crate::platform::windows::WindowsIpc::bind_listener`
+    /// (cfg(windows)-only; intra-doc link disabled per CLAUDEREV P1.3).
+    /// The DACL restricts access to the owner SID only (implicit "empty
     /// DACL = deny all" for every other principal).
     pub fn bind(&self, socket_path: &Path) -> Result<BoundIpcServer, IpcTransportError> {
         #[cfg(unix)]
@@ -782,38 +791,26 @@ impl IpcClient {
     ) -> Result<Response, IpcTransportError> {
         #[cfg(unix)]
         {
-            let request_bytes = self.prepare_envelope(envelope)?;
+            let request_bytes = Zeroizing::new(self.prepare_envelope(envelope)?);
             let mut stream = UnixStream::connect(socket_path)?;
-            std::io::Write::write_all(&mut stream, &request_bytes)?;
+            std::io::Write::write_all(&mut stream, request_bytes.as_slice())?;
             stream.shutdown(std::net::Shutdown::Write)?;
 
-            let mut response_bytes = Vec::new();
-            std::io::Read::read_to_end(&mut stream, &mut response_bytes)?;
-            Ok(self.parse_response(&response_bytes)?)
+            let response_bytes = read_framed_response(&mut stream)?;
+            Ok(self.parse_response(response_bytes.as_slice())?)
         }
         #[cfg(windows)]
         {
             let _ = socket_path; // actual pipe derived from SID
-            let request_bytes = self.prepare_envelope(envelope)?;
-            let stream = crate::platform::windows::connect_client()?;
-            stream.write_all(&request_bytes)?;
+            let request_bytes = Zeroizing::new(self.prepare_envelope(envelope)?);
+            let mut stream = crate::platform::windows::connect_client()?;
+            stream.write_all(request_bytes.as_slice())?;
             // Named pipes have no half-shutdown; the server frames on
             // declared payload length and does not need EOF to know the
             // request is complete.
 
-            // Read the framed response: 8-byte header then payload_len.
-            let mut header = [0u8; 8];
-            stream.read_exact(&mut header)?;
-            let payload_len =
-                u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
-            let mut payload = vec![0u8; payload_len];
-            if payload_len > 0 {
-                stream.read_exact(&mut payload)?;
-            }
-            let mut response_bytes = Vec::with_capacity(8 + payload_len);
-            response_bytes.extend_from_slice(&header);
-            response_bytes.extend_from_slice(&payload);
-            Ok(self.parse_response(&response_bytes)?)
+            let response_bytes = read_framed_response(&mut stream)?;
+            Ok(self.parse_response(response_bytes.as_slice())?)
         }
     }
 }
@@ -852,7 +849,7 @@ where
             return handle_client_error(&mut stream, server, err);
         }
     };
-    let envelope = match server.decode_envelope(&request_bytes) {
+    let envelope = match server.decode_envelope(request_bytes.as_slice()) {
         Ok(envelope) => envelope,
         Err(err) => {
             return handle_client_error(&mut stream, server, IpcTransportError::Protocol(err));
@@ -896,7 +893,7 @@ where
             return handle_client_error(&mut stream, server, err);
         }
     };
-    let envelope = match server.decode_envelope(&request_bytes) {
+    let envelope = match server.decode_envelope(request_bytes.as_slice()) {
         Ok(envelope) => envelope,
         Err(err) => {
             return handle_client_error(&mut stream, server, IpcTransportError::Protocol(err));
@@ -908,7 +905,9 @@ where
     Ok(())
 }
 
-fn read_framed_request<S: IpcStream>(stream: &mut S) -> Result<Vec<u8>, IpcTransportError> {
+fn read_framed_request<S: IpcStream>(
+    stream: &mut S,
+) -> Result<Zeroizing<Vec<u8>>, IpcTransportError> {
     let mut header = [0u8; 8];
     stream.read_exact(&mut header)?;
 
@@ -920,11 +919,46 @@ fn read_framed_request<S: IpcStream>(stream: &mut S) -> Result<Vec<u8>, IpcTrans
         }));
     }
 
-    let mut bytes = Vec::with_capacity(8 + payload_len);
+    let mut bytes = Zeroizing::new(Vec::with_capacity(8 + payload_len));
     bytes.extend_from_slice(&header);
-    let mut payload = vec![0u8; payload_len];
-    stream.read_exact(&mut payload)?;
-    bytes.extend_from_slice(&payload);
+    let mut payload = Zeroizing::new(vec![0u8; payload_len]);
+    stream.read_exact(payload.as_mut_slice())?;
+    bytes.extend_from_slice(payload.as_slice());
+    Ok(bytes)
+}
+
+fn read_framed_response<S: IpcStream>(
+    stream: &mut S,
+) -> Result<Zeroizing<Vec<u8>>, IpcTransportError> {
+    let mut header = [0u8; 8];
+    stream.read_exact(&mut header)?;
+
+    let payload_len = u32::from_le_bytes([header[0], header[1], header[2], header[3]]) as usize;
+    let version = u16::from_le_bytes([header[4], header[5]]);
+    let message_type = u16::from_le_bytes([header[6], header[7]]);
+    if version < MIN_ACCEPTED_IPC_PROTOCOL_VERSION || version > IPC_PROTOCOL_VERSION {
+        return Err(ProtocolError::VersionMismatch {
+            expected: IPC_PROTOCOL_VERSION,
+            actual: version,
+        }
+        .into());
+    }
+    if message_type != MessageKind::Response as u16 {
+        return Err(ProtocolError::UnexpectedMessageKind {
+            expected: MessageKind::Response,
+            actual: message_type,
+        }
+        .into());
+    }
+    if payload_len > MAX_IPC_PAYLOAD_LEN {
+        return Err(ProtocolError::PayloadTooLarge.into());
+    }
+
+    let mut bytes = Zeroizing::new(Vec::with_capacity(8 + payload_len));
+    bytes.extend_from_slice(&header);
+    let mut payload = Zeroizing::new(vec![0u8; payload_len]);
+    stream.read_exact(payload.as_mut_slice())?;
+    bytes.extend_from_slice(payload.as_slice());
     Ok(bytes)
 }
 
@@ -990,6 +1024,9 @@ fn unix_peer_identity(stream: &UnixStream) -> Result<PeerIdentity, IpcTransportE
     ))]
     let (uid, pid) = crate::platform::unix::peer_ucred(stream)?;
 
+    #[cfg(any(target_os = "illumos", target_os = "solaris"))]
+    let (uid, pid) = crate::platform::solarish::peer_ucred(stream)?;
+
     Ok(PeerIdentity { uid, pid })
 }
 
@@ -1003,7 +1040,7 @@ mod tests {
 
     use crate::auth::current_effective_uid;
 
-    use super::{BoundInner, IpcClient, IpcServer};
+    use super::{BoundInner, IpcClient, IpcServer, read_framed_response};
 
     /// Build a per-test socket path inside a process-private subdir of
     /// `temp_dir()`. The subdir lets `IpcServer::bind` re-permission the
@@ -1015,6 +1052,65 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("pcloud-ipc-tests-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("create test socket dir");
         dir.join(format!("{name}.sock"))
+    }
+
+    struct HeaderOnlyResponseStream {
+        header: [u8; 8],
+        header_read: bool,
+        payload_read_attempts: usize,
+    }
+
+    impl super::IpcStream for HeaderOnlyResponseStream {
+        fn read_exact(&mut self, buf: &mut [u8]) -> std::io::Result<()> {
+            if !self.header_read && buf.len() == self.header.len() {
+                buf.copy_from_slice(&self.header);
+                self.header_read = true;
+                return Ok(());
+            }
+            self.payload_read_attempts += 1;
+            Err(std::io::Error::other("payload read attempted"))
+        }
+
+        fn write_all(&mut self, _buf: &[u8]) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        fn close_both(&mut self) {}
+
+        fn set_read_timeout(&self, _t: Option<Duration>) -> std::io::Result<()> {
+            Ok(())
+        }
+
+        fn set_write_timeout(&self, _t: Option<Duration>) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn client_response_reader_rejects_oversized_header_before_payload_read() {
+        let mut header = [0u8; 8];
+        header[..4].copy_from_slice(&((protocol::MAX_IPC_PAYLOAD_LEN + 1) as u32).to_le_bytes());
+        header[4..6].copy_from_slice(&protocol::IPC_PROTOCOL_VERSION.to_le_bytes());
+        header[6..8].copy_from_slice(&(protocol::MessageKind::Response as u16).to_le_bytes());
+        let mut stream = HeaderOnlyResponseStream {
+            header,
+            header_read: false,
+            payload_read_attempts: 0,
+        };
+
+        let err = read_framed_response(&mut stream).expect_err("oversized response must fail");
+        assert!(matches!(
+            err,
+            super::IpcTransportError::Protocol(protocol::ProtocolError::PayloadTooLarge)
+        ));
+        assert_eq!(
+            stream.payload_read_attempts, 0,
+            "oversized response must be rejected from the header before payload read/allocation"
+        );
     }
 
     #[test]

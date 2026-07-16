@@ -44,6 +44,16 @@ pub trait FolderBackend: Send + Sync + 'static {
     fn delete_folder(&self, _path: &str) -> Result<(), FsError> {
         Err(FsError::Invalid)
     }
+
+    /// Return the remote account capacity as `(total_bytes, free_bytes)`.
+    ///
+    /// Mount adapters use this value for `statfs`/`GetVolumeInfo`; it must
+    /// describe pCloud quota, not the local staging filesystem. Backends that
+    /// cannot query quota fail explicitly so platform shims never invent a
+    /// plausible-looking capacity.
+    fn statfs(&self) -> Result<(u64, u64), FsError> {
+        Err(FsError::Io)
+    }
 }
 
 /// `FolderBackend` backed by a live `pcloud-proto` transport.
@@ -959,6 +969,7 @@ pub mod mock {
     #[derive(Debug, Default)]
     pub struct MockFolderBackend {
         listings: Mutex<HashMap<String, Result<RemoteFolderListing, FsError>>>,
+        quota: Mutex<Option<Result<(u64, u64), FsError>>>,
     }
 
     impl MockFolderBackend {
@@ -1006,7 +1017,7 @@ pub mod mock {
             };
             self.listings
                 .lock()
-                .expect("mock: listings mutex poisoned")
+                .unwrap_or_else(|p| p.into_inner())
                 .insert(path.to_owned(), Ok(listing));
         }
 
@@ -1015,8 +1026,19 @@ pub mod mock {
         pub fn insert_error(&self, path: &str, err: FsError) {
             self.listings
                 .lock()
-                .expect("mock: listings mutex poisoned")
+                .unwrap_or_else(|p| p.into_inner())
                 .insert(path.to_owned(), Err(err));
+        }
+
+        /// Seed the account quota returned through the mount `statfs` path.
+        pub fn set_quota(&self, total_bytes: u64, free_bytes: u64) {
+            *self.quota.lock().unwrap_or_else(|p| p.into_inner()) =
+                Some(Ok((total_bytes, free_bytes)));
+        }
+
+        /// Seed an account-quota failure for platform error-path tests.
+        pub fn set_quota_error(&self, error: FsError) {
+            *self.quota.lock().unwrap_or_else(|p| p.into_inner()) = Some(Err(error));
         }
 
         /// Seed a canned directory listing with explicit per-entry sizes,
@@ -1061,14 +1083,22 @@ pub mod mock {
             };
             self.listings
                 .lock()
-                .expect("mock: listings mutex poisoned")
+                .unwrap_or_else(|p| p.into_inner())
                 .insert(path.to_owned(), Ok(listing));
         }
     }
 
     impl FolderBackend for MockFolderBackend {
+        fn statfs(&self) -> Result<(u64, u64), FsError> {
+            self.quota
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clone()
+                .unwrap_or(Err(FsError::Io))
+        }
+
         fn list_contents(&self, path: &str) -> Result<RemoteFolderListing, FsError> {
-            let guard = self.listings.lock().expect("mock: listings mutex poisoned");
+            let guard = self.listings.lock().unwrap_or_else(|p| p.into_inner());
             match guard.get(path) {
                 Some(Ok(l)) => Ok(l.clone()),
                 Some(Err(e)) => Err(e.clone()),
@@ -1108,7 +1138,7 @@ pub mod mock {
         pub fn insert_file(&self, file_id: u64, bytes: Vec<u8>) {
             self.files
                 .lock()
-                .expect("mock: files mutex poisoned")
+                .unwrap_or_else(|p| p.into_inner())
                 .insert(file_id, bytes);
         }
 
@@ -1117,7 +1147,7 @@ pub mod mock {
         pub fn insert_error(&self, file_id: u64, err: FsError) {
             self.errors
                 .lock()
-                .expect("mock: errors mutex poisoned")
+                .unwrap_or_else(|p| p.into_inner())
                 .insert(file_id, err);
         }
     }
@@ -1128,12 +1158,12 @@ pub mod mock {
             if let Some(err) = self
                 .errors
                 .lock()
-                .expect("mock: errors mutex poisoned")
+                .unwrap_or_else(|p| p.into_inner())
                 .get(&file_id)
             {
                 return Err(err.clone());
             }
-            let files = self.files.lock().expect("mock: files mutex poisoned");
+            let files = self.files.lock().unwrap_or_else(|p| p.into_inner());
             let bytes = files.get(&file_id).ok_or(FsError::NotFound)?;
             Ok(FileHandle {
                 file_id,
@@ -1149,12 +1179,12 @@ pub mod mock {
             if let Some(err) = self
                 .errors
                 .lock()
-                .expect("mock: errors mutex poisoned")
+                .unwrap_or_else(|p| p.into_inner())
                 .get(&handle.file_id)
             {
                 return Err(err.clone());
             }
-            let files = self.files.lock().expect("mock: files mutex poisoned");
+            let files = self.files.lock().unwrap_or_else(|p| p.into_inner());
             let bytes = files.get(&handle.file_id).ok_or(FsError::NotFound)?;
             let off = offset as usize;
             if off >= bytes.len() {

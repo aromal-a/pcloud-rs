@@ -7,6 +7,7 @@
 // **GATING:** none (portable).
 
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use pcloud_config::{
     ConfigError, ConfigProfile, Environment, api::ApiMode, env::apply_env_overrides,
@@ -36,6 +37,64 @@ fn prod_profile() -> ConfigProfile {
 
 fn dev_profile() -> ConfigProfile {
     ConfigProfile::secure_defaults(root(), Environment::Development)
+}
+
+const PCLOUD_ENV_KEYS: &[&str] = &[
+    "PCLOUD_ROOT",
+    "PCLOUD_ENV",
+    "PCLOUD_API_MODE",
+    "PCLOUD_API_HOST",
+    "PCLOUD_API_PORT",
+    "PCLOUD_API_SERVER_NAME",
+    "PCLOUD_API_CONNECT_TIMEOUT_MS",
+    "PCLOUD_API_READ_TIMEOUT_MS",
+    "PCLOUD_PLUGINS_ENABLED",
+    "PCLOUD_PLUGIN_ALLOW_NETWORK",
+    "PCLOUD_PLUGIN_ALLOW_SYNC_CONTROL",
+    "PCLOUD_PLUGIN_ALLOW_CRYPTO",
+    "PCLOUD_DURABLE_AUTH_TOKENS",
+    "PCLOUD_VAULT",
+    "PCLOUD_MOUNT_CACHE_SIZE_MB",
+    "PCLOUD_MOUNT_PAGE_CACHE_ENTRIES",
+    "PCLOUD_MOUNT_METADATA_TTL_SECS",
+    "PCLOUD_AUTO_MOUNT_PATH",
+];
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+fn with_pcloud_env<T>(overrides: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
+    let _guard = ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let saved: Vec<(&str, Option<std::ffi::OsString>)> = PCLOUD_ENV_KEYS
+        .iter()
+        .map(|key| (*key, std::env::var_os(key)))
+        .collect();
+    // SAFETY (test-only): Rust 2024 marks `std::env::set_var` /
+    // `remove_var` as unsafe because they race with libc getenv readers
+    // across threads. The enclosing `ENV_LOCK` mutex (acquired above)
+    // serialises every test that touches process env, so no concurrent
+    // reader observes the intermediate clear→set state.
+    // SAFETY: see preceding paragraph.
+    unsafe {
+        for key in PCLOUD_ENV_KEYS {
+            std::env::remove_var(key);
+        }
+        for (key, value) in overrides {
+            std::env::set_var(key, value);
+        }
+    }
+    let result = f();
+    // SAFETY: same ENV_LOCK-protected window as above (test-only).
+    unsafe {
+        for (key, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+    result
 }
 
 // ── secure_defaults + validate ────────────────────────────────────────────────
@@ -110,62 +169,45 @@ fn allow_other_is_off_by_default() {
 
 #[test]
 fn env_pcloud_api_host_overrides_host() {
-    // Safety: single-threaded test binary; env-var mutation is safe in this
-    // context. The variable is immediately removed after the assertion.
-    let result = unsafe {
-        std::env::set_var("PCLOUD_API_HOST", "test-api.example.com");
-        let r = apply_env_overrides(dev_profile());
-        std::env::remove_var("PCLOUD_API_HOST");
-        r
-    };
+    let result = with_pcloud_env(&[("PCLOUD_API_HOST", "test-api.example.com")], || {
+        apply_env_overrides(dev_profile())
+    });
     let p = result.expect("apply_env_overrides should succeed");
     assert_eq!(p.api.host, "test-api.example.com");
 }
 
 #[test]
 fn env_pcloud_api_port_overrides_port() {
-    let result = unsafe {
-        std::env::set_var("PCLOUD_API_PORT", "9000");
-        let r = apply_env_overrides(dev_profile());
-        std::env::remove_var("PCLOUD_API_PORT");
-        r
-    };
+    let result = with_pcloud_env(&[("PCLOUD_API_PORT", "9000")], || {
+        apply_env_overrides(dev_profile())
+    });
     let p = result.expect("apply_env_overrides should succeed");
     assert_eq!(p.api.port, 9000);
 }
 
 #[test]
 fn env_pcloud_durable_auth_tokens_enables_flag() {
-    let result = unsafe {
-        std::env::set_var("PCLOUD_DURABLE_AUTH_TOKENS", "true");
-        let r = apply_env_overrides(dev_profile());
-        std::env::remove_var("PCLOUD_DURABLE_AUTH_TOKENS");
-        r
-    };
+    let result = with_pcloud_env(&[("PCLOUD_DURABLE_AUTH_TOKENS", "true")], || {
+        apply_env_overrides(dev_profile())
+    });
     let p = result.expect("apply_env_overrides should succeed");
     assert!(p.features.durable_auth_tokens_enabled);
 }
 
 #[test]
 fn env_pcloud_env_sets_environment() {
-    let result = unsafe {
-        std::env::set_var("PCLOUD_ENV", "test");
-        let r = apply_env_overrides(dev_profile());
-        std::env::remove_var("PCLOUD_ENV");
-        r
-    };
+    let result = with_pcloud_env(&[("PCLOUD_ENV", "test")], || {
+        apply_env_overrides(dev_profile())
+    });
     let p = result.expect("apply_env_overrides should succeed");
     assert_eq!(p.environment, Environment::Test);
 }
 
 #[test]
 fn env_pcloud_root_rewrites_managed_paths() {
-    let result = unsafe {
-        std::env::set_var("PCLOUD_ROOT", "/tmp/pcloud-root-override");
-        let r = apply_env_overrides(dev_profile());
-        std::env::remove_var("PCLOUD_ROOT");
-        r
-    };
+    let result = with_pcloud_env(&[("PCLOUD_ROOT", "/tmp/pcloud-root-override")], || {
+        apply_env_overrides(dev_profile())
+    });
     let p = result.expect("apply_env_overrides should succeed");
     assert_eq!(
         p.paths.config_dir,
@@ -187,12 +229,10 @@ fn env_pcloud_root_rewrites_managed_paths() {
 
 #[test]
 fn env_invalid_bool_value_returns_typed_error() {
-    let result = unsafe {
-        std::env::set_var("PCLOUD_DURABLE_AUTH_TOKENS", "definitely-not-a-bool");
-        let r = apply_env_overrides(dev_profile());
-        std::env::remove_var("PCLOUD_DURABLE_AUTH_TOKENS");
-        r
-    };
+    let result = with_pcloud_env(
+        &[("PCLOUD_DURABLE_AUTH_TOKENS", "definitely-not-a-bool")],
+        || apply_env_overrides(dev_profile()),
+    );
     let err = result.expect_err("invalid bool should fail");
     assert!(
         matches!(err, ConfigError::InvalidEnvironmentValue { .. }),
@@ -202,24 +242,18 @@ fn env_invalid_bool_value_returns_typed_error() {
 
 #[test]
 fn env_invalid_port_returns_typed_error() {
-    let result = unsafe {
-        std::env::set_var("PCLOUD_API_PORT", "not-a-port");
-        let r = apply_env_overrides(dev_profile());
-        std::env::remove_var("PCLOUD_API_PORT");
-        r
-    };
+    let result = with_pcloud_env(&[("PCLOUD_API_PORT", "not-a-port")], || {
+        apply_env_overrides(dev_profile())
+    });
     let err = result.expect_err("invalid port should fail");
     assert!(matches!(err, ConfigError::InvalidEnvironmentValue { .. }));
 }
 
 #[test]
 fn env_invalid_environment_name_returns_typed_error() {
-    let result = unsafe {
-        std::env::set_var("PCLOUD_ENV", "staging");
-        let r = apply_env_overrides(dev_profile());
-        std::env::remove_var("PCLOUD_ENV");
-        r
-    };
+    let result = with_pcloud_env(&[("PCLOUD_ENV", "staging")], || {
+        apply_env_overrides(dev_profile())
+    });
     let err = result.expect_err("unknown env variant should fail");
     assert!(matches!(err, ConfigError::InvalidEnvironmentValue { .. }));
 }

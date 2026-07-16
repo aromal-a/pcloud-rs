@@ -419,8 +419,11 @@ impl CryptoGetFolderKeyResponse {
 
 /// `crypto_getpubkey` — fetch a recipient's RSA-4096 `pub_key_ver1` blob.
 ///
-/// One of [`userid`] or [`mail`] must be set; the server looks up the
-/// recipient by whichever is provided. For team-share (account_teamshare)
+/// One of `userid` or `mail` must be set (both are `Recipient`
+/// variants on the request enum below; intra-doc links disabled per
+/// CLAUDEREV P1.3 because the bare names resolve as variant fields,
+/// not standalone items); the server looks up the recipient by
+/// whichever is provided. For team-share (account_teamshare)
 /// flows, the C client reuses this same endpoint with `teamid` — the
 /// enum `Recipient::Team(teamid)` variant wires that form.
 #[derive(Debug, Clone, PartialEq, Eq)]

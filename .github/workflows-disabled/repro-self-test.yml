@@ -1,0 +1,51 @@
+# diff-repro-builds.sh self-test (T3.5 helper validation).
+#
+# Validates the `scripts/diff-repro-builds.sh` helper using synthetic
+# binary fixtures (urandom-filled `pcloudc` / `pcloudd`). This is a
+# *helper-correctness* gate: it proves the script's identical-vs-divergent
+# contract still holds after any future edit, without burning macOS or
+# Windows runner minutes.
+#
+# This workflow does NOT replace the macOS / Windows two-runner identical-
+# binary acceptance defined in `repro-build-macos.yml` and
+# `repro-build-windows.yml`. Those remain the actual T3.5 release-gating
+# evidence; this job is purely informational.
+#
+# Toolchain: bash + coreutils + sha256sum. No Rust toolchain required.
+
+name: repro-build-self-test
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [development, main]
+    paths:
+      - "scripts/diff-repro-builds.sh"
+      - "tests/repro_build/diff_helper_self_test.sh"
+      - ".github/workflows/repro-self-test.yml"
+  pull_request:
+    paths:
+      - "scripts/diff-repro-builds.sh"
+      - "tests/repro_build/diff_helper_self_test.sh"
+      - ".github/workflows/repro-self-test.yml"
+
+jobs:
+  self-test:
+    name: diff-repro-builds.sh contract self-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify required tools
+        run: |
+          set -euo pipefail
+          command -v bash
+          command -v dd
+          command -v cp
+          command -v mktemp
+          command -v sha256sum
+
+      - name: Run helper self-test
+        run: bash tests/repro_build/diff_helper_self_test.sh

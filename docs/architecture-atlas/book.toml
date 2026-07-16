@@ -1,0 +1,32 @@
+[book]
+title = "pcloud-rs Architecture Atlas"
+authors = ["pcloud-rs contributors"]
+description = "Source-derived architecture, entrypoint, operations, and file inventory for pcloud-rs."
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+git-repository-url = "https://github.com/ezechiel203/pcloud-rs"
+edit-url-template = "https://github.com/ezechiel203/pcloud-rs/edit/main/docs/architecture-atlas/{path}"
+default-theme = "navy"
+preferred-dark-theme = "navy"
+additional-css = ["theme/atlas.css"]
+site-url = "/"
+
+[output.html.fold]
+enable = true
+level = 1
+
+[output.html.search]
+enable = true
+limit-results = 40
+use-boolean-and = true
+boost-title = 3
+boost-hierarchy = 2
+boost-paragraph = 1
+expand = true
+heading-split-level = 2

@@ -112,7 +112,7 @@ Systemd unit that refuses to restart on config errors or usage bugs:
 
 ```ini
 [Service]
-ExecStart=/usr/bin/pcloud-daemon serve
+ExecStart=/usr/bin/pcloudd serve
 Restart=on-failure
 RestartPreventExitStatus=2 6
 ```

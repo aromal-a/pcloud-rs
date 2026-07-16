@@ -41,7 +41,7 @@ serde_json = { workspace = true, optional = true }
 # library at runtime (the consumer of this feature must supply the
 # `.so` / `.dylib` path via `Pkcs11Hsm::new_from_module`), so there is
 # no build-time linkage against a proprietary HSM SDK.
-cryptoki = { version = "0.10", optional = true }
+cryptoki = { version = "0.12", optional = true }
 # `getrandom` is only needed by the pkcs11 provider (AES-GCM IV).
 getrandom = { workspace = true, optional = true }
 

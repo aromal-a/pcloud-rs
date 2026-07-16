@@ -98,7 +98,7 @@ Fresh single-host install. Do not reuse a vault copied from another UID.
    `~/.config/pcloud-rs/config.json` (TLS enforced, vault persistence
    opted in if desired).
 4. Enable the service (Linux example; see per-platform chapters for
-   launchd, SCM, rc.d):
+   launchd, per-user Windows startup, and rc.d):
    ```bash
    systemctl --user daemon-reload
    systemctl --user enable --now pcloudd
@@ -253,8 +253,9 @@ daemon is down.
    # macOS (launchd)
    launchctl print gui/$(id -u)/com.pcloud.pcloudd
 
-   # Windows (SCM)
-   sc query pcloudd
+   # Windows (per-user daemon)
+   pcloudc status
+   Get-Process pcloudd -ErrorAction SilentlyContinue
 
    # FreeBSD / OpenBSD / NetBSD (rc.d)
    service pcloudd status
@@ -635,24 +636,13 @@ periodic integrity sweeper above.
 
 ## Recovering an older version of a file
 
-> **Honesty notice.** The `log`, `diff`, and `restore` CLI surfaces are
-> scaffolded but not yet live. The daemon dispatches
-> `Method::FileHistory` and returns `6 Unavailable` because pCloud's
-> `listrevisions` endpoint is undocumented and awaiting public-API
-> approval. Tracked under `bd-1du.10`. Until that bead closes, follow
-> the fallback below.
+pCloud's third-party API does not expose revision-history endpoints
+(`listrevisions` / `revertfile`), so `pcloud-rs` does not ship a
+`pcloudc log` / `diff` / `restore` surface. See
+[`docs/future-pcloud-clone-api.md`](../../../future-pcloud-clone-api.md)
+("Removed scaffolds") for context.
 
-**Preferred path (once enabled):**
-
-```bash
-pcloudc log /Documents/Plan.md --limit 20
-pcloudc diff /Documents/Plan.md 101 104
-pcloudc restore /Documents/Plan.md 101
-```
-
-Today all three return `6 Unavailable`.
-
-**Fallback today:**
+To recover an older version of a file today:
 
 1. Use the pCloud web UI revision history to identify the revision id
    and timestamp you want to recover.
@@ -668,10 +658,6 @@ Today all three return `6 Unavailable`.
    place it back under the sync root; `pcloudc verify --recursive`
    will confirm the reconciliation and `pcloudc sync localscan` will
    propagate the change.
-
-Do not claim revision rollback is production-ready until `bd-1du.10`
-closes and these steps collapse into a single `pcloudc restore`
-invocation.
 
 ## Log analysis guide
 
@@ -744,7 +730,7 @@ Use it as the primary correlation key during triage:
    do not leak filenames, paths, emails, tokens, or crypto material
    and are safe to attach to tickets without redaction.
 
-See [enterprise/tracing](../../../../enterprise/tracing.md) for the
+See [enterprise/tracing](../../../enterprise/tracing.md) for the
 full design, sampling policy, and collector configuration schema.
 
 ## Escalation

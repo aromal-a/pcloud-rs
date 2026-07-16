@@ -1,0 +1,189 @@
+name: Fuzz
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # nightly at 02:00 UTC
+  workflow_dispatch:
+
+jobs:
+  fuzz-ipc:
+    name: Fuzz (pcloud-ipc)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_ipc_frame
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly-2026-06-03
+      - run: cargo install cargo-fuzz --version 0.13.1 --locked
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@v4
+        with:
+          path: crates/pcloud-ipc/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-pcloud-ipc-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-pcloud-ipc-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: crates/pcloud-ipc
+        run: |
+          cargo metadata --locked --manifest-path fuzz/Cargo.toml \
+            --format-version 1 >/dev/null
+          cargo fuzz run ${{ matrix.target }} -- -max_total_time=300
+      - name: Upload fuzz artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-pcloud-ipc-${{ matrix.target }}-${{ github.run_id }}
+          path: crates/pcloud-ipc/fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  fuzz-crypto:
+    name: Fuzz (pcloud-crypto)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_open_sector
+          # H-05 fix: fuzz_pclsync_filename_decode was defined in
+          # crates/pcloud-crypto/fuzz/Cargo.toml but never wired into CI.
+          # The decoder runs a custom AES256/HMAC-SHA512 + base32 path that
+          # is attacker-reachable from a crypto folder listing; a panic
+          # there is a DoS. Added 2026-04-26.
+          - fuzz_pclsync_filename_decode
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly-2026-06-03
+      - run: cargo install cargo-fuzz --version 0.13.1 --locked
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@v4
+        with:
+          path: crates/pcloud-crypto/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-pcloud-crypto-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-pcloud-crypto-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: crates/pcloud-crypto
+        run: |
+          cargo metadata --locked --manifest-path fuzz/Cargo.toml \
+            --format-version 1 >/dev/null
+          cargo fuzz run ${{ matrix.target }} -- -max_total_time=300
+      - name: Upload fuzz artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-pcloud-crypto-${{ matrix.target }}-${{ github.run_id }}
+          path: crates/pcloud-crypto/fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  fuzz-daemon:
+    name: Fuzz (pcloud-daemon)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          # H-05 fix: fuzz_auth_vault_decode was defined in
+          # crates/pcloud-daemon/fuzz/Cargo.toml but never wired into CI.
+          # The vault-token parser is security-critical: a panic inside
+          # load_token is a token-theft DoS. Added 2026-04-26.
+          - fuzz_auth_vault_decode
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly-2026-06-03
+      - run: cargo install cargo-fuzz --version 0.13.1 --locked
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@v4
+        with:
+          path: crates/pcloud-daemon/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-pcloud-daemon-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-pcloud-daemon-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: crates/pcloud-daemon
+        run: |
+          cargo metadata --locked --manifest-path fuzz/Cargo.toml \
+            --format-version 1 >/dev/null
+          cargo fuzz run ${{ matrix.target }} -- -max_total_time=300
+      - name: Upload fuzz artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-pcloud-daemon-${{ matrix.target }}-${{ github.run_id }}
+          path: crates/pcloud-daemon/fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  fuzz-proto:
+    name: Fuzz (pcloud-proto)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - fuzz_auth_flow_state
+          - fuzz_binary_request_roundtrip
+          - fuzz_ipc_method_decode
+          - fuzz_json_response
+          - fuzz_path_canonicalize
+          - fuzz_response_parser
+          - fuzz_listfolder_response
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly-2026-06-03
+      - run: cargo install cargo-fuzz --version 0.13.1 --locked
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@v4
+        with:
+          path: crates/pcloud-proto/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-pcloud-proto-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-pcloud-proto-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: crates/pcloud-proto
+        run: |
+          cargo metadata --locked --manifest-path fuzz/Cargo.toml \
+            --format-version 1 >/dev/null
+          cargo fuzz run ${{ matrix.target }} -- -max_total_time=300
+      - name: Upload fuzz artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-pcloud-proto-${{ matrix.target }}-${{ github.run_id }}
+          path: crates/pcloud-proto/fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  fuzz-cross-crate:
+    name: Fuzz (cross-crate protocol surfaces)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - transport_frame
+          - ipc_request
+          - public_link_uri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly-2026-06-03
+      - run: cargo install cargo-fuzz --version 0.13.1 --locked
+      - name: Restore fuzz corpus cache
+        uses: actions/cache@v4
+        with:
+          path: fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-cross-crate-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-cross-crate-${{ matrix.target }}-
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: fuzz
+        run: |
+          cargo metadata --locked --format-version 1 >/dev/null
+          cargo fuzz run ${{ matrix.target }} -- -max_total_time=300
+      - name: Upload fuzz artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-cross-crate-${{ matrix.target }}-${{ github.run_id }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 14

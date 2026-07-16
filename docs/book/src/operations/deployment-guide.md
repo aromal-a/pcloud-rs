@@ -8,11 +8,11 @@ backend, service-management cheat-sheets, troubleshooting top-10), see
 the [`platforms/`](./platforms/linux.md) chapters.
 
 > **Honesty callout.** The Rust rewrite is **not** a "drop-in
-> replacement" for the legacy C client. Linux is Tier 1 (live-tested,
-> mounted-drive proven). macOS and BSD are Tier 2 (compile + lib
-> tests, hardware verification pending). Windows is Tier 2 with the
-> named-pipe IPC accept loop in flight. Do not deploy to a tier
-> higher than the matrix in
+> replacement" for the legacy C client and has no public release. Linux is the
+> Tier-1 reference target and has local kernel-adapter evidence, but it has not
+> passed a clean, credentialed, installed-package release gate. macOS, Windows,
+> every BSD/Unix target, and Tier-2 NAS packages still require their native
+> qualification evidence. Do not deploy beyond the matrix in
 > [`architecture/platform-support.md`](../architecture/platform-support.md).
 
 ---
@@ -39,79 +39,79 @@ sudo pacman  -S      fuse3   # Arch
 
 ### 1.2 Install the binaries
 
-Either via the project APT/RPM/AUR/Nix repo (see
-[`platforms/linux.md` § Install](./platforms/linux.md#install)) or
-from a verified release tarball:
+No project package repository or release tarball exists. Build the reviewed
+checkout with the locked dependency graph:
 
 ```bash
-# Verify before extracting.
-sha256sum -c pcloud-rs-x.y.z.tar.gz.sha256
-cosign verify-blob \
-  --key https://releases.pcloud-rs.example/release.pub \
-  --signature pcloud-rs-x.y.z.tar.gz.sig \
-  pcloud-rs-x.y.z.tar.gz
-
-tar -xzf pcloud-rs-x.y.z.tar.gz
-sudo install -Dm0755 pcloud-rs/pcloudd /usr/bin/pcloudd
-sudo install -Dm0755 pcloud-rs/pcloudc /usr/bin/pcloudc
+git clone https://github.com/ezechiel203/pcloud-rs
+cd pcloud-rs
+cargo build --release --locked -p pcloud-daemon -p pcloud-cli
+sudo install -Dm0755 target/release/pcloudd /usr/bin/pcloudd
+sudo install -Dm0755 target/release/pcloudc /usr/bin/pcloudc
 ```
 
 ### 1.3 Install the systemd unit
 
-> **Required: install the API-access drop-in before starting.**
-> The shipped unit applies `IPAddressDeny=any` with only localhost
-> whitelisted. The daemon **cannot reach the pCloud API** — and therefore
-> cannot log in or sync — until you install the network override.
+> **Network model.** The shipped unit does **not** set `IPAddressDeny=` or
+> `IPAddressAllow=` by default. Outbound API access is governed by the host
+> firewall. Install `override.conf.example` only if you want an opt-in
+> cgroup-level egress allow-list.
 
 ```bash
 sudo install -Dm0644 \
   packaging/systemd/pcloudd.service \
   /etc/systemd/system/pcloudd.service
 
-# Mandatory: allow outbound connections to the pCloud API.
-sudo mkdir -p /etc/systemd/system/pcloudd.service.d/
-sudo install -m 644 \
-  packaging/systemd/override.conf.example \
-  /etc/systemd/system/pcloudd.service.d/api-access.conf
-
 sudo systemctl daemon-reload
 sudo systemctl enable --now pcloudd.service
+
+# Optional: add a strict systemd egress allow-list on top of the host firewall.
+sudo install -Dm0644 \
+  packaging/systemd/override.conf.example \
+  /etc/systemd/system/pcloudd.service.d/egress-allow-list.conf
+sudo systemctl daemon-reload
+sudo systemctl restart pcloudd.service
 ```
 
 For a per-user deployment instead:
 
-> **Warning.** The shipped unit contains `DynamicUser=yes` and several
-> other directives that systemd **rejects** in user mode (`--user`).
-> Running `systemctl --user start pcloudd.service` without the
-> compatibility drop-in will fail with:
-> `DynamicUser= enabled for user unit, which is not supported`.
-> You **must** install the `override-user.conf.example` drop-in
-> alongside the unit, which strips the incompatible directives.
+Use the dedicated user unit. Do not copy `pcloudd.service` into
+`~/.config/systemd/user/`; it is system-only and contains directives
+that user managers reject.
 
 ```bash
-# Step 1: install the unit file.
 install -Dm0644 \
-  packaging/systemd/pcloudd.service \
+  packaging/systemd/pcloudd-user.service \
   ~/.config/systemd/user/pcloudd.service
-
-# Step 2: install the mandatory user-compat drop-in.
-mkdir -p ~/.config/systemd/user/pcloudd.service.d/
-install -m 644 \
-  packaging/systemd/override-user.conf.example \
-  ~/.config/systemd/user/pcloudd.service.d/user-compat.conf
-
-# Step 3: also install the API-access drop-in (pCloud API is blocked by default).
-install -m 644 \
-  packaging/systemd/override.conf.example \
-  ~/.config/systemd/user/pcloudd.service.d/api-access.conf
 
 systemctl --user daemon-reload
 systemctl --user enable --now pcloudd.service
+
+# Optional: add a strict systemd egress allow-list on top of the host firewall.
+install -Dm0644 \
+  packaging/systemd/override.conf.example \
+  ~/.config/systemd/user/pcloudd.service.d/egress-allow-list.conf
+systemctl --user daemon-reload
+systemctl --user restart pcloudd.service
 ```
 
 The shipped system unit uses `DynamicUser=yes` by default (ephemeral
 UID, no home dir). To pin a fixed user in the system unit, see
 [`packaging/systemd/override.conf.example`](https://github.com/ezechiel203/pcloud-rs/blob/main/packaging/systemd/override.conf.example).
+
+For non-interactive bootstrap, prefer systemd credentials over environment
+secrets:
+
+```ini
+[Service]
+LoadCredentialEncrypted=pcloud-rs-token:/etc/credstore.encrypted/pcloud-rs-token
+```
+
+The daemon reads `$CREDENTIALS_DIRECTORY/pcloud-rs-token` as a fallback for
+`PCLOUDRS_TOKEN_FILE`, and similarly supports `pcloud-rs-username`,
+`pcloud-rs-password`, `pcloud-rs-tfa-code`, and
+`pcloud-rs-recovery-code`. Credential files must be regular files owned by
+the daemon UID with no group/other permission bits.
 
 ### 1.4 Enable the FUSE override (only if mounting)
 
@@ -129,8 +129,8 @@ sudo systemctl restart pcloudd.service
 ### 1.5 Verify the install
 
 ```bash
-systemctl --user status pcloudd.service
-journalctl --user -u pcloudd.service -n 50 --no-pager
+systemctl status pcloudd.service
+journalctl -u pcloudd.service -n 50 --no-pager
 pcloudc userinfo            # before login: returns Unauthenticated
 pcloudc login               # interactive
 pcloudc userinfo            # after login: prints account info
@@ -140,10 +140,10 @@ pcloudc userinfo            # after login: prints account info
 
 | Tree | Default | Override |
 |------|---------|----------|
-| Config | `${XDG_CONFIG_HOME:-$HOME/.config}/pcloud-rs/config.json` | `--config <path>` |
-| State (SQLite, journal) | `${XDG_STATE_HOME:-$HOME/.local/state}/pcloud-rs/` | `PCLOUD_ROOT` env / `state.path` |
-| Data (vault) | `${XDG_DATA_HOME:-$HOME/.local/share}/pcloud-rs/` | `PCLOUD_ROOT` env / `data.path` |
-| Runtime (sockets) | `${XDG_RUNTIME_DIR:-/run/user/$UID}/pcloud-rs/` | `runtime.path` |
+| Config file candidate | `$HOME/.config/pcloud/config.json`, then `$HOME/.pcloud/config.json` | `--config <path>` |
+| Config dir | `${XDG_CONFIG_HOME:-$HOME/.config}/pcloud/pcloud-rs/` | `PCLOUD_ROOT` |
+| State dir | `${XDG_DATA_HOME:-$HOME/.local/share}/pcloud/pcloud-rs/` | `PCLOUD_ROOT` |
+| Runtime dir | `${XDG_RUNTIME_DIR:-/run/user/$UID}/pcloud/pcloud-rs/` | `PCLOUD_ROOT` |
 
 Validate the config:
 
@@ -178,10 +178,10 @@ sudo semodule -i packaging/selinux/pcloud-rs.pp
 sudo restorecon -RF /var/lib/pcloud-rs /var/log/pcloud-rs /run/pcloud-rs
 ```
 
-No AppArmor profile ships in-tree at this writing; if your
-distribution requires one, use the
-[`platforms/linux.md` § AppArmor](./platforms/linux.md#apparmor-debian--ubuntu)
-template as a starting point.
+An AppArmor profile ships at `packaging/apparmor/usr.local.bin.pcloudd`.
+Treat it as a starting profile: review paths and FUSE needs for your
+distribution before enforcing it. See
+[`platforms/linux.md` § AppArmor](./platforms/linux.md#apparmor-debian--ubuntu).
 
 ---
 
@@ -198,24 +198,20 @@ template as a starting point.
 
 ### 2.2 Install
 
-```bash
-# Homebrew tap (preferred):
-brew install pcloud-rs/tap/pcloud-rs
+No macOS release workflow publishes a signed Homebrew bottle, `.pkg`, or
+notarised `.dmg` today. The Homebrew formula and package scripts are
+operator-run scaffolds; build and sign them locally before evaluation.
 
-# Or from a notarised .pkg:
-sudo installer -pkg pcloud-rs-x.y.z.pkg -target /
-```
-
-The installer drops binaries under `/usr/local/bin/`, the launchd
-plist under `/Library/LaunchAgents/com.pcloud.pcloudd.plist` (or the
-per-user equivalent), and configures the keychain-backed vault.
+The local package scripts drop binaries under `/usr/local/bin/` and the
+user LaunchAgent template under
+`~/Library/LaunchAgents/com.pcloud.pcloud-rs.plist`.
 
 ### 2.3 Enable the launchd agent
 
 ```bash
 launchctl load -w \
-  ~/Library/LaunchAgents/com.pcloud.pcloudd.plist
-launchctl list | grep com.pcloud.pcloudd
+  ~/Library/LaunchAgents/com.pcloud.pcloud-rs.plist
+launchctl list | grep com.pcloud.pcloud-rs
 ```
 
 For the system-scope variant, place the plist in
@@ -234,8 +230,8 @@ For the system-scope variant, place the plist in
 ```
 
 Gatekeeper rejects unsigned binaries on first launch from a
-quarantined download. Self-built binaries used via Homebrew tap built
-locally are exempt.
+quarantined download. Locally built binaries may still need quarantine
+attributes cleared depending on how they were transferred.
 
 ### 2.5 Troubleshooting first run
 
@@ -253,58 +249,46 @@ Full per-platform deep dive:
 
 ---
 
-## 3. Windows (Tier 2, IPC accept loop in flight)
+## 3. Windows (Tier 1 qualification target)
 
 ### 3.1 Prerequisites
 
-- Windows 10 22H2 / Windows 11 22H2+ / Server 2022.
-- [WinFSP 2.1.x](https://winfsp.dev/rel/) installed (vendor MSI).
-- An Administrator account for SCM service install.
+- Windows 10/11 x64.
+- The signed public setup bundle, which chains the checksum-pinned and
+  vendor-signature-verified WinFSP 2.1 MSI.
+- Administrator approval for machine-wide binary/driver installation; daemon
+  runtime remains per-user.
 
 ### 3.2 Install
 
-```powershell
-# Chocolatey:
-choco install pcloud-rs
+Verify the setup bundle's Authenticode signature and release checksum, then run
+it elevated. The standalone MSI requires WinFSP to be installed already.
 
-# Or winget:
-winget install pCloud.pcloud-rs
+### 3.3 Start the per-user daemon
 
-# Or from a signed MSI:
-msiexec /i pcloud-rs-x.y.z.msi /qn
-```
-
-### 3.3 Service install
-
-The MSI installs `pcloudd-svc` as an SCM-managed service set to
-auto-start. To install manually from a zip:
+Run this from the interactive user's session:
 
 ```powershell
-# As Administrator:
-sc.exe create pcloudd-svc binPath= "C:\Program Files\pcloud-rs\pcloudd-svc.exe" `
-  start= auto DisplayName= "pCloud Rust Daemon"
-sc.exe failure pcloudd-svc reset= 60 actions= restart/5000
-sc.exe start  pcloudd-svc
+pcloudc start
+pcloudc status
 ```
 
-### 3.4 Honest current status
+The MSI deliberately installs no SCM service. Named-pipe authentication,
+DPAPI, and WinFSP mounts are bound to the user SID; a service account would
+create an endpoint and vault the user cannot access.
 
-> **`pcloudd-svc` compiles and starts** on Windows MSVC 14.44 + Rust
-> 1.95 + WinFSP 2.1.25156. Workspace `cargo test --workspace --lib`
-> reports 1449 / 0 / 2 passing on the Windows runner. **However**, the
-> named-pipe IPC accept loop is **not** wired through `serve_once`
-> yet — the Windows daemon currently runs a no-op stub.
-> CLI-to-daemon round-trip and live WinFSP mount are **not** yet
-> live-verified. See `CLAUDE.md` § "Windows posture" for the gating
-> remaining work and `bd-xplat-windows` for the tracker.
+### 3.4 Release evidence
 
-Use Windows for evaluation only until `bd-xplat-windows` closes.
+The repository defines hosted Windows named-pipe tests, a live WinFSP
+mount/read/write/unmount gate, and a strict signed MSI/Burn release job. Treat
+Windows as supported only when those exact jobs pass for the release commit;
+the workflow text alone is not evidence.
 
 Per-platform deep dive: [`platforms/windows.md`](./platforms/windows.md).
 
 ---
 
-## 4. FreeBSD (Tier 3, community best-effort)
+## 4. FreeBSD (Tier 1 qualification target)
 
 ### 4.1 Prerequisites
 
@@ -365,10 +349,10 @@ inline in the unit file; the table below is for quick reference.
 
 | Directive | Value | Why |
 |-----------|-------|-----|
-| `Type=` | `notify` | Daemon emits `sd_notify(READY=1)` after binding the socket; systemd waits for it before declaring active. |
-| `WatchdogSec=` | `30s` | Daemon emits `sd_notify(WATCHDOG=1)` per serve-loop tick. Hung loops are restarted. |
+| `Type=` | `simple` | Daemon binds its own IPC socket and does not emit `READY=1` on the Unix serve path. |
+| `WatchdogSec=` | _unset_ | Watchdog is disabled until daemon heartbeats are driven by `$WATCHDOG_USEC`; a fixed `30s` watchdog can kill a healthy idle daemon. |
 | `DynamicUser=` | `yes` | Ephemeral UID; no fixed account to compromise. |
-| `NotifyAccess=` | `main` | Required when `DynamicUser=yes` + `PrivateUsers=yes` are both on. |
+| `NotifyAccess=` | _unset_ | Not needed while `Type=simple` and `WatchdogSec=` are unset. |
 | `ProtectSystem=` | `strict` | Read-only `/usr`, `/boot`, `/etc`. |
 | `ProtectHome=` | `tmpfs` | `/home` invisible to the daemon. |
 | `PrivateTmp=` | `yes` | Per-service `/tmp` namespace. |
@@ -393,8 +377,8 @@ inline in the unit file; the table below is for quick reference.
 | `CapabilityBoundingSet=` | _empty_ | All file capabilities dropped. |
 | `AmbientCapabilities=` | _empty_ | No ambient caps. |
 | `RestrictAddressFamilies=` | `AF_UNIX AF_INET AF_INET6` | No `AF_NETLINK`, `AF_PACKET`, etc. |
-| `IPAddressDeny=` | `any` | Default-deny outbound. |
-| `IPAddressAllow=` | `localhost` | Plus operator-added pCloud endpoints. |
+| `IPAddressDeny=` | _unset by default_ | Host firewall governs outbound traffic; `override.conf.example` can opt into `any`. |
+| `IPAddressAllow=` | _unset by default_ | Only used by the optional egress allow-list drop-in. |
 | `SystemCallArchitectures=` | `native` | x86_64 only on x86_64. |
 | `SystemCallFilter=` | `@system-service ~@privileged @resources @obsolete @mount @debug @cpu-emulation @raw-io @reboot @swap` | Deny-by-default allow-list of system-service syscalls. |
 | `SystemCallErrorNumber=` | `EPERM` | Filtered syscalls return `EPERM` not `SIGSYS`. |
@@ -410,8 +394,9 @@ inline in the unit file; the table below is for quick reference.
 
 Operator responsibility:
 
-- **Broaden `IPAddressAllow=`** to cover the pCloud API endpoints
-  you actually use (`api.pcloud.com`, `eapi.pcloud.com`).
+- **Install `override.conf.example` only when you want systemd-level egress
+  allow-listing.** Keep its `IPAddressAllow=` entries aligned with the
+  pCloud API endpoints you actually use.
 - **Provide auth tokens via `LoadCredentialEncrypted=`**, never via
   `Environment=`.
 - **Install the FUSE drop-in** only on hosts that mount.
@@ -481,9 +466,9 @@ writing to the old file descriptor.
 ```bash
 systemctl --user stop pcloudd.service
 # Restore files preserving owner/mode (rsync -aHAX or tar -p).
-rsync -aHAX backup/pcloud-rs/ "${XDG_STATE_HOME:-$HOME/.local/state}/pcloud-rs/"
-chmod 700 "${XDG_STATE_HOME:-$HOME/.local/state}/pcloud-rs"
-chmod 600 "${XDG_STATE_HOME:-$HOME/.local/state}/pcloud-rs/store.sqlite"
+rsync -aHAX backup/pcloud-rs/ "${XDG_DATA_HOME:-$HOME/.local/share}/pcloud/pcloud-rs/"
+chmod 700 "${XDG_DATA_HOME:-$HOME/.local/share}/pcloud/pcloud-rs"
+chmod 600 "${XDG_DATA_HOME:-$HOME/.local/share}/pcloud/pcloud-rs/store.sqlite"
 systemctl --user start pcloudd.service
 journalctl --user -u pcloudd.service -n 100 --no-pager
 ```
@@ -505,8 +490,8 @@ upgrading.
 
 ```bash
 # Take backup.
-cp "${XDG_STATE_HOME:-$HOME/.local/state}/pcloud-rs/store.sqlite" \
-   "${XDG_STATE_HOME:-$HOME/.local/state}/pcloud-rs/store.sqlite.backup-$(date +%Y%m%d)"
+cp "${XDG_DATA_HOME:-$HOME/.local/share}/pcloud/pcloud-rs/store.sqlite" \
+   "${XDG_DATA_HOME:-$HOME/.local/share}/pcloud/pcloud-rs/store.sqlite.backup-$(date +%Y%m%d)"
 
 # Stop, install new binaries, start.
 systemctl --user stop pcloudd.service
@@ -516,7 +501,7 @@ systemctl --user start pcloudd.service
 
 # Confirm migration ran cleanly.
 journalctl --user -u pcloudd.service -n 50 --no-pager | grep -i 'migration\|schema'
-sqlite3 -readonly "${XDG_STATE_HOME:-$HOME/.local/state}/pcloud-rs/store.sqlite" \
+sqlite3 -readonly "${XDG_DATA_HOME:-$HOME/.local/share}/pcloud/pcloud-rs/store.sqlite" \
   'PRAGMA user_version;'
 ```
 

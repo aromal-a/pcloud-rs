@@ -1,36 +1,50 @@
 #!/bin/sh
-#
 # PROVIDE: pcloudd
-# REQUIRE: LOGIN NETWORKING FILESYSTEMS
+# REQUIRE: LOGIN NETWORKING
 # KEYWORD: shutdown
-#
 
 . /etc/rc.subr
 
 name="pcloudd"
 rcvar="pcloudd_enable"
+load_rc_config "$name"
 
-: ${pcloudd_enable:="NO"}
-: ${pcloudd_user:="pcloud-rs"}
-: ${pcloudd_env_file:="/usr/local/etc/pcloudd.env"}
-: ${pcloudd_wrapper:="/usr/local/libexec/pcloudd-wrapper.sh"}
-: ${pcloudd_pidfile:="/var/run/${name}.pid"}
+: "${pcloudd_enable:=NO}"
+: "${pcloudd_user:=pcloudd}"
+: "${pcloudd_group:=pcloudd}"
+: "${pcloudd_root:=/var/lib/pcloud-rs}"
+: "${pcloudd_env_file:=/usr/local/etc/pcloud-rs/pcloudd.env}"
+: "${pcloudd_wrapper:=/usr/local/libexec/pcloudd-wrapper.sh}"
+: "${pcloudd_pidfile:=/var/run/pcloudd.pid}"
+: "${pcloudd_restart_delay:=5}"
 
 command="/usr/sbin/daemon"
-command_args="-f -P ${pcloudd_pidfile} ${pcloudd_wrapper}"
 pidfile="${pcloudd_pidfile}"
 required_files="${pcloudd_wrapper}"
-
 start_precmd="pcloudd_precmd"
 
 pcloudd_precmd()
 {
-    [ -r "${pcloudd_env_file}" ] && . "${pcloudd_env_file}"
+    pw usershow "${pcloudd_user}" >/dev/null 2>&1 || {
+        echo "pcloudd: service user does not exist: ${pcloudd_user}" >&2
+        return 1
+    }
+    if [ -r "${pcloudd_env_file}" ]; then
+        # shellcheck disable=SC1090
+        . "${pcloudd_env_file}"
+    fi
+    : "${PCLOUD_ROOT:=${pcloudd_root}}"
+    : "${PCLOUD_ENV:=production}"
+    : "${PCLOUD_API_MODE:=tls}"
+    : "${PCLOUD_DURABLE_AUTH_TOKENS:=1}"
+    install -d -o "${pcloudd_user}" -g "${pcloudd_group}" -m 0700 \
+        "${PCLOUD_ROOT}"
     export PCLOUD_ROOT PCLOUD_ENV PCLOUD_API_MODE PCLOUD_DURABLE_AUTH_TOKENS
     export PCLOUDRS_TOKEN_FILE PCLOUDRS_USERNAME_FILE PCLOUDRS_PASSWORD_FILE
     export PCLOUDRS_TFA_CODE_FILE PCLOUDRS_RECOVERY_CODE_FILE PCLOUDRS_TRUST_DEVICE
     export PCLOUDRS_DAEMON_BIN
 }
 
-load_rc_config $name
+command_args="-f -S -T pcloudd -R ${pcloudd_restart_delay} -P ${pcloudd_pidfile} -u ${pcloudd_user} ${pcloudd_wrapper}"
+
 run_rc_command "$1"

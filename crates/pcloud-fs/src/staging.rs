@@ -24,6 +24,10 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use pcloud_cache::cipher::CacheCipher;
+use pcloud_cache::sealed_blob::{open_blob_from_disk, seal_blob_for_disk};
 
 /// Errors produced by the staging dir manager.
 #[derive(Debug, thiserror::Error)]
@@ -54,12 +58,40 @@ pub enum StagingError {
     /// separator, a traversal component, or a NUL byte.
     #[error("staging blob name rejected: {0}")]
     InvalidName(&'static str),
+    /// At-rest encryption failed (seal or open) when the staging dir
+    /// has a `CacheCipher` installed (T2.3.b). Wraps a stringified
+    /// `CipherError` to keep `pcloud-cache` out of the public error
+    /// surface of this crate's downstream consumers.
+    #[error("staging cipher failure: {0}")]
+    Cipher(String),
 }
 
 /// Staging directory handle.
+///
+/// # Encryption-at-rest (T2.3.b)
+///
+/// When a [`CacheCipher`] is installed via [`StagingDir::with_cipher`],
+/// the **whole-blob** I/O paths ([`StagingDir::write_blob_full`] and
+/// [`StagingDir::read_blob`]) transparently route bytes through
+/// [`seal_blob_for_disk`] / [`open_blob_from_disk`] so the on-disk
+/// record is a sealed AEAD blob (nonce || ciphertext || tag) and an
+/// attacker with disk access (but no auth-vault-derived master key)
+/// cannot recover plaintext.
+///
+/// **Limitation:** the partial-write path
+/// [`StagingDir::write_blob_at`] is intentionally NOT routed through
+/// the cipher. Authenticated block-level encryption requires a fixed
+/// block grid and per-block AAD/nonce derivation, which is a separate
+/// substantive change. Callers that issue partial writes via
+/// `write_blob_at` get plaintext on disk regardless of cipher state.
+/// Use `write_blob_full` for blobs whose contents must be sealed.
 #[derive(Debug, Clone)]
 pub struct StagingDir {
     root: PathBuf,
+    /// Optional at-rest cipher. When `None`, whole-blob I/O is plaintext
+    /// (existing fast path). When `Some`, `write_blob_full` /
+    /// `read_blob` route bytes through the AEAD wrapper.
+    cipher: Option<Arc<CacheCipher>>,
 }
 
 impl StagingDir {
@@ -72,7 +104,23 @@ impl StagingDir {
         create_secure_dir(&blobs)?;
         verify_secure_dir(&root)?;
         verify_secure_dir(&blobs)?;
-        Ok(Self { root })
+        Ok(Self { root, cipher: None })
+    }
+
+    /// Install (or clear) an at-rest encryption cipher on this staging
+    /// dir. See the type-level docs for the exact set of paths that are
+    /// affected (whole-blob writes/reads only — partial writes via
+    /// [`StagingDir::write_blob_at`] remain plaintext).
+    #[must_use]
+    pub fn with_cipher(mut self, cipher: Option<Arc<CacheCipher>>) -> Self {
+        self.cipher = cipher;
+        self
+    }
+
+    /// Whether at-rest encryption is currently active on this handle.
+    #[must_use]
+    pub fn has_cipher(&self) -> bool {
+        self.cipher.is_some()
     }
 
     /// Root directory of the staging area.
@@ -160,15 +208,32 @@ impl StagingDir {
     }
 
     /// Convenience: read the entire blob into a `Vec<u8>`.
+    ///
+    /// When a [`CacheCipher`] has been installed (see
+    /// [`StagingDir::with_cipher`]), the on-disk bytes are treated as a
+    /// sealed AEAD record and decrypted before being returned.
     pub fn read_blob(&self, blob_name: &str) -> Result<Vec<u8>, StagingError> {
         let mut f = self.open_blob(blob_name)?;
-        let mut out = Vec::new();
-        f.read_to_end(&mut out)?;
-        Ok(out)
+        let mut on_disk = Vec::new();
+        f.read_to_end(&mut on_disk)?;
+        match &self.cipher {
+            None => Ok(on_disk),
+            Some(cipher) => open_blob_from_disk(cipher, blob_name, &on_disk)
+                .map_err(|e| StagingError::Cipher(e.to_string())),
+        }
     }
 
     /// Convenience: rewrite a blob from scratch, fsync its contents, and
-    /// return the number of bytes written.
+    /// return the number of bytes written (post-encryption when a cipher
+    /// is installed). The returned count is the number of plaintext
+    /// bytes the caller supplied, so callers tracking logical blob size
+    /// see the same value regardless of cipher state.
+    ///
+    /// When a [`CacheCipher`] has been installed (see
+    /// [`StagingDir::with_cipher`]), the input is sealed via
+    /// [`seal_blob_for_disk`] and the AEAD record is what hits the
+    /// disk; the on-disk file will be `bytes.len() + overhead()` bytes
+    /// long.
     pub fn write_blob_full(&self, blob_name: &str, bytes: &[u8]) -> Result<u64, StagingError> {
         let path = self.blob_path(blob_name)?;
         #[cfg(unix)]
@@ -180,13 +245,28 @@ impl StagingDir {
             opts.mode(0o600);
         }
         let mut file = opts.open(&path)?;
-        file.write_all(bytes)?;
+        let to_write: std::borrow::Cow<'_, [u8]> = match &self.cipher {
+            None => std::borrow::Cow::Borrowed(bytes),
+            Some(cipher) => std::borrow::Cow::Owned(
+                seal_blob_for_disk(cipher, blob_name, bytes)
+                    .map_err(|e| StagingError::Cipher(e.to_string()))?,
+            ),
+        };
+        file.write_all(&to_write)?;
         file.sync_data()?;
         Ok(bytes.len() as u64)
     }
 
     /// Write `bytes` at `offset` inside an existing blob, extending with
     /// zeroes if needed. Syncs the file before returning.
+    ///
+    /// **At-rest encryption (T2.3.b) does NOT cover this path.** Even
+    /// when a [`CacheCipher`] is installed, partial writes go to disk
+    /// as plaintext at the requested offset. Authenticated block-level
+    /// encryption needs a fixed block grid plus per-block AAD/nonce
+    /// derivation, which is a separate substantive change. Callers
+    /// that require sealed-on-disk semantics must use
+    /// [`StagingDir::write_blob_full`].
     pub fn write_blob_at(
         &self,
         blob_name: &str,
@@ -393,6 +473,68 @@ mod tests {
         stage.remove_blob("f").unwrap();
         stage.remove_blob("f").unwrap();
         assert!(!stage.blob_path("f").unwrap().exists());
+    }
+
+    fn fixed_master_key() -> [u8; 32] {
+        // Stable test master key. Master-key plumbing from the auth
+        // vault is a daemon-bootstrap follow-up; the wire test only
+        // needs a deterministic key.
+        let mut k = [0u8; 32];
+        for (i, b) in k.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(31).wrapping_add(7);
+        }
+        k
+    }
+
+    #[test]
+    fn staging_with_cipher_writes_ciphertext_to_disk() {
+        use pcloud_cache::cipher::{CacheCipher, STAGING_DOMAIN};
+
+        let dir = tempdir().unwrap();
+        let cipher = Arc::new(CacheCipher::derive(&fixed_master_key(), STAGING_DOMAIN).unwrap());
+        let stage = StagingDir::open(dir.path().join("stage"))
+            .unwrap()
+            .with_cipher(Some(cipher.clone()));
+        assert!(stage.has_cipher());
+
+        let plaintext: &[u8] = b"this is a unique recognizable plaintext marker xyz";
+        stage.write_blob_full("blob-1", plaintext).unwrap();
+
+        // Read the raw on-disk record (bypassing the cipher) and assert
+        // the plaintext does not appear anywhere in it.
+        let on_disk = std::fs::read(stage.blob_path("blob-1").unwrap()).unwrap();
+        assert!(
+            !on_disk.windows(plaintext.len()).any(|w| w == plaintext),
+            "plaintext leaked onto disk under encryption-at-rest"
+        );
+        // Sealed record is plaintext.len() + overhead.
+        assert_eq!(
+            on_disk.len(),
+            plaintext.len() + pcloud_cache::sealed_blob::sealed_blob_overhead()
+        );
+
+        // read_blob round-trips via the cipher.
+        let recovered = stage.read_blob("blob-1").unwrap();
+        assert_eq!(recovered, plaintext);
+    }
+
+    #[test]
+    fn staging_without_cipher_writes_plaintext() {
+        let dir = tempdir().unwrap();
+        let stage = StagingDir::open(dir.path().join("stage")).unwrap();
+        assert!(!stage.has_cipher());
+
+        let plaintext: &[u8] = b"plaintext-fast-path-marker-abc";
+        let written = stage.write_blob_full("blob-2", plaintext).unwrap();
+        assert_eq!(written, plaintext.len() as u64);
+
+        // On-disk bytes are byte-identical to plaintext.
+        let on_disk = std::fs::read(stage.blob_path("blob-2").unwrap()).unwrap();
+        assert_eq!(on_disk, plaintext);
+
+        // read_blob returns the same plaintext.
+        let recovered = stage.read_blob("blob-2").unwrap();
+        assert_eq!(recovered, plaintext);
     }
 
     #[test]

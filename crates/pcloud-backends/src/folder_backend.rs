@@ -412,54 +412,6 @@ impl FolderRuntime {
         self.api
             .list_folder_contents_by_path(auth_token.expose_secret(), path.into())
     }
-
-    /// List the revision history of a file by absolute remote path.
-    ///
-    /// **Honest scope:** mirrors the C `listrevisions` wire command
-    /// (`pclsync/pnetlibs.c:2481`, `download_file_revisions`), but
-    /// pCloud's public API catalogue does not currently document a
-    /// third-party-accessible `listrevisions` endpoint — the C client
-    /// relies on the binary protocol variant tied to the sync engine's
-    /// authenticated session state. Until that surface is confirmed
-    /// safe to re-expose through the retained Rust backend, this entry
-    /// point returns `Ok(None)` so the daemon can report
-    /// `ResponseStatus::Unavailable` with a tracker pointer
-    /// (`bd-1du.10`) rather than silently fabricating an empty history.
-    ///
-    /// The signature returns `Vec<FileRevision>` so the retained
-    /// backend can flip to live-dispatch in a single change site once
-    /// the endpoint is approved.
-    pub fn list_revisions(
-        &self,
-        _auth_token: SecretString,
-        _path: &str,
-        _limit: Option<u32>,
-    ) -> Result<Option<Vec<FileRevision>>, FolderApiError<FolderBackendError>> {
-        // TODO(bd-1du.10): wire to the binary API `listrevisions`
-        // command once the public-API surface is confirmed.
-        Ok(None)
-    }
-}
-
-/// One revision entry returned by [`FolderRuntime::list_revisions`].
-///
-/// Fields mirror the C `filerevision` table row populated by
-/// `download_file_revisions` (`pclsync/pnetlibs.c:2494`).
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct FileRevision {
-    /// Content-addressed hex revision id (the C `hash` column,
-    /// stringified as lowercase hex for IPC/JSON).
-    pub rev_id: String,
-    /// Modification timestamp (UNIX seconds) reported by the server.
-    pub mtime: u64,
-    /// Revision size in bytes.
-    pub size: u64,
-    /// Display name / email of the user that produced the revision.
-    /// Empty when the server omits the field.
-    pub user: String,
-    /// Optional free-text comment attached to the revision. Empty
-    /// when the server omits the field.
-    pub comment: String,
 }
 
 fn map_response_parse_err(err: ResponseParseError) -> io::Error {
@@ -581,44 +533,6 @@ mod tests {
         FolderRuntime {
             api: FolderApi::new(FolderTransportMode::Development(DevelopmentFolderTransport)),
         }
-    }
-
-    #[test]
-    fn list_revisions_is_honest_about_scope() {
-        // R9 #9: the retained backend cannot claim parity with the C
-        // `listrevisions` command until the public-API path is
-        // approved (bd-1du.10). Until then the helper returns
-        // `Ok(None)` rather than fabricating an empty history, so the
-        // daemon can honestly report Unavailable.
-        let runtime = dev_runtime();
-        let result = runtime
-            .list_revisions(
-                SecretString::new("token".to_owned()),
-                "/Docs/report.txt",
-                Some(5),
-            )
-            .expect("list_revisions must not raise a transport error in the honest-scope stub");
-        assert!(result.is_none(), "stub must return None, got {result:?}");
-    }
-
-    #[test]
-    fn file_revision_serializes_with_expected_field_names() {
-        // The IPC `message` payload serialises these field names
-        // directly; regressions would break the CLI's git-log renderer
-        // (`render_file_history` in pcloud-cli/src/main.rs).
-        let rev = FileRevision {
-            rev_id: "deadbeef".to_owned(),
-            mtime: 1_700_000_000,
-            size: 4096,
-            user: "alice@example.com".to_owned(),
-            comment: "rollup".to_owned(),
-        };
-        let json = serde_json::to_value(&rev).expect("serialize");
-        assert_eq!(json["rev_id"], "deadbeef");
-        assert_eq!(json["mtime"], 1_700_000_000u64);
-        assert_eq!(json["size"], 4096u64);
-        assert_eq!(json["user"], "alice@example.com");
-        assert_eq!(json["comment"], "rollup");
     }
 
     #[test]

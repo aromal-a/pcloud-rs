@@ -3,27 +3,31 @@
 **Status:** Pre-engagement bundle. Hand this document (and the artifacts it references) to a prospective third-party auditor so they can scope, price, and plan an external security review of the `pcloud-rs` Rust rewrite. Every section is intended to answer a question the auditor would otherwise have to ask in a discovery call.
 
 **Point of contact:** Security engineering lead (see `SECURITY.md`).
-**Repository:** `pcloud-rs` (monorepo). Audit target lives in ``.
+**Repository:** `pcloud-rs` (monorepo). Audit target lives in the Rust workspace under `crates/`.
 **Target revision:** the git commit referenced in the engagement SOW. Auditors should pin to a single commit hash for reproducibility.
 
 ---
 
 ## 1. Project Overview and Scope
 
-`pcloud-rs` is a cross-platform pCloud client originally written in C/C++. The `` subtree is a ground-up Rust rewrite that now provides the retained feature set (auth, sync-root management, transfers, public links, shares, crypto, backup/device, and an embeddable SDK). The rewrite is substantially complete, but the team has not yet claimed "full parity" or "production ready" — that gate is tracked internally as `bd-1du.10`.
+`pcloud-rs` is a cross-platform pCloud client originally written in C/C++. The Rust workspace is a ground-up rewrite that now provides most of the retained feature set (auth, sync-root management, transfers, public links, shares, crypto, backup/device, and an embeddable SDK). The rewrite is substantially complete, but the team has not yet claimed "full parity" or "production ready" — the remaining gate is tracked by `STATUS.md` and `C_FEATURE_PARITY_MATRIX.csv`.
 
 ### In scope for the audit
 
-- Everything under `crates/` — **26 workspace members**, approximately **80,000 lines of Rust code** (count via `tokei crates`).
-- The daemon (`pcloud-daemon`), CLI (`pcloud-cli`), SDK (`pcloud-sdk`), protocol client (`pcloud-proto`), crypto (`pcloud-crypto`), secret wrappers (`pcloud-secret`), local IPC, auth vault, and sync/transfer runtimes.
+- Everything under `crates/` — **41 workspace members** and approximately
+  **240,000 physical lines of Rust source** in the current development tree
+  (including comments and tests; regenerate for the pinned audit commit).
+- The daemon (`pcloud-daemon`), CLI (`pcloud-cli`), focused public SDK
+  (`pcloud-sdk`), internal compatibility SDK (`pcloud-embedded-sdk`), protocol
+  client (`pcloud-proto`), crypto (`pcloud-crypto`), secret wrappers
+  (`pcloud-secret`), local IPC, auth vault, and sync/transfer runtimes.
 - Build and release surfaces that ship to end users: `Cargo.toml`, `deny.toml`, `release.toml`, CI workflows under `.github/workflows/`.
 - Documentation that makes security claims (this mdBook, `SECURITY.md`, `security/*.md`).
 
 ### Out of scope
 
-- `packaging/` — distribution shims (deb/rpm/brew/msi recipes) are not Rust and carry no secrets.
 - `fuzz/` — the fuzz harness itself is a test artifact, not a shipped surface. Auditors may of course *use* it.
-- Legacy C code at the repo root (`pclsync/`, `main.cpp`, `control_tools.cpp`, `pclsync_lib.cpp`). It is retained only for parity comparison and is being retired.
+- Legacy C code references (`pclsync/`, `main.cpp`, `control_tools.cpp`, `pclsync_lib.cpp`). The C tree is not shipped in this fork; citations are retained for parity comparison against the upstream reference.
 - Third-party crates beyond the configured `cargo-deny` ruleset. We do expect supply-chain review (see §7) but not a line-by-line audit of upstream dependencies.
 
 ### Build and run
@@ -36,7 +40,10 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo deny  check
 ```
 
-Minimum Rust toolchain: stable `1.78` (pinned in `rust-toolchain.toml`). No nightly features on the release path.
+The full workspace/release toolchain is pinned to Rust `1.91.0` in
+`rust-toolchain.toml`. The portable core has a separate Rust 1.89 MSRV gate;
+the isolated Wasmtime plugin requires 1.91. Nightly is used only for fuzzing,
+not shipped code.
 
 ---
 
@@ -46,10 +53,16 @@ Full narrative: [`architecture/overview.md`](../architecture/overview.md). Conde
 
 - **Daemon (`pcloud-daemon`)** is the long-running process. It owns state, auth vault, transfer queue, sync engine, IPC listener, and the plugin registry. Crates of interest: `pcloud-daemon/src/bootstrap.rs`, `runtime.rs`, `auth_backend.rs`, `auth_vault.rs`, `sync_backend.rs`, `transfer_backend.rs`, `public_link_backend.rs`, `shares_backend.rs`, `backup_backend.rs`, `account_backend.rs`.
 - **CLI (`pcloud-cli`)** is a thin client. It does not talk to pCloud directly; it speaks the local IPC protocol to the daemon.
-- **SDK (`pcloud-sdk`)** is the embeddable Rust API. It can either drive a daemon over IPC or run a process-local engine for library consumers.
+- **SDK (`pcloud-sdk`)** is the focused blocking `RemoteDrive` client over
+  owner-authenticated daemon IPC. The broad process-local engine is separated
+  as the unpublished `pcloud-embedded-sdk` compatibility crate.
 - **Protocol client (`pcloud-proto`)** wraps the pCloud HTTPS API with typed request/response structs. Split by feature family (`auth_api.rs`, `transfer_api.rs`, `public_links_api.rs`, `shares_api.rs`, `backup_api.rs`, `account_api.rs`).
 - **Engine (`pcloud-engine`)** executes sync work: scans local trees, reconciles against the server, and schedules uploads/downloads.
-- **Filesystem (`pcloud-fs`)** is the mounted-drive layer. Mount scaffolding, policy validation, RAII mount handles, in-memory read path, staging/journal/writeback helpers are present. The FUSE wiring is the last open P0 (see §6).
+- **Filesystem (`pcloud-fs`)** is the mounted-drive layer. It contains policy
+  validation, RAII mount handles, read caching, bounded staging,
+  journal/writeback durability, Linux/BSD FUSE, macOS fuse-t, and Windows
+  WinFSP compositions. Linux has a local kernel-mount proof; the other native
+  platforms remain release-qualification gates (see §6).
 - **Crypto (`pcloud-crypto`)** implements Crypto Folder: setup, lock/unlock, sector encryption, key derivation, metadata filename encoding, password rotation, fingerprint verification, and the crypto-aware share temppass flow.
 - **Secrets (`pcloud-secret`)** provides `SecretString` and `SecretBytes` with zeroize-on-drop and redacted `Debug`.
 - **Store (`pcloud-store`)** is SQLite-backed persistence (sync roots, queued work, audit).
@@ -80,7 +93,11 @@ Explicitly **not** in the threat model: kernel-level attackers, attackers with r
 
 ## 4. Unsafe Inventory
 
-The workspace currently contains **54 `unsafe` blocks**. Every single one carries a `// SAFETY:` comment explaining the invariant the author is asserting. The canonical inventory is the wave-02 review artifact `REVIEW_FULL_02.md` (section "Unsafe audit — R2 inventory"), which enumerates each block by `file:line`, the surrounding function, the justification class (FFI, lifetime extension, transmute, raw pointer), and whether the SAFETY comment was judged sufficient.
+Do not copy an unsafe-block count from this document: it changes with native
+platform adapters and must be regenerated from the pinned audit commit. Every
+unsafe operation is expected to have an adjacent `SAFETY` rationale; the
+review deliverable must enumerate file, line, function, invariant, and FFI or
+memory-safety boundary.
 
 Auditors should:
 
@@ -89,8 +106,10 @@ Auditors should:
    rg -n --no-heading 'unsafe\s*\{' crates
    rg -n --no-heading '//\s*SAFETY:'  crates
    ```
-2. Diff against `REVIEW_FULL_02.md` to confirm the 54-block count and confirm no unannotated blocks slipped in.
-3. Pay particular attention to FUSE FFI in `pcloud-fs/` (the largest concentration) and the zeroize paths in `pcloud-secret/`.
+2. Review every match and confirm the rationale covers lifetime, aliasing,
+   ownership, buffer length, thread, and platform-ABI assumptions as relevant.
+3. Pay particular attention to FUSE/fuse-t/WinFSP and IPC FFI, plus the
+   zeroize paths in `pcloud-secret/`.
 
 House rule: any new `unsafe` block requires an ADR. See `adr/` and `development/contributing.md`.
 
@@ -125,44 +144,61 @@ Auditor asks for this section: verify nonce uniqueness per key, confirm constant
 
 We will not pretend these are closed. An auditor should see them before quoting.
 
-- **`bd-1du.4.6` — FUSE daemon wiring.** The `pcloud-fs` crate has mount scaffolding, policy validation, RAII handles, signal-aware unmount, in-memory read path, staging, journal, and writeback helpers. It is **not** yet wired into the daemon runtime as a live mounted-drive. Real readdir/open/read/write/flush/fsync against a mounted point is pending.
-- **`bd-1du.10` — Final parity gate.** The parity matrix
-  (`C_FEATURE_PARITY_MATRIX.csv`) is tracked in
-  [`STATUS.md`](../../../../STATUS.md) — the single source of truth
-  for counts. All retained rows are `Implemented`; the remaining gate
-  items are Reviewer-19 regrade and the closing-commit SHA. Until
-  `bd-1du.10` closes, marketing wording ("full parity", "production
-  ready", "drop-in replacement") remains banned.
-- **Platform coverage.** Live-host verification has been performed on Linux. macOS and Windows have been exercised in CI (unit + integration) but have **not** had a real end-to-end live-host run against a production pCloud account. Auditors on those platforms should treat them as "CI-green, not live-proven".
-- **Residual Partials in transfers/SDK.** A handful of SDK breadth rows (streaming edge cases, resumable-upload edge conditions) are reconciled under `bd-1du.10`.
-- **Missing C surfaces we will not ship.** `change_crypto_pass` family, `send_change_user_private`, `priv_key_flags`, `psync_send_publink`, and the update-check declarations are either pending or deliberately rejected. See `REJECTED-RATIONALES-14042026.md`.
+- **Cross-platform mounted-drive proof.** The Linux mounted-drive path has
+  live proof. macOS `fuse-t` and Windows WinFSP still need real-host live
+  verification before release-grade platform claims.
+- **Release baseline.** The retained C capability matrix is `156 Implemented /
+  0 Partial / 0 Missing / 30 Rejected`, but the development tree is heavily
+  dirty and has not been separated into a clean, reviewable release commit.
+  Functional parity does not imply release readiness.
+- **Platform coverage.** Live-host verification has been performed locally on
+  Linux. macOS, Windows, all BSDs, Solaris-family targets, and Synology/QNAP/
+  ASUSTOR still require retained native release-commit or hardware evidence as
+  applicable. A workflow definition is not that evidence.
+- **Live pCloud proof.** The current audit did not use account credentials.
+  Credentialed transfer, share, mount, conflict, and recovery smoke suites are
+  still required on the release commit.
+- **SDK publication.** The focused `pcloud-sdk` 1.0 source package is staged,
+  but its `pcloud-model` -> `pcloud-ipc` -> `pcloud-sdk` registry publication
+  and clean install verification remain incomplete.
+- **Rejected C surfaces we will not ship.** Update-check declarations and
+  C-internal cache/UI hooks are deliberately rejected with per-row rationale.
+  `change_crypto_pass`, `send_change_user_private`, `priv_key_flags`, and
+  `psync_send_publink` are implemented on the retained Rust path.
 
 ---
 
 ## 7. SBOM Hand-off
 
-- **CI job:** `.github/workflows/` → the `sbom` job runs on every tagged release.
-- **Tool:** `cargo-cyclonedx` (CycloneDX 1.5 JSON + XML).
-- **Artifact:** attached to each GitHub Release as `pcloud-rs-<version>-sbom.cdx.json` and `.cdx.xml`.
+- **CI job:** `.github/workflows/release.yml` -> `sbom`, after release binaries.
+- **Tool:** Syft, run against the auditable `pcloudd` binary and lockfile.
+- **Artifacts:** `pcloud-rs.sbom.cdx.json` (CycloneDX JSON) and
+  `pcloud-rs.sbom.spdx.json` (SPDX JSON).
 - **License scan:** `cargo-deny check licenses` is part of the same workflow; policy lives in `deny.toml`.
 - **Reproducibility:** `development/reproducible-builds.md` documents the exact toolchain, flags, and `SOURCE_DATE_EPOCH` handling so an auditor can reproduce a release artifact bit-for-bit.
 
-Auditors should regenerate the SBOM at the pinned commit and diff against the published artifact.
+Auditors should regenerate the SBOM at the pinned commit and diff against the
+published artifact. No release exists today, so the workflow is a release
+contract rather than evidence of an already published SBOM.
 
 ---
 
 ## 8. Fuzz Harness Inventory and Coverage
 
-Location: `fuzz/fuzz_targets/`. Harnesses cover:
+Harnesses live under the root `fuzz/` workspace and the crate-local fuzz
+workspaces for `pcloud-ipc`, `pcloud-crypto`, `pcloud-daemon`, and
+`pcloud-proto`. The current inventory is 14 targets covering framing and IPC
+request decoding, binary/JSON protocol parsers, path canonicalization, public
+link URIs, auth state/vault decoding, crypto sector opening, and encrypted
+filename decoding. Regenerate the exact list with:
 
-- `fuzz_ipc_frame` — local IPC framing and length-prefix parser (`pcloud-daemon` IPC decoder).
-- `fuzz_proto_response` — pCloud API response deserializer (`pcloud-proto`).
-- `fuzz_crypto_metadata` — metadata filename decoder and sector-layout parser (`pcloud-crypto`).
-- `fuzz_vault_decode` — auth vault file format (`pcloud-daemon/auth_vault`).
-- `fuzz_public_link_url` — public-link URL and token parser (`pcloud-proto/public_links_api`).
-- `fuzz_engine_journal` — sync engine journal record decoder (`pcloud-engine`).
+```bash
+find . -path '*/fuzz_targets/*.rs' -type f -not -path './target/*' -print
+```
 
-Run with `cargo fuzz run <target> -- -max_total_time=3600`. Coverage artifacts (`coverage/fuzz/*.profdata`) are produced by the nightly coverage job and are available on request; they are not published as release artifacts because the corpus contains synthesized inputs only.
+`.github/workflows/fuzz.yml` schedules every target for five minutes. Crashes
+fail the owning matrix job and artifacts are retained even on failure; none of
+the fuzz steps is allowed to continue successfully after a crash.
 
 ---
 

@@ -106,12 +106,20 @@ pub struct ApiServerHint {
 }
 
 /// `PasswordLoginOutcome` — password login outcome.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// CLAUDEREV iter-1 SEC-H fix: `auth_token` and `challenge_token` are
+/// `SecretString` so they zeroize on drop, redact in `Debug`, and never
+/// transit as raw `String`. The enum drops `Clone`, `PartialEq`, `Eq`
+/// because `SecretString` is intentionally not `Clone` (use
+/// `SecretString::clone_secret` for explicit duplication) and equality
+/// on a credential is a leak vector.
+#[derive(Debug)]
 pub enum PasswordLoginOutcome {
     /// `Authenticated` variant (authenticated).
     Authenticated {
-        /// The `auth_token` field (auth token).
-        auth_token: String,
+        /// The `auth_token` field (auth token). `SecretString` per
+        /// CLAUDEREV iter-1 SEC-H fix.
+        auth_token: SecretString,
         /// The `user_id` field (user id).
         user_id: Option<u64>,
         /// The `api_server` field (api server).
@@ -119,8 +127,9 @@ pub enum PasswordLoginOutcome {
     },
     /// `TwoFactorRequired` variant (two factor required).
     TwoFactorRequired {
-        /// The `challenge_token` field (challenge token).
-        challenge_token: String,
+        /// The `challenge_token` field (challenge token). `SecretString`
+        /// per CLAUDEREV iter-1 SEC-H fix.
+        challenge_token: SecretString,
         /// The `trust_device` field (trust device).
         trust_device: bool,
         /// The `api_server` field (api server).
@@ -524,7 +533,7 @@ where
             "missing auth token on successful login",
         ))?;
         return Ok(PasswordLoginOutcome::Authenticated {
-            auth_token: auth_token.to_owned(),
+            auth_token: SecretString::new(auth_token.to_owned()),
             user_id: hash.get_number("userid"),
             api_server: extract_api_server_hint(hash),
         });
@@ -535,7 +544,7 @@ where
         .or_else(|| hash.get_string("tfa_token"))
     {
         return Ok(PasswordLoginOutcome::TwoFactorRequired {
-            challenge_token: challenge_token.to_owned(),
+            challenge_token: SecretString::new(challenge_token.to_owned()),
             trust_device: hash.get_bool("trustdevice").unwrap_or(false),
             api_server: extract_api_server_hint(hash),
         });
@@ -543,7 +552,7 @@ where
 
     if result == 2297 {
         return Ok(PasswordLoginOutcome::TwoFactorRequired {
-            challenge_token: String::new(),
+            challenge_token: SecretString::new(String::new()),
             trust_device: hash.get_bool("trustdevice").unwrap_or(false),
             api_server: extract_api_server_hint(hash),
         });

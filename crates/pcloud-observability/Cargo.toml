@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 description = "Metrics, tracing, and structured-log helpers for pcloud-rs (Prometheus, JSON logs)."
 
 [features]
@@ -25,6 +26,12 @@ tracing-otlp = [
 [dependencies]
 serde.workspace = true
 serde_json = { workspace = true, optional = true }
+# `log` is used by the prometheus-exporter exporter.rs error path
+# (`log::warn!` for spawn / accept-loop failures). CLAUDEREV cron-driven
+# baseline-restore: the prior commit added `log::warn!` calls without
+# declaring the dep, breaking `cargo check --workspace --all-targets` for
+# any consumer that pulls in `prometheus-exporter`.
+log = { workspace = true }
 opentelemetry = { version = "0.24", optional = true }
 opentelemetry-otlp = { version = "0.17", default-features = false, features = ["http-proto", "reqwest-client", "trace"], optional = true }
 opentelemetry_sdk = { version = "0.24", features = ["rt-tokio"], optional = true }

@@ -9,8 +9,8 @@ and state) extracted out of `pcloud-daemon` under PLAN_A_PLUS §P6.1.
 - Hosts the per-subsystem backends the daemon composes into its runtime.
 - Keeps the daemon crate focused on bootstrap, IPC dispatch, and runtime
   orchestration while the feature logic lives here.
-- Provides the `upload_journal` (NDJSON + `fsync`) and `upload_state`
-  helpers shared by the transfer backend and the SDK upload helpers.
+- Provides the canonical ID-first `RemoteFs` service plus the
+  `upload_journal` and `upload_state` durability helpers.
 
 ## Public API entry points
 
@@ -19,10 +19,15 @@ and state) extracted out of `pcloud-daemon` under PLAN_A_PLUS §P6.1.
   `notifications_backend`, `folder_backend`, `account_backend`.
 - `mount_discovery`, `path_resolver`, `sync_suggest`, `ignore_patterns`.
 - `upload_journal`, `upload_state`.
+- `RemoteFs` for resolve/stat/list/range-read/stream-write/copy/move/delete/
+  mkdir/share operations.
 
 ## Usage
 
-Consumed exclusively by `pcloud-daemon`. Not a stable public API.
+Consumed directly by daemon composition, sync and mount adapters, and the
+internal embedded compatibility SDK. CLI, public SDK, and experimental WebDAV
+reach the same service through daemon IPC. This remains a workspace-internal
+API; third parties should use `pcloud-sdk`.
 
 ## Features
 

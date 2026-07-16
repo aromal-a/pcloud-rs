@@ -32,9 +32,8 @@
 //!   must read daemon audit logs, not CLI stderr, to diagnose exchange
 //!   failures.
 
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
-use pcloud_secret::ExposeSecret;
 use pcloud_secret::secret_string::SecretString;
 
 use crate::IdpError;
@@ -114,11 +113,11 @@ pub use http_exchanger::HttpPcloudTokenExchanger;
 
 #[cfg(feature = "oidc-http-exchange")]
 mod http_exchanger {
-    use super::{
-        Duration, ExposeSecret, IdpError, PcloudSession, PcloudTokenExchanger, SecretString,
-        SystemTime,
-    };
+    use super::{IdpError, PcloudSession, PcloudTokenExchanger, SecretString, SystemTime};
 
+    use std::time::Duration;
+
+    use pcloud_secret::ExposeSecret;
     use serde::{Deserialize, Serialize};
 
     /// HTTP-backed pCloud trusted-issuer exchanger.
@@ -283,6 +282,8 @@ mod tests {
         use std::io::{Read, Write};
         use std::net::TcpListener;
         use std::thread;
+
+        use pcloud_secret::ExposeSecret;
 
         fn spawn_stub(status_line: &'static str, body: &'static str) -> std::net::SocketAddr {
             let listener = TcpListener::bind("127.0.0.1:0").expect("bind");

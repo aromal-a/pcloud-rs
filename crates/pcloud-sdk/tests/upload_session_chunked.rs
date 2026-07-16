@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use pcloud_backends::upload_journal::UploadJournal;
-use pcloud_sdk::{
+use pcloud_embedded_sdk::{
     FileMetadata, UploadError, UploadHandle, UploadSession, UploadSessionDriver, UploadState,
 };
 use tempfile::tempdir;
@@ -85,7 +85,9 @@ impl UploadSessionDriver for MockDriver {
     fn save(&mut self, handle: &UploadHandle) -> Result<FileMetadata, UploadError> {
         self.log.lock().unwrap().saves.push(handle.upload_id);
         if self.fail_save {
-            return Err(UploadError::Unimplemented("save forced to fail"));
+            return Err(UploadError::Helper(
+                pcloud_embedded_sdk::UploadHelperError::Write("save forced to fail".to_owned()),
+            ));
         }
         Ok(FileMetadata {
             file_id: Some(42),

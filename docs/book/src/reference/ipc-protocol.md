@@ -171,7 +171,7 @@ method. `Method` is `#[non_exhaustive]` and includes (selected):
   `ListIncomingShareRequests`, `ListOutgoingShareRequests`,
   `ListContacts`, `ListMyTeams`.
 - Notifications: `ListNotifications`.
-- Introspection / diagnostics: `FileHistory`, `IntegrityStatus`.
+- Introspection / diagnostics: `IntegrityStatus`.
 - Lifecycle: `Shutdown`.
 
 **Auth data-bearing** — transit-only secrets; see the audit H1 note at
@@ -236,7 +236,6 @@ the top of `methods.rs` for the rationale for using `String` over
 - `GetFolderIdByPath { ... }`, `GetFolderFlags { ... }`,
   `GetFolderOwnerId { ... }`
 - `FilesystemStatus { ... }`, `VerifyPath { ... }`
-- `FileHistory { ... }`
 
 **Audit / integrity**:
 
@@ -309,10 +308,10 @@ call site. Regressing any of them is a security bug.
 - **Linux**: `getsockopt(SO_PEERCRED)` returning
   `libc::ucred { pid, uid, gid }`.
 - **FreeBSD / OpenBSD / NetBSD / macOS**: `getpeereid(3)`.
+- **DragonFly BSD**: `getpeereid(3)`.
+- **illumos / Solaris**: `getpeerucred(3)` with effective UID and PID.
 - **Windows**: named pipe SID DACL + `GetNamedPipeClientProcessId`
-  followed by TokenUser SID comparison against the daemon's SID. The
-  Windows platform backend is scaffolded; production Windows support
-  is not yet claimed.
+  followed by TokenUser SID comparison against the daemon's SID.
 
 The daemon's owner UID/SID is fixed at boot. `IpcServer::authorize_peer`
 rejects every other caller before any dispatch happens. Rejection does
@@ -440,7 +439,7 @@ Common failure modes:
   `Request`.
 - [Exit Codes](./exit-codes.md) — `ResponseStatus` → CLI exit-code
   ABI.
-- [enterprise/tracing](../enterprise/tracing.md) — span hierarchy,
+- [enterprise/tracing](../../../enterprise/tracing.md) — span hierarchy,
   sampling policy, and `attr_redact` allow-list.
 - `crates/pcloud-ipc/src/methods.rs` — authoritative `Method`,
   `Request`, `Response`, `RequestEnvelope`, `ResponseStatus`

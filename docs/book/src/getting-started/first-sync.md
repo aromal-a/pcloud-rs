@@ -12,8 +12,9 @@
 > ```
 >
 > All four features share the running daemon; you do not need a mount
-> to sync, and you do not need sync to mount. Mount on macOS / Windows
-> / BSD is **scaffolded only** today (see `bd-1du.4`). The revision
+> to sync, and you do not need sync to mount. Linux, macOS, Windows, and the
+> four explicitly supported BSDs have native mount gates. Passing workflow
+> definitions are not evidence until the release-commit jobs run. The revision
 > history preview (`log` / `diff` / `restore`) returns **Unavailable**
 > on purpose — it is CLI-only scaffolding until the parity gate lands.
 
@@ -26,8 +27,7 @@
   resolution with `pcloudc folder-id`.
 - How to observe progress with `pcloudc status`, `pcloudc status --watch`,
   and `pcloudc status --json --follow` (structured events).
-- How to mount the virtual drive on Linux, and what to expect on
-  non-Linux today.
+- How to mount the virtual drive and identify the native qualification gate.
 - How to create, inspect, and delete a public file link, extracting
   the id and URL with `jq` field selectors.
 - How to take your first encrypted backup snapshot, verify it, and
@@ -284,14 +284,14 @@ What this does:
 3. Populates the root listing lazily — `ls /mnt/pcloud` triggers a
    first `listfolder` call; reads are paged and cached.
 
-### Honest status
+### Qualification status
 
-Linux mount is the only wired target today. **macOS**, **Windows
-(ProjFS)** and **BSD** mount runtimes are scaffolded behind
-`bd-1du.4` — the commands parse and the daemon accepts them, but
-you should treat them as pre-alpha until that bead closes. Classic
-`sync-add` works on every platform and is the recommended way to
-use pCloud non-interactively anywhere mount is not ready.
+Linux/BSD use FUSE through `fuser`, macOS uses fuse-t, and Windows uses
+WinFSP. Consult the native CI result for the release commit. illumos and
+Solaris deliberately return an unsupported mount error while retaining
+RemoteFs, CLI/API, copy, transfer, and share operations. WebDAV remains an
+experimental, non-production subset; its implemented verbs have a canonical
+daemon IPC adapter, but the listener is not bootstrapped or shipped.
 
 ### Useful mount flags
 
@@ -434,21 +434,15 @@ kebab tokens above.
 > *read* old ones. A typical layout: backup host holds the public
 > key; a separate air-gapped recovery host holds the private key.
 
-## 8. File-history preview (`log` / `diff` / `restore`)
+## 8. File-history (`log` / `diff` / `restore`) — not shipped
 
-```bash
-pcloudc log "/Docs/readme.pdf"
-# Error: Unavailable. Revision history is CLI-only scaffolding
-#        until bd-1du.10 clears the public-API gate.
-
-pcloudc diff "/Docs/readme.pdf" 3
-pcloudc restore "/Docs/readme.pdf" 3
-```
-
-These commands parse and dispatch correctly, but the daemon returns
-`Unavailable`. This is **by design** — the CLI surface is in place so
-wrappers can be written now; the daemon side is part of the final
-parity proof. Don't build a workflow on them yet.
+`pcloud-rs` does **not** ship `log` / `diff` / `restore` subcommands.
+pCloud's `listrevisions` / `revertfile` endpoints are not exposed to
+third-party clients, so the CLI scaffolding has been removed. See
+[`docs/future-pcloud-clone-api.md`](../../../future-pcloud-clone-api.md)
+("Removed scaffolds") for context, and the
+[Operations Runbook](../operations/runbook.md#recovering-an-older-version-of-a-file)
+for the recommended recovery procedure (web UI + `backup snapshot-restore`).
 
 ## 9. Doctor — full probe sweep
 

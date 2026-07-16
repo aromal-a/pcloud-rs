@@ -236,6 +236,16 @@ pub trait SyncLoopRuntime: Send + 'static {
     /// planned operations generated.
     fn run_local_scan(&mut self, root: &SyncRootRecord) -> Result<usize, String>;
 
+    /// Finalize all local and remote observations collected for `root`
+    /// during the current cycle and enqueue the resulting plan.
+    ///
+    /// Implementations that stage observations should pair them here so
+    /// same-path local/remote conflicts are planned in one pass. Mock or
+    /// legacy implementations may leave the default no-op.
+    fn finish_root_observations(&mut self, _root: &SyncRootRecord) -> Result<usize, String> {
+        Ok(0)
+    }
+
     /// Advance the transfer cycle (move queued ops to in-flight).
     fn advance_transfers(&mut self) -> usize;
 
@@ -270,6 +280,17 @@ pub trait SyncLoopRuntime: Send + 'static {
     /// than silently swallowing it. Audit-04 P2-6
     /// (bd-pcloud-rs-s1p.50).
     fn emit_cycle_audit(&mut self, root_id: u64, result: &CycleResult) -> Result<(), String>;
+
+    /// T1.4.b.2 — apply the bandwidth schedule for the current tick.
+    ///
+    /// Implementations consult their `[bandwidth.schedule]` config and
+    /// drive their `BandwidthPacer::set_limit` if the active cap
+    /// changed since the last call. Default impl is a no-op so mock
+    /// runtimes used in tests do not need to know about pacing.
+    ///
+    /// `on_metered` is the metered-network hint (false until
+    /// T1.4.c lands the platform detectors).
+    fn tick_bandwidth_schedule(&mut self, _on_metered: bool) {}
 }
 
 /// Run one sync cycle for a single root, respecting its `SyncType`.
@@ -296,26 +317,14 @@ fn sync_one_root(
         }
     }
 
-    // 3. Advance transfers into in-flight slots
-    let _advanced = runtime.advance_transfers();
-
-    // 4. Execute downloads (skip for UploadOnly)
-    if root.sync_type != SyncType::UploadOnly {
-        match runtime.execute_downloads(auth_token) {
-            Ok(count) => result.downloads = count,
-            Err(_err) => result.errors += 1,
-        }
+    // 3. Pair local and remote observations from this cycle in one
+    // planner call so a local scan pass cannot replace/drop work from
+    // the remote diff pass for the same root.
+    if let Err(_err) = runtime.finish_root_observations(root) {
+        result.errors += 1;
     }
 
-    // 5. Execute uploads (skip for DownloadOnly)
-    if root.sync_type != SyncType::DownloadOnly {
-        match runtime.execute_uploads(auth_token) {
-            Ok(count) => result.uploads = count,
-            Err(_err) => result.errors += 1,
-        }
-    }
-
-    // 6. Conflict count
+    // 4. Conflict count
     result.conflicts = runtime.conflict_count();
 
     result
@@ -355,6 +364,12 @@ pub fn run_cycle_with_power(
         return cycle;
     }
 
+    // T1.4.b.2: drive `[bandwidth.schedule]` from the wall clock + the
+    // metered-network hint. Runs before the per-root work so any
+    // transfers dispatched this cycle observe the freshly-applied cap.
+    // `on_metered = false` until T1.4.c lands the platform detector.
+    runtime.tick_bandwidth_schedule(false);
+
     let auth_token = match runtime.auth_token() {
         Some(token) => token,
         None => {
@@ -367,18 +382,37 @@ pub fn run_cycle_with_power(
     let roots = runtime.list_sync_roots();
     let _ = config.batch_size; // reserved for future batching refinement
 
+    let mut should_execute_downloads = false;
+    let mut should_execute_uploads = false;
+
     for root in &roots {
         if root.paused || runtime.is_sync_root_paused(root) {
             continue;
         }
 
         let root_result = sync_one_root(runtime, root, &auth_token);
+        should_execute_downloads |= root.sync_type != SyncType::UploadOnly;
+        should_execute_uploads |= root.sync_type != SyncType::DownloadOnly;
 
         cycle.roots_processed += 1;
-        cycle.total_uploads += root_result.uploads;
-        cycle.total_downloads += root_result.downloads;
         cycle.total_conflicts += root_result.conflicts;
         cycle.total_errors += root_result.errors;
+    }
+
+    if cycle.roots_processed > 0 {
+        let _advanced = runtime.advance_transfers();
+        if should_execute_downloads {
+            match runtime.execute_downloads(&auth_token) {
+                Ok(count) => cycle.total_downloads += count,
+                Err(_err) => cycle.total_errors += 1,
+            }
+        }
+        if should_execute_uploads {
+            match runtime.execute_uploads(&auth_token) {
+                Ok(count) => cycle.total_uploads += count,
+                Err(_err) => cycle.total_errors += 1,
+            }
+        }
     }
 
     cycle.duration = started.elapsed();
@@ -722,6 +756,7 @@ mod tests {
             remote_path: format!("/Remote/{id}"),
             paused,
             sync_type,
+            exclude_globs: Vec::new(),
         }
     }
 

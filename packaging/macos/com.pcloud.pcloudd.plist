@@ -21,13 +21,12 @@
 
   Environment-variable accuracy (cross-checked against
   crates/pcloud-config/src/env.rs and pcloud-daemon):
-    - PCLOUD_ROOT / PCLOUD_ENV / PCLOUD_API_MODE / PCLOUD_API_HOST /
-      PCLOUD_API_PORT / PCLOUD_API_SERVER_NAME / PCLOUD_LOG_LEVEL /
-      PCLOUD_DURABLE_AUTH_TOKENS are **read** by the daemon.
+    - PCLOUD_ROOT / PCLOUD_ENV / PCLOUD_LOG_LEVEL are **read** by the daemon.
     - PCLOUD_HOME, PCLOUD_CONFIG, PCLOUD_AUTH_VAULT, PCLOUD_IPC_SOCKET,
-      PCLOUD_API_SERVER are NOT exported by this plist (removed in audit-05
-      cleanup). The Rust daemon derives all paths from PCLOUD_ROOT; the CLI
-      honours PCLOUD_CONFIG via its own config resolution.
+      PCLOUD_API_SERVER, PCLOUD_API_HOST, and PCLOUD_API_SERVER_NAME are NOT
+      exported by this plist. The Rust daemon derives all paths from
+      PCLOUD_ROOT and uses the binary API default endpoint unless an operator
+      intentionally overrides it in a separate config file.
 
   Per-directive notes (load-bearing launchd keys):
     - Label              — launchd identifier; must match the plist filename stem.
@@ -49,7 +48,7 @@
          serve loop (matches ExecStart in packaging/systemd/pcloudd.service).
          Without `serve`, the daemon prints a one-shot runtime summary and
          exits, which launchd would then restart in a loop via KeepAlive.
-         The non-existent `--system` flag was removed in audit-06 (bd
+         The non-existent double-dash system flag was removed in audit-06 (bd
          pcloud-rs-ncx.25): the daemon parser at crates/pcloud-daemon/src/
          main.rs:56-64 rejects unknown args, so the plist previously caused
          an immediate launchd crash-loop. -->
@@ -106,14 +105,11 @@
         <string>production</string>
         <key>PCLOUD_LOG_LEVEL</key>
         <string>info</string>
-        <key>PCLOUD_API_HOST</key>
-        <string>api.pcloud.com</string>
-        <key>PCLOUD_API_SERVER_NAME</key>
-        <string>api.pcloud.com</string>
         <!-- PCLOUD_HOME, PCLOUD_CONFIG, PCLOUD_AUTH_VAULT, PCLOUD_API_SERVER,
-             PCLOUD_IPC_SOCKET removed: the Rust daemon derives all paths from
-             PCLOUD_ROOT and does not read these variables. Removed to avoid
-             misleading operator expectations. -->
+             PCLOUD_API_HOST, PCLOUD_API_SERVER_NAME, and PCLOUD_IPC_SOCKET
+             removed: the Rust daemon derives all paths from PCLOUD_ROOT and
+             uses the secure binary API endpoint by default. Removed to avoid
+             mandatory-missing config files and endpoint drift. -->
     </dict>
 </dict>
 </plist>

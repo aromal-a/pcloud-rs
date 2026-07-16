@@ -695,7 +695,7 @@ fn list_snapshot_files(destination: &Path) -> Result<Vec<(PathBuf, SystemTime)>,
         let mtime = entry.metadata()?.modified().unwrap_or(UNIX_EPOCH);
         out.push((path, mtime));
     }
-    out.sort_by(|a, b| b.1.cmp(&a.1));
+    out.sort_by_key(|entry| std::cmp::Reverse(entry.1));
     Ok(out)
 }
 

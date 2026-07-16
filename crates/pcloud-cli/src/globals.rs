@@ -209,11 +209,13 @@ pub fn known_flag_names() -> &'static [&'static str] {
         "--from",
         // `verify <path> [--recursive] [--fix] [--yes]` — R9 #12.
         "--recursive",
+        "--force",
         "--fix",
         "--yes",
         // `backup snapshot-{create,restore,verify,prune}` — H12 PR1.
         "--gpg-recipient",
         "--retention-days",
+        "--zstd-level",
         // `account register <EMAIL> [--accept-terms]`.
         "--accept-terms",
         // `submit-password` / `submit-auth <TOKEN>` — argv-secret gate.
@@ -224,11 +226,39 @@ pub fn known_flag_names() -> &'static [&'static str] {
         "--max",
         // `sync add --type <FLAVOR>`.
         "--type",
+        // `upload create` metadata. Both the current spellings and the
+        // documented compatibility aliases are accepted.
+        "--parent",
+        "--parent-folder-id",
+        "--size",
+        "--total-bytes",
+        "--conflict",
+        "--conflict-mode",
         // `crypto setup --backend <name> [--acknowledge-not-interop]
         // [--hint <TEXT>]` (CryptoSetupV2).
         "--backend",
         "--acknowledge-not-interop",
         "--hint",
+        // T1.3 — `conflict resolve <path> <policy-flag>`. Plan-mandated
+        // short aliases plus the engine's canonical long forms so the
+        // legacy doc-string examples keep working.
+        "--keep-local",
+        "--keep-remote",
+        "--keep-both",
+        "--prefer-local",
+        "--prefer-remote",
+        "--newest-wins",
+        "--rename-both",
+        // Mount recovery, migration, and tree-link selectors. These are
+        // validated again by the per-command allow-list in `app.rs`; they
+        // must be recognized here first so the global pass-through parser
+        // does not reject valid subcommand flags.
+        "--force-umount",
+        "--dry-run",
+        "--force-overwrite",
+        "--root",
+        "--folder",
+        "--file",
     ]
 }
 

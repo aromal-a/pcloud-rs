@@ -1,0 +1,783 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Linux - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/operations/platforms/linux.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="linux"><a class="header" href="#linux">Linux</a></h1>
+<p>Platform notes for running <code>pcloudd</code> and <code>pcloudc</code> on Linux.
+Linux is the reference platform for the Rust rewrite and has the most
+complete parity coverage.</p>
+<h2 id="support-status"><a class="header" href="#support-status">Support status</a></h2>
+<ul>
+<li><strong>Tier 1 target, locally kernel-tested.</strong> Linux is the only platform where
+the current worktree’s mount path has been exercised against a real kernel
+device. That run used an in-process deterministic backend, not live pCloud
+credentials or an installed release package. See the authoritative
+support matrix in
+<a href="../../architecture/platform-support.html"><code>architecture/platform-support.md</code></a>.</li>
+<li>Status legend used on this page: <strong>Local kernel-tested</strong> means the ignored
+real-<code>/dev/fuse</code> suite passed on the stated host. <strong>Release-qualified</strong> would
+additionally require a clean release-commit job, installed-package lifecycle,
+and credentialed pCloud smoke test; no row currently has that status.</li>
+</ul>
+<blockquote>
+<p><strong>Landing status (2026-07-16):</strong> Linux is the reference platform, but the
+published channel set is empty. Tag workflows are defined to build raw Linux
+x86_64 <code>pcloudd</code> / <code>pcloudc</code> binaries plus <code>.deb</code> and <code>.rpm</code> packages, but no
+public release exists. AppImage, Flatpak, Snap, Docker, AUR, and distro
+repositories are scaffolds unless the packaging matrix says otherwise.</p>
+</blockquote>
+<h2 id="os-version-matrix"><a class="header" href="#os-version-matrix">OS version matrix</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Distribution</th><th>Version</th><th>Kernel</th><th>Status</th></tr>
+</thead>
+<tbody>
+<tr><td>Ubuntu</td><td>22.04 LTS, 24.04 LTS</td><td>5.15 / 6.8</td><td>Target; no current release-commit evidence</td></tr>
+<tr><td>Debian</td><td>12 (bookworm)</td><td>6.1</td><td>Target; package smoke pending</td></tr>
+<tr><td>Fedora</td><td>39, 40</td><td>6.6 / 6.8</td><td>Target; package smoke pending</td></tr>
+<tr><td>RHEL / Rocky / Alma</td><td>9.x</td><td>5.14</td><td>Target; no current release-commit evidence</td></tr>
+<tr><td>Arch Linux</td><td>rolling</td><td>6.19.11</td><td>Local kernel-tested on 2026-07-16</td></tr>
+<tr><td>openSUSE Leap</td><td>15.5</td><td>5.14</td><td>Target; no current release-commit evidence</td></tr>
+<tr><td>Alpine</td><td>3.19 (glibc only)</td><td>6.6</td><td>Scaffolded, musl build not gated</td></tr>
+<tr><td>RHEL 7 / CentOS 7</td><td>3.10</td><td>3.10</td><td><strong>Not supported</strong> — FUSE3 missing</td></tr>
+<tr><td>Kernel &lt; 5.4</td><td>any</td><td>&lt;5.4</td><td><strong>Not supported</strong> — see known gaps</td></tr>
+</tbody>
+</table>
+</div>
+<p>Anything not listed is best-effort. File a bead with the exact
+<code>uname -a</code>, distro, and systemd version.</p>
+<h2 id="install"><a class="header" href="#install">Install</a></h2>
+<h3 id="current-availability"><a class="header" href="#current-availability">Current availability</a></h3>
+<p>There are no current release artifacts. Nix users can build the checked-out
+source with <code>nix build .#pcloud-rs</code>; everyone else should use the source-build
+instructions below. No project APT/YUM/zypper repository, AUR package, Alpine
+package, GHCR image, Flatpak, Snap, AppImage, <code>.deb</code>, or <code>.rpm</code> is published
+today. See
+<a href="../packaging-matrix.html">Packaging matrix</a> for the authoritative channel
+status.</p>
+<h3 id="from-source"><a class="header" href="#from-source">From source</a></h3>
+<p>Build times on a modern 8-core laptop (Zen 3, 32 GiB RAM, NVMe):</p>
+<ul>
+<li>Clean release build: <strong>4–6 minutes.</strong></li>
+<li>Incremental recompile after touching one crate: <strong>10–40 seconds.</strong></li>
+</ul>
+<pre><code class="language-bash"># Install toolchain and FUSE3 development headers
+sudo apt install build-essential pkg-config libfuse3-dev libssl-dev \
+  ca-certificates curl git
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+. "$HOME/.cargo/env"
+
+# Build
+git clone https://github.com/ezechiel203/pcloud-rs
+cd pcloud-rs/
+cargo build --release --locked -p pcloud-daemon -p pcloud-cli
+
+install -Dm0755 target/release/pcloudd \
+  ~/.local/bin/pcloudd
+install -Dm0755 target/release/pcloudc \
+  ~/.local/bin/pcloudc
+</code></pre>
+<h3 id="verification"><a class="header" href="#verification">Verification</a></h3>
+<p>Every release artifact must be signature- and hash-verified before
+execution:</p>
+<pre><code class="language-bash">sha256sum -c SHA256SUMS.txt
+cosign verify-blob --key release.pub \
+  --signature pcloudd.sig pcloudd
+</code></pre>
+<h2 id="config-paths-xdg"><a class="header" href="#config-paths-xdg">Config paths (XDG)</a></h2>
+<p>The Linux build is strict XDG. If <code>XDG_*</code> is unset the daemon falls
+back to the defaults listed below; it does <strong>not</strong> quietly use <code>/tmp</code>
+or <code>$HOME</code> for secret material.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Role</th><th>Path</th><th>Mode</th></tr>
+</thead>
+<tbody>
+<tr><td>Config file candidate</td><td><code>$HOME/.config/pcloud/config.json</code>, then <code>$HOME/.pcloud/config.json</code></td><td>0600</td></tr>
+<tr><td>Config directory</td><td><code>$XDG_CONFIG_HOME/pcloud/pcloud-rs</code></td><td>0700</td></tr>
+<tr><td>State directory</td><td><code>$XDG_DATA_HOME/pcloud/pcloud-rs</code></td><td>0700</td></tr>
+<tr><td>Cache directory</td><td><code>$XDG_CACHE_HOME/pcloud/pcloud-rs</code></td><td>0700</td></tr>
+<tr><td>Runtime directory</td><td><code>$XDG_RUNTIME_DIR/pcloud/pcloud-rs</code> (fallback: <code>&lt;cache&gt;/pcloud-rs-runtime</code>)</td><td>0700</td></tr>
+<tr><td>IPC socket</td><td><code>&lt;runtime_dir&gt;/pcloud.sock</code></td><td>0600</td></tr>
+</tbody>
+</table>
+</div>
+<p>Parent directories for secret-bearing files are <code>0700</code> and owned by
+the running UID. The daemon refuses to start against a vault whose
+ownership or mode disagrees — do <strong>not</strong> <code>chmod</code> to paper over this.</p>
+<p>Create the state directories once with correct permissions:</p>
+<pre><code class="language-bash">install -d -m 0700 \
+  ~/.config/pcloud/pcloud-rs \
+  ~/.local/share/pcloud/pcloud-rs \
+  ~/.cache/pcloud/pcloud-rs
+</code></pre>
+<h2 id="service-management-systemd"><a class="header" href="#service-management-systemd">Service management (systemd)</a></h2>
+<p>The <code>.deb</code> / <code>.rpm</code> packages install a <strong>system</strong> unit:
+<code>/lib/systemd/system/pcloudd.service</code>. It uses <code>DynamicUser=yes</code> and is
+appropriate for headless/service-account deployments. For an interactive
+per-user daemon, install <code>packaging/systemd/pcloudd-user.service</code> as
+<code>~/.config/systemd/user/pcloudd.service</code>.</p>
+<pre><code class="language-bash"># Per-user install from the source tree
+install -Dm0644 packaging/systemd/pcloudd-user.service \
+  ~/.config/systemd/user/pcloudd.service
+systemctl --user daemon-reload
+systemctl --user enable --now pcloudd.service
+
+# Inspect
+systemctl --user status pcloudd.service
+journalctl --user -u pcloudd.service -f
+
+# Stop and disable
+systemctl --user stop pcloudd.service
+systemctl --user disable pcloudd.service
+</code></pre>
+<p>For multi-user workstations, enable lingering so the daemon survives
+logout:</p>
+<pre><code class="language-bash">sudo loginctl enable-linger "$USER"
+</code></pre>
+<p>The system unit sets strict hardening:</p>
+<pre><code class="language-ini">[Service]
+Type=simple
+ExecStart=/usr/bin/pcloudd serve
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+DynamicUser=yes
+StateDirectory=pcloud-rs
+RuntimeDirectory=pcloud-rs
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+</code></pre>
+<p>Do not relax these without a bead justifying it — they are part of the
+secure-by-default posture.</p>
+<p>No templated <code>pcloudd@&lt;user&gt;.service</code> ships today.</p>
+<h2 id="mount-setup-fuse3"><a class="header" href="#mount-setup-fuse3">Mount setup (FUSE3)</a></h2>
+<p>Linux mounts require a working FUSE3 userspace:</p>
+<pre><code class="language-bash"># Debian/Ubuntu
+sudo apt install fuse3
+# Fedora
+sudo dnf install fuse3
+# Arch
+sudo pacman -S fuse3
+</code></pre>
+<p>Verify:</p>
+<pre><code class="language-bash">fusermount3 --version
+</code></pre>
+<p>Ensure the invoking user is allowed to mount FUSE (most distros grant
+this by default). If your distro still uses <code>/etc/fuse.conf</code>,
+<code>user_allow_other</code> is <strong>not</strong> required for per-user mounts in the
+default Rust policy.</p>
+<p>Enable mount policy in the JSON config envelope (<code>config.json</code>) if you need
+non-default access policy or cache sizing. Excerpt:</p>
+<pre><code class="language-json">{
+  "profile": {
+    "mount": {
+      "allow_other": false,
+      "owner_only_by_default": true,
+      "cache_size_mb": 256,
+      "page_cache_entries": 4096,
+      "metadata_ttl_secs": 60
+    }
+  }
+}
+</code></pre>
+<p>Or via CLI:</p>
+<pre><code class="language-bash">pcloudc mount --path ~/pCloudDrive
+pcloudc mount --status
+pcloudc mount --unmount
+</code></pre>
+<p>Wedged mount recovery — see
+<a href="../runbook.html#playbook-7-kernel-mount-recovery">runbook.md Playbook 7</a>:</p>
+<pre><code class="language-bash">fusermount3 -u -z ~/pCloudDrive
+PCLOUD_FORCE_UMOUNT=1 systemctl --user restart pcloudd.service
+</code></pre>
+<h3 id="fuse-status-2026-07-16"><a class="header" href="#fuse-status-2026-07-16">FUSE status (2026-07-16)</a></h3>
+<p>The current practical Linux aggregate is:</p>
+<pre><code class="language-bash">PCLOUD_FUSE_TEST=1 PCLOUD_STRICT_FUSE_TEST=1 \
+  cargo test -p pcloud-fs --locked -- --ignored \
+    --skip chunked_flush_sustains_2gib_write_with_transient_retry \
+    --nocapture --test-threads=1
+</code></pre>
+<p>On Arch Linux x86_64, kernel 6.19.11 and FUSE 3.18.2, all 16 selected
+mount/probe tests passed and <code>findmnt</code> reported no remaining FUSE mount. The
+suite includes the 64 MiB create/write/fsync/read/rename/unlink test,
+write-unmount-remount byte identity, concurrent mounts, forced-detach cleanup,
+metadata-size publication, and clean journal checkpointing. The skipped 2 GiB
+case is a resource-intensive upload stress test, not a kernel-mount lifecycle
+test. It was run separately on the same date and passed in 22.23 seconds,
+including the injected transient failure, exact offset replay, and full 2 GiB
+byte accounting. Release candidates must repeat both commands.</p>
+<ul>
+<li><strong>Live read + write</strong> through both mount paths:
+<ul>
+<li><strong><code>FuserShim&lt;A&gt;</code> / <code>BoxedFuserShim</code></strong> (dyn-trait path in
+<code>pcloud-fs::platform::linux</code>): all read-path ops (<code>lookup</code> /
+<code>getattr</code> / <code>readdir</code> / <code>open</code> / <code>read</code> / <code>release</code>) <strong>and</strong>
+write-path ops (<code>create</code> / <code>write</code> / <code>flush</code> / <code>fsync</code> /
+<code>setattr(size)</code> / <code>unlink</code> / <code>rename</code> / <code>mkdir</code> / <code>rmdir</code>) are
+forwarded through the <code>FuseAdapter</code> trait. When the adapter has a
+<code>WritePathService</code> attached, writes work; otherwise the trait
+defaults return <code>ENOSYS</code> and the mount is effectively read-only.
+Exercised by <code>crates/pcloud-fs/tests/fuse_dyn_shim_write.rs</code>
+(gated on <code>PCLOUD_FUSE_TEST=1</code>).</li>
+<li><strong><code>PcloudFsShim</code></strong> (concrete composition path used by the daemon):
+<code>create</code> / <code>write</code> / <code>flush</code> / <code>fsync</code> / <code>unlink</code> / <code>rename</code> /
+<code>setattr(size)</code> + <code>mkdir</code> / <code>rmdir</code> are forwarded to a crash-safe
+write journal and upload pipeline. Exercised by
+<code>crates/pcloud-fs/tests/fuse_kernel_e2e.rs</code> (64 MiB kernel
+round-trip, same gate).</li>
+</ul>
+</li>
+<li><strong>Remaining qualification:</strong> run the aggregate on the clean release commit,
+repeat the separate 2 GiB stress gate, install and remove the produced
+packages, and execute credentialed remote transfer/share/mount smoke tests.</li>
+</ul>
+<h2 id="vault-backend"><a class="header" href="#vault-backend">Vault backend</a></h2>
+<p>The Linux vault backend is a file-backed vault at
+the auth-token vault under the managed config directory, mode <code>0600</code>,
+parent dir <code>0700</code>,
+UID-bound, ownership and mode validated on every open. There is <strong>no</strong>
+Secret Service / GNOME Keyring / kwallet integration on Linux at this
+time — adding one is tracked as a future bead. Secret material is
+held in <code>SecretString</code> / <code>SecretBytes</code> wrappers in memory and zeroized
+on drop.</p>
+<p>If you need a hardware-backed root, provision the user on an encrypted
+home (LUKS, fscrypt, eCryptfs) — the vault inherits the protection of
+the underlying filesystem.</p>
+<h2 id="upgrade"><a class="header" href="#upgrade">Upgrade</a></h2>
+<p>See <a href="../upgrade.html">Upgrade</a> for the semver policy and the 2-wave
+rolling upgrade. Quick path:</p>
+<pre><code class="language-bash">pcloudc --json status &gt; /tmp/pre.json
+systemctl --user stop pcloudd.service
+sudo apt install --only-upgrade pcloud-rs
+systemctl --user start pcloudd.service
+pcloudc doctor --json
+pcloudc status              # auth=Authenticated, healthy engine summary
+</code></pre>
+<h2 id="uninstall"><a class="header" href="#uninstall">Uninstall</a></h2>
+<pre><code class="language-bash"># 1. Stop and disable the service
+systemctl --user stop pcloudd.service
+systemctl --user disable pcloudd.service
+
+# 2. Remove the package
+sudo apt remove pcloud-rs         # Debian/Ubuntu
+sudo dnf remove pcloud-rs         # Fedora
+sudo pacman -Rns pcloud-rs        # Arch
+
+# 3. Remove per-user state (this deletes the vault)
+rm -rf \
+  ~/.config/pcloud-rs \
+  ~/.local/share/pcloud-rs \
+  ~/.cache/pcloud-rs
+
+# 4. Remove the runtime socket dir if present
+rm -rf "$XDG_RUNTIME_DIR/pcloud-rs"
+</code></pre>
+<p>A clean uninstall leaves no <code>pcloudd</code> processes, no FUSE mounts,
+no systemd units, no state directories. Verify:</p>
+<pre><code class="language-bash">pgrep -a pcloudd || echo "clean"
+mount | grep -i pcloud || echo "clean"
+</code></pre>
+<h2 id="first-run-bootstrap"><a class="header" href="#first-run-bootstrap">First-run bootstrap</a></h2>
+<p>Beginner path (one-user workstation, no fleet, no systemd hardening
+tuning):</p>
+<pre><code class="language-bash"># 1. Ensure the invoking user can mount FUSE. On most distros the
+#    user's primary group already has /dev/fuse rw+.
+id -nG | tr ' ' '\n' | grep -E '^(fuse|kvm|plugdev)$' || true
+
+# If /dev/fuse is 0600 root:fuse, add the user to the fuse group:
+sudo groupadd -f fuse
+sudo gpasswd -a "$USER" fuse
+# log out and back in so the new group membership takes effect
+
+# 2. Create state dirs with the correct permissions (idempotent):
+install -d -m 0700 \
+  ~/.config/pcloud/pcloud-rs \
+  ~/.local/share/pcloud/pcloud-rs \
+  ~/.cache/pcloud/pcloud-rs
+
+# 3. Enable the user service
+install -Dm0644 packaging/systemd/pcloudd-user.service \
+  ~/.config/systemd/user/pcloudd.service
+systemctl --user daemon-reload
+systemctl --user enable --now pcloudd.service
+
+# 4. Sanity check
+pcloudc doctor --json | jq '.checks[] | {name, status}'
+pcloudc status
+</code></pre>
+<p>FAANG-ops tuning callouts:</p>
+<ul>
+<li>Prefer a dedicated service user (<code>pcloud-rs</code>) on shared build boxes
+and wrap the user unit in <code>systemd-nspawn</code> or a rootless Podman
+container that still mounts <code>/dev/fuse</code> and <code>/run/user/$UID</code>.</li>
+<li>Capture <code>NeedsReload=yes</code> reconfiguration via <code>Drop-Ins/</code> rather
+than editing the shipped unit.</li>
+<li>Set <code>CPUAccounting=yes MemoryAccounting=yes IOAccounting=yes</code> at
+the unit level for cgroup-v2 telemetry; the daemon emits its own
+counters but having cgroup accounting makes fleet-wide regressions
+much easier to pin.</li>
+</ul>
+<h2 id="service-management-cheat-sheet"><a class="header" href="#service-management-cheat-sheet">Service management cheat-sheet</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Action</th><th>Command</th></tr>
+</thead>
+<tbody>
+<tr><td>Start</td><td><code>systemctl --user start pcloudd.service</code></td></tr>
+<tr><td>Stop</td><td><code>systemctl --user stop pcloudd.service</code></td></tr>
+<tr><td>Enable at login</td><td><code>systemctl --user enable pcloudd.service</code></td></tr>
+<tr><td>Disable</td><td><code>systemctl --user disable pcloudd.service</code></td></tr>
+<tr><td>Restart</td><td><code>systemctl --user restart pcloudd.service</code></td></tr>
+<tr><td>Status</td><td><code>systemctl --user status pcloudd.service</code></td></tr>
+<tr><td>Follow logs</td><td><code>journalctl --user -u pcloudd.service -f</code></td></tr>
+<tr><td>Last 24h errors</td><td><code>journalctl --user -u pcloudd.service --since '24h ago' -p err</code></td></tr>
+<tr><td>Core-dump inspect</td><td><code>coredumpctl list pcloudd</code> then <code>coredumpctl gdb &lt;PID&gt;</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Enable core dumps (once, system-wide):</p>
+<pre><code class="language-bash">sudo mkdir -p /var/lib/systemd/coredump
+sudo sysctl -w kernel.core_pattern='|/lib/systemd/systemd-coredump %P %u %g %s %t %c %h'
+</code></pre>
+<p>Core-dump capture for the user service:</p>
+<pre><code class="language-bash">systemctl --user edit pcloudd.service
+# add:
+# [Service]
+# LimitCORE=infinity
+systemctl --user daemon-reload
+</code></pre>
+<h2 id="peer-cred-and-ipc"><a class="header" href="#peer-cred-and-ipc">Peer-cred and IPC</a></h2>
+<ul>
+<li>Transport: <code>AF_UNIX</code> stream socket at
+<code>&lt;runtime_dir&gt;/pcloud.sock</code>, mode <code>0600</code>, parent dir
+<code>0700</code>, both UID-checked on every connection.</li>
+<li>Peer identity: the daemon calls <code>getsockopt(SO_PEERCRED)</code> on Linux
+and <strong>rejects</strong> any peer whose UID does not match the daemon’s own
+UID. There is no password fallback on the local channel; trust is
+derived entirely from the kernel-reported <code>ucred</code>.</li>
+<li>CLI discovery: <code>pcloudc</code> uses the managed runtime directory derived from
+the same XDG / <code>PCLOUD_ROOT</code> rules as the daemon.</li>
+<li>Relevant crates: <code>pcloud-ipc/src/transport.rs</code>,
+<code>pcloud-ipc/src/server.rs</code> (see <code>tests/peer_and_protocol.rs</code> for
+the enforced contract).</li>
+</ul>
+<p>Do not relax socket permissions. Fleet operators who need to let a
+monitoring agent call the daemon should make that agent run as the
+same UID (preferred) or run a separate <code>pcloudc</code>-based sidecar.</p>
+<h2 id="secret-storage-backend"><a class="header" href="#secret-storage-backend">Secret storage backend</a></h2>
+<ul>
+<li>In-memory: <code>SecretString</code> / <code>SecretBytes</code> from <code>pcloud-secret</code>
+(zeroize-on-drop, redacted <code>Debug</code>).</li>
+<li>On-disk: file-backed vault at
+the managed auth-token vault, mode <code>0600</code>, parent <code>0700</code>,
+ownership + mode re-validated on every open.</li>
+<li><strong>Secret Service (GNOME Keyring / KWallet) is <em>not</em> wired.</strong> This is
+intentional at the moment — tracked as a future bead. Adding it
+must not weaken the file-vault posture.</li>
+<li>Hardware root of trust: LUKS / fscrypt / eCryptfs on the user’s
+home directory. The vault inherits those protections.</li>
+</ul>
+<p>Never persist plaintext passwords. The legacy C client’s
+<code>pcloud-rs_save_password</code> behavior is intentionally <em>not</em> mirrored.</p>
+<h2 id="observability-integration"><a class="header" href="#observability-integration">Observability integration</a></h2>
+<ul>
+<li>Default log sink: <strong>stderr in JSON</strong> when the daemon is a child of
+systemd, which journald captures natively.</li>
+<li><code>journalctl --user -u pcloudd.service --output=json | \   jq 'select(.PRIORITY&lt;="3")'</code> surfaces warnings and errors.</li>
+<li>Structured log keys the fleet tooling can rely on:
+<code>event</code>, <code>component</code>, <code>corr_id</code>, <code>auth_state</code>, <code>mount_state</code>,
+<code>engine_state</code>, <code>bytes_in</code>, <code>bytes_out</code>, <code>duration_ms</code>.</li>
+<li>Metrics endpoint: off by default. See <code>reference/config.md</code> for the
+current <code>profile.observability.metrics_enabled</code> status before enabling a
+metrics-feature build.</li>
+<li>Audit trail: when durable audit is enabled, the audit log lives
+under the managed state directory with the same mode
+enforcement as the vault.</li>
+</ul>
+<h2 id="firewall-selinux-apparmor-sandboxing"><a class="header" href="#firewall-selinux-apparmor-sandboxing">Firewall, SELinux, AppArmor, sandboxing</a></h2>
+<h3 id="outbound-network"><a class="header" href="#outbound-network">Outbound network</a></h3>
+<p>The daemon makes <strong>outbound-only</strong> HTTPS connections (443) to
+<code>*.pcloud.com</code> API endpoints. No inbound network surface. Egress
+firewalls should allow:</p>
+<pre><code>TCP/443 → bineapi.pcloud.com
+TCP/443 → eapi.pcloud.com
+TCP/443 → binapi.pcloud.com
+TCP/443 → &lt;regional upload/download hosts returned by getfilelink&gt;
+</code></pre>
+<p><code>getfilelink</code> returns dynamic CDN hosts; overly-strict egress ACLs
+that pin a single hostname will cause transfer failures. Observe the
+set with one authenticated session and allowlist on apex domains.</p>
+<h3 id="selinux-fedora--rhel--rocky"><a class="header" href="#selinux-fedora--rhel--rocky">SELinux (Fedora / RHEL / Rocky)</a></h3>
+<p>Default <code>targeted</code> policy works out of the box. If you confine the
+daemon further:</p>
+<pre><code class="language-bash"># Permissive for our domain only (test)
+sudo semanage permissive -a pcloud_daemon_t
+# Allow FUSE mounts under $HOME
+sudo setsebool -P use_fusefs_home_dirs on
+</code></pre>
+<p>If audit2allow flags violations under the managed state directory,
+prefer a user-type transition over relaxing the global policy.</p>
+<h3 id="apparmor-debian--ubuntu"><a class="header" href="#apparmor-debian--ubuntu">AppArmor (Debian / Ubuntu)</a></h3>
+<p>An in-tree starting profile exists at
+<code>packaging/apparmor/usr.local.bin.pcloudd</code>. If you author or adapt one,
+grant the current managed paths:</p>
+<pre><code>owner @{HOME}/.config/pcloud/pcloud-rs/** rw,
+owner @{HOME}/.local/share/pcloud/pcloud-rs/** rw,
+owner @{HOME}/.cache/pcloud/pcloud-rs/** rw,
+/dev/fuse rw,
+@{PROC}/@{pid}/mountinfo r,
+@{run}/user/@{uid}/pcloud/pcloud-rs/** rw,
+network inet stream,
+</code></pre>
+<h3 id="nftables--iptables"><a class="header" href="#nftables--iptables">nftables / iptables</a></h3>
+<p>Host firewalls are not load-bearing because the daemon does not
+listen on any IP socket in the default configuration. If you enable
+the optional Prometheus metrics port, restrict it to <code>127.0.0.1</code>.</p>
+<h2 id="troubleshooting-top-10"><a class="header" href="#troubleshooting-top-10">Troubleshooting (top 10)</a></h2>
+<ol>
+<li><strong><code>Connection refused</code> on <code>pcloudc</code></strong> — daemon not running.
+<pre><code class="language-bash">systemctl --user status pcloudd.service
+journalctl --user -u pcloudd.service -n 200 --no-pager
+</code></pre>
+</li>
+<li><strong><code>EACCES</code> on socket</strong> — wrong UID or relaxed perms.
+<pre><code class="language-bash">ls -la "$XDG_RUNTIME_DIR/pcloud/pcloud-rs/"
+stat -c '%U:%G %a' "$XDG_RUNTIME_DIR/pcloud/pcloud-rs/pcloud.sock"
+</code></pre>
+Expected <code>0600</code>, owned by the invoking UID. Fix by restarting.</li>
+<li><strong><code>Vault rejected (mode 0644)</code></strong> — someone chmod’d the vault.
+<pre><code class="language-bash">chmod 0600 ~/.config/pcloud/pcloud-rs/auth_token
+chmod 0700 ~/.config/pcloud/pcloud-rs
+</code></pre>
+</li>
+<li><strong>Mount hangs, <code>ls ~/pCloudDrive</code> blocks</strong> — stale FUSE.
+<pre><code class="language-bash">fusermount3 -u -z ~/pCloudDrive
+PCLOUD_FORCE_UMOUNT=1 systemctl --user restart pcloudd.service
+</code></pre>
+</li>
+<li><strong><code>SQLITE_BUSY</code></strong> — state on NFS/CIFS. Move <code>XDG_DATA_HOME</code> to a
+local disk and restart.</li>
+<li><strong>TLS errors to <code>bineapi.pcloud.com</code></strong> — missing CA bundle or MITM
+proxy. Verify:
+<pre><code class="language-bash">echo | openssl s_client -servername bineapi.pcloud.com \
+  -connect bineapi.pcloud.com:443 &gt;/dev/null
+</code></pre>
+</li>
+<li><strong><code>auth=NeedsTFA</code> on every start</strong> — vault missing or not
+persisted.
+<pre><code class="language-bash">pcloudc auth status
+pcloudc login
+</code></pre>
+</li>
+<li><strong>Daemon OOM-killed</strong> — cap the unit.
+<pre><code class="language-bash">systemctl --user edit pcloudd.service
+# [Service]
+# MemoryHigh=1.5G
+# MemoryMax=2G
+</code></pre>
+</li>
+<li><strong>FUSE refuses to mount, <code>permission denied</code></strong> — user not in the
+<code>fuse</code> group or <code>/etc/fuse.conf</code> tightened. Check
+<code>ls -la /dev/fuse</code> (expect <code>crw-rw-rw-</code> or group-writable).</li>
+<li><strong>Clock skew → 401</strong> — the API rejects signatures with
+large clock drift. Install <code>chrony</code> or <code>systemd-timesyncd</code>:
+<pre><code class="language-bash">sudo systemctl enable --now systemd-timesyncd
+timedatectl status
+</code></pre>
+</li>
+</ol>
+<h2 id="upgrading"><a class="header" href="#upgrading">Upgrading</a></h2>
+<ul>
+<li>In-place package upgrades within a minor series are safe; the
+daemon applies SQLite migrations on first start. Always snapshot
+the managed state directory before a major-version bump.</li>
+<li>Two-wave rolling strategy for managed fleets is documented in
+<a href="../upgrade.html">Upgrade</a>; the platform-specific hook here is that
+<code>systemctl --user daemon-reload</code> must run after swapping the user unit.</li>
+</ul>
+<h2 id="uninstalling"><a class="header" href="#uninstalling">Uninstalling</a></h2>
+<p>See the <strong>Uninstall</strong> section below for the step-by-step removal.</p>
+<h2 id="known-gaps-linux"><a class="header" href="#known-gaps-linux">Known gaps (Linux)</a></h2>
+<ul>
+<li>No clean release-commit Linux qualification run or credentialed live-pCloud
+mount/transfer smoke result exists for the current tree.</li>
+<li>Produced <code>.deb</code> and <code>.rpm</code> candidates still need install, upgrade, service,
+mount, and uninstall verification on their target distributions.</li>
+<li>No Secret Service / Keyring integration yet.</li>
+<li>No Wayland-native credential prompt.</li>
+<li>No native containerised (rootless) mount profile — runs under
+Docker/Podman only if <code>/dev/fuse</code> and <code>/run/user/$UID</code> are mounted.</li>
+<li>FUSE3 is required; FUSE2-only distros (very old LTS) are not
+supported and no backport is planned.</li>
+</ul>
+<h2 id="known-issues"><a class="header" href="#known-issues">Known issues</a></h2>
+<ul>
+<li><strong>SELinux labeling.</strong> On SELinux-enforcing distros, the daemon runs
+under <code>user_u:user_r:user_t</code>; the default policy allows everything
+the daemon needs. If you confine the daemon further, ensure it can
+create FUSE mounts and bind to <code>$XDG_RUNTIME_DIR</code>.</li>
+<li><strong>AppArmor.</strong> Debian/Ubuntu AppArmor profiles may block
+<code>/proc/self/mountinfo</code> reads in unusual setups. The daemon uses
+this to reject nested sync roots; if it is blocked, sync-root
+registration works but loses the nested-root safety check — keep
+the profile permissive for <code>@{PROC}/@{pid}/mountinfo</code>.</li>
+<li><strong>Snap / Flatpak packaging.</strong> Not supported. The daemon needs
+access to user directories and FUSE that sandboxes block by
+default. Use the native distro packages.</li>
+<li><strong>Home on a network mount.</strong> If <code>$HOME</code> is on NFS/CIFS, the store
+may hit <code>SQLITE_BUSY</code> under contention. Either move state to a
+local path via <code>XDG_DATA_HOME</code> or accept slower write throughput.</li>
+<li><strong>Kernel &lt; 5.4.</strong> FUSE3 behavior degrades noticeably. File a bead
+if you must support older kernels in your fleet.</li>
+<li><strong>Wayland clipboard paste of vault path.</strong> Pasting paths containing
+user names into commands that get logged can leak minor PII; use
+<code>$HOME</code> relative paths in runbook commands.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../operations/platforms/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../operations/platforms/macos.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../operations/platforms/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../operations/platforms/macos.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../../mark-09e88c2c.min.js"></script>
+        <script src="../../searcher-09f2665d.js"></script>
+
+        <script src="../../clipboard-1626706a.min.js"></script>
+        <script src="../../highlight-abc7f01d.js"></script>
+        <script src="../../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

@@ -1,0 +1,829 @@
+name: CI
+
+on:
+  push:
+    branches: [development, main]
+  pull_request:
+    branches: [development, main]
+  workflow_dispatch:
+  schedule:
+    # Weekly live-e2e window: Sunday 02:00 UTC.
+    # Only the live-e2e job uses the schedule trigger; all other jobs
+    # run only on push/pull_request.
+    - cron: '0 2 * * 0'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  msrv-core:
+    name: MSRV (portable core / Rust 1.89)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install core MSRV
+        uses: dtolnay/rust-toolchain@1.89.0
+      - name: Install system deps (FUSE)
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: Check workspace at core MSRV
+        run: >-
+          cargo check --workspace --all-targets --locked
+          --exclude pcloud-plugin-wasmtime
+
+  msrv-wasmtime:
+    name: MSRV (Wasmtime plugin / Rust 1.91)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Wasmtime plugin MSRV
+        uses: dtolnay/rust-toolchain@1.91.0
+      - name: Check isolated Wasmtime plugin
+        run: cargo check -p pcloud-plugin-wasmtime --all-targets --locked
+
+  test-linux:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.96.1
+        with:
+          components: rustfmt, clippy
+      - name: Validate workflows, version contract, and shell assets
+        run: |
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          scripts/check-versions.sh
+          find . \
+            -path './target' -prune -o \
+            -path './docs/book/book' -prune -o \
+            -type f -name '*.sh' -print0 \
+            | xargs -0 -n1 bash -n
+      - name: Install system deps (FUSE)
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: cargo test
+        run: cargo test --workspace --locked
+      - name: Validate NAS package metadata and supervisor lifecycle
+        run: packaging/nas/validate.sh
+      - name: Validate deterministic BSD/Solaris package candidates
+        run: packaging/unix/validate.sh
+      - name: cargo deny
+        uses: EmbarkStudios/cargo-deny-action@v1
+        with:
+          command: check
+          arguments: --locked
+
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.96.1
+      - name: cargo test (workspace minus mount-requiring pcloud-fs tests)
+        run: cargo test --workspace --exclude pcloud-fs --locked
+      - name: cargo test pcloud-fs (unit + mock-backend integration tests, no real FUSE mount)
+        # Runs #[test] functions that do not require fuse-t or a real mount.
+        # fuse-t is not available in GitHub-hosted macOS runners.
+        # --lib covers in-src unit tests; the three integration test files
+        # (fuse_adapter_unit, write_path_unit, inode_unit) use mock backends
+        # and do not touch the kernel, so they are safe on macOS runners.
+        run: |
+          cargo test -p pcloud-fs --lib --locked
+          cargo test -p pcloud-fs --test fuse_adapter_unit --locked
+          cargo test -p pcloud-fs --test inode_unit --locked
+          cargo test -p pcloud-fs --test write_path_unit --locked
+
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.96.1
+      - name: cargo test (workspace minus mount-requiring pcloud-fs tests)
+        run: cargo test --workspace --exclude pcloud-fs --locked
+      - name: cargo test pcloud-fs (unit + mock-backend integration tests)
+        run: |
+          cargo test -p pcloud-fs --lib --locked
+          cargo test -p pcloud-fs --test fuse_adapter_unit --locked
+          cargo test -p pcloud-fs --test inode_unit --locked
+          cargo test -p pcloud-fs --test write_path_unit --locked
+      - name: Native per-user daemon and named-pipe CLI smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo build -p pcloud-daemon -p pcloud-cli --locked
+          $root = Join-Path $env:RUNNER_TEMP ("pcloud-win-smoke-" + [Guid]::NewGuid())
+          New-Item -ItemType Directory -Force $root | Out-Null
+          $stdout = Join-Path $root 'pcloudd.stdout.log'
+          $stderr = Join-Path $root 'pcloudd.stderr.log'
+          $env:PCLOUD_ROOT = $root
+          $env:PCLOUD_ENV = 'test'
+          $daemon = Start-Process `
+            -FilePath 'target\debug\pcloudd.exe' `
+            -ArgumentList 'serve' `
+            -PassThru `
+            -WindowStyle Hidden `
+            -RedirectStandardOutput $stdout `
+            -RedirectStandardError $stderr
+          try {
+            $ready = $false
+            for ($attempt = 0; $attempt -lt 100; $attempt++) {
+              if ($daemon.HasExited) {
+                $out = Get-Content $stdout -Raw -ErrorAction SilentlyContinue
+                $err = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
+                throw "pcloudd exited before readiness (code=$($daemon.ExitCode))`n$out`n$err"
+              }
+              & 'target\debug\pcloudc.exe' status *> $null
+              if ($LASTEXITCODE -eq 0) {
+                $ready = $true
+                break
+              }
+              Start-Sleep -Milliseconds 100
+            }
+            if (-not $ready) {
+              throw 'pcloudd named-pipe endpoint did not become ready within 10 seconds.'
+            }
+            & 'target\debug\pcloudc.exe' shutdown
+            if ($LASTEXITCODE -ne 0) {
+              throw "pcloudc shutdown failed with exit code $LASTEXITCODE."
+            }
+            if (-not $daemon.WaitForExit(10000)) {
+              throw 'pcloudd did not exit within 10 seconds after IPC shutdown.'
+            }
+            if ($daemon.ExitCode -ne 0) {
+              $out = Get-Content $stdout -Raw -ErrorAction SilentlyContinue
+              $err = Get-Content $stderr -Raw -ErrorAction SilentlyContinue
+              throw "pcloudd exited with code $($daemon.ExitCode)`n$out`n$err"
+            }
+          }
+          finally {
+            if (-not $daemon.HasExited) {
+              Stop-Process -Id $daemon.Id -Force -ErrorAction SilentlyContinue
+            }
+            Remove-Item -Recurse -Force $root -ErrorAction SilentlyContinue
+          }
+      - name: Install checksum-pinned WinFSP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $url = 'https://github.com/winfsp/winfsp/releases/download/v2.1/winfsp-2.1.25156.msi'
+          $expected = '073A70E00F77423E34BED98B86E600DEF93393BA5822204FAC57A29324DB9F7A'
+          $msi = Join-Path $env:RUNNER_TEMP 'winfsp-2.1.25156.msi'
+          Invoke-WebRequest -Uri $url -OutFile $msi
+          $actual = (Get-FileHash -Algorithm SHA256 $msi).Hash
+          if ($actual -ne $expected) {
+            throw "WinFSP MSI SHA-256 mismatch: expected $expected, got $actual"
+          }
+          $process = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/i', $msi, '/qn', '/norestart'
+          )
+          if ($process.ExitCode -ne 0) {
+            throw "WinFSP MSI installation failed with exit code $($process.ExitCode)"
+          }
+          $dll = Join-Path ${env:ProgramFiles(x86)} 'WinFsp\bin\winfsp-x64.dll'
+          if (-not (Test-Path $dll -PathType Leaf)) {
+            throw "WinFSP installed without the expected runtime DLL: $dll"
+          }
+      - name: Live WinFSP mount/read/write/unmount gate
+        shell: pwsh
+        env:
+          PCLOUD_WINFSP_TEST: '1'
+        run: cargo test -p pcloud-fs --test winfsp_mount_live --locked -- --ignored --nocapture
+
+  # FreeBSD is release-blocking: compile, unit/integration, and a strict live
+  # kernel FUSE mount all execute inside a native FreeBSD VM.
+  freebsd:
+    name: Test (FreeBSD / release gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/freebsd-vm@v1
+        with:
+          usesh: true
+          prepare: |
+            pkg install -y rust fusefs-libs3 pkgconf
+            kldload fusefs
+            sysctl vfs.usermount=1
+          run: |
+            cargo check --workspace --locked
+            cargo clippy --workspace --all-targets --locked -- -D warnings
+            cargo test --workspace --exclude pcloud-fs --locked
+            cargo test -p pcloud-fs --lib --locked
+            cargo test -p pcloud-fs --test fuse_adapter_unit --locked
+            cargo test -p pcloud-fs --test inode_unit --locked
+            cargo test -p pcloud-fs --test write_path_unit --locked
+            test -c /dev/fuse
+            PCLOUD_FUSE_TEST=1 PCLOUD_STRICT_FUSE_TEST=1 \
+              cargo test -p pcloud-fs --test fuse_small_write_wiring --locked \
+                small_file_below_threshold_roundtrip_checkpoints_journal \
+                -- --ignored --exact --nocapture
+
+  netbsd:
+    name: Test (NetBSD / release gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/netbsd-vm@v1
+        with:
+          release: "10.1"
+          usesh: true
+          prepare: /usr/sbin/pkg_add rust pkgconf
+          run: |
+            cargo check --workspace --locked
+            cargo clippy --workspace --all-targets --locked -- -D warnings
+            cargo test --workspace --exclude pcloud-fs --locked
+            cargo test -p pcloud-fs --lib --locked
+            test -e /dev/puffs -o -e /dev/fuse
+            PCLOUD_FUSE_TEST=1 PCLOUD_STRICT_FUSE_TEST=1 \
+              cargo test -p pcloud-fs --test fuse_small_write_wiring --locked \
+                small_file_below_threshold_roundtrip_checkpoints_journal \
+                -- --ignored --exact --nocapture
+
+  openbsd:
+    name: Test (OpenBSD / release gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/openbsd-vm@v1
+        with:
+          release: "7.9"
+          usesh: true
+          prepare: pkg_add rust pkgconf
+          run: |
+            cargo check --workspace --locked
+            cargo clippy --workspace --all-targets --locked -- -D warnings
+            cargo test --workspace --exclude pcloud-fs --locked
+            cargo test -p pcloud-fs --lib --locked
+            test -c /dev/fuse0
+            PCLOUD_FUSE_TEST=1 PCLOUD_STRICT_FUSE_TEST=1 \
+              cargo test -p pcloud-fs --test fuse_small_write_wiring --locked \
+                small_file_below_threshold_roundtrip_checkpoints_journal \
+                -- --ignored --exact --nocapture
+
+  dragonflybsd:
+    name: Test (DragonFlyBSD / release gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/dragonflybsd-vm@v1
+        with:
+          release: "6.4.2"
+          usesh: true
+          prepare: pkg install -y rust pkgconf fusefs-libs3 gtar
+          run: |
+            cargo check --workspace --locked
+            cargo clippy --workspace --all-targets --locked -- -D warnings
+            cargo test --workspace --exclude pcloud-fs --locked
+            cargo test -p pcloud-fs --lib --locked
+            test -e /dev/fuse
+            PCLOUD_FUSE_TEST=1 PCLOUD_STRICT_FUSE_TEST=1 \
+              cargo test -p pcloud-fs --test fuse_small_write_wiring --locked \
+                small_file_below_threshold_roundtrip_checkpoints_journal \
+                -- --ignored --exact --nocapture
+            sh -n packaging/dragonfly/pcloudd
+            cargo build --release --locked -p pcloud-daemon -p pcloud-cli
+            version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+            SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
+              packaging/unix/build-tarball.sh \
+                --platform dragonfly \
+                --version "${version}" \
+                --arch "$(uname -m)" \
+                --pcloudd target/release/pcloudd \
+                --pcloudc target/release/pcloudc \
+                --output dist
+      - name: Retain DragonFly native package candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: pcloud-rs-dragonfly-package-candidate
+          path: |
+            dist/pcloud-rs-*-dragonfly-*.tar.gz
+            dist/pcloud-rs-*-dragonfly-*.tar.gz.sha256
+          if-no-files-found: error
+
+  # illumos is a first-class API/CLI portability gate. The Rust target is
+  # Tier 2 with host tools and OmniOS publishes a current native toolchain.
+  # Kernel mounting is deliberately not claimed here: fuser 0.16 does not
+  # support the illumos unmount ABI, so this job covers RemoteFs, IPC, daemon,
+  # and CLI compilation/runtime while mount remains an explicit unsupported
+  # operation on this target.
+  omnios:
+    name: Test (OmniOS / illumos portability gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/omnios-vm@v1
+        with:
+          release: "r151058-build"
+          usesh: true
+          prepare: |
+            pkg set-publisher -g https://pkg.omnios.org/r151058/extra extra.omnios
+            pkg install -v ooce/developer/rust ooce/extra-build-tools archiver/gnu-tar compress/gzip
+          run: |
+            export PATH=/opt/ooce/bin:/usr/bin:/usr/sbin:$PATH
+            rustc --version
+            cargo --version
+            rustc --version | awk '{ split($2, v, "."); exit !(v[1] > 1 || (v[1] == 1 && v[2] >= 89)) }'
+            cargo check --workspace --locked
+            cargo test -p pcloud-ipc -p pcloud-backends -p pcloud-cli --locked
+            cargo run -p pcloud-cli --locked -- --help
+            svccfg validate packaging/solarish/pcloudd.xml
+            sh -n packaging/solarish/pcloudd
+            cargo build --release --locked -p pcloud-daemon -p pcloud-cli
+            version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+            SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
+              packaging/unix/build-tarball.sh \
+                --platform omnios \
+                --version "${version}" \
+                --arch "$(uname -m)" \
+                --pcloudd target/release/pcloudd \
+                --pcloudc target/release/pcloudc \
+                --output dist
+      - name: Retain OmniOS native package candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: pcloud-rs-omnios-package-candidate
+          path: |
+            dist/pcloud-rs-*-omnios-*.tar.gz
+            dist/pcloud-rs-*-omnios-*.tar.gz.sha256
+          if-no-files-found: error
+
+  solaris:
+    name: Test (Oracle Solaris 11.4 portability gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: vmactions/solaris-vm@v1
+        with:
+          release: "11.4-gcc"
+          usesh: true
+          run: |
+            pkg install -v archiver/gnu-tar compress/gzip
+            curl --proto '=https' --tlsv1.2 --fail --show-error --silent \
+              https://sh.rustup.rs | sh -s -- -y --profile minimal
+            . "$HOME/.cargo/env"
+            rustc --version
+            cargo --version
+            rustc --version | awk '{ split($2, v, "."); exit !(v[1] > 1 || (v[1] == 1 && v[2] >= 89)) }'
+            cargo check --workspace --locked
+            cargo test -p pcloud-ipc -p pcloud-backends -p pcloud-cli --locked
+            cargo run -p pcloud-cli --locked -- --help
+            svccfg validate packaging/solarish/pcloudd.xml
+            sh -n packaging/solarish/pcloudd
+            cargo build --release --locked -p pcloud-daemon -p pcloud-cli
+            version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+            SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct) \
+              packaging/unix/build-tarball.sh \
+                --platform solaris \
+                --version "${version}" \
+                --arch "$(uname -m)" \
+                --pcloudd target/release/pcloudd \
+                --pcloudc target/release/pcloudc \
+                --output dist
+      - name: Retain Solaris native package candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: pcloud-rs-solaris-package-candidate
+          path: |
+            dist/pcloud-rs-*-solaris-*.tar.gz
+            dist/pcloud-rs-*-solaris-*.tar.gz.sha256
+          if-no-files-found: error
+
+  build-release:
+    name: Release build (Linux)
+    runs-on: ubuntu-latest
+    needs: test-linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.1
+      - name: Install system deps
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: cargo build --release
+        run: cargo build --release --workspace --locked
+
+  # Reproducible-build gate (pcloud-rs-s1p.54 / FIX-PLAN P2-7 H-3)
+  # Builds the auditable release binaries on two independent ubuntu-latest runners and
+  # compares SHA-256 digests. Fails if the digests differ.
+  reproducible-build:
+    name: Reproducible build check
+    runs-on: ubuntu-latest
+    needs: test-linux
+    strategy:
+      matrix:
+        runner-slot: [a, b]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.1
+      - name: Install system deps
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: Build release binaries
+        run: |
+          cargo install cargo-auditable --version 0.7.5 --locked
+          # SOURCE_DATE_EPOCH pins embedded timestamps for reproducibility.
+          export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          export RUSTFLAGS="--remap-path-prefix=${GITHUB_WORKSPACE}= -C link-arg=-Wl,--build-id=none"
+          CARGO_PROFILE_RELEASE_REPRO_ACTIVE=1 \
+            cargo auditable build --locked --profile release-repro \
+              -p pcloud-daemon -p pcloud-cli
+      - name: Upload binary digest
+        run: |
+          sha256sum target/release-repro/pcloudd target/release-repro/pcloudc > digest-${{ matrix.runner-slot }}.txt
+          cat digest-${{ matrix.runner-slot }}.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repro-digest-${{ matrix.runner-slot }}
+          path: digest-${{ matrix.runner-slot }}.txt
+
+  reproducible-build-compare:
+    name: Compare reproducible-build digests
+    runs-on: ubuntu-latest
+    needs: reproducible-build
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: repro-digest-*
+          merge-multiple: true
+      - name: Compare digests (fail on mismatch)
+        run: |
+          echo "Runner A:"
+          cat digest-a.txt
+          echo "Runner B:"
+          cat digest-b.txt
+          if ! diff -u digest-a.txt digest-b.txt; then
+            echo "FAIL: reproducible-build mismatch — binaries differ between runners"
+            exit 1
+          fi
+          echo "OK: reproducible build verified"
+
+  # Optional-feature build check (audit-06 wave-G8 H-06).
+  #
+  # CI previously ran only default-feature clippy/test, so enterprise-only
+  # feature combinations (KMS, metrics, OTLP tracing, IDP insecure-test)
+  # could rot unnoticed. This job compiles each significant non-default
+  # feature set to catch breakage early. It does NOT run tests — optional
+  # features may require runtime services (OTLP collector, KMS endpoint)
+  # that are unavailable on ephemeral runners.
+  #
+  # Intentionally excluded features:
+  #   - pcloud-config: fips-preview — compile-error by design (not yet
+  #     implemented); listed in Cargo.toml as a future placeholder only.
+  optional-features:
+    name: Optional feature builds
+    runs-on: ubuntu-latest
+    needs: test-linux
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.96.1
+      - name: Install system deps (FUSE)
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      # pcloud-config: KMS factory (links against pcloud-kms and pcloud-secret)
+      - name: cargo check pcloud-config --features kms-factory
+        run: cargo check -p pcloud-config --features kms-factory --locked
+      # pcloud-config: AWS KMS provider pass-through
+      - name: cargo check pcloud-config --features aws-kms
+        run: cargo check -p pcloud-config --features aws-kms --locked
+      # pcloud-daemon: Prometheus metrics exporter
+      - name: cargo check pcloud-daemon --features metrics
+        run: cargo check -p pcloud-daemon --features metrics --locked
+      # pcloud-daemon: structured JSON logs
+      - name: cargo check pcloud-daemon --features json-logs
+        run: cargo check -p pcloud-daemon --features json-logs --locked
+      # pcloud-daemon: OpenTelemetry distributed tracing
+      - name: cargo check pcloud-daemon --features tracing-otlp
+        run: cargo check -p pcloud-daemon --features tracing-otlp --locked
+      # pcloud-observability: Prometheus exporter feature
+      - name: cargo check pcloud-observability --features prometheus-exporter
+        run: cargo check -p pcloud-observability --features prometheus-exporter --locked
+      # pcloud-observability: OTLP exporter feature
+      - name: cargo check pcloud-observability --features tracing-otlp
+        run: cargo check -p pcloud-observability --features tracing-otlp --locked
+
+  # mdbook build gate (pcloud-rs-s1p.75 / FIX-PLAN P2-7 MED / §12-opus L-4)
+  # Ensures every chapter in docs/book compiles successfully.
+  mdbook:
+    name: mdbook build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mdbook
+        run: |
+          cargo install mdbook --version 0.5.3 --no-default-features --locked
+      - name: Build docs/book
+        run: |
+          ruby scripts/check-mdbook-links.rb
+          mdbook build docs/book
+
+  # cargo doc gate (pcloud-rs-8mb.39 / §11-12-sonnet L-3)
+  # Fails on any rustdoc warning so public API documentation stays accurate.
+  cargo-doc:
+    name: cargo doc (no warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.96.1
+      - name: Install system deps (FUSE)
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: cargo doc
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --locked --no-deps --document-private-items
+
+  # CHANGELOG release-gate (pcloud-rs-8mb.39 / §11-12-sonnet L-2,
+  # strengthened audit-06 wave-2 bd-pcloud-rs-ncx.78).
+  # On a tag push, verify that CHANGELOG.md has been bumped from [Unreleased]
+  # to a versioned heading matching the tag AND that the versioned section
+  # contains at least one bullet (i.e. the entry is not empty).
+  changelog-gate:
+    name: CHANGELOG release gate
+    runs-on: ubuntu-latest
+    # Only relevant on tag pushes; skip for branch pushes and PRs.
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify CHANGELOG has a non-empty versioned entry for this tag
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          # Strip leading 'v' so v0.1.0 matches [0.1.0].
+          VERSION="${TAG#v}"
+          echo "Checking CHANGELOG.md for [${VERSION}] entry..."
+          if ! grep -qE "^\#\# \[${VERSION}\]" CHANGELOG.md; then
+            echo "ERROR: CHANGELOG.md does not contain a versioned heading for [${VERSION}]."
+            echo "       Bump the [Unreleased] section to [${VERSION}] - $(date +%Y-%m-%d) before tagging."
+            exit 1
+          fi
+          echo "OK: [${VERSION}] heading found in CHANGELOG.md."
+
+          # audit-06 wave-2 bd-pcloud-rs-ncx.78: the previous gate passed
+          # as long as the heading existed. A release tag against a stale
+          # or empty `## [X.Y.Z]` section was accepted silently. Walk from
+          # the versioned heading to the next `## [` heading (or EOF) and
+          # require at least one bullet (`^- `, `^* `, or `^+ `). Subsection
+          # headings (`### Added`, `### Changed`, …) alone are not enough;
+          # a human-readable bullet must exist.
+          echo "Verifying [${VERSION}] section is non-empty..."
+          # Use string-prefix comparison (`index($0, prefix) == 1`) rather
+          # than a regex so `[` / `]` in the version heading are treated
+          # as literal characters without regex escaping.
+          START_PREFIX="## [${VERSION}]"
+          SECTION_LABEL="[${VERSION}]"
+          awk \
+            -v start_prefix="${START_PREFIX}" \
+            -v section_label="${SECTION_LABEL}" '
+            BEGIN { in_section = 0; bullet_count = 0; subsection_count = 0 }
+            index($0, start_prefix) == 1 { in_section = 1; next }
+            in_section && index($0, "## [") == 1 { exit 0 }
+            in_section && index($0, "### ") == 1 { subsection_count++; next }
+            in_section && /^[[:space:]]*[-*+] / { bullet_count++ }
+            END {
+              if (!in_section) {
+                print "ERROR: could not locate " section_label " section body in CHANGELOG.md" > "/dev/stderr"
+                exit 2
+              }
+              if (bullet_count == 0) {
+                print "ERROR: " section_label " section in CHANGELOG.md has no bullets." > "/dev/stderr"
+                print "       Add at least one ### Added / Changed / Fixed / Security" > "/dev/stderr"
+                print "       bullet before tagging the release." > "/dev/stderr"
+                exit 3
+              }
+              printf "OK: %s section has %d bullet(s) across %d subsection(s).\n", section_label, bullet_count, subsection_count
+            }
+          ' CHANGELOG.md
+
+          # Belt-and-braces: also confirm an [Unreleased] section still
+          # exists at the top of the file (so the next cycle has a place
+          # to accumulate entries). A missing [Unreleased] is not a hard
+          # error — Keep-a-Changelog allows omitting it — but emit a
+          # visible warning so we notice if someone removes it by
+          # accident.
+          if ! grep -qE "^\#\# \[Unreleased\]" CHANGELOG.md; then
+            echo "WARNING: no [Unreleased] section at top of CHANGELOG.md."
+            echo "         The next tagged release must re-add one."
+          fi
+
+  # Live end-to-end test suite (pcloud-rs FIX-PLAN §9-10 H4).
+  #
+  # IMPORTANT: This job runs against a real pCloud account. It must NOT
+  # run on every PR push — it is gated to workflow_dispatch and the
+  # weekly schedule only. Secrets (PCLOUD_TEST_USER, PCLOUD_TEST_PASSWORD)
+  # must be configured in the repository secret store by an admin.
+  #
+  # Gating posture (CLAUDEREV iter-1 TEST-H-1, fire 25):
+  #
+  # `continue-on-error: true` was removed. The job is now a hard gate
+  # for the only triggers that can fire it: weekly schedule and
+  # `workflow_dispatch`. PR pushes are unaffected because of the
+  # `if: workflow_dispatch || schedule` filter above — the gating change
+  # cannot block contributor PRs, only operator-initiated/weekly runs.
+  #
+  # Mitigations against transient pCloud account flakiness (rate-limit,
+  # account quota, password-rotation events) are layered:
+  #   1. The suite respects `PCLOUD_RATE_LIMIT_*` env knobs that pin the
+  #      per-test rate-limit budget (see `crates/pcloud-resilience` for
+  #      the budget primitive). The weekly window is sized so two full
+  #      runs fit inside one 24-hour budget.
+  #   2. `--test-threads=1` serializes API access so the suite never
+  #      self-DoSes the soak account.
+  #   3. The dedicated `live-e2e-logs-${run_id}` artifact upload (below)
+  #      preserves the failure-time logs for 7 days so a flake is
+  #      diagnosable post-hoc rather than re-running blindly.
+  #   4. Soak-account provisioning is documented in
+  #      `OPERATIONS-RUNBOOK.md` under "Live E2E account setup"; an
+  #      operator must rotate the credentials at the documented cadence
+  #      to keep TFA / lockout from causing recurring failures.
+  #
+  # If a transient pCloud-side outage causes a failed weekly run, the
+  # operator response is to investigate the artifact + re-run via
+  # `workflow_dispatch` (the manual trigger is intentionally available
+  # without code changes). No silent-pass fallback is acceptable.
+  live-e2e:
+    name: Live E2E (weekly / manual)
+    runs-on: ubuntu-latest
+    # Only run on workflow_dispatch or the weekly schedule; never on PR.
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    env:
+      PCLOUD_LIVE_E2E: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.96.1
+      - name: Install system deps (FUSE)
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: Run live E2E tests (ignored tests, single-threaded)
+        env:
+          PCLOUD_TEST_USER: ${{ secrets.PCLOUD_TEST_USER }}
+          PCLOUD_TEST_PASSWORD: ${{ secrets.PCLOUD_TEST_PASSWORD }}
+        run: |
+          cargo test -p pcloud-live-e2e --locked -- --ignored --test-threads=1
+      - name: Upload test artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-e2e-logs-${{ github.run_id }}
+          # Upload logs only — no secrets are written to files by the test suite.
+          path: |
+            target/debug/build/**/output
+            /tmp/pcloud-live-e2e-*
+          retention-days: 7
+
+  # Coverage (pcloud-rs-ujp item d / CLAUDEREV iter-1 TEST-H-4, fire 32).
+  #
+  # Runs `cargo llvm-cov` over the workspace and **hard-gates on a
+  # documented floor**. The previous job was advisory-only with
+  # `continue-on-error: true`; that was intentionally left behind a
+  # decision-required comment block. This fire makes the gate hard,
+  # picks a conservative floor, and documents the ratchet rules:
+  #
+  # ## Threshold posture
+  #
+  # `LINE_COVERAGE_FLOOR=65` matches the release checklist. The measured
+  # 2026-07-16 locked baseline is 77.82% lines. The shared LCOV checker also
+  # enforces higher floors for the five security-sensitive crates. The number
+  # is a **ratchet floor**, not a quality target:
+  #
+  #   - Rule 1 (ratchet only ever rises): when a weekly green run
+  #     reports a number materially above the floor, the floor should
+  #     be bumped to `floor(actual_coverage - 5)` in a follow-up PR.
+  #     The 5-point cushion is the flap-tolerance margin.
+  #   - Rule 2 (regressions must explain themselves): if `cargo
+  #     llvm-cov report --fail-under-lines=$LINE_COVERAGE_FLOOR` exits
+  #     non-zero on a previously-green branch, the PR author must
+  #     either (a) demonstrate the regression is intentional and bump
+  #     the floor down with reviewer approval, or (b) restore coverage
+  #     before merge.
+  #
+  # ## What is excluded from the metric
+  #
+  # `--ignore-filename-regex '(live_e2e|fuzz|benches)'` excludes:
+  #
+  #   - `live_e2e/**` — runtime-gated tests that this CI cannot fire;
+  #   - `fuzz/**` — fuzz targets are coverage-instrumented separately;
+  #   - `benches/**` — Criterion harnesses are not test paths.
+  #
+  # Platform-gated modules (`platform/{macos,windows,bsd}.rs`) are
+  # **not** excluded — they show as 0% on the Linux runner, which is
+  # honest. Their inclusion is part of why the floor is conservative.
+  #
+  # ## Scope
+  #
+  # Scheduled (weekly) + manual dispatch only. The normal fast-path
+  # PR CI stays quick because coverage instrumentation roughly doubles
+  # build time. Hard-gating on PRs would require a self-hosted runner
+  # with a warm cache budget.
+  coverage:
+    name: Coverage (weekly / manual, hard floor)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    env:
+      # Ratchet floor — only ever rises. See job comment block above
+      # for the bump rules.
+      LINE_COVERAGE_FLOOR: "65"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.96.1
+        with:
+          components: llvm-tools-preview
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --version 0.8.7 --locked
+      - name: Install system deps (FUSE)
+        run: sudo apt-get install -y fuse3 libfuse3-dev
+      - name: Generate coverage (lcov + summary; gate on $LINE_COVERAGE_FLOOR)
+        run: |
+          # Generate the lcov report; do NOT swallow non-zero with `|| true`.
+          # A failure here means the test binaries themselves did not run, which
+          # the job must surface — coverage is only meaningful when tests passed.
+          cargo llvm-cov --workspace --locked --lcov --output-path lcov.info \
+            --ignore-filename-regex 'crates/(pcloud-mockserver|pcloud-chaos)'
+          # Print the summary to logs and to the artifact bundle.
+          cargo llvm-cov report --summary-only | tee coverage-summary.txt
+          # Hard-gate on the documented floor. This step exits non-zero (and
+          # therefore fails the job) when workspace line coverage is below
+          # $LINE_COVERAGE_FLOOR percent.
+          scripts/coverage-check.sh lcov.info "$LINE_COVERAGE_FLOOR"
+      - name: Upload coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}
+          path: |
+            lcov.info
+            coverage-summary.txt
+          retention-days: 30
+
+  # macOS live FUSE tests (pcloud-rs-ujp item f).
+  #
+  # DEFERRED: requires a macOS runner with `fuse-t` pre-installed.
+  # GitHub-hosted macOS runners do NOT have fuse-t (and cannot install
+  # it without a kernel-adjacent step requiring sudo + a signed kext/
+  # system extension workflow that SIP rejects in ephemeral runners).
+  #
+  # Closure paths:
+  #   1. Provision a self-hosted macOS runner with fuse-t pre-baked.
+  #   2. Use macOS runners with a community fuse-t action once one
+  #      exists that is production-trustworthy.
+  #   3. Accept Tier-2 hardware-only verification and never run these
+  #      in CI (documented in README).
+  #
+  # This is an infrastructure / budget decision; no CI job is landed
+  # here on purpose. Local reproducer:
+  #
+  #   PCLOUD_LIVE_E2E=1 PCLOUD_FUSE_TEST=1 \
+  #     cargo test -p pcloud-fs --test fuse_write_path_live \
+  #     -- --ignored --test-threads=1
+  #
+  # Tracking: pcloud-rs-ujp (item f).
+
+  # Chaos / fault-injection tests (pcloud-rs-ujp item g).
+  #
+  # DEFERRED: the chaos suite (disk_full_journal, slowloris_timeout,
+  # sigkill_mid_flush) is gated on `PCLOUD_CHAOS=1`. Moving it into
+  # a weekly CI job is straightforward mechanically, but the suite
+  # currently produces load-dependent timings that make it flaky on
+  # GitHub shared runners. Enabling it before the flakiness is
+  # stabilized would bury real regressions under noise.
+  #
+  # Closure paths:
+  #   1. Stabilize each chaos test's timing budget against
+  #      ubuntu-latest's jittery scheduler.
+  #   2. Land a separate `chaos` workflow on a self-hosted runner with
+  #      a pinned CPU budget.
+  #   3. Accept that chaos stays developer-run-only and document the
+  #      invocation in OPERATIONS-RUNBOOK.md (currently done).
+  #
+  # Local reproducer:
+  #
+  #   PCLOUD_CHAOS=1 cargo test --workspace -- --ignored
+  #
+  # Tracking: pcloud-rs-ujp (item g).
+
+  # IPC stress test (audit-06 wave-2, bd-pcloud-rs-ncx.75).
+  #
+  # `crates/pcloud-ipc/tests/stress_concurrent_clients.rs` exercises
+  # 50 clients × 500 sequential requests against an owner-only Unix-
+  # socket server. It catches fd leaks and connection-cap regressions
+  # — security-critical — but it is `#[ignore]`-gated because it
+  # takes ~30-60 s of wall time. Run it on the weekly schedule and on
+  # manual dispatch; skip on every push/PR so the normal CI fast-
+  # path stays quick.
+  ipc-stress:
+    name: IPC stress (weekly / manual)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.96.1
+      - name: Run IPC stress test (50 clients x 500 reqs)
+        run: |
+          cargo test --release -p pcloud-ipc \
+            --locked \
+            --test stress_concurrent_clients \
+            -- --ignored --test-threads=1 --nocapture

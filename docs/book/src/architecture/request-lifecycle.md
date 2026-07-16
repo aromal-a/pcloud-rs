@@ -224,8 +224,10 @@ Adding a new daemon-mediated command is a fixed six-file change:
 5. `crates/pcloud-proto/src/methods/<area>.rs` (+ `<area>_api.rs`) - if a new
    API call is needed, declare the request/response types and the binary
    command name.
-6. `crates/pcloud-sdk/src/lib.rs` - expose a high-level helper so out-of-tree
-   consumers are not forced to hand-build `Request` values.
+6. `crates/pcloud-sdk-public/src/lib.rs` - expose a focused SDK helper with
+   SDK-owned types when the operation belongs in the stable remote-drive
+   contract. Broad first-party compatibility helpers belong in
+   `crates/pcloud-sdk/src/lib.rs` (`pcloud-embedded-sdk`).
 
 Also write an integration test under
 `crates/pcloud-daemon/tests/` or a `#[cfg(test)]` block next to the backend,
@@ -233,12 +235,10 @@ and update `C_FEATURE_PARITY_MATRIX.csv` if the new method is parity-relevant.
 
 ## Gotchas
 
-**`SO_PEERCRED` is Linux-only.** Other Unixes expose equivalent information
-through different mechanisms (`LOCAL_PEERCRED` on macOS/BSD,
-`getpeereid`). The current `peer_identity` implementation in
-`pcloud-ipc/src/transport.rs` is `#[cfg(target_os = "linux")]`-flavoured and
-will need a parallel path if we support additional platforms. Do not relax
-the check as a shortcut; add the platform-specific equivalent.
+**Peer authentication is platform-specific.** Linux uses `SO_PEERCRED`, BSD
+and macOS use native peer-credential APIs, Solaris-family targets use
+`getpeerucred(3)`, and Windows verifies the named-pipe client's token SID.
+Never replace these checks with socket/file permissions alone.
 
 **The panic guard is unconditional.** The `catch_unwind` wrapper in
 `runtime.rs:130` runs in release builds as well as test builds. It exists so a
@@ -267,7 +267,8 @@ lets an attacker stage a replacement socket.
 ## Runnable example
 
 For a full end-to-end demo you can run against a real account, see
-`crates/pcloud-sdk/examples/login_and_list.rs`. It exercises the same
+`crates/pcloud-sdk/examples/login_and_list.rs` from the internal
+`pcloud-embedded-sdk`. It exercises the same
 CLI -> Request -> daemon -> `pcloud-proto` -> TLS path end-to-end against
 `binapi.pcloud.com`, minus the CLI frontend, and is the fastest way to see
 each layer produce a real log line.
@@ -278,8 +279,8 @@ The dispatch arms of `pcloud-daemon` used to own both the routing logic
 and the per-feature backend implementations. As the feature surface grew
 (auth, transfers, sync, public links, shares, backups, crypto, account,
 folder) that coupling made it hard to unit-test a backend without pulling
-the full daemon binary crate, and it made it hard to reuse a backend from
-the SDK without routing through the daemon entry point.
+the full daemon binary crate, and it made reuse across native compositions
+and the internal embedded compatibility API unnecessarily difficult.
 
 The `pcloud-backends` crate exists to break that coupling. It contains:
 
@@ -287,17 +288,17 @@ The `pcloud-backends` crate exists to break that coupling. It contains:
 - request routing types (`BackendRequest`, `BackendResponse`, dispatch
   keys) that are independent of the IPC wire format;
 - backend composition utilities used by both `pcloud-daemon` (for the
-  daemon dispatch path) and `pcloud-sdk` (for the embedded in-process
+  daemon dispatch path) and `pcloud-embedded-sdk` (for the embedded in-process
   path);
 - shared test doubles and fixtures so each backend can be exercised in
   isolation.
 
 The practical consequence is that a backend no longer needs to know
 whether it is being driven by a real IPC socket, a mock IPC harness, or
-an in-process SDK call. `pcloud-daemon::runtime::dispatch` becomes a
+an in-process compatibility-SDK call. `pcloud-daemon::runtime::dispatch` becomes a
 pure translator between `pcloud-ipc::Request` and
-`pcloud-backends::BackendRequest`; the SDK does the same translation on
-behalf of in-process callers. Neither path can short-circuit the other
+`pcloud-backends::BackendRequest`; the embedded SDK does the same translation
+on behalf of in-process callers. Neither path can short-circuit the other
 because they both go through the same trait surface.
 
 Invariants to preserve when touching this split:
@@ -363,10 +364,9 @@ socket is `0600` on a `0700` parent directory so the kernel's DAC check
 already filters obvious abuse; `SO_PEERCRED` is the defence-in-depth
 layer on top.
 
-macOS uses `LOCAL_PEERCRED` via `getsockopt`, which returns an `xucred`
-structure. The comparison is the same (peer euid versus daemon euid) and
-the file permissions are the same. The only difference from Linux is the
-socket-option name and the structure shape; the policy is identical.
+macOS and the BSD family use `getpeereid(3)`. The comparison is the same
+(peer euid versus daemon euid) and the file permissions are the same.
+illumos/Solaris use `getpeerucred(3)`, which also yields the peer PID.
 
 Windows uses a named pipe at `\\.\pipe\pcloudd-<session>` created with
 an explicit DACL that grants `FILE_ALL_ACCESS` only to the daemon's SID
@@ -477,7 +477,9 @@ rule are identical to the Linux file-vault path.
 ### The Windows branch
 
 On Windows the IPC transport is a *named pipe* rather than a Unix
-socket. The acceptor lives in `crates/pcloud-daemon-win/src/ipc.rs`.
+socket. The acceptor lives in
+`crates/pcloud-ipc/src/platform/windows.rs` and is consumed by the shared
+`pcloud-daemon` runtime.
 The pipe name is `\\.\pipe\pcloud-<sid>`, where `<sid>` is the current
 user's SID formatted via `ConvertSidToStringSidW`. The pipe is created
 with an explicit security descriptor: a DACL built from
@@ -628,7 +630,7 @@ single correlation id is a straightforward log filter.
 - Peer identity is verified before the first body byte is read (tests:
   `crates/pcloud-ipc/tests/peer_cred_linux.rs`,
   `crates/pcloud-ipc/tests/peer_cred_macos.rs`,
-  `crates/pcloud-daemon-win/tests/pipe_dacl.rs`).
+  `crates/pcloud-ipc/tests/platform_ipc_crossplat.rs`).
 - Body size is capped at `MAX_IPC_PAYLOAD_LEN` = 1 MiB before any
   allocation (test:
   `crates/pcloud-ipc/tests/frame_size_cap.rs`).

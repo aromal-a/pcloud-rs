@@ -6,19 +6,21 @@
 //! with `0700` permissions; cached content is disposable — losing it
 //! is a performance event, not a correctness event.
 //!
-//! The page cache ([`page_cache::PageCache`]) is the hot path: it is
-//! guarded by a single [`parking_lot::RwLock`] over a
-//! [`linked_hash_map::LinkedHashMap`], so lookups are O(1) and eviction
-//! (least-recently-inserted) is O(1) per evicted entry. Values are
-//! stored as `Arc<Vec<u8>>` so reads return a cheap refcount bump
-//! instead of copying the underlying page bytes. See the
-//! [`page_cache`] module docs for the P1.1 / P5.1 rationale.
+//! The page cache ([`page_cache_generic::PageCacheGeneric`]) is the
+//! hot path: it is guarded by a single [`std::sync::Mutex`] over a
+//! [`lru::LruCache`], so lookups are O(1) and eviction is O(1) per
+//! evicted entry. Values are stored as `Arc<Vec<u8>>` so reads return
+//! a cheap refcount bump instead of copying the underlying page
+//! bytes. See the [`page_cache_generic`] module docs for the P1.1 /
+//! P5.1 rationale.
 //!
 //! ## Observability
 //!
-//! Cache throughput is tracked by the daemon one layer up: every
-//! call site that queries [`page_cache::PageCache::get`] increments
-//! a hit or miss counter, and the daemon exports
+//! Cache throughput is tracked both inside the cache (lifetime
+//! `hits` / `misses` counters via
+//! [`page_cache_generic::PageCacheGeneric::stats`] →
+//! [`page_cache_generic::PageCacheStats::hit_ratio`]) and at the
+//! daemon layer above. The daemon exports
 //! `hit_ratio = hits / (hits + misses)` as an SLO-grade gauge. A
 //! sustained dip below the configured SLO threshold typically means
 //! the page cache has been sized too small for the current working
@@ -38,8 +40,17 @@
 // **GATING:** none (portable).
 
 pub mod checksum_cache;
+pub mod cipher;
 pub mod eviction;
-pub mod page_cache;
+/// Key-typed generic LRU page cache.
+///
+/// Canonical string-keyed page-cache primitive for this crate.
+/// `pcloud-fs::page_cache` re-exports the types defined here, plus
+/// hosts a `PageKey`-specialised variant with a secondary `by_file`
+/// index for O(k) per-file invalidation (CLAUDEREV deferred-set D1.2
+/// will lift that into the generic via a `CacheKey` trait).
+pub mod page_cache_generic;
+pub mod sealed_blob;
 pub mod staging;
 
 /// Human-readable crate name. Used by telemetry / logging so the
@@ -63,7 +74,11 @@ pub struct CacheShell {
     /// Metadata cache for local file checksums (bounded by entry count).
     pub checksums: checksum_cache::ChecksumCache,
     /// Page cache for downloaded/decrypted file pages.
-    pub pages: page_cache::PageCache,
+    ///
+    /// Backed by `PageCacheGeneric<String>` since CLAUDEREV
+    /// deferred-set D1.1b.2d (fire 42); the legacy `page_cache::PageCache`
+    /// is no longer reachable from production code via this struct.
+    pub pages: page_cache_generic::PageCacheGeneric<String>,
     /// Staging buffer for in-flight local writes awaiting upload.
     pub staging: staging::StagingCache,
     /// Configured eviction policy. Advisory only; each sub-cache
@@ -75,7 +90,7 @@ impl Default for CacheShell {
     fn default() -> Self {
         Self {
             checksums: checksum_cache::ChecksumCache::default(),
-            pages: page_cache::PageCache::default(),
+            pages: page_cache_generic::PageCacheGeneric::default(),
             staging: staging::StagingCache::default(),
             eviction_policy: eviction::EvictionPolicy::SizeBound,
         }
@@ -83,11 +98,13 @@ impl Default for CacheShell {
 }
 
 impl CacheShell {
-    /// Insert a page into the shared [`page_cache::PageCache`].
+    /// Insert a page into the shared `PageCacheGeneric<String>`.
     ///
-    /// Accepts an owned `Vec<u8>` for ergonomics; if the caller already
-    /// holds an `Arc<Vec<u8>>` it should use [`page_cache::PageCache::put`]
-    /// directly to avoid the extra allocation.
+    /// Accepts anything convertible into `String` for the key plus an
+    /// owned `Vec<u8>` for the page bytes. Callers that already hold a
+    /// `String` key + an `Arc<Vec<u8>>` should call
+    /// [`page_cache_generic::PageCacheGeneric::put`] directly with
+    /// `(*arc).clone()` if they want to avoid the convenience wrapper.
     ///
     /// # Example
     ///
@@ -95,10 +112,10 @@ impl CacheShell {
     /// use pcloud_cache::CacheShell;
     /// let mut shell = CacheShell::default();
     /// shell.cache_page("file:42:page:0", vec![0xDE, 0xAD, 0xBE, 0xEF]);
-    /// assert_eq!(shell.pages.entry_count(), 1);
+    /// assert_eq!(shell.pages.len(), 1);
     /// ```
     pub fn cache_page(&mut self, key: impl Into<String>, data: Vec<u8>) {
-        self.pages.put(key, data);
+        self.pages.put(key.into(), data);
     }
 
     /// Stage an in-flight write buffer for `path`.
@@ -130,12 +147,14 @@ impl CacheShell {
     /// ```
     #[must_use]
     pub fn summary(&self) -> String {
+        let cfg = self.pages.config();
+        let stats = self.pages.stats();
         format!(
             "cache(page_limit={}MiB, page_size={}KiB, cached_pages={}, used_bytes={}KiB, staging_files={})",
-            self.pages.max_bytes() / (1024 * 1024),
-            self.pages.page_size_bytes() / 1024,
-            self.pages.entry_count(),
-            self.pages.used_bytes() / 1024,
+            cfg.max_bytes / (1024 * 1024),
+            cfg.page_size / 1024,
+            stats.pages_resident,
+            stats.bytes_resident / 1024,
             self.staging.staged_count()
         )
     }

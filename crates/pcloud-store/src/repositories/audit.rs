@@ -379,7 +379,7 @@ impl AuditRepository {
 /// framing here IS load-bearing: migrating to a different framing would
 /// invalidate every historical row's `entry_hash`. If a future migration
 /// needs to change framing, it must re-hash every row at migration time
-/// (see [`rebuild_hash_chain`](rebuild_hash_chain)) and document the schema bump.
+/// (see [`rebuild_hash_chain`]) and document the schema bump.
 ///
 /// Framing: each field is length-prefixed with a u64 little-endian
 /// length, followed by its UTF-8 / BLOB bytes. Optional fields emit a

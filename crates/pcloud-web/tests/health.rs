@@ -8,6 +8,7 @@
 
 use std::path::PathBuf;
 
+use pcloud_secret::secret_string::SecretString;
 use pcloud_web::{WebConfig, bind_for_test};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -47,9 +48,11 @@ async fn health_endpoint_returns_200_ok() {
 
 #[tokio::test]
 async fn index_sends_csp_and_reports_offline_without_socket() {
+    let web_token = "test-index-token";
     let cfg = WebConfig {
         socket_path: PathBuf::new(),
         bind_addr: "127.0.0.1:0".parse().unwrap(),
+        web_token: SecretString::new(web_token.to_owned()),
         ..WebConfig::default()
     };
     let (listener, addr, app) = bind_for_test(cfg).await.expect("bind");
@@ -58,10 +61,13 @@ async fn index_sends_csp_and_reports_offline_without_socket() {
     });
 
     let mut stream = tokio::net::TcpStream::connect(addr).await.expect("connect");
-    stream
-        .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
-        .await
-        .expect("write");
+    let request = format!(
+        "GET / HTTP/1.1\r\n\
+         Host: localhost\r\n\
+         X-PCloud-Web-Token: {web_token}\r\n\
+         Connection: close\r\n\r\n"
+    );
+    stream.write_all(request.as_bytes()).await.expect("write");
     let mut buf = Vec::new();
     stream.read_to_end(&mut buf).await.expect("read");
     let text = String::from_utf8_lossy(&buf);

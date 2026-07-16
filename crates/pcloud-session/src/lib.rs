@@ -18,7 +18,8 @@
 //! workspace revisions. External consumers should go through
 //! `pcloud-sdk` or the back-compat re-exports in `pcloud_daemon`.
 //!
-//! **MSRV:** Rust 1.82 (workspace-pinned; edition 2024).
+//! **MSRV:** Rust 1.89 for the portable crate; full workspace and release
+//! validation use the repository-pinned Rust 1.96.1 toolchain.
 //!
 //! **Platform:** portable.
 //!

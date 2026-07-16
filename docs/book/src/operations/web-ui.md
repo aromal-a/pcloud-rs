@@ -24,7 +24,7 @@ recipes, and the accessibility bar the UI is held to.
 - `pcloud-daemon` running as the same UID that will run
   `pcloud-web`; the UI connects over the daemon’s Unix-domain IPC
   socket.
-- A loopback-reachable TCP port (default `17650`).
+- A TCP port (default `17650`; loopback bind by default).
 - For multi-operator exposure: a same-host reverse proxy
   (nginx / Caddy) terminating TLS + authentication.
 - (Optional) Prometheus scrape agent if the `metrics` feature is
@@ -35,34 +35,38 @@ recipes, and the accessibility bar the UI is held to.
 ### What the UI is (and is not)
 
 - It **is** a thin HTML viewer / mutator for the daemon’s IPC API.
-- It **is not** an auth boundary. The CSRF cookie is a same-origin
-  control, not an authentication layer. Anyone with `curl` on the
-  host and the right `Cookie:` header is in. Do not expose the UI
-  beyond the local host.
+- It **is not** an enterprise auth boundary. The web token and cookies
+  protect the HTTP surface from ambient browser traffic; they do
+  not replace same-UID daemon IPC trust or reverse-proxy AuthN/AuthZ for
+  multi-operator deployments. Do not expose the UI beyond the local host
+  except for controlled lab testing.
 - It **is not** a JavaScript SPA. The CSP’s `script-src 'none'` is
-  enforced; every flow works without JS. Forms are standard HTML
-  `POST`/`DELETE` via link-with-method.
+  enforced; rendered forms are standard HTML `POST` submissions.
 
 ### Security posture (summary)
 
-1. **Loopback-only.** Non-loopback bind panics before the listener
-   is created (ADR 0004 panic guard). There is no flag / env var /
-   config key that overrides the guard. It is a hard invariant.
+1. **Loopback by default.** The default bind is `127.0.0.1:17650`.
+   Non-loopback binds are accepted only when explicitly requested with
+   `--bind` for testing or a controlled reverse-proxy deployment.
 2. **CSP.** Every HTML response carries
    `default-src 'self'; script-src 'none'; style-src 'self'
    'unsafe-inline'` plus `X-Content-Type-Options: nosniff`.
 3. **CSRF — double-submit cookie.** Every `GET` that renders HTML
    sets `pcw_csrf=<32 hex>; HttpOnly; SameSite=Strict; Path=/`.
-   Every mutating (`POST` / `DELETE`) handler requires the caller
-   to echo that value in the `X-CSRF-Token` request header. The
-   compare is constant-time; missing / malformed / mismatched
-   returns `403 Forbidden`.
+   Rendered forms include the same value as a hidden `csrf_token`
+   field; scripted clients may instead send `X-CSRF-Token`. The compare
+   is constant-time; missing / malformed / mismatched returns
+   `403 Forbidden`.
 4. **No client-side JS.** CSP `script-src 'none'` is not decorative.
-5. **No authentication surface.** Host UID boundary is the trust
-   boundary.
-6. **Secrets redaction.** `/settings` prints paths, modes, and
+5. **Web session token.** Daemon-backed routes require
+   `X-PCloud-Web-Token` or the HttpOnly `pcw_session` cookie issued after
+   a token-authenticated HTML GET.
+6. **Host and origin checks.** Requests must use loopback/local `Host`
+   values or explicitly configured reverse-proxy/LAN test hosts. Mutating
+   requests must carry same-origin `Origin` or `Referer`.
+7. **Secrets redaction.** `/settings` prints paths, modes, and
    booleans — never the token, password, or API keys.
-7. **Web session token delivered via file, not stderr.** At startup
+8. **Web session token delivered via file, not stderr.** At startup
    the session token is written to
    `$XDG_RUNTIME_DIR/pcloud-daemon/web-token` with mode `0600`.
    The log line `pcloud-web: session token written to <path>` tells
@@ -99,12 +103,18 @@ pcloud-web --bind 127.0.0.1:17650 \
            --socket /run/user/1000/pcloudd.sock
 ```
 
-The bind address is validated at start-up. **Any non-loopback address
-triggers an explicit panic** — this is the loopback-only panic guard.
+For lab testing from another host, bind to all interfaces and allow the
+Host header your browser will send:
+
+```bash
+pcloud-web --bind 0.0.0.0:17650 \
+           --allow-host 192.0.2.10:17650 \
+           --socket /run/user/1000/pcloudd.sock
+```
 
 ### 4.2 Reach the UI from a different host
 
-Use an SSH local-forward; never expose loopback directly:
+Prefer an SSH local-forward for normal remote administration:
 
 ```bash
 ssh -L 17650:127.0.0.1:17650 operator@pcloud-host.internal
@@ -135,50 +145,78 @@ Verified source: `crates/pcloud-web/src/routes.rs` lines 68-77
 
 ```text
 pcloud-web
-  --bind <ADDR>        loopback address:port (default 127.0.0.1:17650)
+  --bind <ADDR>        address:port (default 127.0.0.1:17650)
   --socket <PATH>      daemon IPC socket (default auto-discovered)
-  --features metrics   enable the /metrics route (build-time)
+  --web-token <TOKEN>  explicit web session token
+  --web-token-file <PATH>
+                       read web session token from an owner-only file
+  --allow-host <HOST>  additional reverse-proxy/LAN test Host allow-list
+  --not-ready          leave /readyz at 503 instead of ready immediately
 ```
 
-Non-loopback `--bind` values panic before the listener is created.
+Non-loopback `--bind` values are accepted for testing. Remote browser
+Host headers must still be listed with `--allow-host`.
 
 ## 5. Verification
 
 ### 5.1 Smoke test (human)
 
 ```bash
+WEB_TOKEN=$(cat "$XDG_RUNTIME_DIR/pcloud-daemon/web-token")
 curl -s http://127.0.0.1:17650/health           # 200 OK
-curl -s http://127.0.0.1:17650/api/status       # JSON body
-curl -sI http://127.0.0.1:17650/ | grep -i csp  # header present
+curl -s -H "X-PCloud-Web-Token: $WEB_TOKEN" \
+  http://127.0.0.1:17650/api/status             # JSON body
+curl -sI -H "X-PCloud-Web-Token: $WEB_TOKEN" \
+  http://127.0.0.1:17650/ | grep -i csp         # header present
 ```
 
 ### 5.2 Route exercise (machine)
 
 ```bash
-for p in / /api/status /health /sync /publinks /activity /settings; do
+WEB_TOKEN=$(cat "$XDG_RUNTIME_DIR/pcloud-daemon/web-token")
+for p in / /api/status /sync /publinks /activity /settings; do
   curl -s -o /dev/null -w "%{http_code} %{url_effective}\n" \
+    -H "X-PCloud-Web-Token: $WEB_TOKEN" \
     http://127.0.0.1:17650$p
 done
-# expect: 200 / 200 … (except /metrics which returns 404 when the
-# feature is disabled)
+curl -s -o /dev/null -w "%{http_code} %{url_effective}\n" \
+  http://127.0.0.1:17650/health
+# expect: 200 for authenticated daemon-backed routes and health
 ```
 
 ### 5.3 CSRF round-trip
 
 ```bash
-# Fetch a GET to obtain the CSRF cookie:
-curl -s -c /tmp/cookies.txt -o /dev/null http://127.0.0.1:17650/sync
+# Fetch a GET to obtain the CSRF cookie and HttpOnly session cookie:
+WEB_TOKEN=$(cat "$XDG_RUNTIME_DIR/pcloud-daemon/web-token")
+curl -s -c /tmp/cookies.txt -o /tmp/sync.html \
+  -H "X-PCloud-Web-Token: $WEB_TOKEN" \
+  http://127.0.0.1:17650/sync
 TOK=$(awk '$6=="pcw_csrf"{print $7}' /tmp/cookies.txt)
 
-# A mutation WITHOUT the header should return 403:
-curl -s -o /dev/null -w "%{http_code}\n" -X DELETE \
+# A browser-like form POST uses cookies + hidden csrf_token, no custom
+# X-PCloud-Web-Token or X-CSRF-Token headers. curl must add Origin because
+# browsers send it automatically on same-origin POSTs.
+curl -s -o /dev/null -w "%{http_code}\n" \
   -b /tmp/cookies.txt \
-  http://127.0.0.1:17650/sync/1
+  -H "Origin: http://127.0.0.1:17650" \
+  --data "csrf_token=$TOK&local_path=/tmp/a&remote_path=/a&sync_type=full" \
+  http://127.0.0.1:17650/sync
+# → 303 on daemon success, or 502 if the daemon socket is absent
+
+# A mutation WITHOUT a CSRF value should return 403:
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -b /tmp/cookies.txt \
+  -H "Origin: http://127.0.0.1:17650" \
+  --data "local_path=/tmp/a&remote_path=/a&sync_type=full" \
+  http://127.0.0.1:17650/sync
 # → 403
 
-# With the header it is accepted:
+# Non-rendered DELETE calls still use the CSRF header:
 curl -s -o /dev/null -w "%{http_code}\n" -X DELETE \
-  -b /tmp/cookies.txt -H "X-CSRF-Token: $TOK" \
+  -b /tmp/cookies.txt \
+  -H "Origin: http://127.0.0.1:17650" \
+  -H "X-CSRF-Token: $TOK" \
   http://127.0.0.1:17650/sync/1
 # → 200 or 404 (depending on whether id=1 exists)
 ```
@@ -198,7 +236,7 @@ The UI is stateless — rollback is trivial:
 
 | Knob                                 | Default            | Tradeoff                                                      |
 |--------------------------------------|--------------------|---------------------------------------------------------------|
-| `--bind`                             | `127.0.0.1:17650`  | Any non-loopback value panics — this is by design.            |
+| `--bind`                             | `127.0.0.1:17650`  | Use `0.0.0.0:17650` only for lab testing or behind a proxy.   |
 | `metrics` feature                    | off                | On → exposes `/metrics` Prometheus; more cardinality cost.    |
 | CSP `style-src 'unsafe-inline'`      | on                 | Enables the default stylesheet without external files.        |
 | Reverse-proxy auth broker            | off                | OIDC/mTLS sidecar removes single-operator limit; costs setup. |
@@ -206,19 +244,21 @@ The UI is stateless — rollback is trivial:
 
 ## 8. Common failure modes
 
-1. **Panic on start with "bind address not loopback".**
-   - Cause: `--bind 0.0.0.0:17650` or an IPv6 public address.
-   - Fix: bind to `127.0.0.1` or `[::1]`; multi-host access goes
-     through a reverse proxy.
+1. **`400 Bad Request` from another host.**
+   - Cause: the browser sent a `Host` header that is not loopback/local
+     and was not listed in `--allow-host`.
+   - Fix: add the exact host or `host:port`, for example
+     `--allow-host 192.0.2.10:17650`.
 2. **`/metrics` returns `404 Not Found`.**
    - Cause: binary built without `--features metrics`.
    - Fix: rebuild with the feature; confirm via
      `pcloudc doctor --json | jq '.build.features'`.
 3. **`403 Forbidden` on all form submissions.**
-   - Cause: missing `X-CSRF-Token` header (common with tools that
-     drop non-standard headers on redirect).
-   - Fix: ensure the HTTP client preserves the header across the
-     `302` redirect the UI emits after successful mutation.
+   - Cause: missing hidden `csrf_token`, missing `pcw_csrf` cookie, or
+     missing same-origin `Origin`/`Referer`.
+   - Fix: submit rendered forms without stripping cookies. For curl-based
+     simulations, include `-b /tmp/cookies.txt` and
+     `-H "Origin: http://127.0.0.1:17650"`.
 4. **Fields rendering as `—`.**
    - Cause: daemon `GetStatus` JSON shape changed and the UI has
      not yet been updated.
@@ -233,12 +273,13 @@ The UI is stateless — rollback is trivial:
 
 ## 9. Security / compliance notes
 
-- **Loopback guard is a hard invariant.** Never carve around it
-  with an SSH-tunnel daemon, a `socat` listener, or a reverse-proxy
-  co-hosted on a different machine. The threat model assumes the
-  proxy is same-host.
-- **CSRF cookie is `HttpOnly; SameSite=Strict`.** Preserve those
-  attributes end-to-end through the proxy.
+- **All-interface bind is for testing.** If you use `--bind 0.0.0.0:17650`,
+  keep it on a trusted lab network and list only the expected Host values
+  with `--allow-host`. Production multi-operator access should use TLS and
+  an authenticating reverse proxy.
+- **CSRF and session cookies are `HttpOnly; SameSite=Strict`.** Preserve
+  those attributes end-to-end through the proxy, and configure
+  `--allow-host` for the proxy's forwarded `Host` value.
 - **`/settings` redaction is the last line of defence**, not the
   first. The daemon IPC already refuses to return secret material;
   the UI’s redaction prevents accidental leaks if that contract
@@ -334,8 +375,7 @@ when the feature is disabled. When enabled, emits the standard
 
 ## 11. Reverse-proxy recipes
 
-The loopback guard means the UI cannot be exposed directly. For
-multi-operator teams the B6 high-availability design recommends a
+For multi-operator teams the B6 high-availability design recommends a
 **reverse proxy on the same host**, terminated by an authenticating
 sidecar (OIDC, mTLS, or HTTP Basic over TLS), then forwarded to
 `127.0.0.1:17650`.
@@ -395,8 +435,11 @@ proxy).
 
 ### Rules (don't break these)
 
-- The proxy **must** be co-located with the daemon. Cross-host
-  proxying defeats the loopback guard's threat model.
+- The proxy should be co-located with the daemon for production use.
+  Cross-host proxying is a lab/testing setup unless it adds its own
+  transport protection and authentication.
+- Start `pcloud-web` with `--allow-host <proxy-hostname>` if the proxy
+  forwards a non-local `Host` value.
 - The proxy **must** terminate TLS; upstream is plain HTTP on
   loopback by design.
 - The upstream `SameSite=Strict` cookie survives because the proxy

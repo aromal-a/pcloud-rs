@@ -33,7 +33,7 @@ exclusively through
 over a Unix-domain socket: operators only run
 .B pcloudd
 themselves to produce a one-shot bootstrap summary, or have a service
-manager (systemd, launchd, SCM, rc.d) launch
+manager (systemd, launchd, rc.d), or the per-user Windows CLI launch
 .B pcloudd serve
 on their behalf.
 .
@@ -1037,17 +1037,13 @@ User agent at
 (or
 .B "sudo launchctl load"
 for system daemons).
-.SS Service Control Manager (Windows)
-.B pcloudd.exe
-is a console program; wrap it with
-.B pcloudd-svc.exe
-(the shipped service host) and register via
-.BR sc.exe .
-Run the service under a dedicated local account, not
-.BR LocalSystem .
-The wrapper forwards SCM stop as the equivalent of
-.B SIGTERM
-so graceful drain still applies.
+.SS Per-user daemon (Windows)
+Run
+.B pcloudc start
+from the interactive user's session. The installer deliberately does not
+register an SCM service: named-pipe authentication, DPAPI, and WinFSP mounts
+must share the user's SID. Stop gracefully with
+.BR "pcloudc stop" .
 .SS rc.d (FreeBSD, OpenBSD, NetBSD)
 Drop
 .I /usr/local/etc/rc.d/pcloudd
@@ -1077,11 +1073,11 @@ This release is pre-alpha and the Rust rewrite is not yet "full
 parity" with the legacy C daemon. Concretely:
 .RS
 .IP \(bu 2
-.B Mounted-drive runtime (FUSE).
-Scaffolded only. Linux mount/unmount, readdir, read-path, write-path,
-crash-safe writeback, and integration tests are tracked under
-.BR bd\-1du.4 .
-The macOS/Windows/BSD mount paths are not yet implemented.
+.B Mounted-drive runtime.
+Linux/BSD use FUSE, macOS uses fuse-t, and Windows uses WinFSP. Support is
+release-specific and requires the corresponding native mount gate to pass.
+illumos/Solaris return an explicit unsupported-mount error while retaining
+CLI/API/WebDAV operation.
 .IP \(bu 2
 .B Final parity proof
 is still open under

@@ -18,10 +18,10 @@
 //!
 //! ## Security and behavioural posture
 //!
-//! - **Opt-in.** [`DivergenceSweeperConfig::default`] returns
+//! - **Opt-in.** `DivergenceSweeperConfig::default()` returns
 //!   `enabled = false`. A daemon that has never seen this block
 //!   behaves exactly as it did before this module existed. Calling
-//!   [`DivergenceSweeper::tick_if_due`] is a no-op when the config has
+//!   `DivergenceSweeper::tick_if_due` is a no-op when the config has
 //!   `enabled = false`.
 //! - **Read-only.** The sweeper never mutates the engine. It snapshots
 //!   the divergence count and quarantine entries; an operator must
@@ -29,18 +29,18 @@
 //!   `resume_sync_root`, etc.) — the sweeper deliberately does **not**
 //!   call those itself.
 //! - **Cancellation-safe.** The daemon-side wrapper drives this
-//!   sweeper from a tokio task that calls [`tick_if_due`] on a timer.
+//!   sweeper from a tokio task that calls `tick_if_due` on a timer.
 //!   Each tick is a synchronous, bounded scan of in-memory engine
 //!   state — there is no `await` point inside, so cancellation drops
 //!   the next tick at most, never mid-scan.
 //!
 //! ## Quarantine model
 //!
-//! Each detected divergence is recorded as a [`QuarantineEntry`].
+//! Each detected divergence is recorded as a `QuarantineEntry`.
 //! The list is a bounded ring (default 1024 entries) so a runaway
 //! divergence storm cannot exhaust memory. Once full, oldest entries
 //! are evicted with the eviction count surfaced to operators via
-//! [`DivergenceSweeper::evicted_count`].
+//! `DivergenceSweeper::evicted_count`.
 
 // **PLATFORM:** all
 // **GATING:** none (portable; pure in-memory state machine).
@@ -71,7 +71,7 @@ pub const MIN_PERIOD_SECS: u64 = 60;
 pub const MAX_PERIOD_SECS: u64 = 7 * 24 * 60 * 60;
 
 /// Configuration for the divergence sweeper. Lives next to
-/// `SyncLoopConfig` in [`pcloud_config::sync_loop`] and is wired
+/// `SyncLoopConfig` in `pcloud_config::sync_loop` and is wired
 /// through the daemon runtime.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DivergenceSweeperConfig {
@@ -146,7 +146,7 @@ pub struct QuarantineEntry {
 }
 
 /// Live state container. The daemon-side task owns one of these and
-/// calls [`tick_if_due`] from a tokio interval.
+/// calls `tick_if_due` from a tokio interval.
 pub struct DivergenceSweeper {
     config: DivergenceSweeperConfig,
     last_run: Option<Instant>,

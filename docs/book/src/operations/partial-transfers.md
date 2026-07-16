@@ -363,13 +363,12 @@ idempotent. The recovery actions are:
   the same `ResumeOutcome` taxonomy so `doctor` aggregates stay
   useful.
 
-## 10.1 Upload via mounted drive (bd-1du.4.6 — Linux, pre-alpha)
+## 10.1 Upload via mounted drive (Linux, pre-alpha)
 
-Status: **landed on the direct-shim path**
-(`PcloudFsShim` + `MountService::mount_fuser`). The `BoxedFuserShim` /
-`FuserShim<A>` dyn-trait shim is **still read-only** by design; writable
-mounts must be composed through `PcloudFsShim` directly. This matches
-the `#[must_use]` construction in `crates/pcloud-daemon/src/mount_runtime.rs`.
+Status: **landed on both Linux compositions**. `PcloudFsShim` and the
+object-safe `FuserShim<A>` delegate to the same `WritePathService` when a
+writer is attached. An adapter without a writer returns `ENOSYS` instead of
+silently accepting mutations.
 
 ### What the recipe proves
 
@@ -380,9 +379,9 @@ FUSE mount:
 2. journals `Create` / `Write` / `FlushBarrier` records under
    `<state_dir>/journal.bin` with the `fsync(file)+fsync(dir)` barrier
    described in §3,
-3. finalizes via `upload_file` on the wired transport at `close(2)` /
-   `fsync(2)` (whole-file finalize; chunked `upload_write`
-   pipelining is still `TODO(bd-1du.4.6)` in `write_path.rs`),
+3. finalizes via `upload_file` for an explicit small-file flush or uses
+   resumable `upload_create` / bounded `upload_write` / `upload_save` when the
+   chunk threshold is reached,
 4. survives an unmount → remount cycle: once the server has absorbed
    the upload, the next cold mount reads the file back byte-identical
    through the kernel VFS via the `ProtoFuseAdapter` read path.
@@ -442,12 +441,10 @@ pcloudc unmount /mnt/pcloud
 
 ### Interaction with H5 upload resume
 
-The write path inside `PcloudFsShim` writes the same
-`ResumeOutcome`-emitting sidecars as the standalone uploader once
-chunked `upload_write` pipelining lands. Until then, finalize happens
-through `upload_file`; a crash after `FlushBarrier` but before the
-upload ack is safe because the next daemon start replays the journal
-and re-emits the upload. The existing replay path
+The chunked write path writes the same `ResumeOutcome`-emitting sidecars as
+the standalone uploader. An explicit small-file flush uses `upload_file`; a
+crash after `FlushBarrier` but before the upload ack is safe because the next
+daemon start replays the journal and re-emits the upload. The existing replay path
 (`crates/pcloud-daemon/src/bootstrap.rs`,
 `crates/pcloud-daemon/src/mount_runtime.rs`) already calls
 `replay_upload_sidecars` on mount (re)activation, so no additional
@@ -457,16 +454,13 @@ operator step is required.
 
 This is **pre-alpha**. What is **not** yet in place:
 
-- chunked `upload_write` pipelining for sustained multi-GiB writes
-  (tracked under `TODO(bd-1du.4.6)` in `write_path.rs`);
-- writable mounts through the object-safe `BoxedFuserShim` — the
-  dyn-trait shim stays read-only because `WritePathService<U>` is
-  generic over the concrete upload backend. Follow-up is explicitly
-  noted in `crates/pcloud-fs/src/platform/linux.rs`;
-- macOS and Windows writable mounts (scaffolding only);
-- final `bd-1du.10` parity gate closure.
+- a clean release-commit run of the strict Linux mount and 2 GiB transfer gate;
+- credentialed pCloud mount/transfer qualification rather than deterministic
+  local backends;
+- per-release native qualification for macOS and Windows writable mounts;
+- BSD hardware/VM and NAS-appliance qualification.
 
-Until `bd-1du.10` closes, do **not** claim "production-ready" or
+Until those release gates pass, do **not** claim "production-ready" or
 "drop-in replacement" for the mounted-drive surface.
 
 ## 11. Cross-references

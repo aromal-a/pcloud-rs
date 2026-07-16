@@ -8,11 +8,10 @@
 //! (`fuse_lowlevel.h`). Binding directly avoids pulling in a macOS-only
 //! third-party crate and keeps the surface auditable.
 //!
-//! NOTE: This is **Phase-1 scaffolding**. It has **not** been
-//! compiled or executed on an actual Mac. The struct layouts below
-//! follow the publicly documented libfuse 2.9 ABI; real-Mac bring-up
-//! (bd-1du.4) must verify layout, calling convention, and the opaque
-//! type sizes against the installed `libfuse.dylib` on a macOS host.
+//! The struct layouts follow the public libfuse 2.9 ABI. The labelled native
+//! fuse-t workflow is responsible for verifying layout, calling convention,
+//! and the session lifecycle against the installed `libfuse.dylib` for each
+//! supported release.
 //!
 //! Every `extern "C"` function declared here corresponds to a symbol
 //! exported by fuse-t's `libfuse.dylib`. Every raw pointer / C struct

@@ -34,13 +34,27 @@ This script checks for fuse-t, installs binaries, sets up launchd, and logs you 
 
 ### .pkg installer (`build-pkg.sh`)
 
-Produces a standard macOS Installer package (`target/pkg/pcloud-rs-<version>-macos.pkg`).
+Produces a native-architecture macOS Installer package
+(`target/pkg/pcloud-rs-<version>-macos-<arch>.pkg`). The filename records
+whether the build runner produced `arm64` or `x86_64` code; it is not presented
+as a universal binary.
 
 The package installs:
 
 - `/usr/local/bin/pcloudc` — command-line client
 - `/usr/local/bin/pcloudd` — sync daemon
-- `~/Library/LaunchAgents/com.pcloud.pcloud-rs.plist` — user LaunchAgent
+- `/usr/local/share/pcloud-rs/macos/` — the user LaunchAgent template and
+  configuration helper
+
+macOS Installer cannot safely identify and bootstrap the target GUI user.
+After installing the package, each user who wants automatic startup runs:
+
+```sh
+/usr/local/share/pcloud-rs/macos/configure-user.sh
+```
+
+That command must run without `sudo`; it creates and loads the LaunchAgent in
+that user's login session.
 
 ```sh
 # Unsigned (development / CI):
@@ -48,19 +62,24 @@ The package installs:
 
 # Signed:
 ./packaging/macos/build-pkg.sh \
-    --sign "Developer ID Installer: Acme Corp (ABCDE12345)"
+    --application-sign "Developer ID Application: Acme Corp (ABCDE12345)" \
+    --installer-sign "Developer ID Installer: Acme Corp (ABCDE12345)"
 
 # Signed + notarised (release):
 APPLE_ID=you@example.com \
 APPLE_APP_SPECIFIC_PASSWORD=xxxx-xxxx-xxxx-xxxx \
 APPLE_TEAM_ID=ABCDE12345 \
 ./packaging/macos/build-pkg.sh \
-    --sign "Developer ID Installer: Acme Corp (ABCDE12345)" \
+    --application-sign "Developer ID Application: Acme Corp (ABCDE12345)" \
+    --installer-sign "Developer ID Installer: Acme Corp (ABCDE12345)" \
     --notarize
 ```
 
-Prerequisites: Xcode command-line tools (`pkgbuild`, `productbuild`,
-`productsign`), Rust stable toolchain.
+Application and Installer identities are intentionally separate: `codesign`
+signs the executables with the former and `productsign` signs the package with
+the latter. Notarisation is rejected unless both are supplied. Prerequisites:
+Xcode command-line tools (`codesign`, `pkgbuild`, `productbuild`, `productsign`),
+Rust stable toolchain.
 
 ### .dmg disk image (`build-dmg.sh`)
 
@@ -121,10 +140,13 @@ pcloud-rs on macOS.
 
 Both plists set `RunAtLoad`, a conservative `KeepAlive` (restart only
 on crash / non-zero exit), separate `StandardOutPath` /
-`StandardErrorPath` log files, and a `PCLOUD_*` `EnvironmentVariables`
-block covering `PCLOUD_HOME`, `PCLOUD_CONFIG`, `PCLOUD_AUTH_VAULT`,
-`PCLOUD_LOG_LEVEL`, `PCLOUD_MOUNT_POINT` (agent only),
-`PCLOUD_IPC_SOCKET` (daemon only), and `PCLOUD_API_SERVER`.
+`StandardErrorPath` log files, and a minimal `EnvironmentVariables`
+block. The templates intentionally do **not** set `PCLOUD_CONFIG`:
+when present, the daemon treats it as mandatory and expects a JSON
+config envelope, not a TOML file. They also do **not** override
+`PCLOUD_API_HOST` / `PCLOUD_API_SERVER_NAME`; macOS packaged runtime
+uses the binary API defaults unless the operator supplies an explicit
+config.
 
 Before installing the user agent, replace every `{{USER_HOME}}`
 placeholder with an absolute path: launchd does not expand `$HOME`

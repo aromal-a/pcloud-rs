@@ -17,16 +17,20 @@
 //! them verbatim while higher layers migrate to the [`PlatformVault`]
 //! trait.
 
+#[cfg(not(windows))]
+use std::io::Write;
 use std::{
     fs,
-    io::{self, Read, Write},
+    io::{self, Read},
     path::{Path, PathBuf},
 };
 
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
 
-use pcloud_secret::{ExposeSecret, secret_string::SecretString};
+#[cfg(not(windows))]
+use pcloud_secret::ExposeSecret;
+use pcloud_secret::secret_string::SecretString;
 use zeroize::Zeroize;
 
 use crate::auth_vault::AuthVaultError;
@@ -156,54 +160,57 @@ pub fn store_token(path: &Path, token: &SecretString) -> std::result::Result<(),
     #[cfg(windows)]
     {
         let _ = (path, token);
-        return Err(AuthVaultError::UnsupportedPlatform(
+        Err(AuthVaultError::UnsupportedPlatform(
             "file vault is not supported on Windows; use PCLOUD_VAULT=dpapi".to_owned(),
-        ));
+        ))
     }
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-        #[cfg(unix)]
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
-    }
-
-    let tmp_path = path.with_extension("tmp");
-    // Audit finding L3: open the tmp file with O_CREAT|O_EXCL and mode 0o600
-    // atomically so a racing symlink or pre-existing attacker-controlled file
-    // in the vault dir is rejected by the kernel rather than followed.
-    // If a previous aborted write left a stale tmp file behind, clear it
-    // first — the parent dir is already 0o700, so only the running user (or
-    // root) can have created it.
-    match fs::remove_file(&tmp_path) {
-        Ok(()) => {}
-        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
-        Err(err) => return Err(AuthVaultError::Io(err)),
-    }
+    #[cfg(not(windows))]
     {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+            #[cfg(unix)]
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+        }
+
+        let tmp_path = path.with_extension("tmp");
+        // Audit finding L3: open the tmp file with O_CREAT|O_EXCL and mode 0o600
+        // atomically so a racing symlink or pre-existing attacker-controlled file
+        // in the vault dir is rejected by the kernel rather than followed.
+        // If a previous aborted write left a stale tmp file behind, clear it
+        // first — the parent dir is already 0o700, so only the running user (or
+        // root) can have created it.
+        match fs::remove_file(&tmp_path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(AuthVaultError::Io(err)),
+        }
+        {
+            #[cfg(unix)]
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&tmp_path)?;
+            #[cfg(not(unix))]
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&tmp_path)?;
+            // Belt-and-braces: re-apply 0o600 in case the umask on this platform
+            // relaxed the initial mode through the `mode(...)` hint. `create_new`
+            // guarantees we own the newly-created inode.
+            #[cfg(unix)]
+            file.set_permissions(fs::Permissions::from_mode(0o600))?;
+            file.write_all(token.expose_secret().as_bytes())?;
+            file.sync_all()?;
+        }
+        fs::rename(&tmp_path, path)?;
         #[cfg(unix)]
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(&tmp_path)?;
-        #[cfg(not(unix))]
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&tmp_path)?;
-        // Belt-and-braces: re-apply 0o600 in case the umask on this platform
-        // relaxed the initial mode through the `mode(...)` hint. `create_new`
-        // guarantees we own the newly-created inode.
-        #[cfg(unix)]
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        file.write_all(token.expose_secret().as_bytes())?;
-        file.sync_all()?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        sync_parent_directory(path)?;
+        Ok(())
     }
-    fs::rename(&tmp_path, path)?;
-    #[cfg(unix)]
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    sync_parent_directory(path)?;
-    Ok(())
 }
 
 /// Remove any persisted auth token at `path`. Idempotent — returns
@@ -238,45 +245,57 @@ fn validate_vault_file(path: &Path) -> std::result::Result<(), AuthVaultError> {
         ));
     }
 
-    // Harden the parent directory to 0700 on load, not just on creation.
-    // A directory left at a relaxed mode by a previous install, package
-    // upgrade, or manual operation would allow other local users to list the
-    // vault file name even if the file itself is 0600. Re-applying 0700 here
-    // is cheap and idempotent.
-    //
-    // audit-06 LOW security / pcloud-rs-ncx.80-b: if the parent is owned
-    // by us, a chmod failure is a real security problem (we should be
-    // able to tighten our own directory) and we escalate to
-    // `InsecureMetadata`. If the parent is owned by someone else
-    // (e.g. system-managed /etc), we can't tighten it and a warning is
-    // the correct outcome.
     if let Some(parent) = path.parent() {
-        match fs::set_permissions(parent, fs::Permissions::from_mode(0o700)) {
-            Ok(()) => {}
-            Err(err) => {
-                let parent_meta = fs::symlink_metadata(parent).ok();
-                let parent_owned_by_us = parent_meta
-                    .as_ref()
-                    .map(|m| m.uid() == current_uid)
-                    .unwrap_or(false);
-                if parent_owned_by_us {
-                    log::error!(
-                        "vault: failed to tighten parent dir perms on owner-matched {}: {err}",
-                        parent.display()
-                    );
-                    return Err(AuthVaultError::InsecureMetadata(
-                        "vault parent directory chmod to 0700 failed on owner-matched path",
-                    ));
-                }
-                log::warn!(
-                    "vault: could not tighten parent dir permissions on {}: {err} \
-                     (parent not owned by current uid; leaving as-is)",
-                    parent.display()
-                );
-            }
+        if !parent.as_os_str().is_empty() {
+            validate_vault_parent(parent, current_uid)?;
         }
     }
 
+    Ok(())
+}
+
+#[cfg(unix)]
+fn validate_vault_parent(
+    parent: &Path,
+    current_uid: u32,
+) -> std::result::Result<(), AuthVaultError> {
+    let metadata = fs::symlink_metadata(parent)?;
+    if !metadata.file_type().is_dir() {
+        return Err(AuthVaultError::InsecureMetadata(
+            "vault parent path must be a directory",
+        ));
+    }
+    if metadata.uid() != current_uid {
+        return Err(AuthVaultError::InsecureMetadata(
+            "vault parent directory must be owned by the current user",
+        ));
+    }
+
+    if metadata.mode() & 0o077 == 0 {
+        return Ok(());
+    }
+
+    fs::set_permissions(parent, fs::Permissions::from_mode(0o700)).map_err(|err| {
+        log::error!(
+            "vault: failed to tighten parent dir perms on owner-matched {}: {err}",
+            parent.display()
+        );
+        AuthVaultError::InsecureMetadata(
+            "vault parent directory chmod to 0700 failed on owner-matched path",
+        )
+    })?;
+
+    let tightened = fs::symlink_metadata(parent)?;
+    if !tightened.file_type().is_dir() || tightened.uid() != current_uid {
+        return Err(AuthVaultError::InsecureMetadata(
+            "vault parent directory changed during permission validation",
+        ));
+    }
+    if tightened.mode() & 0o077 != 0 {
+        return Err(AuthVaultError::InsecureMetadata(
+            "vault parent directory must not grant group or other access",
+        ));
+    }
     Ok(())
 }
 
@@ -295,6 +314,7 @@ fn validate_vault_file(path: &Path) -> std::result::Result<(), AuthVaultError> {
     Ok(())
 }
 
+#[cfg(not(windows))]
 fn sync_parent_directory(path: &Path) -> std::result::Result<(), AuthVaultError> {
     if let Some(parent) = path.parent() {
         let dir = fs::File::open(parent)?;
@@ -358,6 +378,30 @@ mod tests {
             .expect("vault load should succeed")
             .expect("token should be present");
         assert_eq!(loaded.expose_secret(), "trimmed-token");
+    }
+
+    #[test]
+    fn load_token_tightens_owned_parent_directory() {
+        let path = temp_vault_path("parent-mode");
+        let parent = path.parent().expect("vault parent should exist");
+        std::fs::create_dir_all(parent).expect("vault parent dir should be created");
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o755))
+            .expect("vault parent permissions should be relaxed");
+        std::fs::write(&path, "auth-token\n").expect("vault file should be written");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+            .expect("vault permissions should be tight");
+
+        let loaded = load_token(&path)
+            .expect("owned relaxed parent should be tightened")
+            .expect("token should be present");
+        assert_eq!(loaded.expose_secret(), "auth-token");
+
+        let parent_mode = std::fs::metadata(parent)
+            .expect("parent metadata should load")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(parent_mode, 0o700);
     }
 
     #[test]

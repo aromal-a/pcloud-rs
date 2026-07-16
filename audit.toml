@@ -1,28 +1,21 @@
 # cargo-audit configuration for the pcloud-rs Rust rewrite workspace.
 #
-# Advisories listed under [advisories.ignore] are time-boxed exceptions and
-# MUST mirror deny.toml. Every entry carries a `review: YYYY-MM-DD`
-# comment; the nightly `deny-audit` CI job is expected to re-flag anything
-# whose upstream has shipped a patched release so the reviewer can drop it.
+# Advisories listed under [advisories.ignore] are time-boxed exceptions.
+# cargo-audit 0.22 does not read this file automatically; the GitHub
+# workflows pass the same IDs with explicit `--ignore` flags. Keep both
+# surfaces in sync. Every entry carries a `review: YYYY-MM-DD` comment.
 
 [advisories]
 ignore = [
-    # RUSTSEC-2021-0119: nix 0.19.1 (transitive via `battery v0.7.8`) —
-    # macOS/Windows-only target graph. See deny.toml for detail.
+    # RUSTSEC-2023-0071: the workspace is pinned to rsa 0.10.0-rc.18, whose
+    # private-key arithmetic uses crypto-bigint, but RustSec still applies the
+    # family-wide advisory. Upstream reports no patched version. Retain the
+    # exception only while RSA-OAEP unwrap remains a local, bounded pCloud
+    # Crypto compatibility operation rather than a remotely measurable oracle.
+    # Replace the implementation as soon as a constant-time interoperable
+    # backend is available.
     # review: 2026-07-15
-    "RUSTSEC-2021-0119",
-    # RUSTSEC-2026-0097: rand unsound with custom logger (reqwest/AWS stack).
-    # review: 2026-07-15
-    "RUSTSEC-2026-0097",
-    # RUSTSEC-2025-0134: rustls-pemfile unmaintained (AWS transitive).
-    # review: 2026-07-15
-    "RUSTSEC-2025-0134",
-    # RUSTSEC-2026-0098: rustls name-constraints for URIs (upstream patching).
-    # review: 2026-06-01
-    "RUSTSEC-2026-0098",
-    # RUSTSEC-2026-0099: rustls name-constraints wildcard (upstream patching).
-    # review: 2026-06-01
-    "RUSTSEC-2026-0099",
+    "RUSTSEC-2023-0071",
 ]
 
 # Fail the build on any advisory other than the explicitly ignored set.

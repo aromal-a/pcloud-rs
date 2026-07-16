@@ -113,10 +113,7 @@ impl Planner {
             let mut remote = None;
 
             // Consume all candidates for the same (sync_id, path) group.
-            while idx < sorted.len()
-                && sorted[idx].sync_id == sync_id
-                && sorted[idx].path == path
-            {
+            while idx < sorted.len() && sorted[idx].sync_id == sync_id && sorted[idx].path == path {
                 match sorted[idx].source {
                     ChangeSource::Local => local = Some(sorted[idx].clone()),
                     ChangeSource::Remote => remote = Some(sorted[idx].clone()),

@@ -1,15 +1,19 @@
 # pcloud-fs
 
-Mounted-drive / FUSE integration scaffolding for pcloud-rs: readdir, staging,
-journal, and writeback helpers.
+Cross-platform mounted-drive integration for pcloud-rs: readdir, staging,
+journal, crash-safe writeback, and native mount lifecycle adapters.
 
 ## What this crate does
 
 - Hosts the mount-policy validation, RAII mount handles, signal-aware unmount
   cleanup, in-memory read path, staging area, and crash-safe writeback journal.
-- On Linux it wires to `fuser`. On other platforms the FUSE surface compiles
-  out entirely.
-- Remains a work-in-progress subsystem tracked under `bd-1du.4`.
+- Linux and the BSD family use `fuser`; macOS uses direct fuse-t FFI; Windows
+  uses direct WinFSP FFI.
+- Other Unix targets retain the portable filesystem/API layers and return an
+  explicit `UnsupportedPlatform` error for kernel mounts.
+- Native CI owns mount/read/write/unmount gates for each advertised mount
+  backend. Passing workflow definitions are qualification evidence only after
+  the corresponding jobs have actually run successfully.
 
 ## Public API entry points
 

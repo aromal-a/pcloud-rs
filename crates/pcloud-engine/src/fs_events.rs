@@ -16,7 +16,7 @@ use pcloud_model::{
 /// This ingestor performs **batch-local deduplication only** (last-writer
 /// wins within a single `normalize_events` call). Time-window debouncing
 /// across batches is performed upstream by
-/// [`pcloud_fs::fs_watcher::FsWatcher::debounce_loop`], which is the
+/// `pcloud_fs::fs_watcher::FsWatcher::debounce_loop`, which is the
 /// component that has access to wall-clock timing of inotify / FSEvents
 /// deliveries. Duplicating that logic here with an unused
 /// `coalesce_window_ms` field would have been misleading; the audit-04
@@ -33,6 +33,12 @@ pub enum FsEventKind {
     Create,
     /// Remove the path (file or folder).
     Remove,
+    /// Watcher backend overflowed or reported an event-loss condition.
+    ///
+    /// This is not a path mutation. Runtime scan trackers consume it as
+    /// a root-level "force full rescan" marker before it reaches the
+    /// planner.
+    Overflow,
 }
 
 /// One local filesystem event observed inside a sync root.
@@ -63,6 +69,9 @@ impl FsEventIngestor {
     pub fn normalize_events(&self, events: &[FsEvent]) -> Result<Vec<SyncCandidate>, FsEventError> {
         let mut coalesced = Vec::<FsEvent>::new();
         for event in events {
+            if event.kind == FsEventKind::Overflow {
+                continue;
+            }
             validate_relative_path(&event.path)?;
             if let Some(existing) = coalesced
                 .iter_mut()
@@ -86,6 +95,7 @@ impl FsEventIngestor {
                 change_kind: match event.kind {
                     FsEventKind::Remove => ChangeKind::Delete,
                     FsEventKind::Write | FsEventKind::Create => ChangeKind::Upsert,
+                    FsEventKind::Overflow => unreachable!("overflow events are skipped above"),
                 },
                 remote_file_id: None,
                 remote_folder_id: None,
@@ -159,6 +169,21 @@ mod tests {
 
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].change_kind, ChangeKind::Upsert);
+    }
+
+    #[test]
+    fn overflow_events_do_not_enter_planner_candidates() {
+        let ingestor = FsEventIngestor;
+        let candidates = ingestor
+            .normalize_events(&[FsEvent {
+                sync_id: SyncId::new(1),
+                path: ".".to_owned(),
+                entry_kind: EntryKind::Folder,
+                kind: FsEventKind::Overflow,
+            }])
+            .expect("overflow marker should be consumed before path validation");
+
+        assert!(candidates.is_empty());
     }
 
     #[test]

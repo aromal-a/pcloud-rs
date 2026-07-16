@@ -1,0 +1,2235 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Runbook - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/operations/runbook.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="operations-runbook"><a class="header" href="#operations-runbook">Operations Runbook</a></h1>
+<p>This chapter is the book-embedded operations runbook. It mirrors the
+workspace-root <a href="../../../../OPERATIONS-RUNBOOK.html"><code>OPERATIONS-RUNBOOK.md</code></a>
+and expands the eight core playbooks from plan item P3.7 with exact
+commands.</p>
+<p>Related chapters:</p>
+<ul>
+<li><a href="./deployment.html">Deployment</a> for the 1000-seat rollout checklist.</li>
+<li><a href="./upgrade.html">Upgrade</a> for the semver policy, 2-wave rolling upgrade,
+and the <code>migrate-from-c</code> flow.</li>
+<li>Per-platform chapters for init-system and mount specifics:
+<a href="./platforms/linux.html">Linux</a>, <a href="./platforms/macos.html">macOS</a>,
+<a href="./platforms/windows.html">Windows</a>, <a href="./platforms/freebsd.html">FreeBSD</a>,
+<a href="./platforms/openbsd.html">OpenBSD</a>, <a href="./platforms/netbsd.html">NetBSD</a>.</li>
+</ul>
+<blockquote>
+<p>Scope note: the Rust path still has open parity gaps
+(<code>bd-1du</code>, <code>bd-1du.4</code>, <code>bd-1du.10</code>). Do not claim production
+readiness until <code>STATUS.md</code> reflects a closed matrix for your
+use case.</p>
+</blockquote>
+<h2 id="startup"><a class="header" href="#startup">Startup</a></h2>
+<pre><code class="language-bash">target/release/pcloud-daemon \
+  --config /etc/pcloud-rs/config.json \
+  --log-format json \
+  --log-level info
+</code></pre>
+<p>On startup the daemon loads config, opens the store, opens the vault
+(if enabled), binds the IPC socket at
+<code>$XDG_RUNTIME_DIR/pcloud-rs/daemon.sock</code> with mode <code>0600</code>, starts
+backend runtimes, and emits <code>daemon.started</code>.</p>
+<h2 id="shutdown"><a class="header" href="#shutdown">Shutdown</a></h2>
+<p>Graceful:</p>
+<pre><code class="language-bash">pcloudc shutdown
+# or:
+kill -TERM &lt;pid&gt;
+</code></pre>
+<p>The daemon stops new IPC, drains in-flight work, flushes schedulers,
+commits store transactions, zeroizes resident secrets, removes the IPC
+socket, and emits <code>daemon.stopped</code>. Force stop (<code>kill -KILL</code>) only when
+graceful fails — the next startup will roll forward the journal and
+re-validate staged cache consistency.</p>
+<h2 id="config-hot-reload"><a class="header" href="#config-hot-reload">Config hot-reload</a></h2>
+<p>Edit the on-disk config file, then:</p>
+<pre><code class="language-bash">pcloudc reload
+# or:
+kill -HUP &lt;pid&gt;
+</code></pre>
+<p>Hot-reloadable fields: observability flags (log level, tracing, metrics,
+audit export), rate-limit budgets, integrity-sweeper schedule, sync poll
+interval, data-residency allow-list. The daemon emits a
+<code>config.reloaded { changed_keys: [...] }</code> audit event on success, or
+<code>config.reload_failed { error }</code> if the file cannot be parsed. On parse
+error the previous config is kept.</p>
+<p><strong>Not hot-reloadable</strong> (require restart): auth vault path, IPC socket
+path, crypto master key / KMS config, managed directory paths,
+environment, API endpoint binding.</p>
+<h2 id="health"><a class="header" href="#health">Health</a></h2>
+<pre><code class="language-bash">pcloudc status            # plaintext summary: auth, sync, crypto, engine
+pcloudc --json status     # same as a stable JSON envelope
+pcloudc status auth sync crypto   # extract just those fields (selector order)
+pcloudc doctor --json
+</code></pre>
+<p><code>ready = true</code> requires: store open and migrations current, IPC socket
+bound, and at minimum one successful auth heartbeat if credentials are
+persisted.</p>
+<h2 id="playbook-1-first-install"><a class="header" href="#playbook-1-first-install">Playbook 1: First install</a></h2>
+<p>Fresh single-host install. Do not reuse a vault copied from another UID.</p>
+<ol>
+<li>Install the binaries (package manager per
+<a href="./platforms/linux.html">platform chapters</a>).</li>
+<li>Create state dirs with correct perms:
+<pre><code class="language-bash">install -d -m 0700 ~/.config/pcloud-rs ~/.local/share/pcloud-rs ~/.cache/pcloud-rs
+</code></pre>
+</li>
+<li>Drop a minimal <code>production</code> <code>config.json</code> at
+<code>~/.config/pcloud-rs/config.json</code> (TLS enforced, vault persistence
+opted in if desired).</li>
+<li>Enable the service (Linux example; see per-platform chapters for
+launchd, per-user Windows startup, and rc.d):
+<pre><code class="language-bash">systemctl --user daemon-reload
+systemctl --user enable --now pcloudd
+</code></pre>
+</li>
+<li>Verify:
+<pre><code class="language-bash">pcloudc status
+pcloudc doctor --json
+pcloudc --json status         # stable JSON envelope for scripts
+</code></pre>
+</li>
+<li>Log in: <code>pcloudc login &lt;user&gt;</code>; complete TFA if prompted.</li>
+<li>Capture install fingerprint:
+<pre><code class="language-bash">pcloudc --version &gt; ~/pcloud-rs-install.txt
+sha256sum "$(command -v pcloud-daemon)" &gt;&gt; ~/pcloud-rs-install.txt
+</code></pre>
+</li>
+</ol>
+<p>Do not proceed past step 5 until <code>pcloudc status</code> reports
+<code>auth=Authenticated</code> and a healthy engine summary.</p>
+<h2 id="playbook-2-upgrade-pinned---latest"><a class="header" href="#playbook-2-upgrade-pinned---latest">Playbook 2: Upgrade (pinned -&gt; latest)</a></h2>
+<p>See <a href="./upgrade.html">Upgrade</a> for the full semver policy and 2-wave
+procedure. Quick path on a single host:</p>
+<pre><code class="language-bash"># 1. Record current state
+pcloudc --version
+pcloudc --json status &gt; /tmp/pre-upgrade.json
+sha256sum "$(command -v pcloud-daemon)" &gt; /tmp/pre-upgrade.sha
+
+# 2. Snapshot the vault (see Playbook 4)
+
+# 3. Stop cleanly
+systemctl --user stop pcloudd
+
+# 4. Install new binary (same package source)
+
+# 5. Restart and verify
+systemctl --user start pcloudd
+pcloudc doctor --json
+pcloudc status                 # check auth=Authenticated, engine summary
+pcloudc --version              # confirm daemon version banner matches target
+curl --unix-socket $XDG_RUNTIME_DIR/pcloud-rs/daemon.sock http://localhost/health
+curl --unix-socket $XDG_RUNTIME_DIR/pcloud-rs/daemon.sock http://localhost/slo
+</code></pre>
+<p>If <code>/health</code> is not <code>ok</code> after restart, roll back immediately
+(Playbook 3) rather than investigating with users online.</p>
+<h2 id="playbook-3-rollback"><a class="header" href="#playbook-3-rollback">Playbook 3: Rollback</a></h2>
+<p>Use only when Playbook 2 verification fails. Scope: binary + vault
+rollback. There are <strong>no</strong> DB schema rollbacks — the store format is
+forward-compatible within a minor series.</p>
+<pre><code class="language-bash"># 1. Stop the failing daemon
+systemctl --user stop pcloudd
+
+# 2. Reinstall the previously pinned version, verify sha256
+sha256sum "$(command -v pcloud-daemon)"
+diff - /tmp/pre-upgrade.sha
+
+# 3. Restore vault snapshot from before the upgrade
+install -m 0600 /secure/backup/auth_token.dat ~/.config/pcloud-rs/auth_token.dat
+install -m 0600 /secure/backup/auth_token.meta ~/.config/pcloud-rs/auth_token.meta
+
+# 4. Start and verify
+systemctl --user start pcloudd
+pcloudc status
+</code></pre>
+<p>If <code>pcloudc status</code> does not report <code>auth=Authenticated</code> after
+rollback, delete the vault and re-authenticate. Never copy the store
+file across versions — that is a release bug; stop and escalate.</p>
+<h2 id="playbook-4-vault-backup--restore"><a class="header" href="#playbook-4-vault-backup--restore">Playbook 4: Vault backup / restore</a></h2>
+<p>The vault holds durable auth tokens (opt-in). It is UID-bound, mode
+<code>0600</code>, parent dir <code>0700</code>. Handle it like a private key.</p>
+<p>Backup:</p>
+<pre><code class="language-bash">systemctl --user stop pcloudd
+install -m 0600 ~/.config/pcloud-rs/auth_token* /secure/backup/
+systemctl --user start pcloudd
+</code></pre>
+<p>Restore:</p>
+<pre><code class="language-bash">systemctl --user stop pcloudd
+install -d -m 0700 ~/.config/pcloud-rs
+install -m 0600 /secure/backup/auth_token* ~/.config/pcloud-rs/
+systemctl --user start pcloudd
+pcloudc status
+</code></pre>
+<p>Cautions:</p>
+<ul>
+<li>Never commit vault files to version control or ticket attachments.</li>
+<li>Never restore a vault taken from a different UID, hostname, or
+machine image — the daemon rejects cross-UID restores by design.</li>
+<li>Treat a leaked vault as a full credential compromise: revoke the
+token server-side, rotate, and replace the snapshot.</li>
+</ul>
+<h2 id="playbook-5-certificate-rotation"><a class="header" href="#playbook-5-certificate-rotation">Playbook 5: Certificate rotation</a></h2>
+<p>The Rust client trusts the system CA bundle via <code>webpki-roots</code> /
+<code>rustls-native-certs</code>. <strong>There is no application-level certificate
+pinning</strong> — rotation is a system-CA concern.</p>
+<pre><code class="language-bash"># Debian/Ubuntu
+sudo apt update &amp;&amp; sudo apt install --reinstall ca-certificates
+sudo update-ca-certificates
+
+# Fedora/RHEL
+sudo update-ca-trust extract
+
+# Arch
+sudo trust extract-compat
+
+# Then restart the daemon
+systemctl --user restart pcloudd
+pcloudc status              # confirm engine summary re-establishes API calls
+</code></pre>
+<p>Do <strong>not</strong> patch the binary to disable verification. Do <strong>not</strong>
+introduce a local pin. File a bead if tempted.</p>
+<h2 id="playbook-6-incident-triage-checklist"><a class="header" href="#playbook-6-incident-triage-checklist">Playbook 6: Incident triage checklist</a></h2>
+<p>Run these in order when <code>pcloudc status</code> fails or users report the
+daemon is down.</p>
+<ol>
+<li>
+<p><strong>Run doctor first:</strong></p>
+<pre><code class="language-bash">pcloudc doctor --json
+</code></pre>
+<p>This captures auth state, IPC reachability, vault perms, mount
+state, store health, and journal state in one pass.</p>
+</li>
+<li>
+<p><strong>Check the service per platform:</strong></p>
+<pre><code class="language-bash"># Linux (systemd)
+systemctl --user status pcloud-rs-daemon
+journalctl --user -u pcloud-rs-daemon -n 200
+
+# macOS (launchd)
+launchctl print gui/$(id -u)/com.pcloud.pcloudd
+
+# Windows (per-user daemon)
+pcloudc status
+Get-Process pcloudd -ErrorAction SilentlyContinue
+
+# FreeBSD / OpenBSD / NetBSD (rc.d)
+service pcloudd status
+</code></pre>
+</li>
+<li>
+<p><strong>IPC socket orphaned?</strong> If the journal shows
+<code>bind: Address already in use</code>:</p>
+<pre><code class="language-bash">ls -l $XDG_RUNTIME_DIR/pcloud-rs/daemon.sock
+rm $XDG_RUNTIME_DIR/pcloud-rs/daemon.sock
+systemctl --user start pcloud-rs-daemon
+</code></pre>
+</li>
+<li>
+<p><strong>Mount orphaned?</strong> See Playbook 7 (kernel-mount recovery).</p>
+</li>
+<li>
+<p><strong>Journal corrupted?</strong> Startup logs <code>journal.replay.failed</code>:</p>
+<pre><code class="language-bash">systemctl --user stop pcloud-rs-daemon
+mv ~/.local/share/pcloud-rs/journal \
+   ~/.local/share/pcloud-rs/journal.bad-$(date +%s)
+systemctl --user start pcloud-rs-daemon
+</code></pre>
+<p>Uncommitted writeback will be lost; file a bead with the moved
+journal attached (redact paths).</p>
+</li>
+<li>
+<p><strong>Secret leak?</strong> Run the grep in
+<a href="#log-analysis-guide">Log analysis guide</a>. Any match is P0.</p>
+</li>
+<li>
+<p><strong>Still broken?</strong> Capture <code>pcloudc doctor --json</code>,
+<code>pcloudc --json status</code>, the journal, and
+<code>bd list --status=open</code>, then escalate.</p>
+</li>
+</ol>
+<h2 id="playbook-7-kernel-mount-recovery"><a class="header" href="#playbook-7-kernel-mount-recovery">Playbook 7: Kernel-mount recovery</a></h2>
+<p>When a FUSE mount is wedged and a graceful unmount fails:</p>
+<pre><code class="language-bash"># 1. Identify the mountpoint
+mount | grep pcloud
+
+# 2. Platform-specific forced unmount:
+
+# Linux (FUSE3)
+fusermount3 -u -z /path/to/mount
+# fallback:
+sudo umount -l /path/to/mount
+
+# macOS (fuse-t / macFUSE)
+diskutil unmount force /path/to/mount
+# fallback:
+sudo umount -f /path/to/mount
+
+# Windows (WinFSP) — services must be stopped, then manual cleanup:
+sc stop pcloudd
+net use &lt;drive&gt;: /delete
+# If a stale FUSE device remains in Device Manager, remove it:
+pnputil /remove-device "WinFspNet"  # admin shell
+
+# FreeBSD (fusefs)
+umount -f /path/to/mount
+
+# OpenBSD / NetBSD
+umount -f /path/to/mount
+</code></pre>
+<p>Then restart the daemon with the force-unmount hint:</p>
+<pre><code class="language-bash">PCLOUD_FORCE_UMOUNT=1 systemctl --user restart pcloud-rs-daemon
+# or:
+pcloudc mount --force-umount
+</code></pre>
+<p>On startup, journal replay will roll forward any staged writes that
+were committed locally but not yet uploaded. Entries that fail
+integrity checks are quarantined under
+<code>~/.local/share/pcloud-rs/journal/quarantine/</code> and logged as
+<code>journal.entry.quarantined</code>; they are not retried automatically.</p>
+<p>Mounted-drive parity is tracked under <code>bd-1du.4</code> — expect rough edges
+and file beads for anything surprising.</p>
+<h2 id="playbook-8-crypto-password-rotation"><a class="header" href="#playbook-8-crypto-password-rotation">Playbook 8: Crypto password rotation</a></h2>
+<p><code>change_crypto_pass</code> and <code>send_change_user_private</code> parity is still
+pending. Until those rows land, the supported procedure is:</p>
+<pre><code class="language-bash"># 1. Unlock with the current password
+pcloudc crypto start
+
+# 2. Export or copy out any locally-held crypto-folder data you
+#    need to preserve, while unlocked.
+
+# 3. Use the official pCloud web UI to change the crypto password.
+
+# 4. Stop and restart the daemon
+systemctl --user stop pcloud-rs-daemon
+systemctl --user start pcloud-rs-daemon
+
+# 5. Re-unlock with the new password
+pcloudc crypto start
+
+# 6. Verify fingerprint
+pcloudc status crypto      # prints just the crypto= substring of the summary
+pcloudc crypto status
+</code></pre>
+<p>A follow-up bead tracks first-class CLI support for
+<code>change_crypto_pass</code>; until it closes, treat the web UI as the source
+of truth for crypto password changes.</p>
+<h2 id="playbook-vault--store-snapshot-backup--restore"><a class="header" href="#playbook-vault--store-snapshot-backup--restore">Playbook: Vault + store snapshot backup / restore</a></h2>
+<p>Applies to: all production deployments. Source of truth for the design:
+<a href="../../../enterprise/disaster-recovery.html"><code>docs/enterprise/disaster-recovery.md</code></a>.
+Feature overview and key-management guidance:
+<a href="./backup-snapshots.html">Backup Snapshots</a>.</p>
+<p>The four CLI verbs <code>backup snapshot-create</code>, <code>snapshot-verify</code>,
+<code>snapshot-restore</code>, and <code>snapshot-prune</code> implement a
+GPG-encrypted, point-in-time snapshot of the auth vault, SQLite store,
+audit chain, config (secrets redacted to <code>keyring:*</code> refs), and plugin
+registry manifests. All four verbs shell out to host <code>gpg(1)</code> — the
+binary must be installed on every host that creates, verifies, or
+restores a snapshot.</p>
+<h3 id="1-pre-flight-run-once-per-host"><a class="header" href="#1-pre-flight-run-once-per-host">1. Pre-flight (run once per host)</a></h3>
+<pre><code class="language-bash">gpg --version                                    # confirm gpg(1) is installed
+gpg --import /secure/keys/dr-team.pub            # public key on backup host
+gpg --list-keys dr-team@example.com              # confirm recipient present
+test -w /var/backups/pcloud-rs &amp;&amp; echo OK         # confirm destination writable
+</code></pre>
+<p>Configure <code>[backup]</code> in <code>config.json</code>:</p>
+<pre><code class="language-toml">[backup]
+enabled            = true
+destination        = "local:/var/backups/pcloud-rs"
+gpg_recipient      = "dr-team@example.com"
+retention_days     = 14
+verify_on_create   = true
+max_artifact_bytes = 1073741824
+</code></pre>
+<h3 id="2-create-a-snapshot-manual-pre-upgrade"><a class="header" href="#2-create-a-snapshot-manual-pre-upgrade">2. Create a snapshot (manual, pre-upgrade)</a></h3>
+<pre><code class="language-bash"># Capture the artifact path with a single invocation; --field pulls the
+# path out of the structured reply so scripts do not need a JSON parser.
+# A full JSON envelope is still available via `pcloudc --json ...` if a
+# downstream consumer wants the whole record.
+ART=$(pcloudc --field artifact_path backup snapshot-create \
+    --gpg-recipient dr-team@example.com \
+    --label "pre-upgrade-$(date -u +%F)")
+pcloudc backup snapshot-verify "$ART"            # prove it is restorable
+</code></pre>
+<p><code>snapshot-create</code> runs inside the daemon under <code>BackupGuard</code>, which
+quiesces upload-save and sync-commit critical sections only; other
+traffic continues.</p>
+<h3 id="3-nightly-cron"><a class="header" href="#3-nightly-cron">3. Nightly cron</a></h3>
+<p>Recommended cron for an operator-owned account (never root):</p>
+<pre><code class="language-cron"># /etc/cron.d/pcloud-rs-backup
+15 2 * * *  pcloud-rs  ( \
+  pcloudc backup snapshot-create \
+      --gpg-recipient dr-team@example.com \
+      --label "nightly-$(date -u +\%F)" \
+ &amp;&amp; LATEST=$(ls -t /var/backups/pcloud-rs/*.tar.gpg | head -1) \
+ &amp;&amp; pcloudc backup snapshot-verify "$LATEST" \
+ &amp;&amp; pcloudc backup snapshot-prune --retention-days 14 \
+ ) &gt;&gt; /var/log/pcloud-rs/backup.log 2&gt;&amp;1
+</code></pre>
+<p><code>snapshot-prune</code> refuses to delete below <code>[backup.retention].minimum_keep</code>
+and refuses to drop the most recent verified snapshot.</p>
+<h3 id="4-restore-to-the-same-host"><a class="header" href="#4-restore-to-the-same-host">4. Restore to the same host</a></h3>
+<p>Restore is <strong>destructive</strong>: it stops the daemon and atomically renames
+the state-dir to <code>state-dir.pre-restore.&lt;ts&gt;</code> before moving the verified
+payload into place.</p>
+<pre><code class="language-bash">systemctl stop pcloud-rs                          # (restore also stops it)
+pcloudc backup snapshot-verify /var/backups/pcloud-rs/2026-04-15.tar.gpg
+pcloudc backup snapshot-restore \
+    /var/backups/pcloud-rs/2026-04-15.tar.gpg --yes
+systemctl start pcloud-rs
+pcloudc status
+pcloudc audit verify                             # chain replays from
+                                                 # pre-restore tail
+</code></pre>
+<p>If the daemon fails to start within 60s, roll back by swapping directories:</p>
+<pre><code class="language-bash">systemctl stop pcloud-rs
+mv /var/lib/pcloud-rs   /var/lib/pcloud-rs.failed-restore
+mv /var/lib/pcloud-rs.pre-restore.&lt;ts&gt; /var/lib/pcloud-rs
+systemctl start pcloud-rs
+</code></pre>
+<h3 id="5-restore-onto-a-fresh-host"><a class="header" href="#5-restore-onto-a-fresh-host">5. Restore onto a fresh host</a></h3>
+<ol>
+<li>Install <code>pcloud-rs</code> of the same major version as the snapshot.</li>
+<li>Import the DR <strong>private</strong> key on the new host only
+(<code>gpg --import dr-team.priv</code>).</li>
+<li>Copy the <code>.tar.gpg</code> from your offsite destination.</li>
+<li><code>pcloudc backup snapshot-verify &lt;artifact&gt;</code>.</li>
+<li><code>pcloudc backup snapshot-restore &lt;artifact&gt; --yes</code>.</li>
+<li>Start the daemon; confirm <code>pcloudc status</code> and <code>pcloudc audit verify</code>.</li>
+</ol>
+<h3 id="6-honesty-notes"><a class="header" href="#6-honesty-notes">6. Honesty notes</a></h3>
+<ul>
+<li><code>gpg(1)</code> is a runtime dependency: no in-tree GPG implementation is
+used. Audits of the packaging tree should confirm the <code>gpg</code> binary is
+listed as a declared runtime dependency of the <code>.deb</code> / <code>.rpm</code> / brew
+formula on the operator host class.</li>
+<li>Offsite destinations (<code>s3://</code>, <code>sftp://</code>) are plugin-driven
+(<code>PluginCapability::BackupDestination</code>,
+<code>PluginOperation::BackupPut</code> / <code>BackupGet</code>); see
+<a href="./backup-snapshots.html">Backup Snapshots</a> for configuration.</li>
+<li><code>verify_on_create = true</code> is the supported default. DR you have not
+verified is DR you do not have.</li>
+</ul>
+<h2 id="playbook-verifying-local-vs-server-integrity-on-a-schedule"><a class="header" href="#playbook-verifying-local-vs-server-integrity-on-a-schedule">Playbook: Verifying local-vs-server integrity on a schedule</a></h2>
+<p><strong>When to use.</strong> You want periodic, throttled cross-checking of local
+files against the daemon’s recorded size / mtime / content-hash plus a
+server-side checksum cross-check via the <code>ChecksumFetcher</code> trait.
+Typical targets: long-lived staged content on servers, backup
+destinations, and crypto-folder metadata.</p>
+<p><strong>Status.</strong> Opt-in. Bead <code>bd-1du.4.6.1</code>. <code>pcloudc integrity run-once</code>
+is end-to-end wired today; the in-process background worker thread
+that would drive <code>schedule_cron</code> is stubbed, so automatic runs must
+currently be driven externally (cron, systemd timer, Task Scheduler).</p>
+<p><strong>Enable in <code>pcloud.conf</code>:</strong></p>
+<pre><code class="language-toml">[profile.features.integrity_sweeper]
+enabled               = true
+rate_files_per_minute = 60
+pause_on_battery      = true
+skip_list_path        = "/home/alice/.config/pcloud/integrity.skip"
+# schedule_cron left empty — drive it from cron until the in-process
+# scheduler lands. Keep this empty to avoid double-running.
+schedule_cron         = ""
+</code></pre>
+<p><strong>Seed the skip list</strong> with paths that legitimately diverge (build
+outputs, temp caches):</p>
+<pre><code class="language-bash">install -m 0600 /dev/null ~/.config/pcloud/integrity.skip
+pcloudc integrity skip ~/pCloud/build-artifacts
+pcloudc integrity skip ~/pCloud/.DS_Store
+</code></pre>
+<p><strong>Drive scheduled runs from cron</strong> (nightly at 03:00, JSON captured
+for log-shipping):</p>
+<pre><code class="language-cron">0 3 * * *  /usr/bin/pcloudc --json integrity run-once \
+           &gt;&gt; /var/log/pcloud/integrity.jsonl 2&gt;&amp;1
+</code></pre>
+<p>Or as a systemd timer:</p>
+<pre><code class="language-ini"># /etc/systemd/system/pcloud-integrity.service
+[Service]
+Type=oneshot
+User=alice
+ExecStart=/usr/bin/pcloudc --json integrity run-once
+
+# /etc/systemd/system/pcloud-integrity.timer
+[Timer]
+OnCalendar=*-*-* 03:00:00
+Persistent=true
+[Install]
+WantedBy=timers.target
+</code></pre>
+<p><strong>Inspect results</strong> between runs:</p>
+<pre><code class="language-bash">pcloudc integrity status          # plaintext rollup
+pcloudc --json integrity status   # full structured envelope
+# Or pluck individual counters with the built-in selector:
+pcloudc --field files_hashed --field mismatches_found integrity-status
+</code></pre>
+<p>Counter keys: <code>ok</code>, <code>mismatch</code>, <code>local_missing</code>, <code>remote_missing</code>,
+<code>throttled</code>, <code>fetch_failed</code>. Mismatches, missing files, and fetch
+failures are routed into the audit log under category
+<code>integrity.mismatch</code> with a path-HMAC (never the cleartext path).
+Reconcile divergences by hand using <code>pcloudc audit verify</code> and
+<code>pcloudc sync localscan</code> for the affected sync root.</p>
+<p>If the <code>audit_drops</code> counter in status is non-zero, treat it as a P1:
+persistent audit writes are failing and audit invariant M1 requires
+investigation — check disk space, permissions on the audit sink, and
+the daemon log for <code>audit.sink.*</code> events.</p>
+<p>To stop verifying a path permanently: <code>pcloudc integrity skip &lt;PATH&gt;</code>.
+The daemon appends to <code>skip_list_path</code> and hot-reloads it in-process.</p>
+<h2 id="verifying-integrity-of-a-sync-root-on-demand-pcloudc-verify"><a class="header" href="#verifying-integrity-of-a-sync-root-on-demand-pcloudc-verify">Verifying integrity of a sync root (on-demand <code>pcloudc verify</code>)</a></h2>
+<p>Use this playbook after a crash, a disk swap, a suspected ransomware
+event, or whenever <code>pcloudc doctor</code> flags <code>integrity.mismatch</code> audit
+rows. This is the on-demand, operator-driven counterpart to the
+periodic integrity sweeper above.</p>
+<ol>
+<li>
+<p><strong>Read-only pass first.</strong> Never start with <code>--fix</code>.</p>
+<pre><code class="language-bash">pcloudc verify "$SYNC_ROOT" --recursive
+</code></pre>
+<p>Exit codes:</p>
+<ul>
+<li><code>0 Ok</code> — all objects matched.</li>
+<li><code>6 Unavailable</code> — walk completed with <code>MISSING_LOCAL</code> /
+<code>MISSING_REMOTE</code> records and no <code>--fix</code> was requested. Safe.</li>
+<li><code>7 Conflict</code> — at least one <code>MISMATCH local=… server=…</code> was
+observed. Treat as a data-integrity incident.</li>
+</ul>
+</li>
+<li>
+<p><strong>Collect evidence for any mismatch.</strong> Always capture before
+touching anything:</p>
+<pre><code class="language-bash"># NDJSON — one record per line, safe to stream. Pipe the captured
+# file into whatever JSON consumer your incident pipeline already
+# uses (log shipper, SIEM rule, custom parser).
+pcloudc --json verify "$SYNC_ROOT" --recursive \
+  | tee "/var/log/pcloud-rs/verify-$(date -u +%FT%TZ).ndjson" \
+  &gt; /dev/null
+grep -v '"kind":"ok"' \
+  "/var/log/pcloud-rs/verify-$(date -u +%FT%TZ).ndjson"
+</code></pre>
+<p>The NDJSON stream is append-safe: one JSON object per line, never a
+wrapping array.</p>
+</li>
+<li>
+<p><strong>Decide remediation direction per record.</strong> <code>MISSING_LOCAL</code> and
+<code>MISMATCH</code> usually resolve by re-download; <code>MISSING_REMOTE</code>
+resolves by re-upload. If the local disk is suspect, prefer
+re-download. If the server copy is suspect (rare), restore from a
+<code>backup snapshot-restore</code> first and re-run verify.</p>
+</li>
+<li>
+<p><strong>Apply fixes (destructive).</strong> Only after step 3:</p>
+<pre><code class="language-bash">pcloudc verify "$SYNC_ROOT" --recursive --fix --yes
+</code></pre>
+<p>Re-run the read-only pass afterwards; it must return <code>0 Ok</code>.</p>
+</li>
+<li>
+<p><strong>Wire into cron.</strong> <code>7 Conflict</code> is the signal to page; <code>6 Unavailable</code> is the signal to file a ticket.</p>
+<pre><code class="language-bash"># /etc/cron.d/pcloud-rs-verify
+30 3 * * *  pcloud-rs  pcloudc verify /srv/pcloud --recursive \
+              &gt;&gt; /var/log/pcloud-rs/verify.log 2&gt;&amp;1
+</code></pre>
+</li>
+</ol>
+<h2 id="recovering-an-older-version-of-a-file"><a class="header" href="#recovering-an-older-version-of-a-file">Recovering an older version of a file</a></h2>
+<p>pCloud’s third-party API does not expose revision-history endpoints
+(<code>listrevisions</code> / <code>revertfile</code>), so <code>pcloud-rs</code> does not ship a
+<code>pcloudc log</code> / <code>diff</code> / <code>restore</code> surface. See
+<a href="../../../future-pcloud-clone-api.html"><code>docs/future-pcloud-clone-api.md</code></a>
+(“Removed scaffolds”) for context.</p>
+<p>To recover an older version of a file today:</p>
+<ol>
+<li>
+<p>Use the pCloud web UI revision history to identify the revision id
+and timestamp you want to recover.</p>
+</li>
+<li>
+<p>If the file lives inside a sync root covered by a recent
+<code>backup snapshot-create</code>, verify the snapshot and perform a targeted
+out-of-band extract rather than a full <code>snapshot-restore</code>:</p>
+<pre><code class="language-bash">pcloudc backup snapshot-verify /var/backups/pcloud-rs/&lt;date&gt;.tar.gpg
+</code></pre>
+</li>
+<li>
+<p>Failing that, download the desired revision from the web UI and
+place it back under the sync root; <code>pcloudc verify --recursive</code>
+will confirm the reconciliation and <code>pcloudc sync localscan</code> will
+propagate the change.</p>
+</li>
+</ol>
+<h2 id="log-analysis-guide"><a class="header" href="#log-analysis-guide">Log analysis guide</a></h2>
+<p>Structured JSON via <code>pcloud-observability::logging</code>. Key events:</p>
+<ul>
+<li><code>daemon.started</code> / <code>daemon.stopped</code></li>
+<li><code>auth.login.ok</code> / <code>auth.login.failed</code> / <code>auth.tfa.required</code></li>
+<li><code>auth.vault.persisted</code> / <code>auth.vault.removed</code></li>
+<li><code>sync.root.added</code> / <code>sync.root.removed</code> / <code>sync.root.paused</code></li>
+<li><code>transfer.upload.ok</code> / <code>transfer.download.ok</code> / <code>transfer.*.failed</code></li>
+<li><code>publink.created</code> / <code>publink.changed</code> / <code>publink.deleted</code></li>
+<li><code>crypto.setup</code> / <code>crypto.start</code> / <code>crypto.stop</code> / <code>crypto.mkdir</code></li>
+<li><code>ipc.peer.rejected</code> (UID mismatch)</li>
+<li><code>store.migration.applied</code></li>
+<li><code>journal.entry.quarantined</code></li>
+</ul>
+<p>Filter failed operations (ripgrep on the NDJSON log file; any
+JSON-aware log shipper works equally well):</p>
+<pre><code class="language-bash">grep '"event":"[^"]*\.failed"' daemon.log
+</code></pre>
+<p>Find secret leaks (should return <strong>nothing</strong>):</p>
+<pre><code class="language-bash">grep -E '"(password|token|master_key|temppass)":"[^"]' daemon.log
+</code></pre>
+<p>If that grep ever prints, treat it as a P0 security incident.</p>
+<h2 id="traceparent-correlation"><a class="header" href="#traceparent-correlation">Traceparent correlation</a></h2>
+<p>When the daemon is built with the <code>tracing-otlp</code> feature and
+<code>[observability.tracing]</code> is enabled, every <code>pcloudc</code> invocation emits
+a W3C traceparent line on <strong>stderr</strong> before the command result:</p>
+<pre><code>[trace: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01]
+</code></pre>
+<p>Use it as the primary correlation key during triage:</p>
+<ol>
+<li><strong>Ask the user for the <code>[trace: ...]</code> line</strong> (or have them rerun
+with <code>--trace-id &lt;hex&gt;</code> using an id you provide). This is the
+single piece of data support needs.</li>
+<li><strong>Search the trace id in the OTLP backend</strong> (Jaeger, Tempo,
+Datadog, Honeycomb, New Relic). You should see:
+<ul>
+<li><code>pcloudc.command</code> — CLI root</li>
+<li><code>pcloudd.dispatch</code> — IPC server span</li>
+<li><code>pcloudd.backend.&lt;name&gt;</code> — handler span
+(<code>transfer</code> / <code>sync</code> / <code>crypto</code> / <code>public_link</code> / <code>shares</code> /
+<code>backup</code> / <code>account</code>)</li>
+<li><code>pcloud.proto.&lt;method&gt;</code> — upstream HTTPS call
+Missing levels localise the failure hop.</li>
+</ul>
+</li>
+<li><strong>Error-biased 100% sampling</strong> means any non-Ok span was exported
+with its full ancestor chain, even at the default
+<code>sample_rate = 0.01</code>. If an error trace is not present, the
+failure happened before the CLI opened the span — check the
+stderr line was emitted at all, then fall through to the standard
+playbooks.</li>
+<li><strong>Force-sample a repro</strong> by passing <code>--trace-id</code> on the retry —
+the supplied id force-samples regardless of <code>sample_rate</code> and
+keeps the same trace id across multiple invocations for
+correlation.</li>
+<li><strong>PII safety</strong>: attributes on exported spans are restricted by the
+<code>attr_redact</code> five-key allow-list (<code>command</code>, <code>duration_ms</code>,
+<code>error_category</code>, <code>status_code</code>, <code>trace_kind</code>). Forbidden keys
+panic in debug builds and are dropped in release. Traces therefore
+do not leak filenames, paths, emails, tokens, or crypto material
+and are safe to attach to tickets without redaction.</li>
+</ol>
+<p>See <a href="../../../enterprise/tracing.html">enterprise/tracing</a> for the
+full design, sampling policy, and collector configuration schema.</p>
+<h2 id="escalation"><a class="header" href="#escalation">Escalation</a></h2>
+<ol>
+<li>Capture: daemon log (json), <code>pcloudc doctor --json</code>,
+<code>pcloudc --json status</code>, <code>bd list --status=open</code>.</li>
+<li>Check open beads under <code>bd-1du.*</code> — your issue may already be known.</li>
+<li>File a new bead with reproduction steps; never attach secret
+material.</li>
+</ol>
+<hr>
+<h1 id="enterprise-incident-playbooks"><a class="header" href="#enterprise-incident-playbooks">Enterprise Incident Playbooks</a></h1>
+<p>The playbooks below follow a uniform shape so on-call operators can skim
+quickly:</p>
+<ul>
+<li><strong>Problem.</strong> One-sentence statement of the failure mode.</li>
+<li><strong>Symptoms.</strong> What the operator or user actually sees.</li>
+<li><strong>Diagnose.</strong> Exact commands (no guess work) that produce expected
+output shapes. Avoid <code>jq</code> — use the built-in <code>--field</code> selector and
+<code>--json</code> envelopes.</li>
+<li><strong>Remediate.</strong> The minimal corrective action.</li>
+<li><strong>Cleanup.</strong> Post-incident state reset so the system is left in a
+known-good posture.</li>
+<li><strong>Prevent.</strong> What to change so the incident does not recur.</li>
+<li><strong>Escalate.</strong> When to page, what artefacts to attach.</li>
+<li><strong>Related.</strong> Other playbooks and beads.</li>
+</ul>
+<blockquote>
+<p><strong>Pre-alpha honesty:</strong> some playbooks reference CLI paths whose
+daemon side is still partially wired (see <code>bd-1du</code>, <code>bd-1du.4</code>,
+<code>bd-1du.10</code>). Each such section is tagged with a <strong>Status</strong> note that
+tells you what works today vs. what is forward-looking.</p>
+</blockquote>
+<h2 id="playbook-9-pcloudc-login-hangs-at-password-prompt"><a class="header" href="#playbook-9-pcloudc-login-hangs-at-password-prompt">Playbook 9: <code>pcloudc login</code> hangs at password prompt</a></h2>
+<p><strong>Problem.</strong> The interactive login prompt never completes the TFA /
+password handshake and the CLI appears to block indefinitely.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li><code>pcloudc login alice@example.com</code> prints <code>Password:</code> and hangs.</li>
+<li>No <code>auth.login.ok</code> or <code>auth.login.failed</code> in the daemon log.</li>
+<li><code>pcloudc status</code> from a second terminal returns <code>auth=Unauthenticated</code>.</li>
+</ul>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash"># 1. Is the daemon actually alive and reachable on the IPC socket?
+pcloudc --field ready doctor            # expect: true
+pcloudc --field ipc_socket doctor       # expect: path + mode 0600
+
+# 2. Is the login pending a second factor the CLI is not surfacing?
+pcloudc session-status
+pcloudc --json session-status           # structured: phase, waiting_for
+pcloudc --field phase session-status    # expect: "awaiting_tfa" or similar
+
+# 3. Is there a stale password prompt blocking stdin (e.g. pipe closed)?
+ps -fC pcloudc | head
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># Kill the hung client (daemon session survives).
+pkill -TERM -f 'pcloudc login'
+
+# Resume the session explicitly by token. Preferred: stdin, not argv.
+printf '%s' "$PCLOUD_PW" | pcloudc submit-password --password-stdin alice@example.com
+pcloudc submit-tfa 123456               # if a TFA code is still pending
+pcloudc userinfo                        # confirms the session
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Clear the shell history line containing any bare argv password:
+<code>history -d $(history 1 | awk '{print $1}')</code>.</li>
+<li>Confirm <code>auth.login.ok</code> appears in the journal.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Always prefer <code>--password-stdin</code> or <code>--password-env PCLOUD_PW</code>; never
+pass a password as a positional argv token (it leaks via
+<code>/proc/&lt;pid&gt;/cmdline</code>).</li>
+<li>Scripts should set a hard timeout around the login command.</li>
+</ul>
+<p><strong>Escalate.</strong> Capture <code>pcloudc doctor --json</code> and the daemon log for
+the last 2 minutes. Escalate if <code>session-status</code> returns a phase the
+CLI does not render.</p>
+<p><strong>Related.</strong> Playbook 10 (2FA), Playbook 11 (mid-pipeline session
+expiry), <code>canonical_token_for</code> entries <code>login</code>, <code>submit-password</code>,
+<code>submit-tfa</code>, <code>session-status</code>.</p>
+<h2 id="playbook-10-2fa-code-rejected-repeatedly"><a class="header" href="#playbook-10-2fa-code-rejected-repeatedly">Playbook 10: 2FA code rejected repeatedly</a></h2>
+<p><strong>Problem.</strong> <code>pcloudc submit-tfa &lt;code&gt;</code> fails with <code>auth.tfa.rejected</code>
+or the session keeps demanding a code.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li><code>auth.tfa.rejected</code> events in the daemon log.</li>
+<li>Exit code <code>4 Unauthorized</code> or <code>7 Conflict</code> from the submit commands.</li>
+<li><code>pcloudc session-status</code> stays in <code>awaiting_tfa</code>.</li>
+</ul>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc --field phase session-status           # expected: awaiting_tfa
+pcloudc --field tfa_channel session-status     # sms / app / notification
+pcloudc --json session-status                  # full envelope
+# Recent TFA-related events:
+grep -E '"event":"auth\.tfa\.' /var/log/pcloud-rs/daemon.log | tail -20
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># If the code is expired or the channel went silent, re-request delivery:
+pcloudc send-tfa-sms                    # SMS channel
+pcloudc send-tfa-notification           # push/app channel
+
+# If the device is unreachable, fall through to a recovery code:
+pcloudc submit-recovery                 # prompts on stdin
+
+# Then retry:
+pcloudc submit-tfa                      # prompts on stdin (no argv)
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>If a recovery code was consumed, rotate the recovery list via the
+pCloud web UI.</li>
+<li>Shred any paper / screenshot of the used recovery code.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Keep host clocks within ±30 s of NTP — TOTP windows are narrow.</li>
+<li>Configure <code>--trust-device</code> after the first successful TFA on a
+trusted host to avoid per-command prompts.</li>
+</ul>
+<p><strong>Escalate.</strong> If three consecutive SMS resends fail, the upstream SMS
+gateway is likely the cause — escalate to the pCloud account team with
+<code>auth.tfa.sms.*</code> events.</p>
+<p><strong>Related.</strong> Playbook 9, <code>send-tfa-sms</code>, <code>send-tfa-notification</code>,
+<code>submit-tfa</code>, <code>submit-recovery</code>.</p>
+<h2 id="playbook-11-session-expired-mid-pipeline-exit-3"><a class="header" href="#playbook-11-session-expired-mid-pipeline-exit-3">Playbook 11: Session expired mid-pipeline (exit 3)</a></h2>
+<p><strong>Problem.</strong> A long-running batch pipeline sees a scripted <code>pcloudc</code>
+call return exit code <code>3 SessionExpired</code> partway through.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li>Exit code <code>3</code> from any authenticated subcommand.</li>
+<li><code>auth.session.expired</code> event in the daemon log.</li>
+<li><code>pcloudc --field auth status</code> returns <code>Unauthenticated</code>.</li>
+</ul>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc --field auth status                    # expect: Authenticated
+pcloudc --field last_auth_heartbeat doctor
+pcloudc --json session-status
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># If durable vault persistence is enabled, the daemon refreshes the
+# token on next authenticated call. Force it:
+pcloudc userinfo
+
+# If the vault is not persistent (opt-in), re-authenticate:
+pcloudc submit-password --password-stdin "$PCLOUD_USER" &lt; /run/pcloud.pw
+# (for opt-in persistence only)
+pcloudc authsave                        # persists the freshly-minted token
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Re-run the failed pipeline stage. Prefer idempotent stages that
+tolerate retry.</li>
+<li>Verify the vault is still <code>0600</code> and parent dir is <code>0700</code>
+(Playbook 12).</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Wrap authenticated pipelines in a guard that detects exit <code>3</code> and
+re-auths once before giving up.</li>
+<li>For unattended batches, opt in to vault persistence and pin the
+session with <code>authsave</code>.</li>
+</ul>
+<p><strong>Escalate.</strong> Repeated mid-pipeline expiry on a single host points at
+clock skew, TLS trust anchor issues, or a forced server-side logout.
+Capture <code>doctor --json</code> + the <code>auth.*</code> event stream for the last
+hour.</p>
+<p><strong>Related.</strong> Playbook 12, Playbook 4 (vault backup/restore), <code>authsave</code>.</p>
+<h2 id="playbook-12-token-vault-perms-wrong-0644-instead-of-0600"><a class="header" href="#playbook-12-token-vault-perms-wrong-0644-instead-of-0600">Playbook 12: Token vault perms wrong (0644 instead of 0600)</a></h2>
+<p><strong>Problem.</strong> The auth vault file or its parent directory has loose
+permissions. The daemon refuses to open it on startup as a
+safety-preserving default.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li>Daemon start fails with <code>auth.vault.perm.rejected</code>.</li>
+<li><code>pcloudc doctor --json</code> reports vault health as <code>unhealthy</code>.</li>
+<li><code>ls -l ~/.config/pcloud-rs/auth_token*</code> shows mode <code>0644</code> / <code>0664</code>.</li>
+</ul>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc --field vault_ok doctor
+pcloudc --json doctor | grep -E 'vault|perm'
+ls -ld ~/.config/pcloud-rs
+ls -l  ~/.config/pcloud-rs/auth_token*
+stat -c '%a %U %G %n' ~/.config/pcloud-rs ~/.config/pcloud-rs/auth_token* 2&gt;/dev/null
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash">systemctl --user stop pcloudd
+chmod 0700 ~/.config/pcloud-rs
+chmod 0600 ~/.config/pcloud-rs/auth_token*
+chown "$(id -u):$(id -g)" ~/.config/pcloud-rs/auth_token*
+systemctl --user start pcloudd
+pcloudc --field vault_ok doctor          # expect: true
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Audit the umask used by whatever process last wrote the file.</li>
+<li>If the file was readable by another UID, treat it as a credential
+leak and follow Playbook 13.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Never copy <code>auth_token*</code> across UIDs or hosts.</li>
+<li>Run a daily cron that greps <code>stat</code> output and alerts on drift.</li>
+</ul>
+<p><strong>Escalate.</strong> If the daemon still rejects after chmod, the vault
+metadata is likely signed against a different UID — rebuild the
+vault by re-authenticating.</p>
+<p><strong>Related.</strong> Playbook 4, Playbook 13,
+<code>crates/pcloud-daemon/src/auth_vault.rs</code>.</p>
+<h2 id="playbook-13-persisted-token-stolen--full-revocation"><a class="header" href="#playbook-13-persisted-token-stolen--full-revocation">Playbook 13: Persisted token stolen — full revocation</a></h2>
+<p><strong>Problem.</strong> A copy of <code>auth_token.dat</code> escaped the host (leaked log,
+shared backup, compromised workstation).</p>
+<p><strong>Symptoms.</strong> Any of: vault file on a non-origin host, vault file in
+git history, <code>auth_token.dat</code> found in a world-readable location.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc --json session-status
+grep -E '"event":"auth\.vault\.' /var/log/pcloud-rs/daemon.log
+grep -E '"password"|"token"' /var/log/pcloud-rs/daemon.log   # must be empty
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Invalidate the daemon-side token immediately.
+pcloudc logout
+# 2. Remove the local vault (daemon must be stopped to delete safely).
+systemctl --user stop pcloudd
+rm -f ~/.config/pcloud-rs/auth_token*
+# 3. Revoke upstream sessions via the pCloud web UI
+#    (Settings -&gt; Active sessions -&gt; Terminate all).
+# 4. Rotate the account password via the web UI.
+# 5. Re-authenticate on trusted hosts only; opt back into persistence
+#    only on hosts that still need it.
+systemctl --user start pcloudd
+pcloudc login "$PCLOUD_USER"
+pcloudc authsave                        # opt-in
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Purge backup artefacts containing the old vault.</li>
+<li>If the leak touched git history, force-delete the ref and rotate any
+shared deploy keys used to push the repo.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Encrypt backup destinations at rest (GPG-only for
+<code>backup snapshot-create</code>, per Playbook 5 / backup chapter).</li>
+<li>Add a pre-commit hook that blocks staging <code>auth_token*</code>.</li>
+</ul>
+<p><strong>Escalate.</strong> P0 security incident. File an internal ticket with the
+time of first suspected access and the revocation trail.</p>
+<p><strong>Related.</strong> Playbook 4, Playbook 12, <code>logout</code>, <code>authsave</code>.</p>
+<h2 id="playbook-14-sync-add-rejects-path-as-nested-root"><a class="header" href="#playbook-14-sync-add-rejects-path-as-nested-root">Playbook 14: <code>sync-add</code> rejects path as nested root</a></h2>
+<p><strong>Problem.</strong> <code>pcloudc sync-add /path /remote</code> fails because the local
+path is a parent of, or contained in, an already-registered sync root.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li>Exit code <code>7 Conflict</code> with message <code>nested local root</code>.</li>
+<li><code>sync.root.add.rejected</code> event in the daemon log.</li>
+</ul>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc sync-list
+pcloudc --json sync-list
+pcloudc --field roots sync-list                # array of active roots
+readlink -f /path/to/would-be-root             # canonical form matters
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># Option A: use a disjoint path.
+pcloudc sync-add /srv/pcloud/project-b /ProjectB
+
+# Option B: remove the enclosing root first (destructive to its state):
+pcloudc sync-list
+pcloudc sync-remove &lt;ID&gt;
+pcloudc sync-add /srv/pcloud/project-b /ProjectB
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>After <code>sync-remove</code>, confirm <code>sync-list</code> no longer shows the root.</li>
+<li>Run <code>pcloudc sync-localscan</code> on the replacement root to repopulate
+the catalogue.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Adopt a flat directory convention: one top-level folder per sync root.</li>
+<li>Encode the naming rule in provisioning scripts so operators do not
+accidentally nest.</li>
+</ul>
+<p><strong>Escalate.</strong> Rare. If the rejection happens for a path that is
+genuinely disjoint (per <code>readlink -f</code>), capture both canonical forms
+and file a bead — this is a classifier bug.</p>
+<p><strong>Related.</strong> Playbook 15, <code>sync-add</code>, <code>sync-list</code>, <code>sync-remove</code>,
+<code>sync-localscan</code>.</p>
+<h2 id="playbook-15-mountpoint-busy-on-unmount-force-unmount-recipe"><a class="header" href="#playbook-15-mountpoint-busy-on-unmount-force-unmount-recipe">Playbook 15: Mountpoint busy on unmount (force-unmount recipe)</a></h2>
+<p><strong>Problem.</strong> <code>pcloudc unmount</code> returns <code>EBUSY</code> because a process still
+holds an open file descriptor inside the mount.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li><code>unmount</code> exits non-zero with <code>Device or resource busy</code>.</li>
+<li><code>lsof</code> shows open files under the mountpoint.</li>
+<li><code>mount | grep pcloud</code> still lists the mount.</li>
+</ul>
+<p><strong>Status.</strong> Mounted-drive parity is still in progress under <code>bd-1du.4</code>.
+The CLI surface is wired; FUSE runtime edge cases may still surprise
+you.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">mount | grep pcloud
+lsof +D /path/to/mount | head -20
+fuser -vm /path/to/mount
+pcloudc --field mounts fs-status
+pcloudc --json fs-status
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Try the polite path first.
+pcloudc unmount /path/to/mount
+
+# 2. Escalate to a lazy / forced unmount (Linux).
+fusermount3 -u -z /path/to/mount
+# or:
+sudo umount -l /path/to/mount
+sudo umount -f /path/to/mount
+
+# 3. If those fail, kill offending processes and retry.
+fuser -km /path/to/mount
+sudo umount /path/to/mount
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Confirm <code>mount | grep pcloud</code> is empty.</li>
+<li>Restart the daemon to rebuild the mount supervisor cleanly:
+<code>systemctl --user restart pcloudd</code>.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Teach users not to <code>cd</code> into mounts from long-lived shells.</li>
+<li>Run a pre-unmount <code>fuser -vm</code> sweep in automation.</li>
+</ul>
+<p><strong>Escalate.</strong> If <code>fuser -km</code> cannot clear the busy state, capture
+<code>dmesg | tail</code> and the <code>fs-status</code> envelope, and page. Possible kernel
+FUSE driver wedge.</p>
+<p><strong>Related.</strong> Playbook 7, Playbook 16, <code>mount</code>, <code>unmount</code>, <code>fs-status</code>.</p>
+<h2 id="playbook-16-mount-silently-drops-writes"><a class="header" href="#playbook-16-mount-silently-drops-writes">Playbook 16: Mount silently drops writes</a></h2>
+<p><strong>Problem.</strong> Files written under the mount appear locally but never
+appear on the server.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li>No <code>transfer.upload.ok</code> events for the affected paths.</li>
+<li><code>pcloudc fs-status</code> shows <code>pending_writes &gt; 0</code> and not decreasing.</li>
+<li><code>sync-localscan</code> flags <code>remote_missing</code>.</li>
+</ul>
+<p><strong>Status.</strong> Write path parity is part of <code>bd-1du.4</code>. Expect rough edges.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc fs-status
+pcloudc --json fs-status
+pcloudc --field pending_writes --field oldest_pending_age_s fs-status
+journalctl --user -u pcloudd -n 500 | grep -E 'upload|sidecar|writeback'
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Force a localscan of the affected sync root — it reconciles the
+#    catalogue and re-queues missing uploads.
+pcloudc sync-localscan
+
+# 2. Cycle the daemon to flush the writeback scheduler.
+systemctl --user restart pcloudd
+
+# 3. If the upload queue still does not drain, replay sidecars explicitly.
+pcloudc pending
+pcloudc --json pending
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Re-run <code>pcloudc verify &lt;sync-root&gt; --recursive</code> to confirm server
+and local agree.</li>
+<li>Inspect quarantined journal entries (Playbook 6 step 5).</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Enable the integrity sweeper (runbook §Verifying local-vs-server
+integrity on a schedule).</li>
+<li>Monitor <code>pending_writes</code> and <code>writeback_errors</code> in Prometheus.</li>
+</ul>
+<p><strong>Escalate.</strong> If <code>pending_writes</code> stalls at the same number across
+two daemon restarts, the sidecar journal is likely stuck on a specific
+object — attach the relevant sidecar and open a <code>bd-1du.4</code> bead.</p>
+<p><strong>Related.</strong> Playbook 7, Playbook 17, <code>fs-status</code>, <code>sync-localscan</code>,
+<code>pending</code>.</p>
+<h2 id="playbook-17-sync-loop-oscillates"><a class="header" href="#playbook-17-sync-loop-oscillates">Playbook 17: Sync loop oscillates</a></h2>
+<p><strong>Problem.</strong> The same set of files is continuously uploaded and
+re-downloaded; throughput is burned on churn.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li>Log interleaves <code>transfer.upload.ok</code> and <code>transfer.download.ok</code> for
+identical paths on a tight loop.</li>
+<li>High CPU and bandwidth with no net progress.</li>
+</ul>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc --json sync-list
+pcloudc sync-localscan
+grep -E '"event":"transfer\.(upload|download)\.ok"' \
+     /var/log/pcloud-rs/daemon.log | tail -200 | sort | uniq -c | sort -rn | head
+pcloudc --field engine_summary status
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Pause both directions for the root.
+pcloudc pause
+
+# 2. Full re-enumeration / catalogue rebuild.
+pcloudc sync-localscan
+
+# 3. Resume.
+pcloudc resume
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li><code>pcloudc verify &lt;root&gt; --recursive</code> to confirm steady state.</li>
+<li>Inspect the culprit files — common root cause is filesystem mtime
+rounding (FAT/exFAT) or an editor that rewrites atomically on save.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Avoid sync roots on filesystems with 2-second mtime resolution.</li>
+<li>Add editor-specific ignore rules (<code>.DS_Store</code>, <code>~*.tmp</code>) to the
+integrity skip list.</li>
+</ul>
+<p><strong>Escalate.</strong> Attach the top oscillating paths (HMAC-redacted) and the
+last 500 <code>transfer.*</code> events to a bead.</p>
+<p><strong>Related.</strong> Playbook 16, Playbook 20, <code>pause</code>, <code>resume</code>,
+<code>sync-localscan</code>.</p>
+<h2 id="playbook-18-orphaned-upload-sidecar"><a class="header" href="#playbook-18-orphaned-upload-sidecar">Playbook 18: Orphaned upload sidecar</a></h2>
+<p><strong>Problem.</strong> A crashed upload left behind a sidecar file that did not
+get replayed on the next daemon start.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li><code>pcloudc pending</code> lists an upload that never progresses.</li>
+<li>Sidecar files under the state dir older than the most recent daemon
+uptime.</li>
+</ul>
+<p><strong>Status.</strong> Sidecar replay helper
+(<code>pcloud_fs::write_path::replay_upload_sidecars</code>) is wired in-process;
+there is no top-level CLI verb for it yet, so recovery runs on daemon
+restart.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc --json pending
+pcloudc --field items pending
+ls -lt ~/.local/share/pcloud-rs/journal/upload-sidecars/ | head
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Graceful restart — the write-path enumerator runs on boot.
+systemctl --user restart pcloudd
+pcloudc pending
+
+# 2. If a sidecar cannot be replayed, quarantine it by hand:
+systemctl --user stop pcloudd
+mv ~/.local/share/pcloud-rs/journal/upload-sidecars/&lt;bad&gt; \
+   ~/.local/share/pcloud-rs/journal/quarantine/
+systemctl --user start pcloudd
+pcloudc pending
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Re-queue the originating action (drop the file back into the mount).</li>
+<li>Audit any <code>journal.entry.quarantined</code> events.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Avoid killing the daemon with <code>SIGKILL</code> during an active upload.</li>
+<li>Run the integrity sweeper nightly so slow-leaked sidecars are caught.</li>
+</ul>
+<p><strong>Escalate.</strong> If the sidecar reappears after quarantine, the upstream
+write path is re-creating it — file a <code>bd-1du.4</code> bead with the
+sidecar and the originating path HMAC.</p>
+<p><strong>Related.</strong> Playbook 16, Playbook 17, <code>pending</code>.</p>
+<h2 id="playbook-19-large-upload-interrupted--resume-semantics"><a class="header" href="#playbook-19-large-upload-interrupted--resume-semantics">Playbook 19: Large upload interrupted — resume semantics</a></h2>
+<p><strong>Problem.</strong> A multi-gigabyte upload was interrupted. The operator
+wants to resume rather than restart.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li><code>transfer.upload.ok</code> never arrives; <code>transfer.upload.failed</code> is
+followed by silence.</li>
+<li><code>pcloudc pending</code> shows the item with a partial byte count.</li>
+</ul>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc --json pending
+pcloudc --field items pending
+# Inspect sidecar on disk (layout: one dir per in-flight upload):
+ls -l ~/.local/share/pcloud-rs/journal/upload-sidecars/
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Ensure the daemon is running.
+pcloudc status
+
+# 2. Trigger a re-queue by touching the source (if it still exists).
+#    The sidecar carries the uploadid so bytes already accepted by the
+#    server are not re-sent.
+touch /path/under/sync/root/bigfile.iso
+pcloudc sync-localscan
+
+# 3. Watch the sidecar drain.
+watch -n 2 'pcloudc --field items pending'
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li><code>pcloudc verify /path/under/sync/root --recursive</code> to confirm size
+and SHA256 match the server.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Run uploads under <code>systemd-run --property=OOMScoreAdjust=-500</code> so the
+OOM killer is less likely to terminate them.</li>
+<li>Monitor <code>network.throughput</code> metrics for sustained drops.</li>
+</ul>
+<p><strong>Escalate.</strong> If <code>pending</code> never decreases after 2 localscan cycles,
+the sidecar <code>uploadid</code> is likely expired server-side. Remove the
+sidecar and restart the upload from byte 0 (Playbook 18 cleanup).</p>
+<p><strong>Related.</strong> Playbook 18, Playbook 20, <code>pending</code>, <code>sync-localscan</code>.</p>
+<h2 id="playbook-20-large-download-interrupted--resumable-fetch"><a class="header" href="#playbook-20-large-download-interrupted--resumable-fetch">Playbook 20: Large download interrupted — resumable fetch</a></h2>
+<p><strong>Problem.</strong> A long download died partway. The operator wants the
+client to resume with <code>Range:</code> semantics rather than restart.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li>A <code>.part</code> file sits next to the target path.</li>
+<li><code>transfer.download.failed</code> in the log with a <code>Range</code> error
+classification.</li>
+</ul>
+<p><strong>Status.</strong> The resumable HTTP helper
+(<code>pcloud_proto::http_download::fetch_download_resumable</code>) is
+in-tree and exercised by the transfer backend. There is no user-visible
+<code>download --resume</code> flag yet; recovery runs via re-queue.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc --json pending
+pcloudc --field items pending
+ls -l /path/to/target /path/to/target.part 2&gt;/dev/null
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Re-queue the download.
+pcloudc sync-localscan
+
+# 2. Monitor progress; the client sends a Range request matching the
+#    current .part length.
+watch -n 2 'ls -l /path/to/target.part 2&gt;/dev/null; pcloudc --field items pending'
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Once complete, confirm SHA256 with <code>pcloudc verify &lt;path&gt;</code> (see
+Playbook 21 if it mismatches).</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Keep a generous <code>[transfer.download].max_retries</code> in config.</li>
+<li>Provision enough free disk for <code>.part</code> (peak 2x file size during
+atomic rename).</li>
+</ul>
+<p><strong>Escalate.</strong> If every resume attempt re-starts from byte 0, the
+server is refusing <code>Range:</code> for that object; attach the request id.</p>
+<p><strong>Related.</strong> Playbook 19, Playbook 21, <code>pending</code>, <code>sync-localscan</code>.</p>
+<h2 id="playbook-21-sha256-mismatch-on-download"><a class="header" href="#playbook-21-sha256-mismatch-on-download">Playbook 21: SHA256 mismatch on download</a></h2>
+<p><strong>Problem.</strong> A completed download fails its content-hash check.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li><code>pcloudc verify &lt;path&gt;</code> exits <code>7 Conflict</code> with
+<code>MISMATCH local=… server=…</code>.</li>
+<li><code>transfer.download.hash_mismatch</code> in the log.</li>
+</ul>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc verify /path/to/file
+pcloudc --json verify /path/to/file
+sha256sum /path/to/file
+# Cross-check against the daemon-recorded server digest:
+pcloudc --field server_sha256 --field local_sha256 verify /path/to/file
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Delete the corrupt artefact and any lingering .part.
+rm -f /path/to/file /path/to/file.part
+
+# 2. Re-queue the download.
+pcloudc sync-localscan
+
+# 3. Re-verify.
+pcloudc verify /path/to/file           # expect: 0 Ok
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>If the mismatch recurs across three fresh downloads, suspect
+on-path corruption (NIC, disk, TLS MITM). Capture
+<code>doctor --json</code> + TLS endpoint info and escalate.</li>
+<li>Rotate the TLS trust store (Playbook 5) if corruption is TLS-shaped.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Keep the integrity sweeper enabled on critical roots.</li>
+<li>Monitor <code>transfer.*.hash_mismatch</code> events; page on non-zero.</li>
+</ul>
+<p><strong>Escalate.</strong> Persistent mismatches are a P1 integrity incident.</p>
+<p><strong>Related.</strong> Playbook 20, Runbook §Verifying local-vs-server
+integrity.</p>
+<h2 id="playbook-22-429-too-many-requests--backoff-tuning"><a class="header" href="#playbook-22-429-too-many-requests--backoff-tuning">Playbook 22: 429 Too Many Requests — backoff tuning</a></h2>
+<p><strong>Problem.</strong> The server returns sustained <code>429</code> responses and the
+client is throttled.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li><code>transfer.*.throttled</code> or <code>proto.http.status=429</code> in the log.</li>
+<li><code>pcloudc --field engine_summary status</code> shows reduced throughput.</li>
+</ul>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">grep -c '"status_code":429' /var/log/pcloud-rs/daemon.log
+pcloudc --json status
+pcloudc --field rate_limited status
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<ul>
+<li>Let the client back off; its built-in exponential policy respects
+<code>Retry-After</code>. No manual action usually needed.</li>
+<li>If urgent, reduce concurrency in config and restart:</li>
+</ul>
+<pre><code class="language-toml"># config.json
+[transfer]
+max_concurrent_uploads   = 2
+max_concurrent_downloads = 2
+</code></pre>
+<pre><code class="language-bash">systemctl --user restart pcloudd
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>After the storm, re-enable your previous concurrency.</li>
+<li>Audit any external tooling hitting the same account.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Do not run multiple <code>pcloudd</code> instances against the same account.</li>
+<li>Stagger batch jobs across hosts.</li>
+</ul>
+<p><strong>Escalate.</strong> Persistent 429 across a 24 h window despite low
+concurrency is an account-side rate-limit — page the pCloud account
+team with a 1-hour sample of 429 events.</p>
+<p><strong>Related.</strong> Playbook 19, Playbook 20.</p>
+<h2 id="playbook-23-bulk-public-link-cleanup-native-selectors"><a class="header" href="#playbook-23-bulk-public-link-cleanup-native-selectors">Playbook 23: Bulk public-link cleanup (native selectors)</a></h2>
+<p><strong>Problem.</strong> Hundreds of stale public links must be removed.</p>
+<p><strong>Symptoms.</strong> Audit of <code>list-links</code> shows many links the account no
+longer wants exposed.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc list-links
+pcloudc --json list-links
+# Stream just the ids using the native field selector — no jq needed:
+pcloudc --field id list-links
+pcloudc --field id --field path --field expires list-links
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># Iterate the id stream into delete-link. Safe because --field prints
+# one value per line, whitespace-free.
+pcloudc --field id list-links \
+  | while IFS= read -r ID; do
+        pcloudc delete-link "$ID"
+    done
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Re-run <code>pcloudc list-links</code> to confirm the target set is gone.</li>
+<li>Capture the pre-delete envelope
+(<code>pcloudc --json list-links &gt; /tmp/pre-cleanup.json</code>) for audit.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Enforce link expiry at creation time
+(<code>pcloudc change-link-expire &lt;ID&gt; &lt;date&gt;</code>).</li>
+<li>Run the publink-expiry plugin (Playbook 24).</li>
+</ul>
+<p><strong>Escalate.</strong> If deletion fails with <code>7 Conflict</code> on a specific id,
+the link is currently in-flight — retry after 30s.</p>
+<p><strong>Related.</strong> Playbook 24, Playbook 25, <code>list-links</code>, <code>delete-link</code>,
+<code>change-link-expire</code>.</p>
+<h2 id="playbook-24-expired-link-audit"><a class="header" href="#playbook-24-expired-link-audit">Playbook 24: Expired-link audit</a></h2>
+<p><strong>Problem.</strong> Operators want a daily report of links that expired in
+the last N days so owners can refresh or remove them.</p>
+<p><strong>Status.</strong> The <code>publink-expiry</code> helper is plugin-driven. Until the
+plugin ships, use the native field-selector pipeline below.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc list-links
+pcloudc --json list-links
+pcloudc --field id --field path --field expires list-links
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># Extract expired links with a native, jq-free pipeline.
+NOW_EPOCH=$(date -u +%s)
+pcloudc --json list-links \
+  | grep -oE '"id":[0-9]+,"path":"[^"]*","expires":[0-9]+' \
+  | awk -F'[,:]' -v now="$NOW_EPOCH" '$NF != "" &amp;&amp; $NF &lt; now'
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Feed the expired id list into <code>pcloudc delete-link</code>
+(see Playbook 23).</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Set an organisation-wide default expiry at link creation.</li>
+<li>Schedule this audit as a cron and feed results into the ticketing
+system.</li>
+</ul>
+<p><strong>Escalate.</strong> If the list includes links owned by other accounts,
+shares permissions are misconfigured — see the shares chapter.</p>
+<p><strong>Related.</strong> Playbook 23, <code>list-links</code>, <code>change-link-expire</code>.</p>
+<h2 id="playbook-25-orphaned-upload-link-cleanup"><a class="header" href="#playbook-25-orphaned-upload-link-cleanup">Playbook 25: Orphaned upload-link cleanup</a></h2>
+<p><strong>Problem.</strong> Upload links created for one-off receive workflows are
+never cleaned up.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc list-upload-links
+pcloudc --json list-upload-links
+pcloudc --field id list-upload-links
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash">pcloudc --field id list-upload-links \
+  | while IFS= read -r ID; do
+        pcloudc delete-upload-link "$ID"
+    done
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Confirm the target path no longer accepts anonymous uploads.</li>
+<li>Record the deletion batch id in the change log.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Always set an expiry when creating upload links.</li>
+<li>Scope upload links to a dedicated subfolder that can be revoked
+wholesale if abused.</li>
+</ul>
+<p><strong>Escalate.</strong> If an upload link keeps re-appearing despite deletion,
+it is being re-created by automation — trace the creator from the
+audit log.</p>
+<p><strong>Related.</strong> Playbook 23, <code>list-upload-links</code>, <code>delete-upload-link</code>,
+<code>create-upload-link</code>.</p>
+<h2 id="playbook-26-nightly-gpg-snapshot-failure"><a class="header" href="#playbook-26-nightly-gpg-snapshot-failure">Playbook 26: Nightly GPG snapshot failure</a></h2>
+<p><strong>Problem.</strong> The nightly <code>backup snapshot-create</code> cron fails.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li>Non-zero exit from the cron entry (Playbook §Nightly cron).</li>
+<li>One of: <code>gpg: command not found</code>, <code>no public key</code>, <code>No space left on device</code>.</li>
+</ul>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">which gpg || echo 'MISSING'
+gpg --list-keys "$GPG_RECIPIENT"
+df -h /var/backups/pcloud-rs
+pcloudc --json backup-snapshot-verify "$(ls -t /var/backups/pcloud-rs/*.tar.gpg | head -1)"
+tail -200 /var/log/pcloud-rs/backup.log
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># Case A: gpg missing.
+sudo apt install gnupg           # or: dnf install gnupg2 / pacman -S gnupg
+
+# Case B: recipient key absent.
+gpg --import /secure/keys/dr-team.pub
+gpg --edit-key "$GPG_RECIPIENT" trust quit   # bump to "ultimate" for automation
+
+# Case C: disk full.
+pcloudc backup-snapshot-prune --retention-days 7
+# or free space manually, then:
+pcloudc backup-snapshot-create --gpg-recipient "$GPG_RECIPIENT" --label "manual-$(date -u +%F)"
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Re-run <code>backup-snapshot-verify</code> on the last good snapshot.</li>
+<li>Update the monitoring alert threshold if disk exhaustion recurs.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Alert at 80% disk use on the backup destination.</li>
+<li>Package <code>gpg</code> as a hard dependency of the operator bundle.</li>
+</ul>
+<p><strong>Escalate.</strong> If <code>snapshot-verify</code> fails on a newly-created snapshot,
+the encryption key material may be compromised — treat as P0.</p>
+<p><strong>Related.</strong> Playbook 27, runbook §Playbook: Vault + store snapshot
+backup / restore.</p>
+<h2 id="playbook-27-snapshot-restore-to-a-fresh-host-dr"><a class="header" href="#playbook-27-snapshot-restore-to-a-fresh-host-dr">Playbook 27: Snapshot restore to a fresh host (DR)</a></h2>
+<p><strong>Problem.</strong> The original host is gone (hardware failure, ransomware).
+Restore service on a new host from the offsite snapshot.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash"># On the new host
+which gpg
+gpg --import /secure/keys/dr-team.priv
+gpg --list-secret-keys
+ls -l /secure/recovered/*.tar.gpg
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Install pcloud-rs at the same major version as the snapshot.
+# 2. Verify the artefact before touching state.
+pcloudc backup-snapshot-verify /secure/recovered/2026-04-14.tar.gpg
+
+# 3. Stop any running daemon, then restore.
+systemctl --user stop pcloudd 2&gt;/dev/null || true
+pcloudc backup-snapshot-restore /secure/recovered/2026-04-14.tar.gpg --yes
+
+# 4. Start and validate.
+systemctl --user start pcloudd
+pcloudc status
+pcloudc audit-verify
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Rotate the account password (the restored vault assumes prior
+credential hygiene).</li>
+<li>Trigger a fresh <code>backup-snapshot-create</code> on the new host — DR you
+have not verified is DR you do not have.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Run a DR drill quarterly.</li>
+<li>Keep private keys in an HSM or dedicated keyring; never on the
+origin host.</li>
+</ul>
+<p><strong>Escalate.</strong> If <code>audit-verify</code> reports a chain break, the restore is
+partial — do not accept it as steady state.</p>
+<p><strong>Related.</strong> Playbook 26, Playbook 33 (audit chain break).</p>
+<h2 id="playbook-28-integrity-sweeper-fire--investigate-a-mismatch"><a class="header" href="#playbook-28-integrity-sweeper-fire--investigate-a-mismatch">Playbook 28: Integrity sweeper fire — investigate a mismatch</a></h2>
+<p><strong>Problem.</strong> The sweeper reported an <code>integrity.mismatch</code> audit row
+overnight.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc integrity-status
+pcloudc --json integrity-status
+pcloudc --field mismatches_found --field files_hashed integrity-status
+pcloudc audit-verify
+grep '"category":"integrity.mismatch"' /var/log/pcloud-rs/audit.jsonl | tail
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># Identify the affected sync root by the path-HMAC in the audit row
+# (consult your path-HMAC -&gt; path mapping table; the cleartext path is
+# never in logs by design).
+pcloudc verify &lt;SYNC_ROOT&gt; --recursive
+pcloudc --json verify &lt;SYNC_ROOT&gt; --recursive &gt; /tmp/verify.ndjson
+grep -v '"kind":"ok"' /tmp/verify.ndjson
+
+# If the local is bad: re-download.
+rm -f &lt;bad-local-file&gt;
+pcloudc sync-localscan
+
+# If the server is bad (rare): restore from snapshot, then:
+pcloudc verify &lt;SYNC_ROOT&gt; --recursive
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>File an incident ticket citing the audit row id.</li>
+<li>Re-run <code>integrity-run-once</code> to prove steady state.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Keep the sweeper enabled with <code>rate_files_per_minute</code> sized to your
+I/O budget (Playbook 29).</li>
+<li>Monitor <code>audit_drops</code> — non-zero means audit writes are failing and
+the invariant is broken (see Playbook 33).</li>
+</ul>
+<p><strong>Escalate.</strong> If mismatches recur on the same path, the upstream
+producer is non-deterministic — escalate to the data-owning team.</p>
+<p><strong>Related.</strong> Playbook 29, Playbook 33, runbook §Verifying
+local-vs-server integrity.</p>
+<h2 id="playbook-29-integrity-sweeper-pinning-cpu"><a class="header" href="#playbook-29-integrity-sweeper-pinning-cpu">Playbook 29: Integrity sweeper pinning CPU</a></h2>
+<p><strong>Problem.</strong> The integrity sweeper is saturating a core and causing
+I/O contention.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc integrity-status
+pcloudc --field throttled --field files_hashed integrity-status
+top -p "$(pgrep -f pcloud-daemon)"
+iostat -xm 5 3
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-toml"># config.json — reduce the sweeper rate and pause on battery.
+[profile.features.integrity_sweeper]
+rate_files_per_minute = 15
+pause_on_battery      = true
+</code></pre>
+<pre><code class="language-bash">systemctl --user restart pcloudd
+pcloudc integrity-status
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Consider adding large static trees to the skip list:
+<code>pcloudc integrity-skip &lt;path&gt;</code>.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Size <code>rate_files_per_minute</code> relative to disk IOPS: ~60 is fine on
+NVMe, ~15 is safer on spinning disks.</li>
+<li>Use <code>pause_on_battery=true</code> for laptop deployments.</li>
+</ul>
+<p><strong>Escalate.</strong> If CPU stays pinned at <code>rate_files_per_minute=1</code>, the
+hashing loop is stuck — attach a <code>doctor --json</code> and a perf capture.</p>
+<p><strong>Related.</strong> Playbook 28.</p>
+<h2 id="playbook-30-crypto-folder-locked--cannot-unlock"><a class="header" href="#playbook-30-crypto-folder-locked--cannot-unlock">Playbook 30: Crypto folder locked — cannot unlock</a></h2>
+<p><strong>Problem.</strong> <code>pcloudc unlock-crypto</code> fails repeatedly after a password
+rotation.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li><code>crypto.start.failed</code> events with <code>invalid password</code>.</li>
+<li><code>pcloudc crypto-status</code> shows <code>locked</code>.</li>
+</ul>
+<p><strong>Status.</strong> <code>change_crypto_pass</code> and <code>send_change_user_private</code> parity
+is still pending (see CLAUDE.md). Rotate via the web UI and unlock with
+the new password locally.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc crypto-status
+pcloudc --json crypto-status
+pcloudc --field phase crypto-status
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Confirm the current active password in the web UI.
+# 2. Re-attempt unlock via stdin prompt (no argv):
+pcloudc unlock-crypto
+# 3. If the correct password still fails, lock and retry from scratch:
+pcloudc lock-crypto
+pcloudc unlock-crypto
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Record which password generation is now active in your secret store.</li>
+<li>Rotate sharing-related temppass flows if key material changed.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Track crypto password rotations in a change log; keep one password
+generation back, securely stored, for 72 h.</li>
+</ul>
+<p><strong>Escalate.</strong> Persistent failure with the confirmed-correct password
+points at a stale master-key cache. Follow <code>runbook.md</code> Playbook 8 and
+file a <code>bd-1du</code> bead if the state survives a clean restart.</p>
+<p><strong>Related.</strong> Playbook 8, <code>unlock-crypto</code>, <code>lock-crypto</code>, <code>crypto-status</code>.</p>
+<h2 id="playbook-31-corrupted-crypto-sector--recovery"><a class="header" href="#playbook-31-corrupted-crypto-sector--recovery">Playbook 31: Corrupted crypto sector — recovery</a></h2>
+<p><strong>Problem.</strong> A crypto folder file reports a decryption failure on read.</p>
+<p><strong>Status.</strong> Forward-looking. A first-class <code>crypto-repair</code> CLI is not
+in tree yet. Today: treat as a restore scenario.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc crypto-status
+pcloudc --json crypto-status
+pcloudc verify /path/inside/crypto/folder
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Unlock the folder.
+pcloudc unlock-crypto
+
+# 2. If a recent GPG snapshot exists, restore that file out-of-band
+#    via snapshot-verify + manual extract (do NOT run snapshot-restore
+#    for a single file — that is destructive of the whole state dir).
+pcloudc backup-snapshot-verify /var/backups/pcloud-rs/&lt;date&gt;.tar.gpg
+
+# 3. If no good copy exists locally, pull from the web UI revision
+#    history, drop the plaintext back into the crypto folder, then:
+pcloudc sync-localscan
+pcloudc verify /path/inside/crypto/folder    # expect: 0 Ok
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Open an integrity ticket — a single corrupted sector is usually a
+signal of wider media trouble.</li>
+<li><code>smartctl -a</code> on the underlying disk.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Keep the integrity sweeper on.</li>
+<li>Use ECC memory / filesystem checksums (ZFS/Btrfs) for crypto-folder
+hosts.</li>
+</ul>
+<p><strong>Escalate.</strong> Multiple sectors corrupted on the same host: P0.
+Preserve the state dir as a forensic snapshot before any remediation.</p>
+<p><strong>Related.</strong> Playbook 28, Playbook 30.</p>
+<h2 id="playbook-32-correlating-a-client-trace-to-a-daemon-span"><a class="header" href="#playbook-32-correlating-a-client-trace-to-a-daemon-span">Playbook 32: Correlating a client trace to a daemon span</a></h2>
+<p><strong>Problem.</strong> A user reports a failure. You need to find the matching
+daemon span quickly.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash"># The user or your repro emitted a traceparent line like:
+# [trace: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01]
+TRACE_ID=4bf92f3577b34da6a3ce929d0e0e4736
+
+# 1. Search in your OTLP backend for that trace id — you should see:
+#    pcloudc.command -&gt; pcloudd.dispatch -&gt; pcloudd.backend.&lt;name&gt;
+#    -&gt; pcloud.proto.&lt;method&gt;
+
+# 2. Force a fresh, sampled repro with the same id:
+pcloudc --trace-id "$TRACE_ID" status
+pcloudc --trace-id "$TRACE_ID" --json status
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<ul>
+<li>Work the hop where the span chain stops. The backend span carries
+<code>error_category</code> — read it first.</li>
+</ul>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>If the trace shows a client-side-only failure, update the CLI
+troubleshooting doc.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Ensure <code>[observability.tracing]</code> is enabled on all operator hosts.</li>
+<li>Instruct users to always include the <code>[trace: ...]</code> line in tickets.</li>
+</ul>
+<p><strong>Escalate.</strong> If the OTLP backend cannot find a supplied trace id that
+the CLI definitely printed, the collector is dropping spans — check
+<code>audit_drops</code> and collector egress.</p>
+<p><strong>Related.</strong> Runbook §Traceparent correlation.</p>
+<h2 id="playbook-33-prometheus-exporter-not-scraping"><a class="header" href="#playbook-33-prometheus-exporter-not-scraping">Playbook 33: Prometheus exporter not scraping</a></h2>
+<p><strong>Problem.</strong> Your Prometheus scrape job reports <code>DOWN</code> for the daemon.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">ss -ltnp | grep pcloud
+curl -s http://127.0.0.1:9301/metrics | head
+pcloudc --json status | grep -i prom
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-toml"># config.json — enable and bind the exporter.
+[observability.prometheus]
+enabled = true
+listen  = "127.0.0.1:9301"
+mode    = "restricted"
+</code></pre>
+<pre><code class="language-bash">systemctl --user restart pcloudd
+curl -s http://127.0.0.1:9301/metrics | head
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Re-check the Prometheus scrape job shows the target as <code>UP</code>.</li>
+<li>Confirm firewall allows the Prom collector host.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Pin the exporter port in the deployment template.</li>
+<li>Alert on exporter scrape-age &gt; 2 minutes.</li>
+</ul>
+<p><strong>Escalate.</strong> If the exporter binds but returns empty metrics, the
+collector registry was not populated — attach startup log and open a
+bead.</p>
+<p><strong>Related.</strong> Playbook 35 (audit hash-chain break).</p>
+<h2 id="playbook-34-audit-log-hash-chain-break"><a class="header" href="#playbook-34-audit-log-hash-chain-break">Playbook 34: Audit log hash-chain break</a></h2>
+<p><strong>Problem.</strong> <code>pcloudc audit-verify</code> reports a chain break.</p>
+<p><strong>Symptoms.</strong></p>
+<ul>
+<li><code>audit.chain.broken</code> event.</li>
+<li><code>audit_drops</code> counter non-zero.</li>
+</ul>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc audit-verify
+pcloudc --json audit-verify
+pcloudc --field ok --field break_row_id audit-verify
+df -h "$(dirname /var/log/pcloud-rs/audit.jsonl)"
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Stop the daemon.
+systemctl --user stop pcloudd
+
+# 2. Preserve the current audit log as evidence.
+mv /var/log/pcloud-rs/audit.jsonl \
+   /var/log/pcloud-rs/audit.jsonl.broken-$(date +%s)
+
+# 3. Let the daemon start a fresh chain anchored on an identity row.
+systemctl --user start pcloudd
+pcloudc audit-verify                    # expect: ok=true on fresh chain
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>File a P1 incident with the preserved broken file.</li>
+<li>Confirm the underlying disk is healthy (<code>smartctl</code>, <code>df</code>).</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>
+<p>Alert on <code>audit_drops &gt; 0</code>.</p>
+</li>
+<li>
+<p>Move the audit sink to a durable volume with plenty of free space.</p>
+</li>
+<li>
+<p>Keep the scheduled audit-chain verifier enabled (the default). It
+runs at 03:00 daily and emits <code>audit.chain.verified</code> on success or
+<code>audit.chain.broken</code> on failure. Check its status at any time:</p>
+<pre><code class="language-bash">pcloudc audit-verifier status
+pcloudc --json audit-verifier status
+</code></pre>
+<p>The status payload reports <code>enabled</code>, <code>last_result</code> (<code>never_run</code>,
+<code>pass</code>, or <code>fail</code>), <code>chain_length</code>, <code>total_passes</code>,
+<code>total_failures</code>, <code>last_error</code>, and <code>last_run_ts</code>. Configure the
+schedule and optional checkpoint path in <code>config.json</code>:</p>
+<pre><code class="language-toml">[features.audit_verifier]
+enabled = true                       # default
+schedule_cron = "0 0 3 * * *"        # 03:00 daily (6-field cron)
+checkpoint_path = "/var/lib/pcloud-rs/audit_verifier_checkpoint.json"
+</code></pre>
+<p>The checkpoint lets subsequent runs skip already-verified rows.
+Disabling the verifier removes the only automatic tamper-detection
+path; operators who opt out must arrange out-of-band verification.</p>
+</li>
+</ul>
+<p><strong>Escalate.</strong> A chain break with zero <code>audit_drops</code> and healthy disk
+is a code-level invariant failure: P0, attach the broken file and open
+<code>bd-1du.10</code>-scope bead.</p>
+<p><strong>Related.</strong> Playbook 27, runbook §Verifying local-vs-server
+integrity.</p>
+<h2 id="playbook-35-graceful-drain-during-pcloud-daemon-restart"><a class="header" href="#playbook-35-graceful-drain-during-pcloud-daemon-restart">Playbook 35: Graceful drain during <code>pcloud-daemon</code> restart</a></h2>
+<p><strong>Problem.</strong> A restart must preserve in-flight transfers and
+mount state without visible disruption.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc --field in_flight_uploads --field in_flight_downloads status
+pcloudc --json status
+pcloudc pending
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Announce drain — stop accepting new work.
+pcloudc pause
+
+# 2. Wait for the drain to reach zero.
+until [ "$(pcloudc --field in_flight_uploads status)" = "0" ] \
+   &amp;&amp; [ "$(pcloudc --field in_flight_downloads status)" = "0" ]; do
+     sleep 2
+done
+
+# 3. Graceful restart — journal replay resumes any pending items.
+systemctl --user restart pcloudd
+
+# 4. Un-pause after the new daemon reports ready.
+pcloudc --field ready doctor
+pcloudc resume
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Confirm <code>pcloudc pending</code> drains after resume.</li>
+<li>Verify SLO metrics recovered in Prometheus.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Wire the pause/drain/resume dance into your deployment tooling so
+every restart uses it.</li>
+</ul>
+<p><strong>Escalate.</strong> If the drain loop does not reach zero within 5 minutes,
+a stuck transfer is likely — inspect <code>pending</code> and move to
+Playbook 18 / 19 / 20.</p>
+<p><strong>Related.</strong> Playbook 18, Playbook 19, Playbook 20, <code>pause</code>, <code>resume</code>.</p>
+<h2 id="playbook-36-migrating-from-legacy-c-pcloud-rs"><a class="header" href="#playbook-36-migrating-from-legacy-c-pcloud-rs">Playbook 36: Migrating from legacy C <code>pcloud-rs</code></a></h2>
+<p><strong>Problem.</strong> A host still runs the legacy C <code>pcloud-rs</code> and must move
+to the Rust daemon without losing sync state.</p>
+<p><strong>Status.</strong> <code>pcloudc migrate-from-c</code> is CLI-wired. Scope: copies
+config / vault / store from a reasonable legacy layout. Always run
+with <code>--dry-run</code> first; parity gaps are tracked under <code>bd-1du.10</code>.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash"># 1. Inspect what migrate-from-c will do.
+pcloudc migrate-from-c --dry-run
+pcloudc --json migrate-from-c --dry-run
+pcloudc migrate-from-c --dry-run --from /legacy/pcloud
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 2. Stop the legacy client.
+pkill -TERM -f pcloud-rs-legacy || true
+
+# 3. Run the real migration. --force-overwrite if you are confident.
+pcloudc migrate-from-c --from /legacy/pcloud
+# or:
+pcloudc migrate-from-c --from /legacy/pcloud --force-overwrite
+
+# 4. Start the new daemon and validate.
+systemctl --user start pcloudd
+pcloudc status
+pcloudc sync-list
+pcloudc audit-verify
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Archive <code>/legacy/pcloud</code> to an encrypted offsite location for 30
+days before deletion.</li>
+<li>Decommission the legacy package.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Pin a migration runbook owner so every host migrates through the
+same checklist.</li>
+</ul>
+<p><strong>Escalate.</strong> If <code>sync-list</code> on the new daemon is empty after
+migration, the legacy layout did not match the migrator’s assumptions
+— attach the <code>--dry-run</code> output to a bead.</p>
+<p><strong>Related.</strong> Playbook 2 (upgrade), Playbook 37 (schema bump),
+<code>migrate-from-c</code>.</p>
+<h2 id="playbook-37-upgrading-through-a-schema-bump"><a class="header" href="#playbook-37-upgrading-through-a-schema-bump">Playbook 37: Upgrading through a schema bump</a></h2>
+<p><strong>Problem.</strong> A release contains a store schema bump. The daemon
+applies an online migration at first start.</p>
+<p><strong>Status.</strong> Store migrations are forward-only; there is no rollback
+path. Always snapshot before upgrading through a bump.</p>
+<p><strong>Diagnose.</strong></p>
+<pre><code class="language-bash">pcloudc --version                                  # pre-upgrade
+pcloudc --json status &gt; /tmp/pre-schema.json
+pcloudc backup-snapshot-create --label "pre-schema-$(date -u +%F)"
+pcloudc backup-snapshot-verify "$(ls -t /var/backups/pcloud-rs/*.tar.gpg | head -1)"
+</code></pre>
+<p><strong>Remediate.</strong></p>
+<pre><code class="language-bash"># 1. Graceful drain and restart with the new binary.
+pcloudc pause
+systemctl --user stop pcloudd
+# ...install new binary...
+systemctl --user start pcloudd
+
+# 2. Watch the migration land.
+journalctl --user -u pcloudd -f | grep -E 'store\.migration\.(applied|failed)'
+
+# 3. Validate.
+pcloudc --field ready doctor
+pcloudc status
+pcloudc audit-verify
+pcloudc resume
+</code></pre>
+<p><strong>Cleanup.</strong></p>
+<ul>
+<li>Confirm <code>store.migration.applied</code> was logged for every expected step.</li>
+<li>Keep the pre-schema snapshot for 14 days minimum.</li>
+</ul>
+<p><strong>Prevent.</strong></p>
+<ul>
+<li>Stage upgrades on a canary host first (see <a href="./deployment.html">Deployment</a>).</li>
+<li>Never skip the pre-upgrade snapshot.</li>
+</ul>
+<p><strong>Escalate.</strong> If <code>store.migration.failed</code> fires, stop the world: do
+<strong>not</strong> roll the binary back (forward-only). Restore the snapshot
+onto a fresh state dir and retry with the previous binary. Open a
+P0 bead.</p>
+<p><strong>Related.</strong> Playbook 2, Playbook 3, Playbook 27, runbook §Playbook:
+Vault + store snapshot backup / restore.</p>
+<h2 id="playbook-choosing-the-right-sync-flavor"><a class="header" href="#playbook-choosing-the-right-sync-flavor">Playbook: Choosing the right sync flavor</a></h2>
+<p><strong>When.</strong> Before registering a sync root, or when you realise the
+direction you picked no longer fits the workflow.</p>
+<p><strong>Scope.</strong> <code>sync add --type &lt;FLAVOR&gt;</code>, <code>sync change-type</code>,
+<code>backup snapshot-create</code> — pick one per pairing.</p>
+<p><strong>Decision matrix.</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Workflow</th><th>Flavor</th><th>CLI</th></tr>
+</thead>
+<tbody>
+<tr><td>Interactive workstation (bi-directional work)</td><td><code>bilateral</code> / <code>full</code> / <code>both</code></td><td><code>pcloudc sync add ~/work /Work</code> (default)</td></tr>
+<tr><td>Read-only replica of a shared folder</td><td><code>mirror</code> / <code>download-only</code> / <code>down</code> / <code>remote-to-local</code></td><td><code>pcloudc sync add ~/shared /Shared --type mirror</code></td></tr>
+<tr><td>One-way local-to-remote push (non-deletion-safe)</td><td><code>backup</code> / <code>upload-only</code> / <code>up</code> / <code>local-to-remote</code></td><td><code>pcloudc sync add ~/push /Push --type backup</code></td></tr>
+<tr><td>Deletion-safe archival (GPG-encrypted, content-addressed)</td><td>— (not a sync root)</td><td><code>pcloudc backup snapshot-create ~/archive --gpg-recipient you@domain</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Honest caveat.</strong> In the current pre-alpha implementation, the
+<code>backup</code> alias is a synonym for <code>upload-only</code> and DOES propagate local
+deletions to the remote. A true deletion-safe backup flavor is tracked
+under <code>bd-1du.5 Deletion-safe backup sync flavor</code>. Until that lands,
+reach for <code>backup snapshot-create</code> (nightly GPG tarballs) when you
+actually need “local delete never deletes the remote copy”.</p>
+<p><strong>Validation.</strong> After <code>sync add</code>:</p>
+<pre><code class="language-bash">pcloudc --field sync_id --field sync_type sync add /l /r --type mirror
+# sync_id=7
+# sync_type=DownloadOnly
+</code></pre>
+<p><strong>Related.</strong> Playbook: Converting an existing bilateral sync to
+mirror-only (below); <code>backup snapshot-create</code> in the Backup Snapshots
+chapter.</p>
+<h2 id="playbook-converting-an-existing-bilateral-sync-to-mirror-only"><a class="header" href="#playbook-converting-an-existing-bilateral-sync-to-mirror-only">Playbook: Converting an existing bilateral sync to mirror-only</a></h2>
+<p><strong>When.</strong> You started with a bilateral sync but the local side has
+diverged and you only want the remote as the source of truth going
+forward (local will be overwritten with the remote tree, new local
+edits will no longer be uploaded).</p>
+<p><strong>Scope.</strong> <code>sync change-type</code>. No re-add required; <code>sync_id</code>,
+remote-folder binding, and staging context are preserved.</p>
+<p><strong>Preflight (data safety).</strong></p>
+<pre><code class="language-bash"># 1. Identify the sync id you want to flip.
+pcloudc --json sync list | jq '.result.sync_roots[] | {sync_id, local_path, sync_type}'
+
+# 2. Snapshot the local tree before flipping — download-only will
+#    happily remove local files that the remote side has dropped.
+tar --zstd -cf "/tmp/pre-flip-$(date +%F).tar.zst" ~/work
+
+# 3. (optional) Pause sync so nothing runs while you flip.
+pcloudc pause
+</code></pre>
+<p><strong>Apply.</strong></p>
+<pre><code class="language-bash"># 4. Flip to mirror.
+pcloudc sync change-type 7 mirror
+# sync root 7 sync type changed: full -&gt; download-only
+
+# 5. Resume.
+pcloudc resume
+</code></pre>
+<p><strong>Verify.</strong></p>
+<pre><code class="language-bash"># 6. Re-inspect.
+pcloudc --json sync list | jq '.result.sync_roots[] | select(.sync_id==7)'
+# { "sync_id": 7, "sync_type": "DownloadOnly", ... }
+
+# 7. Watch the next reconcile cycle.
+pcloudc status --watch
+</code></pre>
+<p><strong>Rollback.</strong> If you change your mind, flip back:</p>
+<pre><code class="language-bash">pcloudc sync change-type 7 bilateral
+</code></pre>
+<p>Flipping does not re-upload any previously pruned local files — the
+daemon only has the current state of both sides to work with. Restore
+from the tarball you captured in step 2 if you lost data.</p>
+<p><strong>Related.</strong> Playbook: Choosing the right sync flavor (above); CLI
+reference <code>sync-change-type</code>.</p>
+<h2 id="playbook-responding-to-slo-violations"><a class="header" href="#playbook-responding-to-slo-violations">Playbook: Responding to SLO violations</a></h2>
+<p>The daemon publishes a canonical SLO report under <code>GET /slo</code> (HTTP
+exporter) and <code>Method::GetSlo</code> (IPC). This playbook walks through the
+triage path when an alert fires on a <code>violation</code> status.</p>
+<h3 id="0-pull-the-live-report"><a class="header" href="#0-pull-the-live-report">0. Pull the live report</a></h3>
+<pre><code class="language-bash"># HTTP exporter (feature = metrics, loopback by default)
+curl --unix-socket $XDG_RUNTIME_DIR/pcloud-rs/daemon.sock http://localhost/slo | jq
+
+# IPC — same data, same JSON shape (field-selector-friendly)
+pcloudc slo
+pcloudc --json slo
+pcloudc slo pass             # extract aggregate bit
+pcloudc slo slos             # extract full list
+</code></pre>
+<p>Each entry is <code>{slo_name, target, actual, status}</code> with <code>status</code> one
+of <code>ok</code> / <code>violation</code> / <code>no_data</code>. <code>no_data</code> is <strong>not</strong> a breach —
+the registry honestly reports when a counter has no samples yet.</p>
+<h3 id="1-identify-which-slo-tripped"><a class="header" href="#1-identify-which-slo-tripped">1. Identify which SLO tripped</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>SLO name</th><th>Target</th><th>Common causes</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ipc.request.latency.p99</code></td><td><code>&lt;100ms</code></td><td>CPU starvation, blocking lock inside dispatch, GC stall on store mutex</td></tr>
+<tr><td><code>ipc.request.error_rate</code></td><td><code>&lt;0.1%</code></td><td>Backend connectivity flap, expired auth, malformed requests from a buggy client</td></tr>
+<tr><td><code>auth.login.success_rate</code></td><td><code>&gt;99%</code></td><td>Password-change event, bad TFA device, upstream rate-limit</td></tr>
+<tr><td><code>upload.throughput_mbps.p50</code></td><td><code>&gt;5MB/s</code></td><td>Uplink saturation, TLS renegotiation, journal contention</td></tr>
+<tr><td><code>mount.read.latency.p99</code></td><td><code>&lt;50ms</code></td><td>Page-cache miss storm, remote-list hit, FUSE channel stall</td></tr>
+<tr><td><code>integrity_sweeper.run.p95</code></td><td><code>&lt;5min</code></td><td>Sweeper walking an unexpectedly large root, DB vacuum overlap</td></tr>
+<tr><td><code>audit.hash_chain.verify.daily_pass_rate</code></td><td><code>&gt;99.9%</code></td><td>Clock skew, disk corruption, tampering (P0: escalate)</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="2-cross-check-against-raw-metrics"><a class="header" href="#2-cross-check-against-raw-metrics">2. Cross-check against raw metrics</a></h3>
+<p>Every SLO is backed by a Prometheus family already exposed on
+<code>/metrics</code>. Confirm the SLO is not firing on a thin sample:</p>
+<pre><code class="language-bash">curl --unix-socket $XDG_RUNTIME_DIR/pcloud-rs/daemon.sock http://localhost/metrics \
+  | grep -E 'pcloud_request_latency_seconds|pcloud_auth_attempts_total'
+</code></pre>
+<p>A breach that comes with <code>&lt;100</code> observations in the 5-minute window
+is usually noise from a client test fixture; capture the sample
+count before opening a page.</p>
+<h3 id="3-per-slo-first-action"><a class="header" href="#3-per-slo-first-action">3. Per-SLO first action</a></h3>
+<ul>
+<li><strong><code>ipc.request.latency.p99</code> / <code>error_rate</code></strong> — <code>pcloudc drain</code>
+status + <code>pcloudc doctor</code> + the last five daemon log lines tagged
+<code>method=...</code> identify a stuck handler in under a minute.</li>
+<li><strong><code>auth.login.success_rate</code></strong> — check the authsave vault mode
+(<code>stat -c '%a' ~/.local/share/pcloud-rs/vault*</code>), confirm the
+session lifecycle clock
+(<code>pcloudc session status</code>), and inspect
+<code>pcloud_auth_attempts_total{result="rate_limited"}</code>.</li>
+<li><strong><code>upload.throughput_mbps.p50</code></strong> — <code>pcloudc pending</code>, plus
+<code>pcloud_transfer_bytes_total{direction="upload"}</code> as a rate over
+the alert window.</li>
+<li><strong><code>mount.read.latency.p99</code></strong> — <code>pcloudc fs status &lt;path&gt;</code> to
+confirm the mount is live; then page-cache hit-rate from
+<code>/metrics</code>.</li>
+<li><strong><code>integrity_sweeper.run.p95</code></strong> — <code>pcloudc integrity status</code>
+(<code>files_hashed</code> / <code>bytes_hashed</code> progress); if <code>throttled</code> is
+non-zero, tune the rate-limit in
+<code>[features.integrity_sweeper]</code>.</li>
+<li><strong><code>audit.hash_chain.verify.daily_pass_rate</code></strong> — treat as P0.
+Run <code>pcloudc audit verify</code> by hand; if it reports a broken link,
+stop the daemon and follow <em>Playbook 13: Persisted token stolen</em>
+for blast-radius containment while forensics are captured.</li>
+</ul>
+<h3 id="4-when-the-breach-persists"><a class="header" href="#4-when-the-breach-persists">4. When the breach persists</a></h3>
+<ol>
+<li>Capture <code>pcloudc doctor --json</code>, <code>pcloudc --json slo</code>,
+<code>pcloudc --json status</code>, the last 500 journal lines, and a
+Prometheus scrape.</li>
+<li>Confirm the SLO is <strong>not</strong> definitional pre-GA drift (see
+<code>docs/book/src/architecture/performance.md</code> — several SLOs are
+aspirational and the current build does not meet all of them
+uniformly under load).</li>
+<li>Open a bead under <code>bd-1du.10</code> with the captured evidence and the
+exact <code>slo_name</code> + <code>actual</code> string. Do not silence the alert
+until either the bead closes or the SLO threshold is adjusted in
+<code>crates/pcloud-observability/src/slo.rs</code> by release review.</li>
+</ol>
+<h3 id="5-do-not-do"><a class="header" href="#5-do-not-do">5. Do not do</a></h3>
+<ul>
+<li>Do not edit <code>SLO_*_THRESHOLD</code> constants to silence an alert.
+Threshold changes require release review and a CHANGELOG entry.</li>
+<li>Do not mute <code>violation</code> in dashboards without a matching bead.</li>
+<li>Do not confuse <code>no_data</code> with <code>ok</code> — the registry distinguishes
+them deliberately.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../operations/deployment-guide.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../operations/upgrade.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../operations/deployment-guide.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../operations/upgrade.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

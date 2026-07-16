@@ -37,9 +37,8 @@ write a new one and supersede the old.
   Accepted. `STATUS.md` is authoritative for aggregate parity claims;
   `CLAUDE.md` and `README.md` are consumers.
 - [0010 — FUSE Write-Path Daemon Wiring Pending](0010-fuse-write-path-daemon-wiring-pending.md) —
-  Proposed. Records the shape of the remaining mounted-drive write
-  wiring (`bd-1du.4.6`) and the two open sub-decisions
-  (back-pressure policy and `fsync` durability guarantee).
+  Superseded by ADR 0020. Records the earlier open mounted-drive write
+  questions.
 - [0011 — Daemon vs Library-Only](0011-daemon-vs-library-only.md) —
   Accepted. Long-lived `pcloudd` owns state; CLI, SDK, web, and
   plugins talk to it over IPC. Enterprise surfaces attach at the
@@ -71,3 +70,9 @@ write a new one and supersede the old.
 - [0018 — Native Field Selector (Not `jq`)](0018-native-field-selector-syntax.md) —
   Accepted. `pcloudc --select` ships a small native selector grammar
   so scripted operators don't need `jq` installed, on any platform.
+- [0019 — IPC Serve Loop Is Single-Threaded](0019-ipc-serve-loop-single-threaded.md) —
+  Accepted. Serial daemon dispatch remains intentional until the runtime owns
+  only `Send`-safe handles or telemetry justifies an actor boundary.
+- [0020 — FUSE Write Durability and Bounded Staging](0020-fuse-write-durability.md) —
+  Accepted. `fsync` is server-durable, staging ceilings return `ENOSPC`, and
+  both FUSE compositions share one resumable write service.

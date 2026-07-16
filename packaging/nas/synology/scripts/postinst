@@ -1,0 +1,8 @@
+#!/bin/sh
+
+set -eu
+PACKAGE_NAME="${SYNOPKG_PKGNAME:-pcloud-rs}"
+DATA_DIR="${SYNOPKG_PKGVAR:-/var/packages/$PACKAGE_NAME/var}"
+mkdir -p "$DATA_DIR/root" "$DATA_DIR/log"
+chmod 700 "$DATA_DIR/root" "$DATA_DIR/log"
+exit 0

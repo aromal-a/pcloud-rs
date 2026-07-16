@@ -112,6 +112,12 @@ pub enum SyncBackendError {
     #[error(transparent)]
     /// `Network` variant.
     Network(#[from] TransportError),
+    /// Resilient-wrapper-only condition (circuit-breaker open, rate-limit
+    /// exceeded, retry-budget exhausted). CLAUDEREV deferred-set D5.5
+    /// (fire 53). Carries the human-readable description from
+    /// `pcloud_proto::resilient_transport::ResilientError`.
+    #[error("resilient transport refused request: {0}")]
+    Resilient(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -363,17 +369,33 @@ pub fn suggest_sync_folders(
 enum SyncTransportMode {
     Development(DevelopmentSyncTransport),
     Network(BinaryApiTransport),
+    /// Production network transport wrapped in a circuit-breaker /
+    /// rate-limiter / retry-budget envelope. CLAUDEREV deferred-set
+    /// D5.5 (fire 53) — fifth of 7 per-backend `ResilientTransport`
+    /// migrations.
+    ResilientNetwork(
+        Box<pcloud_proto::resilient_transport::ResilientTransport<BinaryApiTransport>>,
+    ),
 }
 
 impl ProtocolTransport for SyncTransportMode {
     type Error = SyncBackendError;
 
     fn execute(&self, request: &EncodedRequest) -> Result<Value, Self::Error> {
+        use pcloud_proto::resilient_transport::ResilientError;
         match self {
             Self::Development(transport) => {
                 transport.execute(request).map_err(SyncBackendError::from)
             }
             Self::Network(transport) => transport.execute(request).map_err(SyncBackendError::from),
+            Self::ResilientNetwork(transport) => {
+                transport.execute(request).map_err(|err| match err {
+                    ResilientError::Inner(transport_err) => {
+                        SyncBackendError::Network(transport_err)
+                    }
+                    other => SyncBackendError::Resilient(other.to_string()),
+                })
+            }
         }
     }
 }
@@ -383,6 +405,9 @@ impl ApiServerHintConsumer for SyncTransportMode {
         match self {
             Self::Development(transport) => transport.apply_api_server_hint(api_server),
             Self::Network(transport) => transport.apply_api_server_hint(api_server),
+            Self::ResilientNetwork(transport) => {
+                transport.inner_arc().apply_api_server_hint(api_server)
+            }
         }
     }
 }
@@ -434,6 +459,21 @@ impl SyncRuntime {
             }
         };
 
+        Self {
+            api: SyncApi::new(transport.clone()),
+            folder_api: FolderApi::new(transport),
+        }
+    }
+
+    /// Construct a `SyncRuntime` whose transport is wrapped in
+    /// `pcloud_proto::resilient_transport::ResilientTransport`. CLAUDEREV
+    /// deferred-set D5.5 (fire 53). Both `api` and `folder_api` share
+    /// the wrapped transport via `Clone`.
+    #[must_use]
+    pub fn from_resilient_transport(
+        resilient: pcloud_proto::resilient_transport::ResilientTransport<BinaryApiTransport>,
+    ) -> Self {
+        let transport = SyncTransportMode::ResilientNetwork(Box::new(resilient));
         Self {
             api: SyncApi::new(transport.clone()),
             folder_api: FolderApi::new(transport),

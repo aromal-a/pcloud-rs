@@ -27,8 +27,8 @@ mod common;
 
 use std::time::SystemTime;
 
+use pcloud_embedded_sdk::EmbeddedDaemon;
 use pcloud_ipc::{Method, Request, ResponseStatus};
-use pcloud_sdk::EmbeddedDaemon;
 
 use crate::common::{
     ENV_PASSWORD, ENV_TOKEN, ENV_USER, TestDaemon, assert_no_secret_leak, optional_env,

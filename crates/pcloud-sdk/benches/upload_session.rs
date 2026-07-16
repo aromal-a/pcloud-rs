@@ -1,7 +1,7 @@
 #![allow(clippy::pedantic)]
 //! Criterion micro-benchmark for the [`UploadSession`] state machine
 //! landed in G2, routed through the SDK surface re-exported from
-//! `pcloud-sdk`.
+//! `pcloud-embedded-sdk`.
 //!
 //! The bench walks 100 × 4 MiB chunks through
 //! `start` → `write_chunk` ×N → `save_and_complete` with a no-op
@@ -24,7 +24,9 @@
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
-use pcloud_sdk::{FileMetadata, UploadError, UploadHandle, UploadSession, UploadSessionDriver};
+use pcloud_embedded_sdk::{
+    FileMetadata, UploadError, UploadHandle, UploadSession, UploadSessionDriver,
+};
 
 const MIB: usize = 1024 * 1024;
 const CHUNK_SIZE: usize = 4 * MIB;

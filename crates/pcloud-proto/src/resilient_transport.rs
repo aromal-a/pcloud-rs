@@ -282,7 +282,7 @@ where
     /// Override the host label used for metric dimensions.
     ///
     /// By default the label is taken from
-    /// [`ResiliencePolicy::endpoint_label`]. Call this after construction to
+    /// `ResiliencePolicy::endpoint_label`. Call this after construction to
     /// set or override the label (e.g. when the API-server hint changes the
     /// active endpoint).
     pub fn set_host_label(&mut self, host: impl Into<String>) {
@@ -292,6 +292,19 @@ where
     /// Observable breaker state. Primarily for diagnostics/tests.
     pub fn breaker_state(&self) -> BreakerState {
         self.breaker.state()
+    }
+
+    /// Borrow a clone of the inner transport's `Arc` so callers can
+    /// call methods on the inner type that are not part of
+    /// [`ProtocolTransport`] (e.g.
+    /// [`crate::auth_api::ApiServerHintConsumer::apply_api_server_hint`]).
+    /// CLAUDEREV deferred-set D5.1 (fire 49): unblocks per-backend
+    /// transport wrapping while keeping the underlying transport reachable
+    /// for non-`ProtocolTransport` trait calls. The returned `Arc` is a
+    /// cheap pointer bump; mutating the inner state on one clone is
+    /// observable through every other clone.
+    pub fn inner_arc(&self) -> std::sync::Arc<T> {
+        std::sync::Arc::clone(&self.inner)
     }
 
     /// Execute a request with rate-limit, circuit-breaker, and retry logic
@@ -481,14 +494,14 @@ where
     Arc::new(|_: &E| ErrorClass::Permanent)
 }
 
-/// A [`TransportError`]-specific error classifier.
+/// A `TransportError`-specific error classifier.
 ///
 /// Maps protocol-level permanent failures (bad address, invalid TLS name,
 /// TLS handshake errors) to [`ErrorClass::Permanent`] so the
 /// [`ResilientTransport`] does **not** waste retry budget on errors that
 /// are guaranteed to recur.
 ///
-/// `TransportError::Io` is split by the underlying [`io::ErrorKind`]:
+/// `TransportError::Io` is split by the underlying `io::ErrorKind`:
 /// - `TimedOut`, `ConnectionReset`, `BrokenPipe`, `ConnectionAborted`,
 ///   `Interrupted`, and `WouldBlock` are **transient** — a fresh
 ///   connection attempt may succeed.

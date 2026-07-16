@@ -1,25 +1,34 @@
 #![allow(clippy::pedantic)]
-//! **PLATFORM: all** (Linux | FreeBSD | OpenBSD | NetBSD | macOS | Windows).
+//! **PLATFORM: all** (Linux | BSD | macOS | Windows).
 //! **GATING: sub-tests are cfg-gated per OS; the file compiles
 //! everywhere.**
 //!
-//! Phase 3 integration tests for the [`pcloud_fs::platform`] mountinfo
+//! Native integration tests for the [`pcloud_fs::platform`] mountinfo
 //! reader. Exercises the `MountinfoReader` trait through the active
 //! per-OS concrete type:
 //!
 //! - Linux: `ProcMountinfoReader` really reads `/proc/self/mountinfo`
 //!   and feeds it to `parse_pcloud_mounts`. We assert only the shape
 //!   (no panic, well-formed output) so the test is robust on any host.
-//! - BSD/macOS/Windows: the platform reader is a planned
-//!   `unimplemented!` surface; we assert a non-zero `TypeId` on the
-//!   active reader as a placeholder sanity check until the real
-//!   backend lands.
+//! - BSD/macOS: call the production `getmntinfo(3)` reader.
+//! - Windows: call the production Win32 volume enumerator.
+//!
+//! A host normally has no pCloud mount, so the portable assertion is that
+//! native enumeration succeeds and any returned entries parse as private
+//! pCloud filesystem types.
 
-#[cfg(not(target_os = "linux"))]
-use std::any::TypeId;
-
-#[cfg(target_os = "linux")]
 use pcloud_fs::mount_orphan::{MountinfoReader, parse_pcloud_mounts};
+
+fn assert_pcloud_payload_is_well_formed(payload: &str) {
+    for entry in parse_pcloud_mounts(payload) {
+        assert!(!entry.mount_point.as_os_str().is_empty());
+        assert!(
+            entry.fs_type == "fuse.pcloud-rs",
+            "native reader returned an unowned filesystem type: {}",
+            entry.fs_type
+        );
+    }
+}
 
 /// On Linux, the production reader reads `/proc/self/mountinfo`. Assert
 /// the round-trip through `parse_pcloud_mounts` does not panic and
@@ -51,52 +60,47 @@ fn proc_reader_returns_string_matching_mountinfo_format() {
     // Parsing must not panic, even if the live host has zero pCloud
     // FUSE mounts (which is the common CI case). An empty result is
     // expected and valid.
-    let entries = parse_pcloud_mounts(&payload);
-    for entry in &entries {
-        assert!(
-            !entry.fs_type.is_empty(),
-            "parsed entry must carry a non-empty fs_type"
-        );
-    }
+    assert_pcloud_payload_is_well_formed(&payload);
 }
 
-/// BSD/macOS placeholder: the platform mountinfo reader is not yet
-/// implemented (it will wrap `getmntinfo(3)` on BSD/macOS and the
-/// native API on Windows). Until then, we assert only that an active
-/// reader type exists and has a non-zero `TypeId`, which proves the
-/// cfg-selected `ActivePlatformMount` symbol is actually reachable.
+/// BSD reader calls `getmntinfo(3)` and filters foreign FUSE volumes.
 #[cfg(any(
     target_os = "freebsd",
     target_os = "openbsd",
-    target_os = "netbsd",
-    target_os = "macos",
+    target_os = "dragonfly",
+    target_os = "netbsd"
 ))]
 #[test]
-fn bsd_or_macos_reader_typeid_is_non_zero_placeholder() {
-    use pcloud_fs::platform::ActivePlatformMount;
+fn bsd_reader_enumerates_native_mount_table() {
+    use pcloud_fs::platform::bsd::BsdMountinfoReader;
 
-    // TypeId of any live concrete type is non-zero; this is the weakest
-    // statement we can make without actually calling into a reader that
-    // is still `unimplemented!()` on these targets.
-    let tid = TypeId::of::<ActivePlatformMount>();
-    assert_ne!(
-        tid,
-        TypeId::of::<()>(),
-        "ActivePlatformMount must resolve to a real struct on BSD/macOS"
-    );
+    let payload = BsdMountinfoReader
+        .read()
+        .expect("getmntinfo(3) must enumerate the BSD mount table");
+    assert_pcloud_payload_is_well_formed(&payload);
 }
 
-/// Windows placeholder: same rationale as the BSD/macOS arm above. The
-/// real reader will live in `platform::windows` (WinFSP-backed).
+/// macOS reader calls `getmntinfo(3)` and filters foreign FUSE volumes.
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_reader_enumerates_native_mount_table() {
+    use pcloud_fs::platform::macos::MacosMountinfoReader;
+
+    let payload = MacosMountinfoReader
+        .read()
+        .expect("getmntinfo(3) must enumerate the macOS mount table");
+    assert_pcloud_payload_is_well_formed(&payload);
+}
+
+/// Windows reader enumerates every volume and selects only the private
+/// `pcloud-rs` filesystem marker.
 #[cfg(target_os = "windows")]
 #[test]
-fn windows_reader_typeid_is_non_zero_placeholder() {
-    use pcloud_fs::platform::ActivePlatformMount;
+fn windows_reader_enumerates_native_volume_table() {
+    use pcloud_fs::platform::windows::WindowsMountinfoReader;
 
-    let tid = TypeId::of::<ActivePlatformMount>();
-    assert_ne!(
-        tid,
-        TypeId::of::<()>(),
-        "ActivePlatformMount must resolve to a real struct on Windows"
-    );
+    let payload = WindowsMountinfoReader
+        .read()
+        .expect("Win32 must enumerate the native volume table");
+    assert_pcloud_payload_is_well_formed(&payload);
 }

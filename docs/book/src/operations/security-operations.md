@@ -125,12 +125,8 @@ What this means operationally:
 
 ### 3.2 Windows — named-pipe DACL + `GetNamedPipeClientProcessId`
 
-> **Tier-2 status (2026-04-24).** The Windows named-pipe accept loop
-> is in flight — `pcloudd-svc` currently runs a no-op stub that
-> compiles and starts but does not yet serve IPC. See `CLAUDE.md`
-> § "Windows posture" for the gating remaining work.
-
-When the accept loop lands:
+The named-pipe accept loop is wired into the shared framed protocol. Native
+Windows CI owns its same-user round-trip test.
 
 - The named pipe is created with an explicit DACL granting access
   only to the current user's SID.
@@ -140,6 +136,9 @@ When the accept loop lands:
   dispatched.
 - Connections from other SIDs are dropped at accept time without
   ever reading a request body.
+
+The daemon runs under the interactive user; the public MSI deliberately does
+not install a machine service whose SID and DPAPI scope would differ.
 
 ### 3.3 Audit log integration
 
@@ -281,5 +280,5 @@ acceptable" (this is **not** a "production-ready" claim — see
 - ADR 0004 — Panic guard default-on: [`adr/0004.md`](../adr/0004.md)
 - ADR 0005 — Token vault layout: [`adr/0005.md`](../adr/0005.md)
 - ADR 0007 — Crypto password not persisted: [`adr/0007.md`](../adr/0007.md)
-- ADR 0015 — Vault `0600` enforcement: [`adr/0015-vault-0600-permission-enforcement.md`](../adr/0015-vault-0600-permission-enforcement.md)
-- ADR 0016 — Secret-wrapping discipline: [`adr/0016-secret-wrapping-discipline.md`](../adr/0016-secret-wrapping-discipline.md)
+- ADR 0015 — Vault `0600` enforcement: [`adr/0015.md`](../adr/0015.md)
+- ADR 0016 — Secret-wrapping discipline: [`adr/0016.md`](../adr/0016.md)

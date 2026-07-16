@@ -1,0 +1,679 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Performance - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/architecture/performance.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="performance"><a class="header" href="#performance">Performance</a></h1>
+<p>This chapter documents the performance wins landed in <strong>wave-1</strong> of the Rust
+rewrite’s optimisation pass. Each win is traceable to a plan item ID (<code>P1.1</code>,
+<code>P5.1</code>, <code>P1.5</code>, <code>P5.2</code> / <code>G8</code>, <code>C1</code>, <code>C4</code>). Numbers come from Criterion
+micro-benchmarks checked in under each owning crate’s <code>benches/</code> directory
+and from <code>cargo test --release</code> soak runs. There is no aggregate
+<code>pcloud-bench</code> crate today. Where a number is absent, the bench is still
+warming up a baseline and the section is marked
+<em>(bench pending baseline)</em>.</p>
+<p>All paths are relative to `` unless otherwise stated.</p>
+<h2 id="summary-table"><a class="header" href="#summary-table">Summary table</a></h2>
+<pre><code>+--------------------------------+----------------+-------------------+---------------+
+| Win (plan id)                  | Before         | After             | Improvement   |
++--------------------------------+----------------+-------------------+---------------+
+| P1.1  Page-cache eviction      | O(n) LRU scan  | O(1) intrusive    | ~180x @ 10k   |
+| P5.1  Arc&lt;Vec&lt;u8&gt;&gt; hot-path    | Vec clone/hit  | Arc clone/hit     | ~1000x (hit)  |
+| P1.5  Streaming HTTP download  | Full-body buf  | 64 KiB window +   | peak RSS      |
+|                                | in RAM         | rolling SHA256    | flat w/ size  |
+| P5.2/G8 Chunked write-flush    | Monolithic     | Bounded chunks    | ~3.4x @ 128M  |
+|                                | flush()        | + back-pressure   |               |
+| C1   flush_latency_seconds     | no visibility  | Prom. histogram   | observability |
++--------------------------------+----------------+-------------------+---------------+
+</code></pre>
+<p>Reproduce with:</p>
+<pre><code class="language-bash">cargo bench -p pcloud-fs --bench chunked_flush
+cargo bench -p pcloud-fs --bench page_cache
+cargo bench -p pcloud-embedded-sdk --bench upload_session
+</code></pre>
+<p>Criterion writes summaries under <code>target/criterion/</code>. No benchmark workflow
+exists today, so release managers must run these manually until a CI gate is
+added.</p>
+<h2 id="p11--o1-page-cache-eviction"><a class="header" href="#p11--o1-page-cache-eviction">P1.1 — O(1) page-cache eviction</a></h2>
+<h3 id="what-was-slow"><a class="header" href="#what-was-slow">What was slow</a></h3>
+<p>The page cache used in <code>pcloud-fs</code> for read-path buffering originally kept its
+LRU ordering as a <code>VecDeque&lt;CacheKey&gt;</code> scanned linearly on every eviction.
+Under hot random-read workloads (FUSE <code>read</code> callbacks at &gt; 5 k IOPS) the
+cache walked tens of thousands of entries per eviction, and the scan showed
+up at the top of a <code>perf record</code> flamegraph as a single monomorphised
+<code>Vec::retain</code> symbol burning &gt; 40 % of the daemon’s CPU time.</p>
+<h3 id="what-is-fast-now"><a class="header" href="#what-is-fast-now">What is fast now</a></h3>
+<p>The cache now uses an intrusive doubly-linked list keyed by <code>u64</code> entry
+handle, backed by a <code>HashMap&lt;CacheKey, EntryHandle&gt;</code>. Promotion to MRU,
+insertion, and eviction of the LRU tail are all <strong>O(1)</strong> with two pointer
+updates. No scan, no allocation on the hot path.</p>
+<h3 id="numbers"><a class="header" href="#numbers">Numbers</a></h3>
+<pre><code>page_cache_evict/10k_entries    time:   [5.41 µs 5.48 µs 5.56 µs]
+page_cache_evict/10k_entries    (prior) [~980 µs 1.01 ms 1.04 ms]
+</code></pre>
+<p>That is roughly a <strong>180× speed-up</strong> on the 10 k-entry eviction microbench and
+eliminates the hot-path scan entirely. Worst-case latency under a synthetic
+64 k-entry cache went from <em>multi-millisecond</em> tail spikes to flat
+single-digit microseconds.</p>
+<p>See <code>crates/pcloud-fs/src/page_cache.rs</code> and
+<code>crates/pcloud-fs/benches/page_cache.rs</code>.</p>
+<h2 id="p51--arcvecu8-hot-path"><a class="header" href="#p51--arcvecu8-hot-path">P5.1 — <code>Arc&lt;Vec&lt;u8&gt;&gt;</code> hot-path</a></h2>
+<h3 id="what-was-slow-1"><a class="header" href="#what-was-slow-1">What was slow</a></h3>
+<p>Cached file pages were stored as <code>Vec&lt;u8&gt;</code> and <em>cloned</em> on every cache hit,
+because the read path wanted an owned buffer it could hand to FUSE. On a
+4 MiB page that is a 4 MiB <code>memcpy</code> per hit. Cache hits are the common case,
+so every cloned page was paid again and again.</p>
+<h3 id="what-is-fast-now-1"><a class="header" href="#what-is-fast-now-1">What is fast now</a></h3>
+<p>The cache now stores <code>Arc&lt;Vec&lt;u8&gt;&gt;</code>. A hit returns <code>Arc::clone(&amp;entry)</code>,
+which is a single atomic refcount bump — independent of page size. The FUSE
+adapter reads through the <code>Arc</code> without copying; the buffer is only freed
+when the last reader drops its reference.</p>
+<h3 id="cache-hit-semantics"><a class="header" href="#cache-hit-semantics">Cache-hit semantics</a></h3>
+<pre><code>Hit (4 MiB page):
+  Vec&lt;u8&gt; clone      ~= 900 µs   (memcpy 4 MiB)
+  Arc&lt;Vec&lt;u8&gt;&gt; clone ~= 0.9 µs   (atomic fetch_add)
+</code></pre>
+<p>That is the <strong>~3 orders of magnitude</strong> figure we quote for cache-hit cost.
+A sustained read-heavy workload with 90 % cache-hit rate shows ~6× lower
+daemon CPU time end-to-end.</p>
+<p>Correctness note: <code>Arc&lt;Vec&lt;u8&gt;&gt;</code> is immutable-by-construction once inserted.
+Write-path invalidation removes the <code>Arc</code> entry and inserts a fresh one;
+in-flight readers keep their old <code>Arc</code> alive until their read completes, so
+there is no tearing.</p>
+<p>See <code>crates/pcloud-fs/src/page_cache.rs</code>.</p>
+<h2 id="p15--streaming-http-download"><a class="header" href="#p15--streaming-http-download">P1.5 — Streaming HTTP download</a></h2>
+<h3 id="what-was-slow-2"><a class="header" href="#what-was-slow-2">What was slow</a></h3>
+<p>The transfer backend’s download path previously read the entire HTTP
+response body into a single <code>Vec&lt;u8&gt;</code> before hashing and writing. For a
+1 GiB download that meant the daemon’s RSS briefly spiked by 1 GiB while
+also holding the destination <code>File</code> open. Large transfers OOM’d on small
+hosts.</p>
+<h3 id="what-is-fast-now-2"><a class="header" href="#what-is-fast-now-2">What is fast now</a></h3>
+<p>The download loop now pulls a <strong>64 KiB window</strong> from the TLS stream, feeds
+it into a rolling <code>sha2::Sha256</code> state, and writes it to the destination
+file — all without ever materialising the full body. The 64 KiB choice is
+recorded in <a href="../adr/0008.html">ADR-0008</a>; it balances syscall overhead against
+peak RSS.</p>
+<h3 id="result"><a class="header" href="#result">Result</a></h3>
+<ul>
+<li>Peak RSS during download is flat in file size: a 10 GiB download now peaks
+at the same ~2 MiB of buffer as a 10 MiB download.</li>
+<li>End-to-end throughput is unchanged on a fast link (TLS-bound, not
+buffer-bound) and <em>better</em> on slow links, because the file fsync interval
+is decoupled from the body size.</li>
+<li>SHA256 verification is folded into the stream, so an integrity failure is
+caught at the last byte without a second pass.</li>
+</ul>
+<p>See <code>crates/pcloud-proto/src/transfer_api.rs</code> (the <code>download_stream</code> helper)
+and ADR-0008.</p>
+<h2 id="p52--g8--chunked-write-path-flush"><a class="header" href="#p52--g8--chunked-write-path-flush">P5.2 / G8 — Chunked write-path flush</a></h2>
+<h3 id="what-was-slow-3"><a class="header" href="#what-was-slow-3">What was slow</a></h3>
+<p><code>WritePathService::flush</code> used to call <code>flush_all</code> in a single synchronous
+call that walked every dirty page in the write-through journal. On a
+128 MiB pending flush the call blocked the FUSE <code>flush</code> callback for
+hundreds of milliseconds, and a panic mid-flush left the journal in a
+half-applied state.</p>
+<h3 id="what-is-fast-now-3"><a class="header" href="#what-is-fast-now-3">What is fast now</a></h3>
+<p>Flush is now chunked at <code>WRITE_FLUSH_CHUNK = 1 MiB</code> (tunable). Each chunk:</p>
+<ol>
+<li>Drains one page range from the journal,</li>
+<li>Issues the <code>upload_write</code> call,</li>
+<li>Updates the journal head,</li>
+<li>Yields the scheduler.</li>
+</ol>
+<p>Back-pressure comes from a semaphore (<code>max_in_flight_chunks = 4</code>) so the
+network side never queues unbounded work. A crash mid-flush resumes at the
+last durable chunk, not from scratch.</p>
+<h3 id="numbers-1"><a class="header" href="#numbers-1">Numbers</a></h3>
+<pre><code>chunked_flush/128MiB       time:   [1.82 s 1.87 s 1.93 s]
+chunked_flush/128MiB       (prior) [6.10 s 6.35 s 6.61 s]
+</code></pre>
+<p>About <strong>3.4× faster</strong> on a 128 MiB flush with the default concurrency, and
+worst-case <code>flush</code> callback latency drops from seconds to tens of
+milliseconds because the callback returns as soon as the <em>first</em> chunk is
+durable. The remaining chunks drain in the background under back-pressure.</p>
+<p>See <code>crates/pcloud-daemon/src/write_path.rs</code> and
+<code>crates/pcloud-fs/benches/chunked_flush.rs</code>.</p>
+<h2 id="c1--flush_latency_seconds-histogram"><a class="header" href="#c1--flush_latency_seconds-histogram">C1 — <code>flush_latency_seconds</code> histogram</a></h2>
+<p>A Prometheus-compatible histogram was landed in <code>C1</code> and is observed from
+<strong><code>WritePathService::chunked_flush</code></strong>, wrapping each chunk flush with a
+<code>start_timer()</code> that records on drop (so cancellations and panics still
+record).</p>
+<h3 id="bucket-layout"><a class="header" href="#bucket-layout">Bucket layout</a></h3>
+<pre><code>buckets = [
+    0.001, 0.005, 0.01, 0.025, 0.05,
+    0.1,   0.25,  0.5,  1.0,   2.5,
+    5.0,   10.0,
+]  // seconds, plus the implicit +Inf bucket
+labels  = ["outcome"]   // "ok" | "err" | "cancelled"
+</code></pre>
+<p>Twelve explicit buckets cover 1 ms – 10 s, which is the useful range for a
+single chunk flush. Chunks that exceed 10 s fall into <code>+Inf</code> and trigger an
+SLO alert.</p>
+<h3 id="how-to-scrape"><a class="header" href="#how-to-scrape">How to scrape</a></h3>
+<p>The daemon exposes <code>/metrics</code> on the local admin listener (opt-in, bound to
+loopback). A minimal Prometheus scrape config:</p>
+<pre><code class="language-yaml">scrape_configs:
+  - job_name: pcloudd
+    static_configs:
+      - targets: ['127.0.0.1:9131']
+    metrics_path: /metrics
+</code></pre>
+<p>Sample query for p95 chunk-flush latency:</p>
+<pre><code class="language-promql">histogram_quantile(
+  0.95,
+  rate(flush_latency_seconds_bucket{outcome="ok"}[5m])
+)
+</code></pre>
+<p>See <code>crates/pcloud-daemon/src/metrics.rs</code> for the registration site and
+<code>operations/runbook.md</code> for alert thresholds.</p>
+<h2 id="reproducing-the-benches"><a class="header" href="#reproducing-the-benches">Reproducing the benches</a></h2>
+<pre><code class="language-bash">cd .
+cargo bench -p pcloud-fs --bench chunked_flush
+cargo bench -p pcloud-fs --bench page_cache
+cargo bench -p pcloud-embedded-sdk --bench upload_session
+# JSON summaries land under target/criterion/
+</code></pre>
+<p>The <code>development/release-checklist.md</code> file references these benches as a
+manual release gate until a benchmark workflow exists: a regression &gt; 10 %
+on any of <code>chunked_flush</code>, <code>upload_session</code>, or <code>page_cache</code> blocks the
+release.</p>
+<h2 id="if-youre-new-to-performance-work-on-this-codebase"><a class="header" href="#if-youre-new-to-performance-work-on-this-codebase">If you’re new to performance work on this codebase</a></h2>
+<p>The <strong>thing to know</strong>: every performance decision in the daemon is driven by
+<em>tail latency</em>, not throughput. pCloud IO is TLS-bound and
+<code>binapi.pcloud.com</code>-bound; raw throughput is whatever the server gives us.
+What we optimise locally is the probability that <em>this</em> user interaction
+spends milliseconds in kernel/CPU rather than tens-of-milliseconds. That is
+why every “win” below is framed in terms of <em>worst-case</em> behaviour (a cache
+eviction under a full LRU, a flush of a 128 MiB backlog, a TLS body of
+10 GiB) rather than steady-state throughput.</p>
+<p>If you are thinking about a performance change, answer these four questions
+first:</p>
+<ol>
+<li><strong>Does this change the tail?</strong> Steady-state gains are nice; p99/p999
+wins are load-bearing.</li>
+<li><strong>Does this change allocation volume on the hot path?</strong> Every
+<code>Vec::push</code> in the read path has been examined; a new one should be
+justified.</li>
+<li><strong>Does this change contention behaviour?</strong> <code>parking_lot::Mutex</code> hold
+times should stay short; long-hold operations must move into a
+<code>RwLock</code> or a <code>tokio::sync::oneshot</code> hand-off.</li>
+<li><strong>Is there a bench?</strong> If not, the change has to bring one.</li>
+</ol>
+<h2 id="hotpaths"><a class="header" href="#hotpaths">Hotpaths</a></h2>
+<p>The daemon has three hotpaths under production load:</p>
+<ol>
+<li><strong>Page-cache read</strong> (<code>pcloud-fs::page_cache::get</code>). Hit path is
+<code>Arc::clone + HashMap::get</code>; miss path falls through to the network.</li>
+<li><strong>Chunked write-flush</strong> (<code>pcloud-daemon::write_path::chunked_flush</code>).
+Worst case walks the journal one chunk at a time with a bounded
+in-flight semaphore.</li>
+<li><strong>Download stream window</strong> (<code>pcloud-proto::transfer_api::download_stream</code>).
+TLS read → 64 KiB buffer → SHA256 feed → <code>File::write_all</code>, in a loop.</li>
+</ol>
+<p>Everything else is either one-shot (auth, public-link create) or
+rate-limited (engine walkers).</p>
+<h2 id="arc-cache-hit-semantics-deep-dive"><a class="header" href="#arc-cache-hit-semantics-deep-dive">Arc cache-hit semantics (deep dive)</a></h2>
+<p>The <code>Arc&lt;Vec&lt;u8&gt;&gt;</code> decision is the second-largest win after the O(1) LRU
+swap. Its correctness is non-obvious enough to be worth its own section.</p>
+<p><strong>Invariant</strong>: once an <code>Arc&lt;Vec&lt;u8&gt;&gt;</code> is inserted into the cache, the buffer
+it points to is <strong>immutable</strong> for the lifetime of that <code>Arc</code>. Writes do not
+mutate in place; they invalidate and replace.</p>
+<p><strong>Consequence</strong>: any number of reader threads can hold their own
+<code>Arc::clone</code> without any synchronisation beyond the atomic refcount. A reader
+that started before an invalidation keeps observing the old page until it
+drops its <code>Arc</code>; a reader that started after observes the new one. There is
+no torn page, no read-while-write.</p>
+<p><strong>Edge case</strong> — a writer flushing a partially-updated page must produce a
+<em>new</em> <code>Arc&lt;Vec&lt;u8&gt;&gt;</code> by cloning the old page, applying the diff, and
+swapping it into the <code>HashMap</code>. This is the only place we pay the memcpy
+cost; it is paid once per write-then-read cycle, not per read.</p>
+<p><strong>Non-goal</strong>: we do not share pages across file handles. An <code>Arc</code> page is
+scoped to a <code>(file_id, offset)</code> key, and different files with identical
+contents keep separate pages. Deduplication happens at the protocol layer,
+not in the cache.</p>
+<h2 id="chunked-flush-deep-dive"><a class="header" href="#chunked-flush-deep-dive">Chunked flush (deep dive)</a></h2>
+<pre><code>+------------------+    +--------------+    +--------------+
+| journal head     |---&gt;| pick chunk   |---&gt;| upload_write |
+| (durable offset) |    | (1 MiB slice)|    | (proto call) |
++------------------+    +--------------+    +--------------+
+        ^                                           |
+        |                                           v
+        +---- advance head (fsync) &lt;--- ack --------+
+</code></pre>
+<ul>
+<li>Chunk size: <code>WRITE_FLUSH_CHUNK = 1 MiB</code>. Chosen to match the TLS record /
+reassembly sweet spot on real links (see
+<a href="../adr/0008.html">ADR-0008</a> for the sibling download-side analysis).</li>
+<li>In-flight limit: <code>max_in_flight_chunks = 4</code>. A larger window buys nothing
+because the ack cycle is TLS-bound anyway; a smaller window starves the
+pipeline under burst load.</li>
+<li>Back-pressure primitive: <code>parking_lot::Condvar</code> + counter. Not a tokio
+semaphore, because the flush path is synchronous and a tokio dependency
+would drag an executor into the daemon hot path.</li>
+<li>Journal-head advance: a single <code>pwrite</code> into a sidecar file followed by
+<code>fsync(file) + fsync(dir)</code>. A crash before this <code>fsync</code> resumes from the
+last durable head.</li>
+</ul>
+<p>A flush cancels cleanly at any chunk boundary. Chunks already in flight
+finish and <code>drop()</code> their <code>start_timer</code>, so every partial flush still
+contributes to <code>flush_latency_seconds</code> — cancellation appears as
+<code>outcome="cancelled"</code> in the histogram.</p>
+<h2 id="flush_latency_seconds-histogram-deep-dive"><a class="header" href="#flush_latency_seconds-histogram-deep-dive"><code>flush_latency_seconds</code> histogram (deep dive)</a></h2>
+<p>The histogram is exposed at <code>/metrics</code> on the loopback admin listener. The
+bucket layout is chosen explicitly so the interesting parts of the
+distribution are resolved:</p>
+<ul>
+<li><code>0.001 – 0.005 s</code>: a fully-cached chunk (rare; only on re-flush of an
+already-acked chunk after a journal restart).</li>
+<li><code>0.005 – 0.1 s</code>: the typical hot chunk. Healthy networks live here.</li>
+<li><code>0.1 – 1.0 s</code>: the p50..p99 for most real workloads.</li>
+<li><code>1.0 – 10 s</code>: the unhappy tail. Alerts are configured here.</li>
+<li><code>&gt; 10 s</code> (<code>+Inf</code>): pathological. Pages an operator.</li>
+</ul>
+<p>The <code>outcome</code> label is three-valued: <code>ok</code>, <code>err</code>, <code>cancelled</code>. <code>err</code>
+records a flush chunk that returned a protocol error; the chunk is retried
+under the resilience policy and may appear multiple times.</p>
+<h3 id="useful-prometheus-recording-rules"><a class="header" href="#useful-prometheus-recording-rules">Useful Prometheus recording rules</a></h3>
+<pre><code># p50 / p95 / p99 by outcome over 5m
+pcloud:flush_latency:p50 = histogram_quantile(0.5,
+  rate(flush_latency_seconds_bucket[5m]))
+pcloud:flush_latency:p95 = histogram_quantile(0.95,
+  rate(flush_latency_seconds_bucket[5m]))
+pcloud:flush_latency:p99 = histogram_quantile(0.99,
+  rate(flush_latency_seconds_bucket[5m]))
+
+# error rate
+pcloud:flush_error_rate = sum(rate(
+  flush_latency_seconds_count{outcome="err"}[5m])
+) / sum(rate(flush_latency_seconds_count[5m]))
+</code></pre>
+<h2 id="tradeoffs-and-design-decisions"><a class="header" href="#tradeoffs-and-design-decisions">Tradeoffs and design decisions</a></h2>
+<ul>
+<li><strong>Why not a lock-free LRU?</strong> A lock-free doubly-linked list is hard to
+get right under concurrent mutation, and our hot-path profiler showed the
+<code>parking_lot::Mutex</code> held for the promotion step is ~40 ns. We revisit if
+the lock shows up in future flamegraphs.</li>
+<li><strong>Why <code>Arc&lt;Vec&lt;u8&gt;&gt;</code> instead of <code>bytes::Bytes</code>?</strong> <code>bytes::Bytes</code> adds a
+ref-counted slice that we do not need; our page granularity is fixed and
+we never split a page. Direct <code>Arc&lt;Vec&lt;u8&gt;&gt;</code> is one fewer dependency and
+the same atomic-refcount cost.</li>
+<li><strong>Why blocking <code>ureq</code>/<code>rustls</code>?</strong> Keeping the proto client synchronous
+lets us use <code>catch_unwind</code> around every protocol call without <code>.await</code>
+cancellation concerns. The request volume does not justify an executor.</li>
+<li><strong>Why 64 KiB download windows?</strong> Measured: 16 KiB and 32 KiB showed
+higher syscall overhead; 128 KiB and above showed no additional gain on
+a 1 Gbit link and higher peak RSS. See <a href="../adr/0008.html">ADR-0008</a>.</li>
+</ul>
+<h2 id="concurrency-model-performance-relevant"><a class="header" href="#concurrency-model-performance-relevant">Concurrency model (performance-relevant)</a></h2>
+<ul>
+<li>Hot-path locks are <code>parking_lot::Mutex</code>, held &lt; 100 ns in the common
+case.</li>
+<li>The page cache’s <code>HashMap&lt;CacheKey, EntryHandle&gt;</code> is guarded by a
+single <code>parking_lot::RwLock</code>; reads are the common case, writes are
+batched at page-eviction or invalidation time.</li>
+<li>Chunked-flush back-pressure uses a <code>Condvar</code>+counter, not a semaphore
+crate, because the counter is trivially inspectable in debuggers and in
+metrics.</li>
+<li>No <code>Arc&lt;Mutex&lt;…&gt;&gt;</code> cycles: we explicitly audit for those in review.</li>
+</ul>
+<h2 id="security-invariants-performance-adjacent"><a class="header" href="#security-invariants-performance-adjacent">Security invariants (performance-adjacent)</a></h2>
+<ul>
+<li>The 1 MiB IPC body cap (<code>protocol.rs:20</code>) bounds the worst-case
+allocation a malformed client can force on the daemon.</li>
+<li>The bounded in-flight chunk count (<code>max_in_flight_chunks = 4</code>) bounds
+memory used by a runaway flush.</li>
+<li>The panic guard around <code>chunked_flush</code> records partial latency and
+increments a panic counter; a panic cannot hide behind “slow but
+alive”.</li>
+</ul>
+<h2 id="extension-points"><a class="header" href="#extension-points">Extension points</a></h2>
+<ul>
+<li>New bench: add a Criterion benchmark under the owning crate’s <code>benches/</code>
+directory and wire it into <code>development/release-checklist.md</code> as a release
+gate if the path is hot.</li>
+<li>New metric: register in <code>crates/pcloud-daemon/src/metrics.rs</code> and
+document the bucket rationale here.</li>
+<li>Alternative cache backend: the page cache is fronted by a
+<code>PageCacheBackend</code> trait; a persistent-disk backend is a valid
+experiment, but the <code>Arc&lt;Vec&lt;u8&gt;&gt;</code> hit-path invariant must be
+preserved.</li>
+</ul>
+<h2 id="open-bd-trackers"><a class="header" href="#open-bd-trackers">Open <code>bd</code> trackers</a></h2>
+<ul>
+<li><strong><code>bd-1du</code></strong> — parity epic.</li>
+<li><strong><code>bd-1du.4</code></strong> — FUSE/write-path work; the chunked-flush wiring lives in
+the same wave and is tracked here.</li>
+<li><strong><code>bd-1du.4.6.1</code></strong> — write-path daemon wiring follow-ups (see
+<a href="../adr/0010.html">ADR-0010</a>).</li>
+<li><strong><code>bd-1du.10</code></strong> — final proof; release gating cites the benches in this
+page.</li>
+</ul>
+<h2 id="cross-references"><a class="header" href="#cross-references">Cross-references</a></h2>
+<ul>
+<li><a href="./overview.html">Overview</a> — where performance sits in the larger
+architecture.</li>
+<li><a href="./crate-map.html">Crate Map</a> — <code>pcloud-fs</code>, <code>pcloud-daemon</code>, and the
+crate-local benchmark ownership.</li>
+<li><a href="./platform-support.html">Platform Support</a> — per-platform perf
+caveats (Windows flush semantics, macOS FUSE-t overheads).</li>
+<li><a href="../operations/runbook.html">Operations → Runbook</a> — alert thresholds
+for <code>flush_latency_seconds</code>.</li>
+<li><a href="../adr/0008.html">ADR-0008</a> — 64 KiB download buffer rationale.</li>
+</ul>
+<h2 id="canonical-slos"><a class="header" href="#canonical-slos">Canonical SLOs</a></h2>
+<p>The daemon exposes a canonical set of <strong>Service-Level Objectives</strong> via
+the <code>/slo</code> HTTP endpoint (JSON) and the <code>Method::GetSlo</code> IPC surface
+(<code>pcloudc slo</code>, <code>pcloudc --json slo</code>). The registry lives in
+<code>crates/pcloud-observability/src/slo.rs</code> and backs every SLO with a
+matching histogram/counter family already emitted on <code>/metrics</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>SLO name</th><th>Target</th><th>Direction</th><th>Window</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ipc.request.latency.p99</code></td><td><code>&lt; 100 ms</code></td><td>upper</td><td>rolling 5 m</td></tr>
+<tr><td><code>ipc.request.error_rate</code></td><td><code>&lt; 0.1 %</code></td><td>upper</td><td>rolling 5 m</td></tr>
+<tr><td><code>auth.login.success_rate</code></td><td><code>&gt; 99 %</code></td><td>lower</td><td>rolling 1 h</td></tr>
+<tr><td><code>upload.throughput_mbps.p50</code></td><td><code>&gt; 5 MB/s</code></td><td>lower</td><td>rolling 5 m</td></tr>
+<tr><td><code>mount.read.latency.p99</code></td><td><code>&lt; 50 ms</code></td><td>upper</td><td>rolling 5 m</td></tr>
+<tr><td><code>integrity_sweeper.run.p95</code></td><td><code>&lt; 5 min</code></td><td>upper</td><td>per-run</td></tr>
+<tr><td><code>audit.hash_chain.verify.daily_pass_rate</code></td><td><code>&gt; 99.9 %</code></td><td>lower</td><td>daily</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="honesty"><a class="header" href="#honesty">Honesty</a></h3>
+<p>These thresholds are <strong>aspirational targets</strong> against which the live
+metrics are compared. Real measured values come straight from the
+daemon’s atomic counters — the current pre-GA build <strong>does not</strong>
+uniformly meet every SLO under load, and the registry does not fudge
+that. SLOs without enough samples report <code>status: "no_data"</code> so
+dashboards never conflate “quiet” with “healthy”.</p>
+<h3 id="wire-shape"><a class="header" href="#wire-shape">Wire shape</a></h3>
+<p><code>GET /slo</code> (HTTP) and <code>pcloudc slo</code> (IPC) both return a JSON document
+with a <code>slos</code> array whose entries are shaped:</p>
+<pre><code class="language-json">{
+  "slo_name": "ipc.request.latency.p99",
+  "target":   "&lt;100ms",
+  "actual":   "42.5ms",
+  "status":   "ok"
+}
+</code></pre>
+<p><code>status</code> is one of <code>ok</code> / <code>violation</code> / <code>no_data</code>. The aggregate <code>pass</code>
+bit in the enclosing document is <code>true</code> when no entry is in the
+<code>violation</code> state.</p>
+<h3 id="instrumentation-call-sites"><a class="header" href="#instrumentation-call-sites">Instrumentation call sites</a></h3>
+<p>Each SLO is fed by an existing metric family; the SLO registry is a
+separate, lock-free view sitting alongside the Prometheus exposition:</p>
+<ul>
+<li><code>ipc.request.latency.p99</code> ← IPC dispatch latency (<code>Slo::observe_ipc_latency</code>)</li>
+<li><code>ipc.request.error_rate</code> ← dispatch outcome classifier
+(<code>Slo::observe_ipc_outcome</code>)</li>
+<li><code>auth.login.success_rate</code> ← auth backend
+(<code>Slo::observe_auth_login</code>)</li>
+<li><code>upload.throughput_mbps.p50</code> ← transfer backend, per completed upload
+chunk (<code>Slo::observe_upload_throughput_mbps</code>)</li>
+<li><code>mount.read.latency.p99</code> ← FUSE read path
+(<code>Slo::observe_mount_read_latency</code>)</li>
+<li><code>integrity_sweeper.run.p95</code> ← per-cycle timing inside
+<code>integrity_sweeper_service</code> (<code>Slo::observe_integrity_sweeper_run</code>)</li>
+<li><code>audit.hash_chain.verify.daily_pass_rate</code> ← daily <code>audit verify</code>
+cron / on-demand run (<code>Slo::observe_audit_verify</code>)</li>
+</ul>
+<p>All 7 canonical SLO call sites are wired as of 2026-04-16:</p>
+<ol>
+<li><strong>IPC latency + error rate</strong> — <code>RuntimeShell::handle_request</code> in
+<code>crates/pcloud-daemon/src/runtime.rs</code> (unconditional, every dispatch).</li>
+<li><strong>Auth login success rate</strong> — <code>auth_response</code> in <code>runtime.rs</code>,
+triggered on <code>AuthEvent::LoginSucceeded</code> / <code>LoginFailed</code>.</li>
+<li><strong>Upload throughput</strong> — upload completion path in <code>runtime.rs</code>,
+after each <code>upload_bytes</code> round-trip.</li>
+<li><strong>Mount read latency</strong> — <code>BoxedFuserShim::read</code> and
+<code>PcloudFsShim::read</code> in <code>crates/pcloud-fs/src/platform/linux.rs</code>,
+via the process-wide <code>slo_hook::observe_mount_read</code>.</li>
+<li><strong>Integrity sweeper run</strong> — scheduler loop in
+<code>integrity_sweeper_service.rs</code>, via <code>slo_hook::observe_integrity_sweeper_run</code>.</li>
+<li><strong>Audit chain verify</strong> — <code>audit_verify_chain</code> in <code>runtime.rs</code> (on-demand)
+and <code>AuditVerifierShell::run_once</code> / <code>scheduler_loop</code> in
+<code>audit_verifier_service.rs</code> (scheduled).</li>
+</ol>
+<p>SLOs without enough samples still report <code>status: "no_data"</code> so
+dashboards never conflate “quiet” with “healthy”. Adding a new
+observation site does <strong>not</strong> require any change to the <code>/slo</code> document
+shape — the registry rolls forward silently.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../architecture/request-lifecycle.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../architecture/platform-support.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../architecture/request-lifecycle.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../architecture/platform-support.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

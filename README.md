@@ -1,7 +1,12 @@
 # pcloud-rs-rust-dev
 
-Developer entry point for the Rust rewrite of the pCloud client. Cross-platform
-target (Linux Tier 1; macOS + Windows Tier 2; FreeBSD/NetBSD/OpenBSD Tier 3).
+Developer entry point for the Rust rewrite of the pCloud client. Tier 1 targets
+are Linux, macOS, Windows, FreeBSD, NetBSD, OpenBSD, DragonFly BSD,
+illumos/OmniOS, and Solaris; Synology, QNAP, and ASUSTOR packages are Tier 2.
+Support claims require successful native release-commit gates. Solaris-family
+targets support the portable API/CLI surface but not kernel mounting. WebDAV is
+an experimental, unshipped subset with a canonical daemon-IPC adapter and no
+RFC 4918 compliance-class claim.
 The legacy C/C++ client has been removed from this fork; its sources remain
 available upstream at
 [`github.com/pcloudcom/pcloudcc`](https://github.com/pcloudcom/pcloudcc)
@@ -12,16 +17,19 @@ Single source of truth for parity counts: [`STATUS.md`](./STATUS.md).
 Shipped history: [`CHANGELOG.md`](./CHANGELOG.md). Disclosure policy:
 [`SECURITY.md`](./SECURITY.md). Dev rules: [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
-> The rewrite explicitly does **not** claim "full parity", "production
-> ready", "enterprise ready", or "drop-in replacement" until `bd-1du.10`
-> is satisfied by code, tests, docs, and matrix evidence. See `CLAUDE.md`
-> at the repo root for the honesty rules.
+> The rewrite does **not** claim "full parity", "production ready",
+> "enterprise ready", or "drop-in replacement". There is no public release.
+> Before one can be made, the dirty development tree must be separated into a
+> clean release candidate, the staged SDK publication chain must be released,
+> a credentialed pCloud smoke suite must pass, and every claimed
+> platform/package gate must pass on its native release runner. See
+> [`STATUS.md`](./STATUS.md) for current evidence and blockers.
 
 ## Workspace Layout
 
 ```
 
-├── crates/            # 27 crates (see Crate Map below)
+├── crates/            # 41 crates (see Crate Map below)
 ├── docs/book/         # mdBook — developer + operator handbook
 ├── packaging/         # per-platform packaging (deb, rpm, homebrew, …)
 ├── fuzz/              # aggregate fuzz harness entry
@@ -80,7 +88,7 @@ operations runbook, security model, and the request lifecycle.
 ## Run the Daemon + CLI
 
 ```bash
-# Long-running daemon (binds an owner-only UNIX socket)
+# Long-running daemon (owner-only Unix socket or Windows named pipe)
 cargo run -p pcloud-daemon -- serve
 
 # Local CLI — health and auth
@@ -108,6 +116,11 @@ cargo run -p pcloud-cli -- account change-password
 cargo run -p pcloud-cli -- download link 123456         # print signed URL
 cargo run -p pcloud-cli -- download file 123456 ~/Downloads/report.pdf
 
+# Canonical RemoteFs path surface
+cargo run -p pcloud-cli -- remote ls /
+cargo run -p pcloud-cli -- remote put ./report.pdf /Docs/report.pdf
+cargo run -p pcloud-cli -- remote cp /Docs/report.pdf /Archive/report.pdf
+
 # Backup
 cargo run -p pcloud-cli -- backup list
 cargo run -p pcloud-cli -- backup delete 42
@@ -122,16 +135,21 @@ Full command reference: [`docs/book/src/reference/cli.md`](./docs/book/src/refer
 ## Run the Web UI
 
 ```bash
+cargo run -p pcloud-web -- --help
 cargo run -p pcloud-web
-# default: http://127.0.0.1:8080 (localhost bind only)
+# default: http://127.0.0.1:17650 (localhost bind only)
+# test from another host:
+# cargo run -p pcloud-web -- --bind 0.0.0.0:17650 --allow-host <host-or-ip>:17650
 ```
 
 The Web UI is an MVP scaffold tracked under PLAN_A_PLUS §P4.5 and is not
-exposed on non-loopback interfaces by default.
+exposed on non-loopback interfaces by default, but `--bind 0.0.0.0:17650`
+is available for lab testing. Daemon-backed pages require
+the owner-only web token written under `$XDG_RUNTIME_DIR/pcloud-daemon/`.
 
 ## Crate Map
 
-27 crates, grouped by layer. Full per-crate purpose and public API lives in
+41 crates, grouped by layer. Full per-crate purpose and public API lives in
 the [mdBook crate-map chapter](./docs/book/src/architecture/crate-map.md);
 each crate also carries its own `README.md`.
 
@@ -165,9 +183,14 @@ each crate also carries its own `README.md`.
 ### Runtime & interfaces
 
 - [`pcloud-daemon`](./crates/pcloud-daemon/) — `pcloudd` binary + runtime.
-- [`pcloud-daemon-win`](./crates/pcloud-daemon-win/) — Windows Service wrapper.
+- [`pcloud-daemon-win`](./crates/pcloud-daemon-win/) — experimental SCM host;
+  not installed publicly because user-scoped IPC/DPAPI/WinFSP require the
+  interactive user's SID.
 - [`pcloud-cli`](./crates/pcloud-cli/) — `pcloudc` CLI.
-- [`pcloud-sdk`](./crates/pcloud-sdk/) — embeddable SDK facade.
+- [`pcloud-sdk`](./crates/pcloud-sdk-public/) — focused SemVer 1.0 blocking
+  client over owner-authenticated daemon IPC; its registry release is pending.
+- [`pcloud-embedded-sdk`](./crates/pcloud-sdk/) — broad, internal in-process
+  compatibility API; deliberately unpublished.
 - [`pcloud-web`](./crates/pcloud-web/) — MVP Web UI.
 - [`pcloud-plugin-api`](./crates/pcloud-plugin-api/) — plugin manifest + signature API.
 
@@ -196,7 +219,8 @@ for the full env var matrix and transport-override rules.
 
 - Secrets wrapped in `SecretString` / `SecretBytes` (zeroize on drop, redacted `Debug`).
 - Auth vault: `0600` file / `0700` parent; passwords **never** persisted.
-- IPC: UNIX socket `0600`, `SO_PEERCRED` UID check, per-connection timeouts.
+- IPC: owner-only Unix socket with native peer credentials, or Windows named
+  pipe with DACL + exact TokenUser SID validation.
 - Transport: central `ApiEndpoint::validate(environment)` rejects plaintext
   in production; no TLS-bypass flag anywhere.
 - Mount: `allow_other && !read_only` rejected; no `allow_root` / `setuid`.

@@ -14,7 +14,7 @@
 use pcloud_ipc::{
     IpcServer, Method, PeerIdentity, Request, Response, ResponseStatus, decode_request,
     decode_response, encode_request_bare as encode_request, encode_response,
-    protocol::{IPC_PROTOCOL_VERSION, MAX_IPC_PAYLOAD_LEN, ProtocolError},
+    protocol::{IPC_PROTOCOL_VERSION, MAX_IPC_PAYLOAD_LEN, MessageKind, ProtocolError},
 };
 use proptest::prelude::*;
 
@@ -79,6 +79,43 @@ fn decode_request_rejects_len_mismatch() {
     bytes.extend_from_slice(&[0, 0, 0, 0]);
     let err = decode_request(&bytes).expect_err("length mismatch should fail");
     assert!(matches!(err, ProtocolError::PayloadTooLarge));
+}
+
+#[test]
+fn decode_request_rejects_response_message_kind_before_payload_parse() {
+    let mut bytes = encode_request(&Request::Plain {
+        method: Method::GetStatus,
+    })
+    .expect("request encodes");
+    bytes[6..8].copy_from_slice(&(MessageKind::Response as u16).to_le_bytes());
+
+    let err = decode_request(&bytes).expect_err("response-tagged request must fail");
+    assert!(matches!(
+        err,
+        ProtocolError::UnexpectedMessageKind {
+            expected: MessageKind::Request,
+            actual
+        } if actual == MessageKind::Response as u16
+    ));
+}
+
+#[test]
+fn decode_response_rejects_request_message_kind_before_payload_parse() {
+    let mut bytes = encode_response(&Response {
+        status: ResponseStatus::Ok,
+        message: "ok".to_owned(),
+    })
+    .expect("response encodes");
+    bytes[6..8].copy_from_slice(&(MessageKind::Request as u16).to_le_bytes());
+
+    let err = decode_response(&bytes).expect_err("request-tagged response must fail");
+    assert!(matches!(
+        err,
+        ProtocolError::UnexpectedMessageKind {
+            expected: MessageKind::Response,
+            actual
+        } if actual == MessageKind::Request as u16
+    ));
 }
 
 #[test]

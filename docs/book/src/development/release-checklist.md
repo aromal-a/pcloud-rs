@@ -1,10 +1,12 @@
 # Cross-Platform Release Checklist
 
 > **Honesty note:** `pcloud-rs-rust` is **pre-alpha**. There is **no release
-> tag yet**; `bd-1du.10` (final parity proof) remains open. Every entry in
+> tag yet**. The current development tree is not a clean integrated release
+> commit, the SDK is not published, and native/package qualification remains
+> incomplete. Every entry in
 > `CHANGELOG.md` lives under `[Unreleased]`. This page is the standing
 > gauntlet that will apply when the first tag is cut — read it, test it
-> against dry-runs, but do **not** cut `v0.1.0-alpha.1` until every row
+> against dry-runs, but do **not** cut `v0.1.0-alpha.1` until every blocking row
 > below is genuinely green.
 >
 > When the first tag lands, promote the header to the released version and
@@ -27,8 +29,12 @@ completed, the release does not ship — open a bead and reschedule.
 
 ### Toolchain pin
 
-- `rust-toolchain.toml`: `channel = "stable"`, components `clippy, rustfmt`.
-- Workspace `Cargo.toml`: `edition = "2024"`, `rust-version = "1.85"`.
+- `rust-toolchain.toml`: exact `channel = "1.91.0"`, components
+  `clippy, rustfmt`.
+- Workspace `Cargo.toml`: `edition = "2024"`, `rust-version = "1.89"`.
+- `pcloud-plugin-wasmtime` is the sole MSRV exception at Rust 1.91 because the
+  advisory-fixed Wasmtime 43 line requires it. CI checks the portable
+  workspace-minus-Wasmtime at 1.89 and that isolated plugin at 1.91.
 - Release builds use `--profile release-repro` (inherits from
   `release-dist`; see `reproducible-builds.md`).
 
@@ -37,7 +43,8 @@ completed, the release does not ship — open a bead and reschedule.
 - `gpg` (≥ 2.2) — for tag and `SHA256SUMS.asc` signing.
 - `cargo-deny` — license / advisory / sources audit.
 - `cargo-audit` — RustSec advisory database check.
-- `cargo-llvm-cov` — coverage enforcement.
+- `cargo-llvm-cov` — coverage reporting; the scheduled/manual CI job hard-gates
+  the workspace and critical-crate floors, and the release manager repeats it.
 - `cargo-mutants` (weekly; not on the blocking path).
 - `mdbook` — build the contributor handbook artefact.
 - `cargo-deb`, `cargo-generate-rpm`, `linuxdeploy` — Linux packaging.
@@ -86,6 +93,15 @@ are what separates a commit from an artefact trustworthy enough to ship.
       and `C_FEATURE_PARITY_REVIEW.md` agree on the feature state. If
       they disagree, stop and reconcile; `STATUS.md` wins.
 - [ ] No open `P0` bead in any subsystem.
+- [ ] `git status --porcelain` is empty. The tag candidate contains no
+      unstaged, staged-but-uncommitted, or untracked release input.
+- [ ] The focused `pcloud-sdk` has an intentional SemVer and a reviewed public
+      API diff. Publish and verify the dependency chain in order:
+      `pcloud-model` -> `pcloud-ipc` -> `pcloud-sdk`. For each crate, run
+      `cargo package --locked`, publish from the clean tag candidate, wait for
+      registry indexing, then verify a fresh project can resolve the registry
+      package without workspace paths. The broad `pcloud-embedded-sdk` remains
+      `publish = false` and is not part of this chain.
 
 *Why:* a release whose own dossier lies is an outage waiting to happen. The
 one-file mismatch between `STATUS.md` and the matrix is the most common
@@ -99,9 +115,10 @@ cargo fmt --all --check
 cargo check  --workspace --all-targets --locked
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test   --workspace --locked
-cargo doc    --workspace --no-deps --document-private-items
-cargo audit  --deny warnings
-cargo deny   check
+cargo doc    --workspace --locked --no-deps --document-private-items
+cargo audit  --deny warnings \
+  --ignore RUSTSEC-2023-0071
+cargo deny   --locked check
 ```
 
 Row-by-row:
@@ -115,22 +132,25 @@ Row-by-row:
       the workspace. The gate has held at zero across every wave.
       *Prevents:* the `-D warnings` erosion that kills code-quality trends.
 - [ ] **`cargo test --workspace --locked`** — unit + integration + doctest
-      pyramid. See `testing.md` for the layer breakdown (1247 unit tests,
-      7 proptest properties × 128 cases, 4 fuzz targets, 5 chaos scenarios).
+      pyramid. See `testing.md` for the layer breakdown; use the current
+      command output rather than hard-coded historical counts.
       *Prevents:* regressions that slip past a single-crate test run.
 - [ ] **`cargo doc --workspace --no-deps --document-private-items`** with
       **zero warnings** in rustdoc output. Capture to a file and grep for
       `warning:` to be safe:
 
       ```sh
-      cargo doc --workspace --no-deps --document-private-items 2>&1 \
+cargo doc --workspace --locked --no-deps --document-private-items 2>&1 \
           | tee /tmp/doc.log
       ! grep -E '^warning:' /tmp/doc.log
       ```
       *Prevents:* dead intra-doc links that break under the mdBook build.
-- [ ] **`cargo audit --deny warnings`** — RustSec database clean.
-      *Prevents:* shipping a known-CVE transitive dep.
-- [ ] **`cargo deny check`** — licences, advisories, bans, sources (see
+- [ ] **`cargo audit --deny warnings ... --ignore <time-boxed IDs>`** —
+      RustSec database clean except for the reviewed exceptions listed in
+      `audit.toml` and mirrored in workflow flags. cargo-audit 0.22 does not
+      read `audit.toml` automatically, so the flags are required.
+      *Prevents:* shipping an unreviewed known-CVE transitive dep.
+- [ ] **`cargo deny --locked check`** — licences, advisories, bans, sources (see
       `deny.toml`; GPL-only families are blocked at the workspace level).
       *Prevents:* accidental GPL-only dep leaking into an MIT/Apache-2.0
       artefact.
@@ -168,12 +188,11 @@ The release gauntlet expects the following on a clean tree:
 - **`[bans].wildcards = "deny"` with `allow-wildcard-paths = true`.** Path
   deps inside the workspace legitimately use `version = "*"`; external
   wildcards still hard-fail. Do not relax either knob.
-- **`audit.toml` mirrors `deny.toml`.** The nightly
-  `deny-audit` CI job runs `cargo audit` against the live RustSec feed
-  and the CLI no longer passes per-advisory `--ignore` flags — the
-  ignore list is read from `audit.toml` so the two files cannot drift.
-  If you add an entry to `deny.toml`, add the same entry to
-  `audit.toml` in the same PR.
+- **`audit.toml` mirrors the workflow ignore flags.** cargo-audit does
+  not read `audit.toml` automatically in the current CLI path, so
+  `cargo xtask host` passes the reviewed RustSec IDs as explicit `--ignore`
+  flags. If you add an advisory exception, update `audit.toml`, `deny.toml`,
+  and the xtask audit invocation in the same change.
 
 Sweep command used by the release manager to verify the above:
 
@@ -189,11 +208,11 @@ date — fix it in the release PR, not in a follow-up.
 ### 4.2 Coverage (blocking)
 
 ```sh
-cargo llvm-cov --workspace --summary-only
+cargo xtask coverage
 ```
 
-- [ ] Workspace floor: **≥ 65 %** (ratcheting up toward 80 % by
-      `bd-1du.10` close). See `testing.md §6`.
+- [ ] Workspace line floor: **≥ 90 %**. See `testing.md §6`. A current
+      successful local run is mandatory.
 - [ ] Per-crate floors override the workspace number for security-critical
       crates: `pcloud-secret 90 %`, `pcloud-crypto 85 %`,
       `pcloud-auth 85 %`, `pcloud-resilience 80 %`, `pcloud-ipc 80 %`.
@@ -204,15 +223,19 @@ cargo llvm-cov --workspace --summary-only
 *Why:* coverage is a crude but leading indicator. A drop on a release tag is
 the single strongest signal of deletion-without-replacement.
 
-### 4.3 Benchmark regression guard (blocking, >10%)
+### 4.3 Benchmark regression guard (manual target; not automated)
 
 ```sh
-cargo bench -p pcloud-bench -- chunked_flush upload_session page_cache_evict
+cargo bench -p pcloud-fs --bench chunked_flush
+cargo bench -p pcloud-fs --bench page_cache
+cargo bench -p pcloud-embedded-sdk --bench upload_session
 ```
 
 - [ ] Compare against `target/criterion/` baselines committed to the
       release branch. **No benchmark regresses more than 10%** versus the
-      previous release baseline.
+      previous release baseline. No GitHub Actions benchmark workflow
+      exists today, so this is a manual release-manager check until a
+      baseline/threshold workflow lands.
 - [ ] Any regression between 5 % and 10 % is a **warning**: document it in
       the release ticket and the CHANGELOG `### Performance` bullet.
 - [ ] See `architecture/performance.md` for the wave-1 optimisation dossier
@@ -229,7 +252,8 @@ mdbook build docs/book
 
 - [ ] mdBook builds clean with **zero warnings**.
 - [ ] Every code snippet with a language tag must actually compile or be
-      marked `text`. The mdBook-compile-check in CI enforces this.
+      marked `text`. The current workflow runs `mdbook build`; snippet
+      compile-checking must not be claimed until a dedicated checker lands.
 - [ ] `docs/book/book/` artefact is deterministic — same `SOURCE_DATE_EPOCH`
       applies here too.
 
@@ -256,13 +280,13 @@ downstream packagers who script over it.
 *Why:* the parity matrix is the single audit artefact downstream auditors
 will consult. A silent regression there is worse than a missing feature.
 
-### 4.7 Live E2E (blocking)
+### 4.7 Live E2E (target blocking; current CI advisory)
 
 ```sh
 PCLOUD_LIVE_E2E=1 \
-PCLOUD_E2E_USERNAME=staging-bot@example.com \
-PCLOUD_E2E_PASSWORD=… \
-cargo test -p pcloud-live-e2e --locked
+PCLOUD_TEST_USER=staging-bot@example.com \
+PCLOUD_TEST_PASSWORD=… \
+cargo test -p pcloud-live-e2e --locked -- --ignored --test-threads=1
 ```
 
 - [ ] Green against the **staging** pCloud account within the last 24 h.
@@ -323,27 +347,40 @@ git push origin v<version>
 
 ### 4.10 Build phase — per platform
 
-All builds use `--profile release-repro` with `SOURCE_DATE_EPOCH` pinned to
-the tag commit time (`git log -1 --pretty=%ct`). See
-`reproducible-builds.md`.
+Raw Linux release binaries in `.github/workflows/release.yml` use
+`--profile release-repro` with `SOURCE_DATE_EPOCH` pinned to the tag commit
+time (`git log -1 --pretty=%ct`). See `reproducible-builds.md`.
 
-#### Linux (x86_64, aarch64) — blocking
+The `.deb` / `.rpm` workflow currently builds with `cargo build --release`
+because the cargo-deb/cargo-generate-rpm metadata consumes
+`target/release/{pcloudd,pcloudc}`. Treat those packages as release-candidate
+artefacts until the packaging workflow is switched to the reproducible
+profile or records a separate reproducibility proof.
 
+#### Linux (x86_64) — blocking
+
+- [ ] On the labelled native FUSE runner, execute
+      `scripts/linux-release-mount-gate.sh`. It runs all 16 practical
+      real-kernel mount/probe tests serially, the separate 2 GiB
+      transient-retry transfer test, and fails if a pcloud-rs mount remains.
 - [ ] Build under the release container (Debian stable + pinned toolchain)
       for glibc compatibility.
-- [ ] Artefacts: `.deb` (cargo-deb), `.rpm` (cargo-generate-rpm),
-      `.tar.xz`, `.AppImage` (linuxdeploy).
+- [ ] Current CI artefacts: raw `pcloudd` and `pcloudc` binaries, CycloneDX
+      and SPDX SBOMs, `.deb`, `.rpm`, and checksum files.
+- [ ] AppImage, Flatpak, Snap, Docker, and aarch64 release artefacts are not
+      produced. macOS and Windows jobs exist but count only after their native
+      live-mount, signing, and publication steps are green for this tag.
 - [ ] `ldd` confirms no unexpected dynamic deps.
 - [ ] `readelf -n` confirms deterministic build-id or absent per policy.
 
-#### macOS (universal) — blocking when macOS is in scope
+#### macOS (universal) — blocking only when macOS is promoted into scope
 
 - [ ] `MACOSX_DEPLOYMENT_TARGET=12.0`.
 - [ ] Lipo-joined `.pkg`, signed with Developer ID Application cert,
       notarised via `xcrun notarytool submit --wait`, stapled.
 - [ ] `spctl -a -vv` reports accepted.
 
-#### Windows (x86_64) — blocking when Windows is in scope
+#### Windows (x86_64) — blocking only when Windows is promoted into scope
 
 - [ ] MSI via WiX, signed with the EV HSM-backed cert.
 - [ ] SmartScreen submission for new version families.
@@ -359,8 +396,10 @@ sha256sum pcloud-rs-*.{tar.xz,deb,rpm,AppImage,pkg,msi} > SHA256SUMS
 gpg --detach-sign --armor SHA256SUMS
 ```
 
-- [ ] The release GPG key is distinct from platform code-signing certs.
-      Its public half is in `SECURITY.md` and on `keys.openpgp.org`.
+- [ ] If a GPG release key is used, it is distinct from platform code-signing
+      certs and its public half is in `SECURITY.md` and on `keys.openpgp.org`.
+      Current CI uses cosign for raw binaries/SBOMs and does not emit GPG
+      package signatures.
 - [ ] Verify the signature from a fresh checkout on a clean VM before
       proceeding:
 
@@ -369,53 +408,53 @@ gpg --detach-sign --armor SHA256SUMS
       sha256sum -c SHA256SUMS
       ```
 
-- [ ] **CI packaging pipeline (blocking).** `.github/workflows/packaging.yml`
-      fires on `release: published` and produces a signed artifact per
-      target. For every release verify:
+- [ ] **CI release pipelines (blocking for what they publish).**
+      `.github/workflows/release.yml` runs `release-candidate` first
+      (`fmt`, `check`, `clippy -D warnings`, `test`, `doc`, `mdbook`,
+      `cargo audit --deny warnings`
+      with the `audit.toml` exceptions mirrored as `--ignore` flags,
+      and `cargo deny --locked check`), then builds raw Linux x86_64 `pcloudd` and
+      `pcloudc` binaries plus SBOMs. The signing job emits cosign detached
+      signatures for the raw binaries, their `.sha256` files, and the SBOMs.
+      Keyless signing also emits `<file>.pem` certificates.
 
-      - The six packaging jobs (`linux-deb-rpm`, `linux-appimage`,
-        `linux-flatpak`, `macos-pkg`, `windows-msi`, `docker-image`) all
-        completed with status `success` (Flatpak is advisory today — see
-        packaging-matrix §12b).
-      - Each blob artifact attached to the release has a paired `<file>.sig`
-        and `<file>.pem`. Pick one and verify from a clean VM:
+      ```sh
+      cosign verify-blob \
+        --certificate-identity-regexp "https://github.com/${REPO}/.github/workflows/release.yml@.*" \
+        --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+        --signature <file>.sig --certificate <file>.pem <file>
+      ```
 
-        ```sh
-        cosign verify-blob \
-          --certificate-identity-regexp "https://github.com/${REPO}/.github/workflows/packaging.yml@.*" \
-          --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-          --signature <file>.sig --certificate <file>.pem <file>
-        ```
-
-      - The Docker image has a cosign OCI signature:
-
-        ```sh
-        cosign verify ghcr.io/${REPO}/pcloud-rs:<version> \
-          --certificate-identity-regexp "https://github.com/${REPO}/.github/workflows/packaging.yml@.*" \
-          --certificate-oidc-issuer https://token.actions.githubusercontent.com
-        ```
-
-      - `release-artifacts.txt` is present and lists every artifact with a
-        SHA256 line.
+      `.github/workflows/release-packaging.yml` runs the same source gate and a
+      strict Linux FUSE gate before building Linux and Tier-2 NAS candidates.
+      Its Windows job requires signing credentials and signs the executables,
+      MSI, and Burn bundle. Its self-hosted macOS job requires fuse-t, runs live
+      mounts, signs and notarizes the package, and assesses it before upload.
+      Linux package GPG signing remains conditional on configured secrets, and
+      the workflow does not produce SLSA provenance or Docker images. Existing
+      job definitions are not evidence: require a green run for the tag.
 
 - [ ] **Supply-chain PR gates (blocking, per commit).** Confirm the
-      following jobs are green on the release commit in `rust.yml`:
-      `cargo deny check` (`deny` job), `cargo doc --workspace --no-deps`
-      under `RUSTDOCFLAGS="-D warnings"` (`doc` job), and the PR-path
-      `cargo audit` (`audit` job). The nightly `deny-audit` run against
-      the live RustSec feed must be green within 24h of the tag.
+      current workflow jobs are green on the release commit:
+      `.github/workflows/ci.yml` (`test-linux`, `mdbook`, `cargo-doc`)
+      and `.github/workflows/security.yml` (`audit`, `deny`). The release
+      workflow repeats `cargo audit --deny warnings` and
+      `cargo deny --locked check`
+      before any publish job can run.
 
-- [ ] **Scaffolded signing paths.** Apple Dev-ID (`macos-pkg`) and
-      Windows EV (`windows-msi`) are intentionally marked
-      `continue-on-error` until certs land; their failures are
-      informational and **must not** be used to claim the release is
-      signed end-to-end. The authoritative supply-chain signature is
-      cosign keyless until that changes.
+- [ ] **Native signing paths.** Apple Developer ID/notarization and Windows
+      Authenticode jobs are strict and require their release secrets. A missing
+      credential or failed signature blocks the corresponding public artifact;
+      do not substitute an unsigned candidate. Raw Linux binaries and SBOMs
+      continue to use cosign keyless signatures.
 
 ### 4.12 Publication (blocking)
 
 - [ ] GitHub Release from the signed tag; title `v<version>`.
-- [ ] Upload every artefact + `SHA256SUMS` + `SHA256SUMS.asc`.
+- [ ] Upload every artefact plus the signature/checksum files the workflows
+      actually emit. Current state: raw binary `.sha256`, raw binary/SBOM
+      `.sig` and keyless `.pem`, and package `SHA256SUMS` without a detached
+      package signature.
 - [ ] Paste the `CHANGELOG.md` block into the release notes.
 - [ ] Mark pre-releases as such; only promote to "Latest" after §4.14 smoke
       tests pass.
@@ -473,13 +512,15 @@ Each may land asynchronously. None block the tag.
 Full dossier: C_FEATURE_PARITY_MATRIX.csv @ <tag>.
 
 ## Verification
-Signed by the release GPG key (fingerprint `<FP>`, also in SECURITY.md).
+Signed by the workflow-emitted signature files. If a future release also uses
+a GPG key, include its fingerprint here and in `SECURITY.md`.
 Reproduce:
 
 ```sh
 export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct v<version>)
-cargo build --profile release-repro --locked -p pcloud-cli
-sha256sum target/release-repro/pcloud-cli
+CARGO_PROFILE_RELEASE_REPRO_ACTIVE=1 \
+  cargo auditable build --profile release-repro --locked -p pcloud-cli
+sha256sum target/release-repro/pcloudc
 ```
 
 ## Known limitations
@@ -509,8 +550,8 @@ A one-screen summary maintainers copy into the release ticket:
 - [ ] pre-flight bead/matrix/status reconciled
 - [ ] `fmt / check / clippy -D warnings / test / doc / audit / deny` all
       green
-- [ ] coverage ≥ floor, per-crate floors met
-- [ ] benchmarks within 10 % of baseline
+- [ ] coverage advisory reviewed; no automated release floor exists yet
+- [ ] benchmark manual check reviewed; no workflow baseline exists yet
 - [ ] mdBook + rustdoc 0 warnings
 - [ ] parity matrix unchanged or growing
 - [ ] live E2E green within 24 h
@@ -518,7 +559,7 @@ A one-screen summary maintainers copy into the release ticket:
 - [ ] tag GPG-signed
 - [ ] artefacts built under `release-repro` with pinned
       `SOURCE_DATE_EPOCH`
-- [ ] `SHA256SUMS.asc` signed + verified on clean VM
+- [ ] emitted signatures/checksums verified on clean VM
 - [ ] GitHub Release uploaded, marked pre-release
 - [ ] smoke tests on 4 clean VMs green
 - [ ] announcement sent
@@ -552,14 +593,16 @@ patches.
 **Q: What if a benchmark regresses exactly 10%?**
 A: Treat it as a regression. The threshold is `<10%`, not `≤10%`.
 
-**Q: Can a release go out with `bd-1du.10` open?**
-A: Yes, as a pre-alpha, but the release notes must say so explicitly and
-must not claim parity. Once `bd-1du.10` closes, parity claims unlock.
+**Q: Can a release go out while a native or package gate is missing?**
+A: Only an explicitly labelled development snapshot may do so. A public
+platform-support claim requires every blocking gate for that platform and the
+release notes must list any excluded platform honestly.
 
 **Q: Do package-manager manifests block the tag?**
 A: No. §4.13 is async. The blocking path ends at §4.14 smoke tests.
 
 **Q: What key signs the release?**
-A: The release GPG key, distinct from platform code-signing certs, held in
-the release team vault with an offline HSM backup. Fingerprint is in
-`SECURITY.md`.
+A: Current CI uses cosign keyless blob signatures for raw binaries/SBOMs.
+Linux package GPG signing is conditional on configured release secrets;
+Windows Authenticode and Apple Developer ID/notarization use separate native
+credentials. Every key identity must be documented in `SECURITY.md`.

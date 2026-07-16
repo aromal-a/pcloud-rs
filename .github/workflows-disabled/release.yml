@@ -1,0 +1,439 @@
+name: Release
+
+# Triggered on version tags (v*) or manually.
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v0.1.0)'
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
+  RELEASE_REF: ${{ github.event.inputs.tag || github.ref }}
+
+jobs:
+  release-candidate:
+    name: Release candidate gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          fetch-depth: 0
+
+      - name: Validate tag checkout
+        run: |
+          set -euo pipefail
+          case "${RELEASE_TAG}" in
+            v*) ;;
+            *)
+              echo "ERROR: release tag must start with 'v' (got '${RELEASE_TAG}')" >&2
+              exit 1
+              ;;
+          esac
+          git fetch --force --tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          TAG_SHA="$(git rev-list -n 1 "refs/tags/${RELEASE_TAG}")"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "${HEAD_SHA}" != "${TAG_SHA}" ]; then
+            echo "ERROR: checked-out commit ${HEAD_SHA} does not match ${RELEASE_TAG} target ${TAG_SHA}" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@1.96.1
+        with:
+          components: rustfmt, clippy
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fuse3 libfuse3-dev
+
+      - name: Install release audit tools
+        run: |
+          cargo install cargo-audit --version 0.22.1 --locked
+          cargo install cargo-deny --version 0.19.8 --locked
+          cargo install mdbook --version 0.5.3 --no-default-features --locked
+
+      - name: Validate release version, workflows, and shell assets
+        run: |
+          VERSION="${RELEASE_TAG#v}" scripts/check-versions.sh
+          go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          find . \
+            -path './target' -prune -o \
+            -path './docs/book/book' -prune -o \
+            -type f -name '*.sh' -print0 \
+            | xargs -0 -n1 bash -n
+
+      - name: cargo fmt
+        run: cargo fmt --all --check
+
+      - name: cargo check
+        run: cargo check --workspace --all-targets --locked
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace --locked
+
+      - name: cargo doc
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --workspace --locked --no-deps --document-private-items
+
+      - name: mdbook build
+        run: |
+          ruby scripts/check-mdbook-links.rb
+          mdbook build docs/book
+
+      - name: Validate NAS package metadata and supervisor lifecycle
+        run: packaging/nas/validate.sh
+
+      - name: cargo audit
+        run: |
+          cargo audit --deny warnings \
+            --ignore RUSTSEC-2023-0071
+
+      - name: cargo deny
+        run: cargo deny --locked check
+
+  linux-live-mount:
+    name: Linux native FUSE release gate
+    runs-on: [self-hosted, Linux, pcloud-fuse]
+    needs: release-candidate
+    timeout-minutes: 45
+    environment: live-e2e
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@1.96.1
+
+      - name: Validate tag checkout and native FUSE prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          test "$(git rev-parse HEAD)" = "$(git rev-list -n 1 "refs/tags/${RELEASE_TAG}")"
+          command -v fusermount3
+          test -c /dev/fuse
+          test -r /dev/fuse
+          test -w /dev/fuse
+
+      - name: Strict native mount lifecycle and 2 GiB transfer gate
+        shell: bash
+        run: scripts/linux-release-mount-gate.sh
+
+      - name: Credentialed pCloud mount smoke
+        shell: bash
+        env:
+          PCLOUD_LIVE_E2E: "1"
+          PCLOUD_RELEASE_GATE: "1"
+          PCLOUD_FUSE_TEST: "1"
+          PCLOUD_TEST_TOKEN: ${{ secrets.PCLOUD_TEST_TOKEN }}
+          PCLOUD_TEST_SCRATCH: ${{ vars.PCLOUD_TEST_SCRATCH }}
+        run: |
+          set -euo pipefail
+          if [ -z "${PCLOUD_TEST_TOKEN}" ]; then
+            echo "ERROR: PCLOUD_TEST_TOKEN is required for a release mount gate" >&2
+            exit 1
+          fi
+          cargo test -p pcloud-live-e2e --locked \
+            --test mount_linux -- --ignored --test-threads=1
+
+  live-account-smoke:
+    name: Credentialed pCloud transfer/share gate
+    runs-on: ubuntu-latest
+    needs: release-candidate
+    timeout-minutes: 30
+    environment: live-e2e
+    concurrency:
+      group: pcloud-release-live-e2e
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@1.96.1
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fuse3 libfuse3-dev
+
+      - name: Require dedicated release test accounts
+        env:
+          PCLOUD_TEST_TOKEN: ${{ secrets.PCLOUD_TEST_TOKEN }}
+          PCLOUD_LIVE_ACCOUNT_A_EMAIL: ${{ secrets.PCLOUD_LIVE_ACCOUNT_A_EMAIL }}
+          PCLOUD_LIVE_ACCOUNT_A_PASSWORD: ${{ secrets.PCLOUD_LIVE_ACCOUNT_A_PASSWORD }}
+          PCLOUD_LIVE_ACCOUNT_B_EMAIL: ${{ secrets.PCLOUD_LIVE_ACCOUNT_B_EMAIL }}
+          PCLOUD_LIVE_ACCOUNT_B_PASSWORD: ${{ secrets.PCLOUD_LIVE_ACCOUNT_B_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for name in \
+            PCLOUD_TEST_TOKEN \
+            PCLOUD_LIVE_ACCOUNT_A_EMAIL \
+            PCLOUD_LIVE_ACCOUNT_A_PASSWORD \
+            PCLOUD_LIVE_ACCOUNT_B_EMAIL \
+            PCLOUD_LIVE_ACCOUNT_B_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "ERROR: ${name} is required for release live-E2E" >&2
+              exit 1
+            fi
+          done
+
+      - name: Live transfer and public-link round trips
+        env:
+          PCLOUD_LIVE_E2E: "1"
+          PCLOUD_RELEASE_GATE: "1"
+          PCLOUD_TEST_TOKEN: ${{ secrets.PCLOUD_TEST_TOKEN }}
+          PCLOUD_TEST_SCRATCH: ${{ vars.PCLOUD_TEST_SCRATCH }}
+        run: |
+          cargo test -p pcloud-live-e2e --locked \
+            --test transfers --test public_links \
+            -- --ignored --test-threads=1
+
+      - name: Live two-account share round trip
+        env:
+          PCLOUD_LIVE_E2E: "1"
+          PCLOUD_RELEASE_GATE: "1"
+          PCLOUD_LIVE_ACCOUNT_A_EMAIL: ${{ secrets.PCLOUD_LIVE_ACCOUNT_A_EMAIL }}
+          PCLOUD_LIVE_ACCOUNT_A_PASSWORD: ${{ secrets.PCLOUD_LIVE_ACCOUNT_A_PASSWORD }}
+          PCLOUD_LIVE_ACCOUNT_B_EMAIL: ${{ secrets.PCLOUD_LIVE_ACCOUNT_B_EMAIL }}
+          PCLOUD_LIVE_ACCOUNT_B_PASSWORD: ${{ secrets.PCLOUD_LIVE_ACCOUNT_B_PASSWORD }}
+        run: |
+          cargo test -p pcloud-live-e2e --locked \
+            --test shares_a_to_b -- --ignored --test-threads=1
+
+  # ── Build release artifacts ──────────────────────────────────────────────
+  build-artifacts:
+    name: Build release artifacts (Linux x86_64)
+    runs-on: ubuntu-latest
+    needs: [release-candidate, linux-live-mount, live-account-smoke]
+    outputs:
+      daemon-path: target/release-repro/pcloudd
+      cli-path: target/release-repro/pcloudc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          fetch-depth: 0
+
+      - name: Validate tag checkout
+        run: |
+          set -euo pipefail
+          git fetch --force --tags origin "refs/tags/${RELEASE_TAG}:refs/tags/${RELEASE_TAG}"
+          TAG_SHA="$(git rev-list -n 1 "refs/tags/${RELEASE_TAG}")"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          if [ "${HEAD_SHA}" != "${TAG_SHA}" ]; then
+            echo "ERROR: checked-out commit ${HEAD_SHA} does not match ${RELEASE_TAG} target ${TAG_SHA}" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@1.96.1
+
+      - name: Install system deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends fuse3 libfuse3-dev
+
+      - name: Build with cargo-auditable
+        # cargo-auditable embeds a dependency manifest inside the binary
+        # (pcloud-rs-s1p.55 / FIX-PLAN P2-7 H-4).
+        # Both pcloudd (daemon) and pcloudc (CLI) are shipped: the nfpm
+        # Debian/RPM manifest (packaging/debian/nfpm.yaml:65-72) places both
+        # under /usr/bin, and end users need the CLI to drive the daemon.
+        # (pcloud-rs-ncx.26 / audit-06 P2-12)
+        run: |
+          cargo install cargo-auditable --version 0.7.5 --locked
+          export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          export RUSTFLAGS="--remap-path-prefix=${GITHUB_WORKSPACE}= -C link-arg=-Wl,--build-id=none"
+          CARGO_PROFILE_RELEASE_REPRO_ACTIVE=1 \
+            cargo auditable build --locked --profile release-repro \
+              -p pcloud-daemon -p pcloud-cli
+
+      - name: Compute SHA-256 digests
+        run: |
+          sha256sum target/release-repro/pcloudd > target/release-repro/pcloudd.sha256
+          sha256sum target/release-repro/pcloudc > target/release-repro/pcloudc.sha256
+          cat target/release-repro/pcloudd.sha256
+          cat target/release-repro/pcloudc.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-binary
+          path: |
+            target/release-repro/pcloudd
+            target/release-repro/pcloudd.sha256
+            target/release-repro/pcloudc
+            target/release-repro/pcloudc.sha256
+
+  # ── SBOM generation ─────────────────────────────────────────────────────
+  sbom:
+    name: Generate SBOM (syft)
+    runs-on: ubuntu-latest
+    needs: build-artifacts
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-binary
+          path: dist/
+
+      - name: Install syft
+        # Pin and checksum the SBOM generator; executing the mutable installer
+        # from a repository branch would weaken the release supply chain.
+        run: |
+          curl -sSfLo /tmp/syft.tar.gz \
+            https://github.com/anchore/syft/releases/download/v1.46.0/syft_1.46.0_linux_amd64.tar.gz
+          echo "d654f678b709eb53c393d38519d5ed7d2e57205529404018614cfefa0fb2b5ca  /tmp/syft.tar.gz" \
+            | sha256sum --check -
+          sudo tar -xzf /tmp/syft.tar.gz -C /usr/local/bin syft
+          syft version
+
+      - name: Generate SBOM (CycloneDX JSON)
+        # Syft is invoked against the daemon binary; both pcloudd and
+        # pcloudc are built from the same Cargo.lock so the dependency
+        # inventory is identical. The SBOM therefore covers both binaries.
+        run: |
+          syft dist/pcloudd \
+            --source-name pcloud-rs \
+            --source-version "${RELEASE_TAG}" \
+            -o cyclonedx-json=dist/pcloud-rs.sbom.cdx.json \
+            -o spdx-json=dist/pcloud-rs.sbom.spdx.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom
+          path: |
+            dist/pcloud-rs.sbom.cdx.json
+            dist/pcloud-rs.sbom.spdx.json
+
+  # ── cosign signing ───────────────────────────────────────────────────────
+  sign:
+    name: Sign release artifacts (cosign)
+    runs-on: ubuntu-latest
+    needs: [build-artifacts, sbom]
+    # Signing strategy (in priority order):
+    #   1. Keyless Sigstore OIDC (preferred on tag pushes — no secrets required).
+    #      Requires id-token: write permission (granted below).
+    #      Produces a transparency-log entry on https://rekor.sigstore.dev.
+    #   2. Key-based fallback: set COSIGN_KEY + COSIGN_PASSWORD repository
+    #      secrets for offline signing without a Sigstore log entry.
+    permissions:
+      contents: read
+      id-token: write   # required for Sigstore keyless OIDC signing
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_REF }}
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-binary
+          merge-multiple: true
+          path: dist/
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sbom
+          path: dist/
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+        with:
+          cosign-release: v3.1.1
+
+      - name: Sign binary, checksums, and SBOM with cosign
+        # Keyless path: when COSIGN_KEY secret is absent (the default for this
+        # repo), sign with Sigstore OIDC — no key management required on GitHub
+        # Actions. The --yes flag suppresses the interactive confirmation prompt.
+        #
+        # Key-based fallback: if COSIGN_KEY is set as a repository secret,
+        # use it for offline signing (no transparency log entry).
+        env:
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          for artifact in \
+            dist/pcloudd \
+            dist/pcloudd.sha256 \
+            dist/pcloudc \
+            dist/pcloudc.sha256 \
+            dist/pcloud-rs.sbom.cdx.json \
+            dist/pcloud-rs.sbom.spdx.json; do
+            if [ -f "$artifact" ]; then
+              if [ -n "${COSIGN_KEY}" ]; then
+                # Key-based fallback path.
+                echo "${COSIGN_KEY}" > /tmp/cosign.key
+                cosign sign-blob \
+                  --key /tmp/cosign.key \
+                  --output-signature "${artifact}.sig" \
+                  "${artifact}"
+                rm -f /tmp/cosign.key
+              else
+                # Keyless Sigstore OIDC path (default).
+                cosign sign-blob \
+                  --yes \
+                  --rekor-url https://rekor.sigstore.dev \
+                  --output-certificate "${artifact}.pem" \
+                  --output-signature "${artifact}.sig" \
+                  "${artifact}"
+              fi
+            fi
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: signatures
+          path: |
+            dist/*.sig
+            dist/*.pem
+        if: always()
+
+  # ── GitHub Release attachment ────────────────────────────────────────────
+  publish:
+    name: Attach artifacts to GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-artifacts, sbom, sign]
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: '*'
+          merge-multiple: true
+          path: dist/
+
+      - name: List artifacts
+        run: ls -lh dist/
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: |
+            dist/pcloudd
+            dist/pcloudd.sha256
+            dist/pcloudc
+            dist/pcloudc.sha256
+            dist/pcloud-rs.sbom.cdx.json
+            dist/pcloud-rs.sbom.spdx.json
+            dist/*.sig
+            dist/*.pem

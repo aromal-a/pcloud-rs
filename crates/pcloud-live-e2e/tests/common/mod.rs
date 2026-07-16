@@ -20,7 +20,7 @@
 
 use std::{
     env, fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -32,6 +32,10 @@ use pcloud_ipc::{Method, Request, Response, ResponseStatus};
 
 /// Environment-variable master gate.
 pub const GATE_ENV: &str = "PCLOUD_LIVE_E2E";
+/// Release-only hard-gate marker. When enabled, selected qualification tests
+/// must fail instead of converting unavailable credentials/backend behavior
+/// into an advisory skip.
+pub const RELEASE_GATE_ENV: &str = "PCLOUD_RELEASE_GATE";
 
 /// Required credential envs for the login phase.
 pub const ENV_USER: &str = "PCLOUD_TEST_USER";
@@ -51,12 +55,66 @@ pub const ENV_SCRATCH_FOLDER: &str = "PCLOUD_TEST_SCRATCH";
 /// crypto tests read it.
 pub const ENV_CRYPTO_PASSWORD: &str = "PCLOUD_TEST_CRYPTO_PASSWORD";
 
+/// Secondary opt-in gate for tests that mutate the soak account in
+/// observable ways: triggering an email send (`VerifyEmail`), rotating
+/// the account password (`AccountChangePassword`), or any other action
+/// the operator must explicitly accept the side-effect for.
+///
+/// `PCLOUD_LIVE_E2E=1` is the master gate. A destructive test
+/// additionally requires `PCLOUD_LIVE_E2E_DESTRUCTIVE=1`. Tests that
+/// only read, or that target IETF-reserved black-hole identifiers
+/// (e.g. `@example.invalid`), do **not** need this gate.
+pub const DESTRUCTIVE_GATE_ENV: &str = "PCLOUD_LIVE_E2E_DESTRUCTIVE";
+
 /// Returns `true` when the master gate is explicitly enabled.
 pub fn gate_enabled() -> bool {
     matches!(
         env::var(GATE_ENV).ok().as_deref(),
         Some("1") | Some("true") | Some("yes")
     )
+}
+
+/// Return whether the caller is executing a release-blocking live gate.
+#[must_use]
+pub fn release_gate_enabled() -> bool {
+    matches!(
+        env::var(RELEASE_GATE_ENV).ok().as_deref(),
+        Some("1") | Some("true") | Some("yes")
+    )
+}
+
+/// Returns `true` when both the master gate and the destructive gate
+/// are explicitly enabled. Test bodies that mutate the soak account
+/// (trigger emails, rotate passwords, etc.) call
+/// [`skip_if_not_destructive`] to gate-skip when this returns `false`.
+#[must_use]
+pub fn destructive_gate_enabled() -> bool {
+    gate_enabled()
+        && matches!(
+            env::var(DESTRUCTIVE_GATE_ENV).ok().as_deref(),
+            Some("1") | Some("true") | Some("yes")
+        )
+}
+
+/// Skip helper for destructive tests. Returns `true` and prints a
+/// reason when either the master gate or the destructive gate is
+/// missing. Test bodies should `return;` immediately when this returns
+/// `true`.
+#[must_use]
+pub fn skip_if_not_destructive(required: &[&str]) -> bool {
+    if skip_if_not_live(required) {
+        return true;
+    }
+    if !destructive_gate_enabled() {
+        eprintln!(
+            "[live-e2e] skipping destructive test: {}=1 is not set. \
+             This test mutates the soak account (email send / password rotation) — \
+             enable only when an operator has agreed to the side effect.",
+            DESTRUCTIVE_GATE_ENV
+        );
+        return true;
+    }
+    false
 }
 
 /// Reads an env var, treating empty strings as absent.
@@ -312,4 +370,79 @@ pub fn probe_userinfo(daemon: &mut TestDaemon) {
         "post-auth userinfo failed: {}",
         resp.message
     );
+}
+
+// ── AccountChangePassword marker-file recovery (CLAUDEREV deferred-set
+// D2.1, fire 46) ────────────────────────────────────────────────────────
+//
+// The destructive `AccountChangePassword` round-trip rotates the soak
+// account's password from `original` → `temp` → `original`. A flake
+// between the two rotations would leave the account password stuck at
+// `temp` with no way for a fresh test process to recover. Solution: a
+// marker file under $TMPDIR persists `(original, temp, phase)` so the
+// next invocation can detect a half-rotated state and roll forward.
+//
+// Privacy: the marker contains both passwords in plaintext at mode
+// 0600 under TMPDIR. That's the same disclosure surface as
+// `PCLOUD_TEST_PASSWORD` in the env, so net new exposure is zero.
+//
+// The file is keyed on a non-cryptographic hash of the user email so
+// concurrent CI runs against different accounts get separate markers.
+
+/// Persisted state for the `AccountChangePassword` round-trip recovery.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct AcpRotationMarker {
+    /// Original (env-supplied) password.
+    pub original: String,
+    /// Temporary password the test rotated to.
+    pub temp: String,
+    /// Pipeline phase the marker was written at.
+    pub phase: AcpPhase,
+}
+
+/// Pipeline phases for the AccountChangePassword round-trip.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum AcpPhase {
+    /// `original → temp` rotation has been dispatched and acknowledged.
+    /// On recovery we know `temp` is the live password and need to
+    /// rotate back to `original`.
+    RotatedToTemp,
+}
+
+/// Compute the marker-file path for `user_email`. Uses a fast non-
+/// cryptographic hash so concurrent runs against different accounts
+/// produce different paths; the marker file content is the secret
+/// envelope, not the path.
+pub fn acp_marker_path(user_email: &str) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    user_email.hash(&mut hasher);
+    let h = hasher.finish();
+    env::temp_dir().join(format!("pcloud-rs-acp-marker-{h:016x}"))
+}
+
+/// Read the marker file if present and parsable.
+pub fn read_acp_marker(path: &Path) -> Option<AcpRotationMarker> {
+    let bytes = std::fs::read(path).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// Persist the marker file at mode 0600 (Unix). Returns the resulting
+/// path on success.
+pub fn write_acp_marker(path: &Path, marker: &AcpRotationMarker) -> Result<(), String> {
+    let bytes = serde_json::to_vec(marker).map_err(|e| format!("serialize marker: {e}"))?;
+    fs::write(path, bytes).map_err(|e| format!("write marker {}: {e}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("chmod marker {}: {e}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// Best-effort delete. Errors are intentionally ignored — the next
+/// run will recover from a stale marker via [`read_acp_marker`].
+pub fn delete_acp_marker(path: &Path) {
+    let _ = std::fs::remove_file(path);
 }

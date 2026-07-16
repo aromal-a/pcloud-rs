@@ -38,6 +38,15 @@ Until that happens for *every* row below, the honesty rules in
 `Implemented`. The narrative below is retained for historical context.
 See [`STATUS.md`](../../STATUS.md) for current status.
 
+**Update 2026-05-01 (Fire 91)** — row 94 (`transfers,SDK UploadSession`)
+was the last `Partial` row and is now `Implemented`. The CSV tally is
+now `156 / 0 / 0 / 30 (186 rows)` — zero Partial, zero Missing. The
+remaining unchecked rows in the table below are gated on live
+hardware/account proof (libfuse CI runner, live pCloud account
+end-to-end, real fuse-t mount), not on additional Rust code work, and
+are tracked as `bd-1du.10` release-gating evidence rather than parity
+feature work.
+
 - **Row 76 — `fs,psync_stat_path`.** C clients call this to stat a
   path on the mounted drive. The Rust equivalent exists in
   `pcloud-fs`, but it cannot be honestly flipped until it is exercised
@@ -73,7 +82,7 @@ See [`STATUS.md`](../../STATUS.md) for current status.
 | 2 | `fs,mounted pcloud filesystem` (row 85) | Daemon mount lifecycle wiring (`bd-1du.4.6`) completes: `Request::Mount` / `Request::Unmount` drive the real shim on a libfuse host; the existing gated test `kernel_create_write_fsync_unlink_rename_remount_cycle` runs green in CI on a libfuse-enabled runner; live-account end-to-end remount replay captured. | L | TBD | [ ] | — |
 | 3 | `transfers,upload_create/write/save` (row 92) | Daemon-side chunked upload state machine lands (multi-`upload_write` driven from `transfer_backend.rs`, pipelining up to `PSYNC_MAX_PENDING_UPLOAD_REQS`, `upload_writefromfile` server-side copy, `upload_info` resume-after-restart). Test: new `transfer_backend::tests::chunked_upload_resumes_after_restart` + proptest over chunk boundary fuzz. | L | TBD | [ ] | — |
 | 4 | `transfers,upload wire methods` (row 93) | Live-API verification of UPLOAD-SPEC-14042026.md §9 unknowns (big-endian trailer, overwrite-without-ifhash, `upload_info` pipelining). Test: gated `pcloud-proto/tests/upload_wire_live.rs::wire_spec_section_9` running against a real account. | M | TBD | [ ] | — |
-| 5 | `transfers,SDK UploadSession` (row 94) | Replace cooperative-stub pause/resume/cancel with real wire semantics once row 92/93 land. Test: `pcloud-sdk/tests/upload_session_pause_resume.rs::pause_holds_pending_write_frames` + `cancel_aborts_inflight_session`. Remove `TODO(stub)` markers. | M | TBD | [ ] | — |
+| 5 | `transfers,SDK UploadSession` (row 94) | Replace cooperative-stub pause/resume/cancel with real wire semantics once row 92/93 land. Test: `pcloud-sdk/tests/upload_session_pause_resume.rs::pause_holds_pending_write_frames` + `cancel_aborts_inflight_session`. Remove `TODO(stub)` markers. | M | TBD | [x] | 2026-05-01 (Fire 91): row 94 flipped Partial → Implemented; `EmbeddedDaemon::start_upload` now drives `RuntimeUploadDriver` through `upload_create → N×upload_write (4 MiB) → upload_save`, `ConflictMode` threaded via `to_proto_param()` onto the save frame, mock-server test `start_upload_drives_chunked_sequence_with_conflict_threaded_to_save` asserts the on-wire sequence and `ifhash` param. `cargo test -p pcloud-sdk --lib`: 53 passed / 0 failed. See [`STATUS.md`](../../STATUS.md) Fire 91 entry. |
 | 6 | `sdk,embedded library shell` (row 187) | Close once rows 1–2 close (FS-level library helpers arrive via the mounted-drive runtime). Test: `pcloud-sdk/tests/embedded_library_shell.rs::fs_helper_surface_matches_c_psynclib_h` enumerating helpers against `pclsync/psynclib.h`. | S | TBD | [ ] | — |
 
 ## Cross-cutting exit criteria

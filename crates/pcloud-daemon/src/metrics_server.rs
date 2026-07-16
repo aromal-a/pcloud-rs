@@ -74,12 +74,21 @@ impl MetricsBridge {
         let text = runtime.observability.families.render_prometheus();
         let clean = !runtime.control.shutdown_requested;
         let slo_json = self.slo.as_ref().map(|s| s.render_json());
-        if let Ok(mut guard) = self.inner.lock() {
-            *guard = Snapshot {
-                prometheus_text: text,
-                is_clean: clean,
-                slo_json,
-            };
+        let next = Snapshot {
+            prometheus_text: text,
+            is_clean: clean,
+            slo_json,
+        };
+        match self.inner.lock() {
+            Ok(mut guard) => *guard = next,
+            Err(poisoned) => {
+                log::error!("metrics bridge snapshot lock poisoned; marking exporter unhealthy");
+                let mut guard = poisoned.into_inner();
+                *guard = Snapshot {
+                    is_clean: false,
+                    ..next
+                };
+            }
         }
     }
 
@@ -118,6 +127,12 @@ pub fn serve_with_metrics(
     let mut drain_deadline: Option<std::time::Instant> = None;
     let poll_interval = Duration::from_millis(100);
 
+    if let Some(timeout) = crate::serve::accept_timeout_with_watchdog(None) {
+        if let Err(err) = bound.set_accept_timeout(Some(timeout)) {
+            log::warn!("pcloud-daemon: failed to configure metrics IPC accept timeout: {err}");
+        }
+    }
+
     loop {
         bridge.refresh(runtime);
         let shutdown_observed =
@@ -126,6 +141,7 @@ pub fn serve_with_metrics(
             runtime.control.shutdown_requested = true;
             bridge.refresh(runtime);
             if signals::begin_drain() || drain_deadline.is_none() {
+                crate::serve::notify_systemd_stopping();
                 drain_deadline = Some(std::time::Instant::now() + drain_timeout);
             }
             let drained = signals::in_flight() == 0;
@@ -138,7 +154,29 @@ pub fn serve_with_metrics(
             std::thread::sleep(poll_interval);
         }
         if crate::signals::take_reload_request() {
-            // Reserved; no-op today. Mirrors serve_until_shutdown.
+            if let Some(ref config_path) = runtime.config_path {
+                use crate::config_reload::{
+                    ReloadOutcome, format_reload_failed_event, format_reloaded_event, try_reload,
+                };
+                crate::serve::notify_systemd_reloading();
+                let (outcome, new_profile) = try_reload(config_path, &runtime.config);
+                match outcome {
+                    ReloadOutcome::Applied { changed_keys } => {
+                        let msg = format_reloaded_event(&changed_keys);
+                        log::info!("pcloud-rs: {msg}");
+                        if let Some(profile) = new_profile {
+                            runtime.apply_hot_reload(profile);
+                        }
+                    }
+                    ReloadOutcome::NoChange => {}
+                    ReloadOutcome::Failed { error } => {
+                        let msg = format_reload_failed_event(&error);
+                        log::error!("pcloud-rs: {msg}");
+                    }
+                }
+                crate::serve::notify_systemd_ready();
+                bridge.refresh(runtime);
+            }
         }
         let slo_handle = bridge.slo();
         // audit-06 P1-6 / ncx.11: use `serve_once_with_peer` +
@@ -164,8 +202,12 @@ pub fn serve_with_metrics(
             {
                 continue;
             }
+            Err(pcloud_ipc::IpcTransportError::Io(err))
+                if err.kind() == io::ErrorKind::WouldBlock
+                    || err.kind() == io::ErrorKind::TimedOut => {}
             Err(other) => return Err(other),
         }
+        crate::serve::notify_systemd_watchdog();
     }
 }
 

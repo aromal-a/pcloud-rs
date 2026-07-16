@@ -1,10 +1,10 @@
 # Reproducible Builds
 
 > **Status honesty:** **pre-alpha**. No release tag exists yet; the CI
-> double-build job and the published `SHA256SUMS` described below are the
-> *contracts* we hold ourselves to for the first tag, not empirical artefacts
-> downstream auditors can already verify. Treat this page as a binding
-> specification that the release-cutting PR will exercise end-to-end.
+> double-build job and the published checksum/signature files described below
+> are the *contracts* we hold ourselves to for the first tag, not empirical
+> artefacts downstream auditors can already verify. Treat this page as a
+> binding specification that the release-cutting PR will exercise end-to-end.
 
 ## 1. Purpose
 
@@ -22,29 +22,37 @@ After reading this page you will know:
 
 - what we pin to achieve byte-identical output,
 - what we *cannot* pin (signed installer outer layers) and why,
-- the exact verification procedure a third party runs to confirm our
-  `SHA256SUMS` file matches a locally rebuilt binary.
+- the exact verification procedure a third party runs to confirm the
+  workflow-emitted checksum and signature files match a locally rebuilt
+  auditable binary.
 
 ## 2. Prerequisites
 
 ### Toolchain pin
 
-- `rust-toolchain.toml` — `channel = "stable"`, components `clippy,
-  rustfmt`. Rebuilders must install the exact same toolchain:
+- `rust-toolchain.toml` — exactly pins `channel = "1.91.0"`, with
+  `clippy, rustfmt`. Release, packaging, and cross-host reproducibility
+  workflows use the same exact compiler:
 
   ```sh
-  rustup show          # prints the resolved toolchain
+  rustup show          # must select 1.91.0 for this checkout
   ```
 
-- Workspace: `edition = "2024"`, `rust-version = "1.85"`.
+- Portable workspace/core: `edition = "2024"`, `rust-version = "1.89"`.
+  The isolated `pcloud-plugin-wasmtime` crate declares Rust 1.91 because its
+  advisory-fixed Wasmtime 43 dependency requires that compiler; it is not part
+  of the distributed daemon/CLI build.
 - Build profile: `--profile release-repro` (defined in `Cargo.toml`,
-  inherits from `release-dist`; `strip = "debuginfo"`, `debug = 0`,
+  inherits from `release-dist`; `strip = "symbols"`, `debug = false`,
   `codegen-units = 1`). The core rationale block is at `Cargo.toml:91`.
 
 ### System dependencies
 
 - `git` (to recover the tag commit time for `SOURCE_DATE_EPOCH`).
-- `gpg` (to verify `SHA256SUMS.asc`).
+- `cosign` (to verify the detached signatures emitted by `release.yml`).
+- `gpg` only if a future release also publishes `SHA256SUMS.asc`.
+- `cargo-auditable` — required to match the release workflow's auditable
+  binary format.
 - `cargo-vendor` — only for the fully-offline rebuild path (§4.4).
 - `diffoscope` — only when hunting a reproducibility breakage.
 
@@ -71,7 +79,7 @@ After reading this page you will know:
  pinned env: SOURCE_DATE_EPOCH, --remap-path-prefix, --build-id=…
         │
         ▼
- cargo build --profile release-repro --locked
+ cargo auditable build --profile release-repro --locked
         │
         ▼
  byte-identical binary
@@ -122,9 +130,9 @@ Defined in `Cargo.toml` starting around line **91**. Inherits from
 ```toml
 [profile.release-repro]
 inherits = "release-dist"
-# keep symbols, drop DWARF — incident responders still get stack traces.
-strip = "debuginfo"
-debug = 0
+# strip symbols and DWARF; symbolication uses the matching unstripped build.
+strip = "symbols"
+debug = false
 # deterministic symbol layout.
 codegen-units = 1
 ```
@@ -168,11 +176,11 @@ not.
 `--locked` — mandatory on every `cargo build` invocation during a release
 so the lockfile cannot silently re-resolve.
 
-`rust-toolchain.toml` — commit the exact channel. Rebuilders install:
+`rust-toolchain.toml` — commit the exact release compiler. Rebuilders install:
 
 ```sh
-rustup install stable                 # resolves to the pinned version
-rustup component add clippy rustfmt
+rustup install 1.91.0
+rustup component add --toolchain 1.91.0 clippy rustfmt
 ```
 
 ### 4.4 Vendored deps (optional, fully offline)
@@ -203,11 +211,14 @@ For Nix users, the repo root carries a `flake.nix`; see `flake.lock`.
 Rebuilders run:
 
 ```sh
-nix build --refresh .#pcloud-rs --no-write-lock-file
+nix build --refresh .#pcloud-rs-repro --no-write-lock-file
 ```
 
 The lock file fully pins every input including nixpkgs revision, so the
-build graph is reproducible end-to-end.
+build graph is reproducible end-to-end. Current flake outputs use the
+`release-repro` profile and deterministic flags, but they do not invoke
+`cargo auditable`; do not compare them byte-for-byte with signed release
+assets until that gap is closed.
 
 ## 5. Verification procedure
 
@@ -215,9 +226,9 @@ build graph is reproducible end-to-end.
 
 The repo ships a wrapper at
 `packaging/scripts/verify-reproducibility.sh` that performs steps 1–5 below
-for `pcloudc` and `pcloudd` together. This is the same script the
-`reproducibility` CI job executes, so local success is a near-perfect
-predictor of CI success.
+for `pcloudc` and `pcloudd` together with `cargo auditable`.
+`cargo xtask release` invokes the same local reproducibility gate after all
+CI stages pass.
 
 ```sh
 # From the repo root:
@@ -234,17 +245,17 @@ The script:
 - exports a `RUSTFLAGS` that carries `--remap-path-prefix` for the checkout
   root, `$CARGO_HOME`, and `$HOME/.rustup`, plus
   `-C link-arg=-Wl,--build-id=none`,
-- runs `cargo build --locked --profile release-repro -p pcloud-cli -p
-  pcloud-daemon` twice (first build, `cargo clean --profile release-repro`,
-  second build),
+- runs `cargo auditable build --locked --profile release-repro -p
+  pcloud-cli -p pcloud-daemon` twice (first build,
+  `cargo clean --profile release-repro`, second build),
 - snapshots each build's `pcloudc` / `pcloudd` under a temp directory and
   compares SHA-256 manifests,
 - exits 0 only if both binaries match byte-for-byte across the two runs.
 
 ### 5.2 Manual procedure
 
-The release job runs the equivalent double-build check on every release
-tag. A third party may reproduce it by hand as follows:
+The local release gate runs the equivalent auditable build twice. A third
+party may reproduce it by hand as follows:
 
 ```sh
 git checkout v<version>
@@ -255,30 +266,30 @@ export RUSTFLAGS='--remap-path-prefix=$PWD= -C link-arg=-Wl,--build-id=none'
 
 # 2. Confirm toolchain pin.
 rustc --version    # must match rust-toolchain.toml exactly
+cargo auditable --version
 
 # 3. Build.
-cargo build --profile release-repro --locked -p pcloud-cli -p pcloud-daemon
+CARGO_PROFILE_RELEASE_REPRO_ACTIVE=1 \
+  cargo auditable build --profile release-repro --locked \
+    -p pcloud-cli -p pcloud-daemon
 sha256sum target/release-repro/pcloudc target/release-repro/pcloudd > /tmp/first.sha
 
 # 4. Scrub and rebuild.
 cargo clean --profile release-repro
-cargo build --profile release-repro --locked -p pcloud-cli -p pcloud-daemon
+CARGO_PROFILE_RELEASE_REPRO_ACTIVE=1 \
+  cargo auditable build --profile release-repro --locked \
+    -p pcloud-cli -p pcloud-daemon
 sha256sum target/release-repro/pcloudc target/release-repro/pcloudd > /tmp/second.sha
 
 # 5. Compare.
 diff /tmp/first.sha /tmp/second.sha       # must be empty
 ```
 
-Then compare against the signed manifest:
+Then compare against the operator-published signed checksum files using the
+verification procedure for the selected signing provider, followed by
+`sha256sum -c pcloudc.sha256 --ignore-missing`.
 
-```sh
-# 6. Verify signature and local hash.
-gpg --verify SHA256SUMS.asc SHA256SUMS
-grep pcloud-cli SHA256SUMS
-sha256sum -c SHA256SUMS --ignore-missing
-```
-
-If the local hash matches the signed manifest, the release artefact is
+If the local hash matches the signed checksum, the release artefact is
 verified end-to-end. If it does not, capture the divergence with
 `diffoscope` and open a bead tagged `repro-regression`.
 
@@ -289,14 +300,16 @@ On the release branch:
 - [ ] `rust-toolchain.toml` pin unchanged since the previous release.
 - [ ] `Cargo.lock` committed on the release tag.
 - [ ] `Cargo.toml` carries `[profile.release-repro]` with
-      `codegen-units = 1`, `strip = "debuginfo"`, `debug = 0`.
-- [ ] `SOURCE_DATE_EPOCH` exported from the tag commit time in CI.
+      `codegen-units = 1`, `strip = "symbols"`, `debug = false`.
+- [ ] `SOURCE_DATE_EPOCH` exported from the tag commit time in the local
+      release environment.
 - [ ] `RUSTFLAGS` carries `--remap-path-prefix` for the runner root and
       `$CARGO_HOME` / `$HOME/.rustup`.
 - [ ] `-C link-arg=-Wl,--build-id=none` (or `=sha1` per distro policy).
-- [ ] Double-build job green: two consecutive builds produce identical
-      SHA-256.
-- [ ] `SHA256SUMS.asc` signed with the release GPG key.
+- [ ] Double-build job green: two independent
+      `cargo auditable build --profile release-repro` runs produce
+      identical SHA-256 manifests for `pcloudc` and `pcloudd`.
+- [ ] Operator-produced signature files verify for raw binaries and SBOMs.
 - [ ] Verification procedure in §5 executed on a **clean VM** before the
       release is promoted from pre-release to "Latest".
 
@@ -309,6 +322,9 @@ On the release branch:
 - **Used `cargo build` without `--locked`.** *How reviewers catch it:*
   `Cargo.lock` diff surfaces in CI or the hash mismatches a fresh-clone
   rebuild.
+- **Used plain `cargo build` instead of `cargo auditable build`.** *How
+  reviewers catch it:* the local manifest may be self-consistent but will
+  not match the release workflow's auditable binary.
 - **Checked out to `/some/other/path` without a matching remap.** *How
   reviewers catch it:* absolute paths leak into `.note.gnu.build-id` /
   panic strings; `strings pcloud-cli | grep /home` finds them.
@@ -321,7 +337,122 @@ On the release branch:
   catch it:* it can't be. The unsigned binary inside is; the signature
   envelope intentionally isn't.
 
-## 8. FAQ
+## 9. Cross-platform reproducibility (macOS + Windows)
+
+The §1–§7 contract is written from the Linux ELF perspective because the
+current local double-build driver is Linux-native. The former GitHub macOS
+and Windows definitions are archived and inactive. Native cross-platform
+reproducibility remains a release qualification step that must run on
+operator-provided macOS and Windows hosts.
+
+### 9.1 Files involved
+
+- `.github/workflows-disabled/repro-build-macos.yml` — archived reference
+  for the former two-slot macOS build.
+- `.github/workflows-disabled/repro-build-windows.yml` — archived reference
+  for the former Windows build and its `link.exe /Brepro` flag (see §9.3).
+- `scripts/diff-repro-builds.sh` — Bash helper that hashes a fixed
+  basename list across two directories and exits non-zero on
+  divergence. Auto-detects `sha256sum` / `shasum -a 256` / `certutil`
+  so operators can run it identically on Linux, macOS, and git-bash on
+  Windows.
+- `packaging/scripts/verify-reproducibility.sh` — Linux-only build
+  driver from §5.1, invoked by `cargo xtask release`.
+
+### 9.2 macOS specifics
+
+macOS uses the `ld64` linker from Apple's toolchain. The GNU-ld
+`--build-id=none` flag is a no-op on Mach-O — Mach-O objects do not carry
+an ELF-style build-id note. Determinism of the Mach-O `LC_UUID` load
+command is handled by `ld64` itself when `codegen-units = 1` and inputs
+are deterministic; older `ld64` versions used a random UUID, but
+toolchains shipped with macOS-latest runners on GitHub Actions hash the
+content. We therefore drop `-Wl,--build-id=*` on macOS and rely on:
+
+- `--profile release-repro` (`codegen-units = 1`, `strip = "symbols"`,
+  `debug = false`),
+- `SOURCE_DATE_EPOCH=1700000000` exported at the workflow level (a fixed
+  constant — both matrix slots see the same value, so wall-clock-derived
+  timestamps cannot leak),
+- `RUSTFLAGS="--remap-path-prefix=${GITHUB_WORKSPACE}="` to scrub the
+  runner checkout path out of debug strings,
+- `cargo auditable build --locked` to match the auditable-binary format
+  used by the release pipeline.
+
+If the macOS job fails byte-equality, the slot-a and slot-b artefacts
+are retained for 90 days; download both and run `diffoscope` locally.
+
+### 9.3 Windows specifics — the PE timestamp trap
+
+Windows PE binaries have **three** non-determinism sources that ELF does
+not. They will silently break reproducibility unless mitigated:
+
+1. **PE COFF `TimeDateStamp`.** `link.exe` writes the current wall-clock
+   time into the file header on every link. `SOURCE_DATE_EPOCH` does
+   *not* fix this — it is honoured by rustc for embedded crate metadata
+   but not by MSVC link.exe.
+2. **Debug directory `TimeDateStamp`.** Same wall-clock value is written
+   into the PE debug directory entry that points at the PDB.
+3. **`rc.exe` resource embedding.** When a resource has no explicit
+   `FileVersion` stamp, the resource compiler embeds a build timestamp.
+   Currently a non-issue for this tree (no `*.rc` files), but worth
+   recording.
+
+The MSVC mitigation is a single linker flag:
+
+```text
+/Brepro
+```
+
+Documented at *Microsoft Learn → /Brepro (Output Replicable Binaries)*:
+when present, link.exe replaces both `TimeDateStamp` fields with the
+sentinel value `0xFFFFFFFF` and zeroes related fields, so two builds
+from identical inputs are byte-identical. We pass it through Rust via:
+
+```text
+RUSTFLAGS="-C link-arg=/Brepro --remap-path-prefix=${GITHUB_WORKSPACE}="
+```
+
+The `--remap-path-prefix` half is the same as on Linux/macOS — scrubs
+absolute checkout paths out of debug strings.
+
+What we deliberately do *not* do on Windows:
+
+- We do not pass `--build-id=none`. That is a GNU-ld flag and link.exe
+  rejects it; the Windows-equivalent guarantee is `/Brepro`.
+- We do not produce a PDB in `release-repro` (the profile sets
+  `debug = false`). PDB GUIDs are reproducibility hazards even with
+  `/Brepro`; a future "release-repro-with-pdb" profile would need
+  `/PDBALTPATH` plus deterministic-PDB tooling.
+- We do not run `signtool`. Signed `.exe` / `.msi` outer envelopes are
+  not reproducible by design (timestamp-server response is unique per
+  signing call). The unsigned binary is.
+
+### 9.4 Workflow-level flags summary
+
+| Variable / flag | Linux | macOS | Windows |
+| --- | --- | --- | --- |
+| `SOURCE_DATE_EPOCH` | tag commit time (CI) / `1700000000` (cross-platform) | `1700000000` | `1700000000` |
+| `--remap-path-prefix=${GITHUB_WORKSPACE}=` | yes | yes | yes |
+| `-C link-arg=-Wl,--build-id=none` | yes | no (Mach-O) | no (rejected by link.exe) |
+| `-C link-arg=/Brepro` | no | no | **yes** |
+| `--profile release-repro` | yes | yes | yes |
+| `cargo auditable build --locked` | yes | yes | yes |
+| Two-runner-context diff via `diff-repro-builds.sh` | yes (`ci.yml`) | yes (`repro-build-macos.yml`) | yes (`repro-build-windows.yml`) |
+
+### 9.5 Status of cross-platform reproducibility — T3.5
+
+Per `CLAUDEREV/TIER-PROGRESS.md` row T3.5, this is **PARTIAL** until a
+real macOS + Windows runner pair successfully completes a two-slot
+build whose SHA-256 manifests match. The AI-scope foundation — the two
+workflows, the helper script, the Windows `/Brepro` mitigation, the
+artefact-retention contract — is landed. The empirical proof requires
+infrastructure (user-provided runners) outside this campaign's scope.
+
+When closing T3.5: re-run both workflows, attach the green run links to
+the bead comment, and flip the row to DONE.
+
+## 10. FAQ
 
 **Q: Does `--locked` affect codegen?**
 A: No. It blocks dependency resolution changes. Codegen determinism is

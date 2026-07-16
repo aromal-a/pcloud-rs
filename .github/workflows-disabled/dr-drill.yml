@@ -1,0 +1,75 @@
+name: DR drill (monthly)
+
+# Disaster-recovery drill harness. Runs the scripted scenarios under
+# tests/dr_drill/ on the first of every month. A FAIL here blocks
+# the next release tag (per CLAUDEREV/TIER-PROGRESS.md row T4.2 plan
+# constraints). SKIPs (exit code 77 from a scenario) do NOT block —
+# they surface a runbook gap that the operator must resolve before
+# the drill can flip to PASS.
+
+on:
+  schedule:
+    # First of every month at 00:00 UTC.
+    - cron: "0 0 1 * *"
+  workflow_dispatch: {}
+
+# Drills should not race a manual rerun on the same scenario set.
+concurrency:
+  group: dr-drill
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  dr-drill:
+    name: DR drill scenarios
+    runs-on: ubuntu-latest
+    # A failed drill blocks the release-tag workflow per T4.2.
+    continue-on-error: false
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install sqlite3
+        run: sudo apt-get update && sudo apt-get install -y sqlite3
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.96.1
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: dr-drill-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build pcloudd + pcloud-cli (release)
+        run: cargo build --release -p pcloud-daemon -p pcloud-cli
+
+      - name: Run DR drill scenarios
+        env:
+          # Surface the built binaries to the drill harness without
+          # depending on $PWD-relative paths.
+          PCLOUD_BIN_DIR: ${{ github.workspace }}/target/release
+        run: |
+          chmod +x tests/dr_drill/run.sh tests/dr_drill/scenarios/*.sh
+          bash tests/dr_drill/run.sh | tee dr-drill.log
+
+      - name: Surface PASS/FAIL/SKIP lines
+        if: always()
+        run: |
+          echo "::group::Scenario results"
+          grep -E '^\[(PASS|FAIL|SKIP)\] ' dr-drill.log || true
+          echo "::endgroup::"
+
+      - name: Upload drill log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dr-drill-log
+          path: dr-drill.log
+          retention-days: 90

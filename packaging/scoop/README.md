@@ -52,11 +52,11 @@ gated on upstream maintainer review.
 
 ### 2. Maintain a private Scoop bucket
 
-Publish a Git repo (for example `pcloudcom/scoop-bucket`) and tell
+Publish a Git repo (for example `your-org/scoop-bucket`) and tell
 users:
 
 ```powershell
-scoop bucket add pcloud-rs https://github.com/pcloudcom/scoop-bucket
+scoop bucket add pcloud-rs https://github.com/your-org/scoop-bucket
 scoop install pcloud-rs/pcloud-rs
 ```
 

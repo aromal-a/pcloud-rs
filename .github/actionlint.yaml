@@ -1,0 +1,7 @@
+self-hosted-runner:
+  labels:
+    # Native mount release gates. These labels are intentionally narrower
+    # than the default OS labels because the hosts must expose real FUSE
+    # devices and the corresponding vendor runtime.
+    - pcloud-fuse
+    - pcloud-fuse-t

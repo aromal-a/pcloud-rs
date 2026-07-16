@@ -2,8 +2,10 @@
 //! **GATING: `#[cfg(target_os = "macos")]`** -- the entire module file is
 //! gated at the `mod macos;` line in `platform/mod.rs`.
 //!
-//! **Running on a real Mac.** Real-hardware bring-up in progress under bd-1du.4.6.
-//! fuse-t must be installed; see docs/MACOS.md for setup instructions.
+//! **Running on a real Mac.** fuse-t must be installed. The strict native
+//! workflow exercises readdir, create/write/fsync, and unmount on a labelled
+//! fuse-t runner; a workflow definition is not a claim that a given release
+//! commit passed it.
 //!
 //! Implementation strategy: **fuse-t** (<https://www.fuse-t.org/>) via
 //! direct FFI to its shipped `libfuse.dylib`, which is ABI-compatible
@@ -12,19 +14,16 @@
 //! surface stays small, auditable, and free of transitive macOS-only
 //! deps that would churn the workspace.
 //!
-//! **BRING-UP STATUS:** Phase 5: full read+write surface wired;
-//! pending real-Mac bring-up for bd-1du.4.6. The probe path, option
-//! defaults, session loop, and read+write op thunks are populated;
-//! actual boot on a Mac (dylib ABI confirmation, argv option audit,
-//! integration tests) is still tracked under bd-1du.4.6. The Linux
-//! workspace must remain green regardless (enforced by cfg-gates).
+//! The probe path, option defaults, session loop, read/write thunks, and RAII
+//! teardown are populated. Native CI owns dylib ABI and VFS qualification;
+//! Linux builds remain isolated through target cfgs.
 //!
 //! **WRITE SURFACE (U3):** the `create`, `unlink`, `mkdir`, `rmdir`,
 //! and `rename` thunks now resolve parent inodes to remote paths via
 //! `FuseAdapter::resolve_ino_to_path` and pass real paths through to
 //! the adapter's write-side methods. Live-host bring-up is still
 //! required to exercise the kernel-VFS integration for these calls on
-//! an actual fuse-t mount (tracked under bd-1du.4.6).
+//! an actual fuse-t mount in the native gate.
 //!
 //! Also implemented here:
 //! - `MacosMountinfoReader` wraps `getmntinfo(3)` and produces a
@@ -112,13 +111,10 @@ impl PlatformMount for MacosPlatformMount {
 
     /// Mount a boxed [`FuseAdapter`] at `mount_point` using fuse-t.
     ///
-    /// **Current bring-up gate:** this implementation validates the
-    /// mountpoint, probes fuse-t, and stages the adapter for the FFI
-    /// thunks declared in [`macos_ffi`]. The actual session loop
-    /// (`fuse_session_loop` on a background thread, RAII-style
-    /// unmount) is deferred to bd-1du.4 real-Mac bring-up. Until then
-    /// we return [`MountError::Unsupported`] with a clear marker so
-    /// callers do not silently believe they have a live mount.
+    /// The implementation validates the mountpoint, probes fuse-t, starts
+    /// `fuse_session_loop` on a background thread, and returns an RAII mount
+    /// handle. Missing or incompatible fuse-t fails as a surfaced
+    /// [`MountError::Unsupported`].
     fn mount_adapter(
         &self,
         adapter: Box<dyn FuseAdapter>,
@@ -134,7 +130,7 @@ impl PlatformMount for MacosPlatformMount {
 // -----------------------------------------------------------------------------
 // fuse-t session bring-up.
 //
-// **NOT YET TESTED ON MACOS** — ships pending PHASE-4 live verification.
+// Native verification is owned by the strict fuse-t workflow.
 // -----------------------------------------------------------------------------
 
 /// Mount `adapter` at `mount_point` against fuse-t's `libfuse.dylib`.
@@ -230,6 +226,7 @@ fn mount_with_fuse_t(
     // `LowlevelOps`. Regions do not overlap. `LowlevelOps` is `#[repr(C)]`
     // and contains only `Option<extern "C" fn(...)>` slots, which are
     // plain-old-data.
+    // SAFETY: see paragraph above.
     unsafe {
         std::ptr::copy_nonoverlapping(
             (&ops as *const macos_ffi::LowlevelOps) as *const u8,
@@ -342,6 +339,7 @@ fn mount_with_fuse_t(
 /// which points to a `Box<dyn FuseAdapter>` living inside a
 /// `Box<Box<dyn FuseAdapter>>` owned by the `MountHandle`. Lifetime
 /// of the returned reference is bounded by the caller thunk.
+// SAFETY: see "# Safety" doc comment above.
 #[allow(clippy::borrowed_box, dead_code)]
 unsafe fn adapter_from_userdata<'a>(ud: *mut std::ffi::c_void) -> Option<&'a dyn FuseAdapter> {
     if ud.is_null() {
@@ -362,6 +360,7 @@ unsafe fn adapter_from_userdata<'a>(ud: *mut std::ffi::c_void) -> Option<&'a dyn
 /// `req` must be live for the duration of the call; libfuse owns it
 /// until a `fuse_reply_*` returns. The returned adapter reference is
 /// rooted in the `Box<Box<dyn FuseAdapter>>` that outlives the session.
+// SAFETY: see "# Safety" doc comment above.
 unsafe fn adapter_from_req<'a>(req: macos_ffi::fuse_req_t) -> Option<&'a dyn FuseAdapter> {
     if req.is_null() {
         return None;
@@ -993,6 +992,9 @@ extern "C" fn thunk_create(
         // additional open round-trip. Adapters that require an
         // explicit `open` to allocate a handle id will still see one
         // on the next callback.
+        // SAFETY: `fi` is a libfuse-allocated `fuse_file_info*` valid for
+        // the duration of this callback; writing the `fh` field is the
+        // documented way to publish a handle id back to libfuse.
         unsafe { (*fi).fh = new_ino };
         // SAFETY: `req` is valid; `&param` and `fi` are live for this
         // call and libfuse copies them synchronously.
@@ -1425,31 +1427,44 @@ extern "C" fn thunk_setattr(
     });
 }
 
-/// `statfs` thunk. The [`FuseAdapter`] trait does not currently expose
-/// a statfs hook, so we reply with a zero-initialized `statvfs` that
-/// advertises the volume as present but size-unknown. Real capacity
-/// reporting (pCloud quota) is a follow-up once the adapter grows a
-/// `statfs` method (tracked alongside bd-1du.4 write path).
+/// `statfs` thunk. Account quota comes from the canonical backend through
+/// [`FuseAdapter::statfs`]; local disk capacity and synthetic defaults are
+/// deliberately never reported as remote capacity.
 ///
 /// # Safety
 /// `req` is live for this call.
 extern "C" fn thunk_statfs(req: macos_ffi::fuse_req_t, _ino: macos_ffi::fuse_ino_t) {
     let _ = std::panic::catch_unwind(|| {
+        // SAFETY: `req` is live; userdata outlives the session.
+        let adapter = match unsafe { adapter_from_req(req) } {
+            Some(adapter) => adapter,
+            None => {
+                // SAFETY: `req` is valid and must receive exactly one reply.
+                unsafe { macos_ffi::fuse_reply_err(req, libc::EIO) };
+                return;
+            }
+        };
+        let (total_bytes, free_bytes) = match adapter.statfs() {
+            Ok(quota) => quota,
+            Err(errno) => {
+                // SAFETY: `req` is valid and must receive exactly one reply.
+                unsafe { macos_ffi::fuse_reply_err(req, errno) };
+                return;
+            }
+        };
+        let (blocks, free_blocks) = crate::fuse_adapter::statfs_blocks(total_bytes, free_bytes);
         let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
         st.f_namemax = 255;
-        st.f_bsize = 4096;
-        st.f_frsize = 4096;
-        // Placeholder: report 1 TiB total, 512 GiB free until real pCloud
-        // quota is wired through the adapter (tracked bd-1du.4.e).
-        let total_blocks: u64 = (1u64 << 40) / 4096; // 1 TiB in 4KiB blocks
-        let free_blocks: u64 = (512u64 << 30) / 4096; // 512 GiB free
+        st.f_bsize = u64::from(crate::fuse_adapter::STATFS_BLOCK_SIZE);
+        st.f_frsize = u64::from(crate::fuse_adapter::STATFS_BLOCK_SIZE);
         // macOS libc::statvfs uses u32 for block counts; clamp to u32::MAX
-        // on the (unlikely) overflow path so the reply is always well-typed.
-        st.f_blocks = total_blocks.min(u32::MAX as u64) as u32;
+        // on overflow so the reply remains ABI-correct.
+        st.f_blocks = blocks.min(u32::MAX as u64) as u32;
         st.f_bfree = free_blocks.min(u32::MAX as u64) as u32;
         st.f_bavail = free_blocks.min(u32::MAX as u64) as u32;
-        st.f_files = 1_000_000;
-        st.f_ffree = 999_000;
+        // pCloud does not publish inode quotas.
+        st.f_files = 0;
+        st.f_ffree = 0;
         // SAFETY: `req` is a valid libfuse request handle; `&st` is a
         // fully-initialised `statvfs` on the stack, alive for this call.
         unsafe { macos_ffi::fuse_reply_statfs(req, &st) };
@@ -1497,7 +1512,9 @@ struct RegisteredSession {
 // ever calls `fuse_session_exit` on it, which libfuse documents as
 // safe across threads. We remove the entry from the registry before
 // `fuse_session_destroy` runs in `teardown_macos`.
+// SAFETY: see block above.
 unsafe impl Send for RegisteredSession {}
+// SAFETY: see block above.
 unsafe impl Sync for RegisteredSession {}
 
 /// Mutex + Condvar pair used by the reaper thread. The `bool` in the
@@ -1529,6 +1546,7 @@ fn install_signal_handler_once() {
         // syscalls resume cleanly). The handler body only stores to
         // an `AtomicBool` and calls `pthread_cond_signal`, both of
         // which are async-signal-safe on Darwin.
+        // SAFETY: see paragraph above.
         unsafe {
             let mut sa: libc::sigaction = std::mem::zeroed();
             sa.sa_sigaction = signal_trampoline as usize;
@@ -1832,9 +1850,7 @@ fn ensure_libfuse_loaded() -> Result<(), MountError> {
 }
 
 // -----------------------------------------------------------------------------
-// Mount-arg helpers. Currently unused pending session-loop bring-up;
-// kept at module scope so the shape of the FFI call sequence is
-// reviewable alongside the struct definitions in `macos_ffi`.
+// Mount-argument helpers used by the live session bring-up.
 // -----------------------------------------------------------------------------
 
 /// Translate a filesystem path into a `CString` suitable for the
@@ -2030,6 +2046,8 @@ extern "C" fn thunk_access(req: macos_ffi::fuse_req_t, _ino: macos_ffi::fuse_ino
 ///                       macOS indexers (Spotlight/mds),
 /// - `defer_permissions` — let FUSE mode/uid/gid bits govern access
 ///                         rather than the NFS client's cached perms,
+/// - `fsname=pcloud-rs` — private source identity used by native orphan and
+///                       sync-root discovery (never labels foreign FUSE),
 /// - `volname=<fs_name>` — macOS Finder display name (falls back to
 ///                         "pCloud" if the caller did not set one).
 fn build_fuse_args(opts: &MountOptions) -> Vec<CString> {
@@ -2070,6 +2088,8 @@ fn build_fuse_args(opts: &MountOptions) -> Vec<CString> {
     }
     argv.push(CString::new("-o").expect("literal has no NUL"));
     argv.push(CString::new("defer_permissions").expect("literal has no NUL"));
+    argv.push(CString::new("-o").expect("literal has no NUL"));
+    argv.push(CString::new("fsname=pcloud-rs").expect("literal has no NUL"));
     // `volname=…` may contain arbitrary user-supplied characters;
     // build through CString which will reject interior NULs (falling
     // back to the safe default).
@@ -2156,12 +2176,10 @@ fn build_lowlevel_ops() -> macos_ffi::LowlevelOps {
 ///
 /// Enumerates the kernel mount table and emits a
 /// `/proc/self/mountinfo`-compatible payload containing only FUSE-backed
-/// entries (those whose `f_fstypename` contains `"fuse"`, which covers
-/// both `macfuse` and `fuse-t`). Emitted lines advertise `fuse.pcloud`
-/// as the filesystem type so the shared parser in
-/// [`crate::mount_orphan::parse_pcloud_mounts`] classifies them as
-/// candidate pCloud mounts; the daemon then reconciles against its own
-/// known-mount set.
+/// genuine pCloud entries. Generic FUSE mounts are filtered by both their
+/// filesystem type and source identity so orphan cleanup cannot claim an
+/// unrelated sshfs, rclone, or macFUSE volume. Emitted lines advertise the
+/// private `fuse.pcloud-rs` marker consumed by the shared parser.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MacosMountinfoReader;
 
@@ -2197,7 +2215,14 @@ fn read_getmntinfo() -> io::Result<String> {
     let mut out = String::new();
     for entry in entries {
         let fstype = cstr_to_string(entry.f_fstypename.as_ptr());
-        if !fstype.contains("fuse") {
+        let src = cstr_to_string(entry.f_mntfromname.as_ptr());
+        let identity = format!("{fstype} {src}").to_ascii_lowercase();
+        let is_supported_backend = [
+            "fuse", "macfuse", "osxfuse", "fuse-t", "nfs", "smb", "fskit",
+        ]
+        .iter()
+        .any(|marker| identity.contains(marker));
+        if !is_supported_backend || !identity.contains("pcloud-rs") {
             continue;
         }
         let mountpoint = cstr_to_string(entry.f_mntonname.as_ptr());
@@ -2213,8 +2238,7 @@ fn read_getmntinfo() -> io::Result<String> {
         // Fields: id parent_id major:minor root mountpoint - fstype src opts
         out.push_str("0 0 0:0 / ");
         out.push_str(&escape_mountinfo(&mountpoint));
-        out.push_str(" - fuse.pcloud ");
-        let src = cstr_to_string(entry.f_mntfromname.as_ptr());
+        out.push_str(" - fuse.pcloud-rs ");
         if src.is_empty() {
             out.push_str("pcloud");
         } else {
@@ -2316,7 +2340,7 @@ mod tests {
         let raw = "/home/user/pCloud Drive";
         let escaped = escape_mountinfo(raw);
         // Construct a synthetic mountinfo line for the parser.
-        let line = format!("0 0 0:0 / {escaped} - fuse.pcloud pcloud rw\n");
+        let line = format!("0 0 0:0 / {escaped} - fuse.pcloud-rs pcloud-rs rw\n");
         let entries = parse_pcloud_mounts(&line);
         assert_eq!(entries.len(), 1);
         assert_eq!(
@@ -2423,6 +2447,16 @@ mod tests {
             args.contains(&"defer_permissions".to_string()),
             "defer_permissions must always be present"
         );
+    }
+
+    #[test]
+    fn build_fuse_args_has_private_mount_identity() {
+        let args = collect_args(&MountOptions::default());
+        let position = args
+            .iter()
+            .position(|arg| arg == "fsname=pcloud-rs")
+            .expect("private filesystem identity must be present");
+        assert_eq!(args[position - 1], "-o");
     }
 
     #[test]

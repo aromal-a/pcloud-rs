@@ -179,33 +179,27 @@ fn readdir_root_via_fuset() {
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let svc = MountService::new();
 
-    let handle = match svc.mount(
-        mnt.path(),
-        adapter,
-        MountOptions {
-            read_only: true,
-            ..MountOptions::default()
-        },
-    ) {
-        Ok(h) => h,
-        Err(err) if should_skip_mount_error(&err.to_string()) => return,
-        Err(err) => panic!("mount must succeed with fuse-t installed: {err}"),
-    };
+    let handle = svc
+        .mount(
+            mnt.path(),
+            adapter,
+            MountOptions {
+                read_only: true,
+                ..MountOptions::default()
+            },
+        )
+        .unwrap_or_else(|err| panic!("mount must succeed with fuse-t installed: {err}"));
 
     std::thread::sleep(Duration::from_millis(200));
     if !mount_appears_in_getmntinfo(mnt.path()) {
         handle.unmount().ok();
-        return;
+        panic!("fuse-t mount did not appear in getmntinfo");
     }
 
     let entries: Vec<String> = match std::fs::read_dir(mnt.path()) {
         Ok(rd) => rd
             .filter_map(|e| e.ok().map(|d| d.file_name().to_string_lossy().into_owned()))
             .collect(),
-        Err(err) if should_skip_io_error(&err) => {
-            handle.unmount().ok();
-            return;
-        }
         Err(err) => panic!("readdir /: {err}"),
     };
 
@@ -552,61 +546,39 @@ fn write_create_fsync_via_fuset() {
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let svc = MountService::new();
 
-    let handle = match svc.mount(
-        mnt.path(),
-        adapter,
-        MountOptions {
-            read_only: false,
-            ..MountOptions::default()
-        },
-    ) {
-        Ok(h) => h,
-        Err(err) if should_skip_mount_error(&err.to_string()) => return,
-        Err(err) => panic!("mount: {err}"),
-    };
+    let handle = svc
+        .mount(
+            mnt.path(),
+            adapter,
+            MountOptions {
+                read_only: false,
+                ..MountOptions::default()
+            },
+        )
+        .unwrap_or_else(|err| panic!("mount: {err}"));
 
     std::thread::sleep(Duration::from_millis(200));
     if !mount_appears_in_getmntinfo(mnt.path()) {
         handle.unmount().ok();
-        return;
+        panic!("fuse-t mount did not appear in getmntinfo");
     }
 
     let payload = b"durable content from fuse-t test";
     let new_file = mnt.path().join("new.txt");
 
-    match std::fs::write(&new_file, payload) {
-        Ok(()) => {}
-        Err(err) if should_skip_io_error(&err) => {
-            handle.unmount().ok();
-            return;
-        }
-        Err(err) => panic!("kernel write: {err}"),
-    }
+    std::fs::write(&new_file, payload).unwrap_or_else(|err| panic!("kernel write: {err}"));
 
     // Force fsync.
     {
         use std::io::Write;
-        match std::fs::OpenOptions::new().write(true).open(&new_file) {
-            Ok(mut f) => {
-                if let Err(err) = f.flush() {
-                    if should_skip_io_error(&err) {
-                        handle.unmount().ok();
-                        return;
-                    }
-                }
-                if let Err(err) = f.sync_all() {
-                    if should_skip_io_error(&err) {
-                        handle.unmount().ok();
-                        return;
-                    }
-                }
-            }
-            Err(err) if should_skip_io_error(&err) => {
-                handle.unmount().ok();
-                return;
-            }
-            Err(err) => panic!("reopen for fsync: {err}"),
-        }
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&new_file)
+            .unwrap_or_else(|err| panic!("reopen for fsync: {err}"));
+        file.flush()
+            .unwrap_or_else(|err| panic!("flush mounted file: {err}"));
+        file.sync_all()
+            .unwrap_or_else(|err| panic!("fsync mounted file: {err}"));
     }
 
     let uploads = upload_backend.uploads.lock().unwrap();
@@ -866,6 +838,9 @@ fn statfs_via_fuset() {
 
     let folder = Arc::new(MockFolderBackend::new());
     folder.insert_dir("/", 1, vec![]);
+    let expected_total = 10u64 * 1024 * 1024 * 1024;
+    let expected_free = 6u64 * 1024 * 1024 * 1024;
+    folder.set_quota(expected_total, expected_free);
     let adapter = ProtoFuseAdapter::new(Arc::clone(&folder), AdapterOptions::default());
 
     let mnt = tempfile::tempdir().expect("mount tempdir");
@@ -914,9 +889,8 @@ fn statfs_via_fuset() {
             "namemax must be positive, got {}",
             st.f_namemax
         );
-        // The thunk reports 1 TiB total, 512 GiB free.
-        let expected_total_blocks = (1u64 << 40) / 4096;
-        let expected_free_blocks = (512u64 << 30) / 4096;
+        let expected_total_blocks = expected_total.div_ceil(4096);
+        let expected_free_blocks = expected_free / 4096;
         assert_eq!(
             st.f_blocks as u64,
             expected_total_blocks.min(u32::MAX as u64)

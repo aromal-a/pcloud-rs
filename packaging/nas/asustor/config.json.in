@@ -1,0 +1,28 @@
+{
+  "general": {
+    "package": "pcloud-rs",
+    "name": "pcloud-rs",
+    "version": "@VERSION@",
+    "depends": [],
+    "conflicts": [],
+    "developer": "pcloud-rs contributors",
+    "maintainer": "pcloud-rs contributors",
+    "email": "ezechiel203@gmail.com",
+    "website": "https://github.com/ezechiel203/pcloud-rs",
+    "architecture": "@ARCH@",
+    "firmware": "5.0.0"
+  },
+  "register": {
+    "symbolic-link": {},
+    "share-folder": [],
+    "port": [],
+    "boot-priority": {
+      "start-order": 50,
+      "stop-order": 50
+    },
+    "prerequisites": {
+      "enable-service": [],
+      "restart-service": []
+    }
+  }
+}

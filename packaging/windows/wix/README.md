@@ -3,57 +3,39 @@
 
 # pcloud-rs WiX MSI
 
-This directory contains the WiX (v3 compatible, v4 convertible) scaffolding for
-building a Windows MSI installer for `pcloud-rs`.
+This directory contains the WiX v3 sources for two artifacts:
+
+- `pcloud-rs-X.Y.Z-x64.msi`: the standalone application MSI. It requires an
+  existing WinFSP installation and checks the official WinFSP registry key.
+- `pcloud-rs-X.Y.Z-x64-setup.exe`: the public Burn bundle. It chains the
+  official checksum-pinned WinFSP MSI before the pcloud-rs MSI.
 
 ## Prerequisites
 
 ### Build host
 
-- Windows 10 or 11 build host (or an equivalent CI runner — `windows-latest`
-  is used in `.github/workflows/release.yml`).
+- Windows 10 or 11 build host. `cargo xtask windows` uses the configured
+  native Windows SSH host for compile/test qualification.
 - The [WiX Toolset v3](https://wixtoolset.org/) installed and on `PATH`
   (`candle.exe`, `light.exe`). v4 is convertible but not yet wired.
 - Rust toolchain (`rustup default stable`, target `x86_64-pc-windows-msvc`).
-- Windows SDK / `signtool.exe` on `PATH` (bundled with `windows-latest` under
+- Windows SDK / `signtool.exe` on `PATH` (normally under
   `C:\Program Files (x86)\Windows Kits\10\bin\*\x64\`).
 
 ### Target machine runtime: WinFSP
 
-`pcloud-fs` uses the **user-space WinFSP** FUSE-compatible driver (the
-same component used by rclone, cbfs, sshfs-win, etc.). It must be present on
-the end-user machine before `pcloudc.exe` can mount a drive.
+`pcloud-fs` uses WinFSP for mounted drives. The public setup executable embeds
+the official `winfsp-2.1.25156.msi` and verifies its published SHA-256 before
+building:
 
-The MSI bundles the **WinFSP 2.x installer** and invokes it as a deferred
-`<CustomAction>` during `InstallExecuteSequence`:
-
-```xml
-<!-- excerpt from pcloud-rs.wxs -->
-<Binary Id="WinFspInstaller" SourceFile="$(var.StageDir)\vendor\winfsp-2.0.msi" />
-
-<CustomAction Id="InstallWinFsp"
-              BinaryKey="WinFspInstaller"
-              ExeCommand="/qn /norestart"
-              Execute="deferred"
-              Impersonate="no"
-              Return="check" />
-
-<InstallExecuteSequence>
-  <Custom Action="InstallWinFsp" Before="InstallFinalize">
-    NOT Installed AND NOT REMOVE
-  </Custom>
-</InstallExecuteSequence>
+```text
+073A70E00F77423E34BED98B86E600DEF93393BA5822204FAC57A29324DB9F7A
 ```
 
-The bundled MSI is fetched at build time from the official release feed:
-
-```
-https://winfsp.dev/rel/
-```
-
-Pin a specific version (`winfsp-2.0.23075.msi` at time of writing) in the
-release workflow; never pull `latest`. Verify the published SHA256 against
-`winfsp.dev/rel/` before staging.
+The standalone pcloud-rs MSI does not run a nested installer custom action.
+It searches the documented 32-bit `HKLM\SOFTWARE\WinFsp` registry view and
+fails with a remediation message if WinFSP is absent. The Burn bundle is the
+normal end-user artifact because Burn is designed to chain MSI packages.
 
 ### Driver signing: user-space vs kernel-space
 
@@ -78,41 +60,64 @@ release workflow; never pull `latest`. Verify the published SHA256 against
 
 ## Build
 
-Install the helper:
+From the repository root, after building and staging `pcloudc.exe` and
+`pcloudd.exe` under `dist\stage`:
 
 ```powershell
-cargo install cargo-wix
+$version = "0.1.0"
+$wix = "packaging\windows\wix"
+
+candle.exe -nologo -wx `
+  -dStageDir="dist\stage" `
+  -dProductVersion=$version `
+  -out "dist\pcloud-rs.wixobj" `
+  "$wix\pcloud-rs.wxs"
+light.exe -nologo -wx -ext WixUIExtension `
+  -b "$wix" `
+  -out "dist\pcloud-rs-$version-x64.msi" `
+  "dist\pcloud-rs.wixobj"
+
+candle.exe -nologo -wx -ext WixBalExtension `
+  -dProductVersion=$version `
+  -dWinFspMsi="dist\vendor\winfsp-2.1.25156.msi" `
+  -dPcloudMsi="dist\pcloud-rs-$version-x64.msi" `
+  -out "dist\pcloud-rs-bundle.wixobj" `
+  "$wix\pcloud-rs-bundle.wxs"
+light.exe -nologo -wx -ext WixBalExtension `
+  -out "dist\pcloud-rs-$version-x64-setup.exe" `
+  "dist\pcloud-rs-bundle.wixobj"
 ```
 
-Then from the repository root:
+## Authenticode signing
+
+Release CI signs both Rust executables and the pcloud-rs MSI. Burn bundles
+must be signed in two pieces: detach and sign the engine, reattach it, then
+sign the complete bundle.
 
 ```powershell
-cargo wix --install-version X.Y.Z
+insignia.exe -ib pcloud-rs-0.1.0-x64-setup.exe -o engine.exe
+signtool.exe sign /fd sha256 /td sha256 /tr http://timestamp.digicert.com engine.exe
+insignia.exe -ab engine.exe pcloud-rs-0.1.0-x64-setup.exe -o signed-setup.exe
+signtool.exe sign /fd sha256 /td sha256 /tr http://timestamp.digicert.com signed-setup.exe
+signtool.exe verify /pa /v signed-setup.exe
 ```
 
-This produces `target\wix\pcloud-rs-X.Y.Z-x86_64.msi`.
-
-## EV Code Signing (stub)
-
-After the MSI is built and before publishing:
-
-```powershell
-signtool sign /v /fd sha256 ^
-  /tr http://timestamp.digicert.com ^
-  /td sha256 ^
-  /f "%SIGNING_CERT_PATH%" ^
-  /p "%SIGNING_CERT_PASSWORD%" ^
-  pcloud-rs.msi
-```
-
-<!-- TODO: replace the /f path with a hardware token (EV cert) reference,
-     e.g. `/sha1 <thumbprint> /csp "eToken Base Cryptographic Provider"`. -->
+`packaging/signing/sign-windows.ps1` implements the PFX signing and verification
+step used by CI. Public tag builds fail if the signing credentials are absent.
 
 ## Files
 
 - `pcloud-rs.wxs` — WiX source.
+- `pcloud-rs-bundle.wxs` — WinFSP + pcloud-rs Burn chain.
 - `License.rtf` — license shown by the installer UI (MIT OR Apache-2.0).
 - `README.md` — this file.
+
+## Daemon identity
+
+The MSI installs no SCM service. `pcloudc start` launches a no-console daemon
+under the interactive user's SID. This is required because named-pipe peer
+authentication, DPAPI, and WinFSP mounts are user-scoped; a machine service
+account would create an endpoint and vault the installed user cannot access.
 
 ## Uninstall
 

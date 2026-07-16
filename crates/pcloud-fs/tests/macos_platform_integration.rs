@@ -222,8 +222,8 @@ fn macos_mountinfo_reader_entries_have_pcloud_fstype() {
         let entries = parse_pcloud_mounts(&payload);
         for entry in &entries {
             assert!(
-                entry.fs_type.starts_with("fuse.pcloud"),
-                "every entry from MacosMountinfoReader must have fuse.pcloud* fstype, got: {}",
+                entry.fs_type == "fuse.pcloud-rs",
+                "every entry from MacosMountinfoReader must have the private fuse.pcloud-rs fstype, got: {}",
                 entry.fs_type
             );
         }
@@ -235,8 +235,8 @@ fn macos_mountinfo_reader_entries_have_pcloud_fstype() {
 // =============================================================================
 
 const MACOS_STYLE_FIXTURE: &str = concat!(
-    "0 0 0:0 / /Volumes/pCloud\\040Drive - fuse.pcloud pcloud rw\n",
-    "0 0 0:0 / /Volumes/pCloudOld - fuse.pcloud pcloud rw\n",
+    "0 0 0:0 / /Volumes/pCloud\\040Drive - fuse.pcloud-rs pcloud-rs rw\n",
+    "0 0 0:0 / /Volumes/pCloudOld - fuse.pcloud-rs pcloud-rs rw\n",
 );
 
 #[test]
@@ -291,7 +291,7 @@ fn mountpoint_is_already_mounted_finds_macos_fuse_mount() {
     let reader = StaticMountinfoReader::new(MACOS_STYLE_FIXTURE);
     let ft = mountpoint_is_already_mounted(&reader, Path::new("/Volumes/pCloud Drive"))
         .expect("pCloud Drive must be detected as mounted");
-    assert_eq!(ft, "fuse.pcloud", "fstype must be fuse.pcloud");
+    assert_eq!(ft, "fuse.pcloud-rs", "fstype must be fuse.pcloud-rs");
 }
 
 #[test]
@@ -303,11 +303,11 @@ fn mountpoint_is_already_mounted_not_found_returns_none() {
 
 #[test]
 fn mountpoint_is_already_mounted_handles_space_in_path() {
-    let payload = "0 0 0:0 / /Volumes/my\\040cloud - fuse.pcloud pcloud rw\n";
+    let payload = "0 0 0:0 / /Volumes/my\\040cloud - fuse.pcloud-rs pcloud-rs rw\n";
     let reader = StaticMountinfoReader::new(payload);
     let ft = mountpoint_is_already_mounted(&reader, Path::new("/Volumes/my cloud"))
         .expect("space-escaped path must be detected");
-    assert_eq!(ft, "fuse.pcloud");
+    assert_eq!(ft, "fuse.pcloud-rs");
 }
 
 // =============================================================================
@@ -381,20 +381,20 @@ fn mount_service_rejects_allow_other_on_macos() {
 #[test]
 fn parse_pcloud_mounts_on_macos_formatted_lines() {
     let payload = concat!(
-        "0 0 0:0 / /Volumes/pCloud - fuse.pcloud pcloud rw\n",
-        "0 0 0:0 / /Volumes/pCloudLegacy - fuse.pclsync pclsync rw\n",
+        "0 0 0:0 / /Volumes/pCloudRs - fuse.pcloud-rs pcloud-rs rw\n",
+        "0 0 0:0 / /Volumes/OfficialPCloud - fuse.pcloud pcloud rw\n",
         "0 0 0:0 / /Volumes/other - ext4 /dev/disk1 rw\n",
     );
     let entries = parse_pcloud_mounts(payload);
-    assert_eq!(entries.len(), 2, "only pCloud fuse types must be returned");
+    assert_eq!(entries.len(), 1, "only the private pcloud-rs type is owned");
     let paths: Vec<&std::path::Path> = entries.iter().map(|e| e.mount_point.as_path()).collect();
-    assert!(paths.contains(&Path::new("/Volumes/pCloud")));
-    assert!(paths.contains(&Path::new("/Volumes/pCloudLegacy")));
+    assert!(paths.contains(&Path::new("/Volumes/pCloudRs")));
+    assert!(!paths.contains(&Path::new("/Volumes/OfficialPCloud")));
 }
 
 #[test]
 fn parse_pcloud_mounts_handles_spaces_in_macos_volume_names() {
-    let payload = "0 0 0:0 / /Volumes/My\\040pCloud - fuse.pcloud pcloud rw\n";
+    let payload = "0 0 0:0 / /Volumes/My\\040pCloud - fuse.pcloud-rs pcloud-rs rw\n";
     let entries = parse_pcloud_mounts(payload);
     assert_eq!(entries.len(), 1);
     assert_eq!(entries[0].mount_point, PathBuf::from("/Volumes/My pCloud"));

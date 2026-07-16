@@ -24,7 +24,6 @@
 #![forbid(unsafe_code)]
 #![allow(dead_code)]
 
-use std::io::Cursor;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -40,7 +39,7 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use rustls::ServerConfig;
-use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use rustls::pki_types::{CertificateDer, PrivateKeyDer, pem::PemObject};
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 use tokio_rustls::TlsAcceptor;
@@ -288,11 +287,7 @@ fn error_response(code: StatusCode) -> Response<Full<Bytes>> {
 fn load_certs(
     pem: &[u8],
 ) -> Result<Vec<CertificateDer<'static>>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut rdr = Cursor::new(pem);
-    let mut out = Vec::new();
-    for c in rustls_pemfile::certs(&mut rdr) {
-        out.push(c?);
-    }
+    let out = CertificateDer::pem_slice_iter(pem).collect::<Result<Vec<_>, _>>()?;
     if out.is_empty() {
         return Err("no certificate in PEM".into());
     }
@@ -302,10 +297,5 @@ fn load_certs(
 fn load_key(
     pem: &[u8],
 ) -> Result<PrivateKeyDer<'static>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut rdr = Cursor::new(pem);
-    // The fixture is a PKCS#8 key; `private_key` returns the first match.
-    if let Some(k) = rustls_pemfile::private_key(&mut rdr)? {
-        return Ok(k);
-    }
-    Err("no private key in PEM".into())
+    PrivateKeyDer::from_pem_slice(pem).map_err(Into::into)
 }

@@ -3,7 +3,7 @@
 #   docker compose -f packaging/docker/docker-compose.yml up -d
 #
 # Hardening defaults: read-only rootfs, non-root UID, no new privileges,
-# dropped caps, persistent 0700 SQLite volume, owner-only IPC socket.
+# dropped caps, persistent 0700 PCLOUD_ROOT volume, owner-only IPC socket.
 #
 # Secrets MUST be supplied via `docker secret` (swarm) or a bind-mounted
 # 0400 file for plain compose. Do NOT put credentials in `environment:`.
@@ -36,7 +36,8 @@ services:
       - pcloud-rs-egress
 
     volumes:
-      # Persistent SQLite + auth vault. Must be 0700, owned by UID 65532.
+      # Persistent config, SQLite state, auth vault, cache, and runtime
+      # socket. Must be 0700, owned by UID 65532.
       # Create with:
       #   sudo install -d -m 0700 -o 65532 -g 65532 ./state
       - type: bind
@@ -44,11 +45,6 @@ services:
         target: /var/lib/pcloud-rs
         bind:
           create_host_path: false
-      # Runtime dir holds daemon.sock (0600). Keep on a dedicated volume
-      # so host consumers can bind-mount read-only if needed.
-      - type: volume
-        source: pcloud-rs-run
-        target: /run/pcloud-rs
 
     # --- Secrets ---
     # Preferred: docker secrets (swarm) or sops-decrypted bind mounts.
@@ -59,6 +55,8 @@ services:
         gid: "65532"
         mode: 0400
     environment:
+      PCLOUD_ROOT: /var/lib/pcloud-rs
+      PCLOUD_ENV: production
       # Path only — the token itself is never in the environment.
       PCLOUDRS_TOKEN_FILE: /run/secrets/pcloud-rs-token
       RUST_LOG: "info"
@@ -73,19 +71,11 @@ services:
       nproc: 256
 
     healthcheck:
-      test: ["CMD", "/usr/local/bin/pcloudc", "--socket", "/run/pcloud-rs/daemon.sock", "ping"]
+      test: ["CMD", "/usr/local/bin/pcloudc", "health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-
-volumes:
-  pcloud-rs-run:
-    driver: local
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
-      o: "uid=65532,gid=65532,mode=0700"
 
 networks:
   pcloud-rs-egress:

@@ -9,8 +9,8 @@
 #![cfg(windows)]
 
 use std::fs;
-use std::io::{self, Write};
-use std::path::{Path, PathBuf};
+use std::io;
+use std::path::PathBuf;
 
 use pcloud_secret::{ExposeSecret, secret_string::SecretString};
 use windows::Win32::Foundation::LocalFree;
@@ -18,6 +18,7 @@ use windows::Win32::Security::Cryptography::{
     CRYPT_INTEGER_BLOB, CryptProtectData, CryptUnprotectData,
 };
 
+use super::windows_secure_file::atomic_write;
 use super::{AuthToken, PlatformVault, Result as VaultResult, VaultError};
 
 /// Windows DPAPI-backed vault.
@@ -41,8 +42,8 @@ impl DpapiVault {
         VaultError::Io(err)
     }
 
-    fn map_win(context: &'static str) -> VaultError {
-        VaultError::Io(io::Error::new(io::ErrorKind::Other, context))
+    fn map_win(context: &'static str, error: windows::core::Error) -> VaultError {
+        VaultError::Io(io::Error::other(format!("{context}: {error}")))
     }
 }
 
@@ -77,6 +78,7 @@ impl Drop for LocalFreeGuard {
             // deallocation routine. After this call the pointer is dead;
             // we null it out to keep the guard idempotent in case `drop`
             // is somehow re-entered.
+            // SAFETY: see paragraph above.
             unsafe {
                 let _ = LocalFree(windows::Win32::Foundation::HLOCAL(
                     self.blob.pbData as *mut _,
@@ -86,20 +88,6 @@ impl Drop for LocalFreeGuard {
             self.blob.cbData = 0;
         }
     }
-}
-
-fn atomic_write(path: &Path, data: &[u8]) -> io::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let tmp = path.with_extension("dpapi.tmp");
-    {
-        let mut f = fs::File::create(&tmp)?;
-        f.write_all(data)?;
-        f.sync_all()?;
-    }
-    fs::rename(&tmp, path)?;
-    Ok(())
 }
 
 impl PlatformVault for DpapiVault {
@@ -135,7 +123,7 @@ impl PlatformVault for DpapiVault {
                 &mut output as *mut _,
             )
         };
-        status.map_err(|_| Self::map_win("CryptUnprotectData failed"))?;
+        status.map_err(|error| Self::map_win("CryptUnprotectData failed", error))?;
 
         let guard = LocalFreeGuard::new(output);
         let plain = guard.as_slice().to_vec();
@@ -174,7 +162,7 @@ impl PlatformVault for DpapiVault {
                 &mut output as *mut _,
             )
         };
-        status.map_err(|_| Self::map_win("CryptProtectData failed"))?;
+        status.map_err(|error| Self::map_win("CryptProtectData failed", error))?;
 
         let guard = LocalFreeGuard::new(output);
         let ciphertext = guard.as_slice().to_vec();
@@ -216,6 +204,13 @@ mod tests {
 
         let loaded = vault.load().unwrap().expect("token present");
         assert_eq!(loaded.expose_secret(), "hunter2-token-xyz");
+
+        let replacement = SecretString::new(String::from("replacement-token-abc"));
+        vault
+            .store(&replacement)
+            .expect("replace existing vault atomically");
+        let loaded = vault.load().unwrap().expect("replacement token present");
+        assert_eq!(loaded.expose_secret(), "replacement-token-abc");
 
         vault.clear().unwrap();
         assert!(!path.exists());

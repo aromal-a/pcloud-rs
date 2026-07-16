@@ -1,0 +1,39 @@
+[Unit]
+Description=pCloud Console Client (Rust daemon, per-user)
+Documentation=https://github.com/ezechiel203/pcloud-rs
+After=network-online.target
+Wants=network-online.target
+
+# User-scoped companion to pcloudd.service. This unit deliberately avoids
+# DynamicUser=, PrivateUsers=, StateDirectory=, LogsDirectory=, and
+# ProtectSystem=strict because those are system-service concepts that either
+# fail or misbehave under `systemctl --user`.
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pcloudd serve
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+KillMode=mixed
+KillSignal=SIGTERM
+
+# Keep all daemon-created files owner-only.
+UMask=0077
+
+# Hardening that is valid in user managers on contemporary systemd.
+NoNewPrivileges=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete @mount @debug @cpu-emulation @raw-io @reboot @swap
+SystemCallErrorNumber=EPERM
+LockPersonality=yes
+RestrictSUIDSGID=yes
+
+# The user unit uses the daemon's XDG discovery by default. Set PCLOUD_ROOT in
+# a drop-in only when you intentionally want a single rooted instance tree.
+Environment=PCLOUD_ENV=production
+
+[Install]
+WantedBy=default.target

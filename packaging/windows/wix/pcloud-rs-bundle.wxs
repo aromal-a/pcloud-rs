@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Public Windows installer: a WiX v3 Burn bundle that installs the official,
+  checksum-pinned WinFSP package before the pcloud-rs MSI. Do not replace this
+  with a nested MSI custom action; Windows Installer does not support reliable
+  nested transactional installs.
+
+  The release workflow signs the embedded pcloud-rs MSI, then signs both the
+  detached Burn engine and the final bundle. The upstream WinFSP MSI retains
+  its own publisher signature and is never modified.
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:bal="http://schemas.microsoft.com/wix/BalExtension">
+  <Bundle Name="pcloud-rs"
+          Version="$(var.ProductVersion)"
+          Manufacturer="pcloud-rs contributors"
+          UpgradeCode="{1CF29583-D995-4F3E-83E7-652D726D07C5}"
+          Compressed="yes">
+    <BootstrapperApplicationRef Id="WixStandardBootstrapperApplication.HyperlinkLicense">
+      <bal:WixStandardBootstrapperApplication LicenseUrl=""
+                                                SuppressOptionsUI="yes" />
+    </BootstrapperApplicationRef>
+
+    <Chain>
+      <MsiPackage Id="WinFspRuntime"
+                  SourceFile="$(var.WinFspMsi)"
+                  Compressed="yes"
+                  DisplayInternalUI="no"
+                  Permanent="yes"
+                  Vital="yes" />
+      <MsiPackage Id="PcloudRs"
+                  SourceFile="$(var.PcloudMsi)"
+                  Compressed="yes"
+                  DisplayInternalUI="no"
+                  Vital="yes" />
+    </Chain>
+  </Bundle>
+</Wix>

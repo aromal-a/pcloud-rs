@@ -40,7 +40,6 @@ format, see [IPC Protocol](./ipc-protocol.md). For configuration, see
   - [4.11 Crypto](#411-crypto)
   - [4.12 Integrity Sweeper](#412-integrity-sweeper)
   - [4.13 `verify`](#413-verify)
-  - [4.14 Revision History (`log` / `diff` / `restore`)](#414-revision-history-log--diff--restore)
   - [4.15 Folders](#415-folders)
   - [4.16 Notifications](#416-notifications)
   - [4.17 Audit](#417-audit)
@@ -68,7 +67,7 @@ format, see [IPC Protocol](./ipc-protocol.md). For configuration, see
 ### Beginner intro
 
 `pcloudc` is the command-line front door to the pCloud client. It talks
-to a long-running process, `pcloud-daemon`, over a local-only IPC socket
+to a long-running process, `pcloudd`, over a local-only IPC socket
 (UNIX socket on POSIX, named pipe on Windows). You run short commands —
 "log in", "show status", "create this public link" — and the daemon does
 the heavy lifting (authenticated HTTP, sync engine, FUSE mount, crypto
@@ -77,7 +76,7 @@ state, audit chain).
 | You want to… | Use |
 | --- | --- |
 | Run a one-shot operation, script it, or wire it into CI | `pcloudc` |
-| Keep a persistent session, sync, and mount running | `pcloud-daemon serve` (or `pcloudc start`) |
+| Keep a persistent session, sync, and mount running | `pcloudd serve` (or `pcloudc start`) |
 | Embed pCloud calls inside your own Rust program | the `pcloud-sdk` crate |
 | Drive the daemon directly from another language | the IPC protocol ([ipc-protocol.md](./ipc-protocol.md)) |
 
@@ -323,7 +322,7 @@ pcloudc --field quota userinfo
 pcloudc -f quota -f usedquota --select premium userinfo
 
 # Project an array element.
-pcloudc --field revisions.0.id log /Documents/Plan.md
+pcloudc --field links.0.code list-public-links
 ```
 
 **Interactions.** When *any* `--field` is supplied, the JSON renderer
@@ -890,8 +889,9 @@ crypto shell is already unlocked. The old passphrase is not required.
 Mirrors C `psync_crypto_change_crypto_pass_unlocked`.
 
 **Honest scope.** `crypto setup` and `crypto setup-folder` remain
-intentionally not exposed on the retained CLI path. Use the SDK surfaces
-(`pcloud-sdk`) when those flows are needed for first-time setup.
+intentionally absent from the public CLI and focused `pcloud-sdk` 1.x path.
+The internal `pcloud-embedded-sdk` compatibility API retains those flows;
+there is no supported third-party first-time-setup API yet.
 
 ### 4.12 Integrity Sweeper
 
@@ -973,54 +973,6 @@ pcloudc --json verify ~/Documents --recursive | \
 pcloudc verify ~/Photos --recursive --fix --yes
 ```
 
-### 4.14 Revision History (`log` / `diff` / `restore`)
-
-> **Pluggable adapter.** CLI parses; the daemon dispatches through a
-> `RevisionProvider`. With no provider configured, the response is a
-> structured `{"status":"not_configured",…}` JSON payload and the exit
-> code is `6 Unavailable`. Operators can wire an HTTP provider via
-> `[file_history].revision_url`. Tracked under `bd-1du.10`.
-
-Canonical tokens: `log` (aliases `file-log`, `file-history`),
-`diff` (alias `file-diff`), `restore` (alias `file-restore`).
-
-```
-pcloudc log <PATH> [--limit N]
-pcloudc diff <PATH> <REV_A> <REV_B>
-pcloudc restore <PATH> <REV>
-```
-
-**Provider wiring.** The daemon constructs exactly one
-`RevisionProvider` per call, selected at runtime from the active
-config profile:
-
-| `[file_history].revision_url` | Provider                     | Behaviour                                                                 |
-|-------------------------------|------------------------------|---------------------------------------------------------------------------|
-| unset (default)               | `NullRevisionProvider`       | Returns `{"status":"not_configured", … "next": …}` + exit `6 Unavailable`. |
-| `https://…`                   | `HttpRevisionProvider`       | POSTs `{"path": "<remote path>"}`; expects a JSON array of revisions or `{"revisions":[…]}`. Response is projected to `{"revisions":[…],"count":N}`. |
-| `http://…` (Development only) | `HttpRevisionProvider` (test)| Same as above; refused at config-load time in Production profiles.        |
-
-The HTTP provider lives behind the `file-history-http` feature on
-`pcloud-proto` so the default build pulls in zero HTTP client code.
-
-**Structured error taxonomy.** When the daemon cannot satisfy a
-`log` / `diff` / `restore` call, `Response::message` is a JSON object
-with these fields:
-
-| Field     | Kinds                                                                              |
-|-----------|------------------------------------------------------------------------------------|
-| `status`  | `not_configured` \| `invalid_url` \| `transport` \| `http_status` \| `malformed_response` \| `invalid_request` |
-| `message` | Human-readable error text (safe to log).                                           |
-| `next`    | Actionable remediation hint naming the exact config key / recovery step.           |
-| `path`    | The absolute remote path that triggered the error (audit correlation).             |
-
-Tooling SHOULD key on `status` rather than parse `message`; the set of
-values is stable.
-
-Exit-code mapping, CLI flag surface, and the `revision.restored`
-audit event are already wired, so enabling the backend requires only
-a config change — no CLI release.
-
 ### 4.15 Folders
 
 Two-token form (preferred) and single-token aliases:
@@ -1058,7 +1010,7 @@ break.
 
 | Token | Meaning |
 | --- | --- |
-| `start` (alias `daemon-start`) | Fork `pcloud-daemon serve` with stdout/stderr redirected to `$state_dir/daemon.log` (mode `0600`), detach via `setsid`, poll the socket ~5 s for "daemon listening". Idempotent: responds "already running" and exits `0` if the socket already answers. |
+| `start` (alias `daemon-start`) | Launch sibling/`PATH` binary `pcloudd serve` with stdout/stderr redirected to `$state_dir/daemon.log` (mode `0600`), detach it, and poll the IPC endpoint. Idempotent: responds "already running" and exits `0` if the endpoint already answers. |
 | `finalize` (aliases `shutdown`, `f`, `stop`) | Dispatches `Method::Shutdown`. |
 | (implicit) `restart` | Run `stop` then `start` in a script. No single-token `restart` exists. |
 
@@ -1077,8 +1029,8 @@ doctor.rs`). Returns `0` on all-green, `6 Unavailable` otherwise. With
 | `clock-drift` | NTP/chrony offset, fail if `|drift| > 30 s` | W32Time offset |
 | `config-dir-mode` | POSIX bits | NTFS-ACL stub |
 | `runtime-dir-mode` | POSIX bits | NTFS-ACL stub |
-| `ipc-endpoint` | `$XDG_RUNTIME_DIR/pcloud-rs/daemon.sock` reachable | `\\.\pipe\pcloudd` reachable |
-| `daemon-binary` | `pcloud-daemon` on `PATH` | `pcloudd.exe` on `%PATH%` |
+| `ipc-endpoint` | canonical runtime-dir `pcloud.sock` reachable | owner-SID named pipe reachable |
+| `daemon-binary` | sibling `pcloudd` or `pcloudd` on `PATH` | sibling `pcloudd.exe` or `%PATH%` |
 
 `vault-perms` refuses to pass on any platform if another user could
 read the vault. Windows ACL validation is currently a stub
@@ -1446,7 +1398,7 @@ The selector runs against
 | Error | Exit | Example message |
 | --- | --- | --- |
 | Key not found on an object | `2 Usage` | `field not found: 'quota.bogus'. available: premium, quota, usedquota` |
-| Index out of range | `2 Usage` | `field not found: 'revisions.99.id'. available: [0..5]` |
+| Index out of range | `2 Usage` | `field not found: 'links.99.code'. available: [0..5]` |
 | Type mismatch (key on array, index on scalar) | `2 Usage` | `type mismatch at 'quota': expected object, got number` |
 
 Error messages **never echo user-supplied values**; they print field
@@ -1482,7 +1434,7 @@ Stable ABI (see `EXIT_CODE_HELP` in `exit_code.rs`).
 | `3` | `Auth` | Bad credentials, expired token, TFA cancel, daemon `Unauthorized`, or transport errors that match `auth*fail*` / `unauthorized`. |
 | `4` | `Network` | Socket refused, connect timeout, broken pipe, "no such file" (socket missing), generic transport words. If `doctor` cannot reach the IPC endpoint, you'll get `4` from every downstream command. |
 | `5` | `CryptoLocked` | Crypto path locked or unavailable. Common when a sync root lives inside a crypto folder and the user hasn't run `unlock-crypto`. |
-| `6` | `Unavailable` | Daemon unreachable, feature disabled, or an endpoint that's wired but gated (`log`, `diff`, `restore` today). Also the canonical `doctor` failure code. |
+| `6` | `Unavailable` | Daemon unreachable, feature disabled, or an endpoint that's wired but gated. Also the canonical `doctor` failure code. |
 | `7` | `Conflict` | Duplicate sync root, already-mounted path, GPG key missing, audit chain break, `verify` mismatch, `PolicyViolation`. |
 | `8` | `Internal` | Daemon reported `InternalError`. Treat as a bug — collect `daemon.log`, trace id, and `audit verify` output; file a ticket. |
 
@@ -1563,7 +1515,7 @@ a live environment cannot persist itself.
   structured log line, so `journalctl -u pcloudd | grep <id>`
   gives you the full server-side picture.
 
-See the enterprise tracing doc (`docs/book/src/enterprise/tracing.md`)
+See the enterprise tracing doc (`docs/enterprise/tracing.md`)
 for exporter configuration and retention.
 
 ---
@@ -1702,7 +1654,7 @@ silent relaxations.
 - [Exit Codes](./exit-codes.md) — standalone exit-code reference.
 - [Operations: Backup Snapshots](../operations/backup-snapshots.md) —
   GPG key management, offsite destinations.
-- [Enterprise: Tracing](../enterprise/tracing.md) — trace-id
+- [Enterprise: Tracing](../../../enterprise/tracing.md) — trace-id
   propagation, exporter configuration.
 - `pcloudc(1)` — manpage (`docs/man/pcloudc.1`).
 - C-to-Rust parity matrix: `C_FEATURE_PARITY_MATRIX.csv`.

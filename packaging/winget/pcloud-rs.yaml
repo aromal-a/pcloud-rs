@@ -22,12 +22,12 @@ PackageIdentifier: pCloud.pcloud-rs
 PackageVersion: 0.1.0
 PackageLocale: en-US
 Publisher: pCloud Community
-PublisherUrl: https://github.com/pcloudcom
-PublisherSupportUrl: https://github.com/pcloudcom/pcloud-rs/issues
+PublisherUrl: https://github.com/ezechiel203
+PublisherSupportUrl: https://github.com/ezechiel203/pcloud-rs/issues
 PackageName: pcloud-rs
-PackageUrl: https://github.com/pcloudcom/pcloud-rs
+PackageUrl: https://github.com/ezechiel203/pcloud-rs
 License: MIT OR Apache-2.0
-LicenseUrl: https://github.com/pcloudcom/pcloud-rs/blob/main/LICENSE
+LicenseUrl: https://github.com/ezechiel203/pcloud-rs/blob/main/LICENSE
 ShortDescription: pCloud command-line client and sync daemon (Rust rewrite).
 Description: |
   pcloud-rs is the pCloud command-line client and background sync daemon,
@@ -54,7 +54,7 @@ InstallModes:
 UpgradeBehavior: install
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/pcloudcom/pcloud-rs/releases/download/vX.Y.Z/pcloud-rs-X.Y.Z-x64.msi
+    InstallerUrl: https://github.com/ezechiel203/pcloud-rs/releases/download/vX.Y.Z/pcloud-rs-X.Y.Z-x64.msi
     InstallerSha256: SHA256_PLACEHOLDER
     InstallerLocale: en-US
     ProductCode: "{00000000-0000-0000-0000-000000000000}"

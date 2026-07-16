@@ -22,10 +22,10 @@
 //! - `limit_bytes_per_sec = Some(n)` → token-bucket with refill rate
 //!   `n` bytes/second and burst size `n`.
 //!
-//! Callers invoke [`BandwidthLimiter::acquire_blocking`] before each
+//! Callers invoke `BandwidthLimiter::acquire_blocking` before each
 //! transfer I/O unit; the call blocks just long enough for the bucket
 //! to refill the requested budget.  For async callers,
-//! [`BandwidthLimiter::acquire`] returns the required
+//! `BandwidthLimiter::acquire` returns the required
 //! [`std::time::Duration`] without sleeping so the caller can hand it
 //! to an async runtime.
 //!

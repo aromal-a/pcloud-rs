@@ -211,52 +211,20 @@ Show remote folder owner id.
 .BI "fs status " local-path
 Classify a local path against current sync state.
 .SH REVISION HISTORY COMMANDS
-.TP
-.BI "log " path " [--limit N]"
-Show the revision history of a remote file. Aliases
-.BR file-log ", " file-history .
-.TP
-.BI "diff " path " " rev_a " " rev_b
-Diff two revisions of a remote file (requires a configured provider).
-Alias
-.BR file-diff .
-.TP
-.BI "restore " path " " rev
-Restore
-.I path
-to the given revision (requires a configured provider).
-Alias
-.BR file-restore .
 .PP
-These three commands dispatch through a pluggable
+.B Not shipped.
+The
+.BR log ", " diff ", and " restore
+subcommands and the
 .B RevisionProvider
-selected at runtime from
-.BR "[file_history].revision_url"
-in the active config profile.
-When no URL is configured, the daemon returns a structured JSON payload of the
-form
-.RS
-.EX
-{"status":"not_configured","message":"...","next":"configure [file_history].revision_url ..."}
-.EE
-.RE
-and the CLI exits
-.BR 6 " " (Unavailable) .
-When a URL is configured and the
-.B file-history-http
-cargo feature is built into
-.BR pcloud-proto ,
-the daemon POSTs
-.B {"path": "<remote path>"}
-to the URL and projects the response to
-.BR {"revisions":[...],"count":N} .
-In
-.B Production
-profiles only
-.B https://
-URLs are accepted; plaintext
-.B http://
-is refused at config-load time.
+plumbing have been removed from this fork. pCloud's
+.BR listrevisions / revertfile
+endpoints are not exposed to third-party clients. See
+.B docs/future-pcloud-clone-api.md
+("Removed scaffolds") and the operations runbook section
+.B "Recovering an older version of a file"
+for the recommended recovery procedure (web UI revision history plus
+.BR "pcloudc backup snapshot-restore" ).
 .SH MOUNT COMMANDS
 .TP
 .BI "mount " path

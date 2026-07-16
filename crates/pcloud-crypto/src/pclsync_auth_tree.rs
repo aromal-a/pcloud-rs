@@ -56,6 +56,7 @@
 
 #![forbid(unsafe_code)]
 
+use aes::Aes256;
 use hmac::{Hmac, Mac};
 use sha2::Sha512;
 use subtle::ConstantTimeEq;
@@ -264,6 +265,144 @@ fn hmac_sha512_trunc32(
     out
 }
 
+/// Apply the AES-256-ECB step on a parent tag in place. Mirrors the
+/// second half of `pcrypto_sign_sec` (`pclsync/pcrypto.c:644-654`):
+///
+/// ```text
+///     tag = AES-256-ECB-encrypt-2-consecutive-blocks(aes_key, hmac_tag)
+/// ```
+///
+/// `cipher` must be keyed on `sym_key_ver1::aes_key` (32 bytes, see
+/// `pclsync_rsa::PCLSYNC_AES_KEY_LEN`). The 32-byte input is encrypted
+/// as two consecutive 16-byte AES-256-ECB blocks, matching
+/// `psync_aes256_encode_2blocks_consec` in the C client.
+///
+/// CLAUDEREV iter-1 CRYPTO-H-3 / fire 17 (2026-04-30): closes the
+/// long-standing DIVERGENCE NOTE at the head of this module. The
+/// previous Wave-1 deliverable produced HMAC-only parent tags; this
+/// helper completes the C tag shape.
+fn aes_ecb_two_blocks_inplace(cipher: &Aes256, tag: &mut [u8; PCLSYNC_AUTH_TAG_LEN]) {
+    crate::pclsync_sector::ecb_encrypt_two_blocks(cipher, tag);
+}
+
+/// Length of the `sym_key_ver1::aes_key` that drives the AES-256 step.
+pub const PCLSYNC_AES_KEY_LEN: usize = 32;
+
+/// Build the auth tree the **byte-exact C-compatible** way: each
+/// parent tag is `AES-256-ECB-2-blocks(aes_key, HMAC-SHA512(hmac_key,
+/// concat_of_children)[0..32])`. Closes CLAUDEREV iter-1 CRYPTO-H-3
+/// (fire 17, 2026-04-30) — the AES-256-ECB step that the original
+/// Wave-1 deliverable left for a future "Primitive D wrapper" is now
+/// applied here.
+///
+/// `aes_key` is `sym_key_ver1::aes_key` (32 bytes); `hmac_key` is
+/// `sym_key_ver1::hmackey` (128 bytes). The leaf tags in
+/// `sector_tags` are NOT re-AES'd — leaves are produced by the
+/// `pcrypto_encode_sec` AEAD which already incorporates the AES key.
+/// Only **parent and root** tags are HMAC + AES'd here, matching the
+/// C call site at `pfs_crpt_flush` (`pfscrypto.c:695`).
+///
+/// Same edge-case behaviour as [`build_auth_tree`]:
+/// - empty input → empty tree, `needmasterauth = false`,
+///   `treelevels = 0`.
+/// - single leaf → leaf tag stored verbatim, `needmasterauth = false`,
+///   `treelevels = 0`. (No parent — no AES step applied.)
+///
+/// # Cross-client interop posture
+///
+/// This function produces the byte-exact C wire shape *if* the
+/// `aes_key` and `hmac_key` arguments match those used by the C
+/// client to encode the same plaintext. Capturing a real C-client
+/// fixture and asserting byte-identity is tracked separately as a
+/// follow-up live-KAT (the closure criterion stated in the
+/// CLAUDEREV remediation plan); the in-tree round-trip test
+/// `aes_step_changes_root` regression-guards that the AES step is
+/// actually applied versus the HMAC-only baseline.
+#[must_use]
+pub fn build_auth_tree_with_aes(
+    aes_key: &[u8; PCLSYNC_AES_KEY_LEN],
+    hmac_key: &[u8; PCLSYNC_HMAC_KEY_LEN],
+    sector_tags: &[[u8; PCLSYNC_AUTH_TAG_LEN]],
+) -> AuthTree {
+    if sector_tags.is_empty() {
+        return AuthTree {
+            levels: Vec::new(),
+            treelevels: 0,
+            masterauthoff: 0,
+            needmasterauth: false,
+        };
+    }
+
+    // SAFETY: AES-256 accepts exactly 32-byte keys; we statically
+    // require `[u8; PCLSYNC_AES_KEY_LEN]` (= 32) so this never fails.
+    // Use the fully-qualified call to avoid the `new_from_slice`
+    // ambiguity with `hmac::Mac::new_from_slice` already in scope.
+    let cipher = <Aes256 as aes::cipher::KeyInit>::new_from_slice(aes_key)
+        .expect("AES-256 accepts a 32-byte key");
+
+    // Pack level 0 verbatim — leaves are not AES'd here (they came
+    // pre-encoded from `pcrypto_encode_sec`).
+    let mut level0 = Vec::with_capacity(sector_tags.len() * PCLSYNC_AUTH_TAG_LEN);
+    for tag in sector_tags {
+        level0.extend_from_slice(tag);
+    }
+    let mut levels: Vec<Vec<u8>> = Vec::new();
+    levels.push(level0);
+
+    // Build parent levels with the full HMAC + AES tag shape until the
+    // top level holds a single auth sector.
+    while level_sector_count(levels.last().expect("non-empty").len()) > 1 {
+        if levels.len() >= PCLSYNC_MAX_TREE_LEVELS {
+            break;
+        }
+        let parent =
+            build_parent_level_with_aes(&cipher, hmac_key, levels.last().expect("non-empty"));
+        levels.push(parent);
+    }
+
+    let needmasterauth = sector_tags.len() > 1;
+    if needmasterauth {
+        let top = levels.last().expect("non-empty");
+        let mut root_tag = hmac_sha512_trunc32(hmac_key, top);
+        aes_ecb_two_blocks_inplace(&cipher, &mut root_tag);
+        levels.push(root_tag.to_vec());
+    }
+
+    let treelevels = if needmasterauth { levels.len() - 1 } else { 0 };
+    let data_bytes: u64 = (sector_tags.len() as u64) * (PCLSYNC_AUTH_SECTOR_SIZE as u64);
+    let auth_bytes: u64 = levels
+        .iter()
+        .take(levels.len().saturating_sub(1))
+        .map(|l| l.len() as u64)
+        .sum();
+    let masterauthoff = data_bytes + auth_bytes;
+
+    AuthTree {
+        levels,
+        treelevels,
+        masterauthoff,
+        needmasterauth,
+    }
+}
+
+/// Build one parent level by HMAC + AES-ECB-chunking the child level
+/// 128 tags at a time. Companion to [`build_parent_level`] for the
+/// C-byte-exact path.
+fn build_parent_level_with_aes(
+    cipher: &Aes256,
+    hmac_key: &[u8; PCLSYNC_HMAC_KEY_LEN],
+    child_level: &[u8],
+) -> Vec<u8> {
+    let mut parent =
+        Vec::with_capacity(level_sector_count(child_level.len()) * PCLSYNC_AUTH_TAG_LEN);
+    for chunk in child_level.chunks(PCLSYNC_AUTH_SECTOR_SIZE) {
+        let mut tag = hmac_sha512_trunc32(hmac_key, chunk);
+        aes_ecb_two_blocks_inplace(cipher, &mut tag);
+        parent.extend_from_slice(&tag);
+    }
+    parent
+}
+
 /// Verify that `sector_tag` at `sector_index` (0-based, leaf ordering) is
 /// consistent with the supplied tree by recomputing the parent chain from
 /// the claimed leaf up to the root and constant-time-comparing against
@@ -375,6 +514,67 @@ mod tests {
 
     fn tags(n: usize) -> Vec<[u8; PCLSYNC_AUTH_TAG_LEN]> {
         (0..n).map(|i| tag(i as u8)).collect()
+    }
+
+    fn aes_key() -> [u8; PCLSYNC_AES_KEY_LEN] {
+        let mut k = [0u8; PCLSYNC_AES_KEY_LEN];
+        for (i, b) in k.iter_mut().enumerate() {
+            *b = (i as u8).wrapping_mul(11).wrapping_add(5);
+        }
+        k
+    }
+
+    /// CLAUDEREV iter-1 CRYPTO-H-3 / fire 17 (2026-04-30) regression
+    /// guard. The AES-256-ECB step on parent tags must actually be
+    /// applied — i.e. `build_auth_tree_with_aes` must produce a
+    /// different root than the HMAC-only `build_auth_tree` when the
+    /// input has at least one parent level. A single-leaf input is
+    /// excluded because no parent is ever computed.
+    #[test]
+    fn aes_step_changes_root() {
+        // Two leaves → one parent level, plus root with AES applied.
+        let leaves = tags(2);
+        let hmac_only = build_auth_tree(&key(), &leaves);
+        let with_aes = build_auth_tree_with_aes(&aes_key(), &key(), &leaves);
+        let hmac_only_root = compute_master_auth(&hmac_only);
+        let with_aes_root = compute_master_auth(&with_aes);
+        assert_ne!(
+            hmac_only_root, with_aes_root,
+            "build_auth_tree_with_aes must apply AES; root tags differ from HMAC-only baseline"
+        );
+        // Both trees have the same shape (treelevels, needmasterauth)
+        // — only the bytes differ.
+        assert_eq!(hmac_only.needmasterauth, with_aes.needmasterauth);
+        assert_eq!(hmac_only.treelevels, with_aes.treelevels);
+    }
+
+    /// Edge case: a single-leaf input never builds a parent level, so
+    /// `build_auth_tree_with_aes` must produce the SAME root as the
+    /// HMAC-only `build_auth_tree` (the leaf tag itself, untouched).
+    #[test]
+    fn aes_variant_single_leaf_matches_hmac_only() {
+        let leaves = tags(1);
+        let hmac_only = build_auth_tree(&key(), &leaves);
+        let with_aes = build_auth_tree_with_aes(&aes_key(), &key(), &leaves);
+        assert_eq!(
+            compute_master_auth(&hmac_only),
+            compute_master_auth(&with_aes),
+            "single-leaf trees: no parent level → no AES step → identical roots"
+        );
+        assert!(!with_aes.needmasterauth);
+        assert_eq!(with_aes.treelevels, 0);
+    }
+
+    /// Edge case: empty input → both variants return the empty tree.
+    #[test]
+    fn aes_variant_empty_input_matches_hmac_only() {
+        let hmac_only = build_auth_tree(&key(), &[]);
+        let with_aes = build_auth_tree_with_aes(&aes_key(), &key(), &[]);
+        assert_eq!(hmac_only.needmasterauth, with_aes.needmasterauth);
+        assert_eq!(hmac_only.treelevels, with_aes.treelevels);
+        assert_eq!(hmac_only.masterauthoff, with_aes.masterauthoff);
+        assert!(hmac_only.levels.is_empty());
+        assert!(with_aes.levels.is_empty());
     }
 
     #[test]

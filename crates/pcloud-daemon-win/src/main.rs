@@ -49,7 +49,9 @@
 //! 1. `Running` with `controls_accepted = STOP | SHUTDOWN`
 //! 2. `StopPending` with `wait_hint = 5s` once the shutdown flag flips
 //!    or the worker thread finishes
-//! 3. `Stopped` with `exit_code = Win32(0)` immediately after
+//! 3. `Stopped` with `exit_code = Win32(0)` after a clean stop, or a
+//!    service-specific non-zero code when bootstrap/request handling
+//!    fails or the worker thread panics
 //!
 //! The flag uses [`std::sync::atomic::Ordering::SeqCst`] on both the
 //! store (handler) and the load (worker poll). That is deliberately
@@ -137,6 +139,8 @@ mod svc {
     /// SCM-visible service name. Must match the name passed to
     /// `sc.exe create` at install time.
     const SERVICE_NAME: &str = "pcloudd";
+    const SERVICE_ERROR_DAEMON_FAILED: u32 = 1;
+    const SERVICE_ERROR_WORKER_PANICKED: u32 = 2;
 
     /// Service type reported to the SCM. [`ServiceType::OWN_PROCESS`]
     /// means the service runs in its own dedicated process, not as part
@@ -153,14 +157,46 @@ mod svc {
     /// Invoked on the service worker thread spawned by the
     /// `windows_service` dispatcher. Returning from this function signals
     /// the SCM that the service has stopped. Any error returned by
-    /// [`run_service`] is intentionally swallowed here because the SCM
-    /// log is the only available sink at this layer and the process is
-    /// about to exit regardless.
+    /// [`run_service`] cannot be reported through `SetServiceStatus`
+    /// when registration fails, so it is written to the Windows Event
+    /// Log fallback and the process exits non-zero.
     fn service_main(_args: Vec<OsString>) {
         if let Err(err) = run_service() {
-            // We cannot surface errors to the user here; the SCM logs are the
-            // only sink. Swallow so the process exits cleanly.
-            let _ = err;
+            report_service_failure(&format!(
+                "service lifecycle failed before final SCM status: {err}"
+            ));
+            std::process::exit(1);
+        }
+    }
+
+    fn report_service_failure(message: &str) {
+        eprintln!("pcloud-daemon-win: {message}");
+        let status = std::process::Command::new("eventcreate")
+            .args([
+                "/L",
+                "APPLICATION",
+                "/T",
+                "ERROR",
+                "/SO",
+                SERVICE_NAME,
+                "/ID",
+                "1",
+                "/D",
+                message,
+            ])
+            .status();
+        if let Err(err) = status {
+            eprintln!("pcloud-daemon-win: failed to write Windows Event Log entry: {err}");
+        }
+    }
+
+    fn panic_payload_summary(payload: &(dyn std::any::Any + Send)) -> String {
+        if let Some(message) = payload.downcast_ref::<&str>() {
+            (*message).to_owned()
+        } else if let Some(message) = payload.downcast_ref::<String>() {
+            message.clone()
+        } else {
+            "non-string panic payload".to_owned()
         }
     }
 
@@ -204,7 +240,7 @@ mod svc {
             service_type: SERVICE_TYPE,
             current_state: ServiceState::Running,
             controls_accepted: ServiceControlAccept::STOP | ServiceControlAccept::SHUTDOWN,
-            exit_code: ServiceExitCode::Win32(0),
+            exit_code: ServiceExitCode::NO_ERROR,
             checkpoint: 0,
             wait_hint: Duration::default(),
             process_id: None,
@@ -233,32 +269,35 @@ mod svc {
             service_type: SERVICE_TYPE,
             current_state: ServiceState::StopPending,
             controls_accepted: ServiceControlAccept::empty(),
-            exit_code: ServiceExitCode::Win32(0),
+            exit_code: ServiceExitCode::NO_ERROR,
             checkpoint: 0,
             wait_hint: Duration::from_secs(5),
             process_id: None,
         })?;
 
-        // Join the worker. The daemon's serve loop returns within one
-        // accept(2) iteration of the flag flipping, so this completes
-        // promptly. Errors surface via SCM logs only; the SCM API does
-        // not offer a richer channel at this layer.
-        match worker.join() {
-            Ok(Ok(())) => {}
+        // Join the worker. Clean stops report success; failures are
+        // preserved as service-specific SCM exit codes and mirrored to
+        // the Windows Event Log fallback above.
+        let exit_code = match worker.join() {
+            Ok(Ok(())) => ServiceExitCode::NO_ERROR,
             Ok(Err(err)) => {
-                let _ = err;
+                report_service_failure(&format!("daemon worker failed: {err:#}"));
+                ServiceExitCode::ServiceSpecific(SERVICE_ERROR_DAEMON_FAILED)
             }
-            Err(_panic) => {
-                // Worker panicked; treated as a clean stop from the
-                // SCM's perspective since there is no recovery path.
+            Err(panic) => {
+                report_service_failure(&format!(
+                    "daemon worker panicked: {}",
+                    panic_payload_summary(panic.as_ref())
+                ));
+                ServiceExitCode::ServiceSpecific(SERVICE_ERROR_WORKER_PANICKED)
             }
-        }
+        };
 
         status_handle.set_service_status(ServiceStatus {
             service_type: SERVICE_TYPE,
             current_state: ServiceState::Stopped,
             controls_accepted: ServiceControlAccept::empty(),
-            exit_code: ServiceExitCode::Win32(0),
+            exit_code,
             checkpoint: 0,
             wait_hint: Duration::default(),
             process_id: None,

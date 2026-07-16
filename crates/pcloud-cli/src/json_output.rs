@@ -313,59 +313,6 @@ mod tests {
     }
 
     #[test]
-    fn file_history_unavailable_envelope_round_trips() {
-        // R9 #9: `pcloudc log <PATH>` currently returns Unavailable
-        // from the daemon (bd-1du.10). Make sure the standard success
-        // envelope preserves the exit code + message verbatim so the
-        // operator sees the honest-scope detail.
-        let response = Response {
-            status: ResponseStatus::Unavailable,
-            message: "file-history: not yet supported by pCloud public API".into(),
-        };
-        let env = JsonEnvelope::from_response("log", &response);
-        let rendered = env.render();
-        let parsed: JsonEnvelope = serde_json::from_str(rendered.trim()).unwrap();
-        match parsed {
-            JsonEnvelope::Success {
-                command,
-                status,
-                message,
-                exit_code,
-            } => {
-                assert_eq!(command, "log");
-                assert_eq!(status, JsonStatus::Unavailable);
-                assert_eq!(exit_code, ExitCode::Unavailable.as_i32());
-                assert!(message.contains("not yet supported"));
-            }
-            _ => panic!("expected success variant with unavailable status"),
-        }
-    }
-
-    #[test]
-    fn file_history_ok_envelope_preserves_revision_array_message() {
-        // R9 #9: when the daemon eventually supports listrevisions it
-        // will return a JSON array in `message`. Ensure the envelope
-        // does not mangle the payload — callers parse it as-is.
-        let payload = "[{\"rev_id\":\"deadbeef\",\"mtime\":123,\"size\":10,\"user\":\"a@b\",\"comment\":\"\"}]";
-        let response = Response {
-            status: ResponseStatus::Ok,
-            message: payload.to_owned(),
-        };
-        let env = JsonEnvelope::from_response("log", &response);
-        let rendered = env.render();
-        // The envelope must embed the array verbatim inside the
-        // `message` JSON string. Deserialising + re-reading `message`
-        // round-trips to the same JSON text.
-        let v: serde_json::Value = serde_json::from_str(rendered.trim()).unwrap();
-        assert_eq!(v["command"], "log");
-        assert_eq!(v["status"], "ok");
-        assert_eq!(v["exit_code"], 0);
-        let msg = v["message"].as_str().unwrap();
-        let inner: serde_json::Value = serde_json::from_str(msg).unwrap();
-        assert_eq!(inner[0]["rev_id"], "deadbeef");
-    }
-
-    #[test]
     fn filtered_envelope_round_trips() {
         use serde_json::json;
         let resp = Response {

@@ -1,0 +1,104 @@
+# T4.1 — Prometheus alert rules in tree.
+#
+# This file ships the canonical alert set for the pcloud-rs daemon.
+# Severity is one of {info, warning, critical}; every rule cites a
+# runbook anchor under OPERATIONS-RUNBOOK.md.
+#
+# Validate locally with: promtool check rules deploy/prometheus/alerts.yml
+
+groups:
+  - name: pcloud_daemon_health
+    interval: 30s
+    rules:
+      # Cache hit-ratio dip
+      - alert: PCloudPageCacheHitRatioLow
+        expr: |
+          (sum(rate(pcloud_page_cache_hits_total[5m]))
+           /
+           clamp_min(
+             sum(rate(pcloud_page_cache_hits_total[5m])) +
+             sum(rate(pcloud_page_cache_misses_total[5m])),
+             1
+           )
+          ) < 0.50
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "pcloud-rs page cache hit ratio below 50%"
+          description: |
+            The page cache served fewer than 50% of read requests over
+            the last 10 minutes. The working set is likely larger than
+            the configured `mount.page_cache_entries`.
+          runbook: "OPERATIONS-RUNBOOK.md#cache-hit-ratio-dip"
+
+      # Audit-log persistence drops
+      - alert: PCloudAuditDropSpike
+        expr: rate(pcloud_audit_drops_total[5m]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "pcloud-rs audit-log writes are being dropped"
+          description: |
+            Audit events are being dropped — the tamper-evident chain
+            is being broken in real time. Storage may be full, or the
+            SQLite WAL may be locked by an external client.
+          runbook: "OPERATIONS-RUNBOOK.md#audit-drop-spike"
+
+      # Integrity sweeper mismatches
+      - alert: PCloudIntegritySweepMismatch
+        expr: increase(pcloud_integrity_mismatches_total[1h]) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "pcloud-rs integrity sweeper found a mismatch"
+          description: |
+            The integrity sweeper detected a SHA mismatch between the
+            local cached content and the server-reported digest.
+            Investigate before the next sync cycle propagates the
+            drift.
+          runbook: "OPERATIONS-RUNBOOK.md#integrity-sweep-mismatch"
+
+      # Mount-orphan threshold
+      - alert: PCloudMountOrphans
+        expr: pcloud_mount_orphans_total > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "pcloud-rs has orphan mounts (kernel-tracked, daemon-untracked)"
+          description: |
+            One or more kernel mount handles exist that the daemon's
+            ACTIVE_MOUNTS registry does not track. A previous crash
+            likely leaked them. Reap with `pcloudc mount --force-umount`.
+          runbook: "OPERATIONS-RUNBOOK.md#mount-orphan-threshold"
+
+      # Transport circuit breaker open
+      - alert: PCloudTransportCircuitOpen
+        expr: pcloud_transport_circuit_open == 1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "pcloud-rs transport circuit breaker is open"
+          description: |
+            The resilient transport's circuit breaker tripped on
+            repeated failures. Outbound API requests are being failed
+            fast. Check pcloud.com status and the daemon's transport
+            counters.
+          runbook: "OPERATIONS-RUNBOOK.md#transport-circuit-open"
+
+      # SLO violation aggregate
+      - alert: PCloudSloViolation
+        expr: pcloud_slo_pass == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "pcloud-rs aggregate SLO bit is violation"
+          description: |
+            At least one canonical SLO is in violation state. Drill
+            into individual SLOs via `pcloudc slo` to identify which.
+          runbook: "OPERATIONS-RUNBOOK.md#slo-violation"

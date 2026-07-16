@@ -51,7 +51,8 @@
 //! **Stability:** T1 internal — API evolves with the upstream pCloud
 //! binary/HTTP protocol and is not semver-stable.
 //!
-//! **MSRV:** Rust 1.82 (workspace-pinned; edition 2024).
+//! **MSRV:** Rust 1.89 for the portable crate; full workspace and release
+//! validation use the repository-pinned Rust 1.96.1 toolchain.
 //!
 //! **Features:** none. TLS/transport selection is controlled by the
 //! transport crate, not this one.
@@ -84,11 +85,11 @@ pub mod folder_api;
 pub mod http_download;
 pub mod methods;
 pub mod notifications_api;
+pub mod parallel_download;
 pub mod public_links_api;
 pub mod redacted;
 pub mod resilient_transport;
 pub mod response;
-pub mod revision_provider;
 pub mod shares_api;
 pub mod sync_api;
 pub mod tls;

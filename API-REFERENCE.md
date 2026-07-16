@@ -12,12 +12,19 @@ Rust entry points:
 
 - Protocol clients: `crates/pcloud-proto/src/*`
 - Daemon backends:  `crates/pcloud-daemon/src/*_backend.rs`
-- SDK surface:      `crates/pcloud-sdk/src/lib.rs`
-  (`EmbeddedDaemon::*`)
+- Stable SDK:       `crates/pcloud-sdk-public/src/lib.rs`
+  (`Client::remote()` / `RemoteDrive`)
+- Embedded compatibility API: `crates/pcloud-sdk/src/lib.rs`
+  (`pcloud-embedded-sdk`, `EmbeddedDaemon::*`)
 - IPC methods:      `crates/pcloud-ipc/src/methods.rs`
 
 Legend: **I** Implemented · **P** Partial · **M** Missing · **R**
 intentionally Rejected. See the CSV for full notes per row.
+
+The method-by-method `EmbeddedDaemon` entries below describe the internal,
+unpublished compatibility API. The public `pcloud-sdk` 1.0 contract is
+intentionally narrower: it exposes filesystem and share operations through
+`RemoteDrive`, while authentication and lifecycle remain daemon-owned.
 
 ## Auth (`pcloud-proto::auth_api`)
 
@@ -56,11 +63,11 @@ intentionally Rejected. See the CSV for full notes per row.
 
 ## Transfers (`pcloud-proto::transfer_api`, `async_transfer`, `http_download`)
 
-Row 93 (`upload_writefromfile`) is **Implemented** as of audit-06 stream-c
-(2026-04-26). `TransferRuntime::upload_write_from_file` drives server-side
-copy against the live `BinaryApiTransport`; daemon handler
-`upload_write_from_file_ipc` routes `Request::UploadWriteFromFile` to it;
-CLI exposes `pcloudc upload write-from-file`. See `STATUS.md`.
+Row 93 (`upload_writefromfile`) is **Implemented** as of the GPTREV Worker 4
+reconciliation (2026-04-30). The proto primitive, backend runtime, daemon
+dispatch, CLI, and SDK all expose separate destination `uploadoffset` and
+source `offset` values for the server-side-copy C shape. See
+`STATUS.md` for the authoritative tally.
 
 | Operation | Rust entry | C counterpart | Status |
 |-----------|-----------|---------------|--------|
@@ -68,10 +75,11 @@ CLI exposes `pcloudc upload write-from-file`. See `STATUS.md`.
 | `upload_create` | `TransferApi::upload_create` | `psync_upload_create` | I |
 | `upload_write` | `TransferApi::upload_write` | `psync_upload_write` | I |
 | `upload_save` | `TransferApi::upload_save` | `psync_upload_save` | I |
-| `upload_writefromfile` (server-side copy) | `TransferRuntime::upload_write_from_file` / `pcloudc upload write-from-file` | `upload_writefromfile` | I (row 93 closed, audit-06 stream-c 2026-04-26) |
+| `upload_writefromfile` (server-side copy) | `TransferRuntime::upload_write_from_file` / `Request::UploadWriteFromFile` / `pcloudc upload write-from-file` / `EmbeddedDaemon::upload_write_from_file` | `upload_writefromfile` | I (row 93; distinct upload/source offsets exposed) |
 | signed HTTP download | `http_download::execute` | internal | I |
 | SDK `upload_file` / `_as` | `EmbeddedDaemon::upload_file{_as}` | convenience | I |
 | SDK `upload_data` / `_as` | `EmbeddedDaemon::upload_data{_as}` | convenience | I |
+| SDK `UploadSession` public route | `EmbeddedDaemon::start_upload` | upload-session convenience | I (row 94) |
 | SDK `download_file` | `EmbeddedDaemon::download_file` | convenience | I |
 | per-download state query | — | `psync_download_state` | R (C body is a `return 0` stub; Rust transfer runtime exposes real per-transfer state via IPC) |
 
@@ -80,9 +88,9 @@ CLI exposes `pcloudc upload write-from-file`. See `STATUS.md`.
 | Operation | Rust entry | C counterpart | Status |
 |-----------|-----------|---------------|--------|
 | file link create | `create_file_public_link` | `psync_file_public_link` | I |
-| folder link create | `create_folder_public_link{_with_options}` | `psync_folder_public_link{_full}` | I |
+| folder link create | `create_folder_public_link` | `psync_folder_public_link` | I |
 | tree link create (ids) | `create_tree_public_link` | `psync_tree_public_link` | I |
-| tree link create (paths) | `Request::CreateTreePublicLinkFromPaths` / `PublicLinkPathResolver` | path-based shape | I |
+| tree link create (paths) | `Request::CreateTreePublicLinkFromPathTargets` / `PublicLinkPathResolver` / SDK `create_tree_public_link_from_targets` | path-based root/folder/file shape | I |
 | list publinks | `list_public_links` | `psync_list_publinks` | I |
 | list uploadlinks | `list_upload_links` | `psync_list_uploadlinks` | I |
 | show link | `show_public_link` | `psync_show_publink` | I |

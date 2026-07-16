@@ -1,19 +1,23 @@
 #![allow(clippy::pedantic)]
-//! Constructs a `PageCache`, warms it with 16 pages, then replays a mixed
-//! read workload that would hit and miss the cache. Reports the observed
-//! hit/miss ratio so operators can tune page size and capacity.
+//! Constructs a `PageCacheGeneric<String>`, warms it with 16 pages, then
+//! replays a mixed read workload that would hit and miss the cache.
+//! Reports the observed hit/miss ratio so operators can tune page size
+//! and capacity.
 //!
 //! Run with: `cargo run -p pcloud-cache --example warm_cache`
 
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
-use pcloud_cache::page_cache::PageCache;
+use pcloud_cache::page_cache_generic::{PageCacheConfig, PageCacheGeneric};
 
 fn main() {
     // 1 MiB capacity, 64 KiB page size — small enough to observe evictions
     // if the workload scales up, big enough to hold our 16 warm pages.
-    let cache = PageCache::with_capacity(1024 * 1024, 64 * 1024);
+    let cache: PageCacheGeneric<String> = PageCacheGeneric::new(PageCacheConfig {
+        max_bytes: 1024 * 1024,
+        page_size: 64 * 1024,
+    });
 
     const WARM_PAGES: usize = 16;
     const PAGE_BYTES: usize = 4096;
@@ -23,11 +27,10 @@ fn main() {
         let key = format!("page:{i}");
         cache.put(key, vec![i as u8; PAGE_BYTES]);
     }
+    let stats = cache.stats();
     println!(
         "warmed:  {} pages, used={} bytes, entry_count={}",
-        WARM_PAGES,
-        cache.used_bytes(),
-        cache.entry_count()
+        WARM_PAGES, stats.bytes_resident, stats.pages_resident,
     );
 
     // Replay phase: 32 reads, half of which target pages we warmed and half

@@ -1,0 +1,17 @@
+#!/bin/sh
+
+set -eu
+
+PACKAGE_NAME="${SYNOPKG_PKGNAME:-pcloud-rs}"
+export PCLOUD_PACKAGE_DIR="${SYNOPKG_PKGDEST:-/var/packages/$PACKAGE_NAME/target}"
+export PCLOUD_DATA_DIR="${SYNOPKG_PKGVAR:-/var/packages/$PACKAGE_NAME/var}"
+export PCLOUD_RUN_DIR="${SYNOPKG_PKGTMP:-/var/packages/$PACKAGE_NAME/tmp}/run"
+export PCLOUD_LOG_DIR="$PCLOUD_DATA_DIR/log"
+
+case "${1:-}" in
+    prestart|prestop) exit 0 ;;
+    start|stop|restart|status)
+        exec "$PCLOUD_PACKAGE_DIR/share/pcloud-rs/pcloudd-supervisor.sh" "$1"
+        ;;
+    *) exit 0 ;;
+esac

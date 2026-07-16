@@ -1,0 +1,610 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Distributed Tracing - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/../../enterprise/tracing.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <blockquote>
+<p><strong>Pre-alpha scaffold — not live / not production-verified.</strong> This document
+describes design and unit-tested code that has not been validated against a
+real production deployment. Do not treat it as a shippable capability.
+See <code>CLAUDE.md</code> and <code>docs/enterprise/README.md</code> for the honesty rules.</p>
+</blockquote>
+<h1 id="opentelemetry-distributed-tracing"><a class="header" href="#opentelemetry-distributed-tracing">OpenTelemetry Distributed Tracing</a></h1>
+<blockquote>
+<p><strong>Status:</strong> <strong>LANDED</strong> (H13a–H13d), <strong>live in-process collector
+test</strong>. Enabled by opting into the <code>tracing-otlp</code> Cargo feature at
+build time and setting <code>[observability.tracing].enabled = true</code> at
+runtime. End-to-end OTLP delivery is now exercised by an in-process
+OTLP/HTTP collector integration test
+(<code>crates/pcloud-observability/tests/otlp_live_interop.rs</code>) that
+spins up <code>axum</code>, decodes the exported protobuf payloads via
+<code>opentelemetry-proto</code>, and asserts the span hierarchy, the
+[<code>ALLOWED_ATTRS</code>] allow-list contract, and W3C <code>traceparent</code>
+propagation. Live interop against a managed third-party OTLP
+backend (Datadog, Honeycomb, New Relic, Tempo UI) is still
+unverified in CI; <code>Pkcs11Hsm</code> KMS paths and FUSE callbacks are
+<strong>not</strong> instrumented yet.</p>
+</blockquote>
+<h2 id="1-purpose"><a class="header" href="#1-purpose">1. Purpose</a></h2>
+<p>Distributed tracing turns a CLI-to-API call chain into a single,
+queryable object in an OTLP backend (Jaeger, Tempo, Datadog,
+Honeycomb, New Relic). For a user hitting a failure in
+<code>pcloudc sync add /some/path</code>, the operator wants one trace id that
+covers:</p>
+<ul>
+<li>CLI parsing and the IPC round-trip,</li>
+<li>daemon dispatch routing,</li>
+<li>the responsible backend (<code>transfer</code>, <code>sync</code>, <code>crypto</code>, <code>shares</code>,
+<code>public_link</code>, <code>backup</code>, <code>account</code>),</li>
+<li>the outgoing HTTPS call to the pCloud API.</li>
+</ul>
+<p>Without tracing, the operator is stuck correlating three separate
+log streams by wall-clock and hoping the clocks are synced. With
+tracing, the user pastes one trace id into a ticket and the
+operator sees the whole chain end-to-end in the collector UI.</p>
+<p>This is the beginner-friendly, non-negotiable story: <strong>one id,
+whole trace, no PII.</strong> Everything below is the enterprise-grade
+shape of that story.</p>
+<h2 id="2-threat-model"><a class="header" href="#2-threat-model">2. Threat model</a></h2>
+<p>Tracing adds an outbound TLS channel to a collector and attaches a
+header (<code>traceparent</code>) to local IPC requests. The relevant threats
+and their mitigations:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Threat</th><th>Mitigation</th></tr>
+</thead>
+<tbody>
+<tr><td><strong>PII leakage</strong> via span attributes (paths, emails, tokens)</td><td><code>attr_redact</code> five-key allow-list; debug builds panic on unknown keys (§6)</td></tr>
+<tr><td><strong>PII leakage</strong> via span <em>names</em></td><td>Names are fixed string literals drawn from §5; callers cannot inject user data</td></tr>
+<tr><td><strong>Malicious <code>traceparent</code> injection</strong> on the wire</td><td>Invalid traceparent values are dropped; daemon synthesises a fresh root (§4)</td></tr>
+<tr><td><strong>Collector endpoint downgrade to plaintext</strong></td><td>Non-loopback plaintext endpoints refused at startup (§8)</td></tr>
+<tr><td><strong>Secret leakage via collector auth headers in config file</strong></td><td>Headers MUST use <code>${env:VAR}</code> form; literal values refused at startup (§8)</td></tr>
+<tr><td><strong>Always-on performance cost in disabled builds</strong></td><td>Feature-gated at compile time (<code>tracing-otlp</code>) plus opt-in at runtime</td></tr>
+</tbody>
+</table>
+</div>
+<p>Tracing is explicitly not an auth channel, not a DLP channel, and
+not a security boundary. It is an observability channel only.</p>
+<h2 id="3-scope"><a class="header" href="#3-scope">3. Scope</a></h2>
+<p>In scope, landed:</p>
+<ul>
+<li>W3C Trace Context <code>traceparent</code> propagation between CLI and
+daemon,</li>
+<li>server span on the dispatch boundary,</li>
+<li>internal spans for each backend (<code>transfer</code>, <code>sync</code>, <code>crypto</code>,
+<code>shares</code>, <code>public_link</code>, <code>backup</code>, <code>account</code>),</li>
+<li>OTLP/HTTP protobuf export,</li>
+<li>strict attribute allow-list,</li>
+<li>head sampling with error bias.</li>
+</ul>
+<p>Out of scope for H13:</p>
+<ul>
+<li>FUSE/mount callbacks instrumentation (uninstrumented by design
+in this wave; follow-up),</li>
+<li><code>Pkcs11Hsm</code> KMS provider call paths (stub surface, no spans),</li>
+<li>TraceState (W3C multi-vendor extension) propagation,</li>
+<li>metrics and logs pipelines — only <strong>tracing</strong> landed here;
+OpenTelemetry metrics and logs are separate roadmap items.</li>
+</ul>
+<h2 id="4-design"><a class="header" href="#4-design">4. Design</a></h2>
+<h3 id="41-wire-shape"><a class="header" href="#41-wire-shape">4.1 Wire shape</a></h3>
+<p>The CLI wraps each IPC <code>Request</code> in <code>RequestEnvelope</code>:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// crates/pcloud-ipc/src/methods.rs
+#[derive(Serialize, Deserialize)]
+pub struct RequestEnvelope {
+    pub request: Request,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traceparent: Option&lt;String&gt;,
+}
+
+impl RequestEnvelope {
+    /// Accept either the new envelope shape or a legacy bare `Request`.
+    pub fn try_from_wire(bytes: &amp;[u8]) -&gt; Result&lt;Self, ProtocolError&gt; { /* ... */ }
+}
+<span class="boring">}</span></code></pre>
+<p>Design choice: <strong>single envelope wrapper, not per-variant
+ripple.</strong> Threading a <code>traceparent</code> field into every
+<code>Request::*</code> variant would have touched ~485 call sites and
+required breaking <code>#[non_exhaustive]</code>. The envelope localises the
+change, preserves byte compatibility with untraced peers
+(Serde omits <code>traceparent</code> when <code>None</code>), and keeps legacy bare-
+<code>Request</code> peers working via <code>try_from_wire</code>.</p>
+<h3 id="42-propagation"><a class="header" href="#42-propagation">4.2 Propagation</a></h3>
+<p>The wire carrier is the W3C Trace Context <code>traceparent</code>:</p>
+<pre><code>traceparent = "00-" &lt;trace_id:32-hex&gt; "-" &lt;parent_id:16-hex&gt; "-" &lt;flags:2-hex&gt;
+</code></pre>
+<ul>
+<li><code>00</code> is the version byte,</li>
+<li><code>flags = 01</code> means sampled; <code>00</code> means recorded-but-not-sampled,</li>
+<li>malformed traceparents are dropped at the boundary and the
+daemon synthesises a fresh root — never trust a broken id.</li>
+</ul>
+<h3 id="43-span-hierarchy"><a class="header" href="#43-span-hierarchy">4.3 Span hierarchy</a></h3>
+<pre><code>pcloudc.command                kind=client   (CLI root; --trace-id or fresh)
+└── pcloudd.dispatch           kind=server   (IPC receive; extracts traceparent)
+    └── pcloudd.backend.&lt;name&gt; kind=internal (transfer | sync | crypto |
+                                              public_link | shares | backup |
+                                              account)
+        └── pcloud.proto.&lt;method&gt; kind=client (HTTPS call to pCloud API)
+</code></pre>
+<p>Background work (sync engine ticks, writeback flushes) is emitted
+under <code>pcloudd.background.&lt;job&gt;</code> with a stable <code>job</code> attribute.
+These spans are <strong>not</strong> parented to any CLI invocation — they are
+trace roots in their own right.</p>
+<h3 id="44-sampling"><a class="header" href="#44-sampling">4.4 Sampling</a></h3>
+<p>Head-based <strong>1% default</strong>, error-biased to <strong>100% on error</strong>:</p>
+<ul>
+<li>The CLI rolls a random sample at <code>sample_rate</code>
+(default <code>0.01</code>). The decision is encoded in the <code>flags</code> byte of
+the outgoing <code>traceparent</code>, so the daemon honours it without
+re-rolling.</li>
+<li>Any span ending with a non-<code>Ok</code> status is force-exported
+together with its full ancestor chain. Success is cheap;
+failure is fully traced.</li>
+<li>Passing <code>--trace-id</code> implicitly force-samples that invocation
+regardless of <code>sample_rate</code>.</li>
+</ul>
+<h2 id="5-interfaces"><a class="header" href="#5-interfaces">5. Interfaces</a></h2>
+<h3 id="51-library-surface-pcloud-observability"><a class="header" href="#51-library-surface-pcloud-observability">5.1 Library surface (<code>pcloud-observability</code>)</a></h3>
+<ul>
+<li><code>TracingHandle::init(cfg) -&gt; Result&lt;TracingHandle&gt;</code> — installs
+the global subscriber, starts the OTLP exporter.</li>
+<li><code>attr_redact(key, value) -&gt; Option&lt;Value&gt;</code> — the allow-list
+filter.</li>
+<li><code>parse_traceparent(&amp;str) -&gt; Option&lt;W3cTraceparent&gt;</code> — validator.</li>
+<li><code>set_thread_traceparent(Option&lt;&amp;str&gt;)</code> — sets the current
+dispatching thread’s ambient parent context.</li>
+<li><code>note_dispatch_panic(&amp;Err)</code> — closes the current span with a
+non-Ok status and force-exports with the full ancestor chain.</li>
+</ul>
+<p>All gated on the <code>tracing-otlp</code> Cargo feature; without the
+feature these functions exist as no-op stubs that return <code>Ok</code>.</p>
+<h3 id="52-attribute-allow-list"><a class="header" href="#52-attribute-allow-list">5.2 Attribute allow-list</a></h3>
+<p><code>attr_redact</code> enforces a <strong>five-key allow-list</strong>, no exceptions:</p>
+<ul>
+<li><code>command</code></li>
+<li><code>duration_ms</code></li>
+<li><code>error_category</code></li>
+<li><code>status_code</code></li>
+<li><code>trace_kind</code></li>
+</ul>
+<p>Any other key is <strong>dropped</strong> in release builds and <strong>panics in
+debug builds</strong>, so accidental additions are caught in CI and
+local dev. There is no path through the redaction layer that can
+emit a filename, folder name, path, email, username, auth token,
+or crypto material. Span <em>names</em> are fixed literals from §4.3.</p>
+<h3 id="53-cli-surface"><a class="header" href="#53-cli-surface">5.3 CLI surface</a></h3>
+<pre><code>pcloudc --trace-id=&lt;32-HEX&gt; &lt;subcommand&gt; ...
+pcloudc --trace-id &lt;32-HEX&gt;  &lt;subcommand&gt; ...
+</code></pre>
+<ul>
+<li>
+<p>With <code>--trace-id</code>: the provided 32-hex id is validated and used
+as the root <code>trace_id</code>; the invocation is implicitly sampled.</p>
+</li>
+<li>
+<p>Without <code>--trace-id</code>: a fresh random 16-byte id is generated.</p>
+</li>
+<li>
+<p>Both paths emit a single stderr line before the command result:</p>
+<pre><code>[trace: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01]
+</code></pre>
+</li>
+</ul>
+<p>Operators copy this line into tickets; support pastes the
+<code>trace_id</code> into the OTLP backend.</p>
+<h2 id="6-configuration"><a class="header" href="#6-configuration">6. Configuration</a></h2>
+<pre><code class="language-toml">[observability.tracing]
+enabled     = false
+endpoint    = "https://otlp.example.com:4318/v1/traces"
+sample_rate = 0.01
+headers     = { "x-honeycomb-team" = "${env:HONEYCOMB_API_KEY}" }
+</code></pre>
+<p>Validation rules (fail-closed at daemon start):</p>
+<ul>
+<li><code>enabled = false</code> (default) — tracing is off; all library calls
+become no-ops.</li>
+<li><code>endpoint</code> must be <code>https://</code> unless it resolves to loopback.
+Plaintext non-loopback endpoints are <strong>refused</strong> at startup.</li>
+<li><code>sample_rate</code> is clamped to <code>[0.0, 1.0]</code>; out-of-range values
+cause refuse-to-start.</li>
+<li><code>headers</code> values must use <code>${env:VAR}</code> form. Literal secrets
+in the config file are <strong>refused</strong> at startup, matching
+<code>CLAUDE.md</code> §Secrets: “do not persist auth tokens in clear”.</li>
+<li>A daemon built <strong>without</strong> the <code>tracing-otlp</code> feature accepts
+the section but logs
+<code>observability.tracing.feature_disabled</code> once at startup and
+silently ignores the rest.</li>
+</ul>
+<h2 id="7-onboarding"><a class="header" href="#7-onboarding">7. Onboarding</a></h2>
+<p><strong>Small-deployment happy path:</strong></p>
+<ol>
+<li>Rebuild the daemon with the <code>tracing-otlp</code> feature:
+<pre><code>cargo build --release -p pcloud-daemon --features tracing-otlp
+</code></pre>
+</li>
+<li>Run an OTLP collector somewhere reachable on HTTPS (Jaeger,
+Tempo, otel-collector-contrib in HTTP/protobuf mode).</li>
+<li>Set <code>[observability.tracing]</code> in the daemon config per §6.</li>
+<li>Restart the daemon. Confirm the absence of
+<code>observability.tracing.feature_disabled</code> in the daemon log.</li>
+<li>Run <code>pcloudc --trace-id=0123...</code>, copy the stderr
+<code>[trace: ...]</code> line, paste the id into the collector UI.</li>
+</ol>
+<p><strong>Incident triage:</strong> the user runs <code>pcloudc &lt;failing-command&gt;</code>,
+copies the stderr trace line into the ticket, and the operator
+searches the <code>trace_id</code> in the backend. Every hop from CLI to the
+outgoing HTTPS call appears in the same trace.</p>
+<h2 id="8-verification"><a class="header" href="#8-verification">8. Verification</a></h2>
+<p>What has been verified in this release:</p>
+<ul>
+<li><strong>Live OTLP/HTTP end-to-end delivery.</strong> The integration test
+<code>crates/pcloud-observability/tests/otlp_live_interop.rs</code>
+(feature-gated on <code>tracing-otlp</code>) spins up an in-process
+OTLP/HTTP collector with <code>axum</code> + <code>opentelemetry-proto</code>,
+initializes the daemon tracer against it, emits the
+<code>pcloudd.dispatch</code> + <code>pcloudd.backend.&lt;name&gt;</code> span pair, and
+asserts:
+<ul>
+<li>exactly one <code>pcloudd.dispatch</code> parent span arrives,</li>
+<li>exactly one <code>pcloudd.backend.*</code> child span arrives, parented
+to the dispatch span and sharing the same <code>trace_id</code>,</li>
+<li>every exported attribute key is drawn from the five-key
+[<code>ALLOWED_ATTRS</code>] allow-list (<code>command</code>, <code>duration_ms</code>,
+<code>error_category</code>, <code>status_code</code>, <code>trace_kind</code>) — no
+<code>code.filepath</code>, <code>thread.id</code>, <code>busy_ns</code>, or other
+auto-injected keys leak past the exporter,</li>
+<li>inbound W3C <code>traceparent</code> round-trips into the exported
+<code>trace_id</code> bytes verbatim.</li>
+</ul>
+</li>
+<li>Span hierarchy shape (server → internal → client) produced
+against a local OTLP sink.</li>
+<li><code>attr_redact</code> panics in debug builds on any non-allow-listed
+key; release builds drop silently.</li>
+<li>Malformed <code>traceparent</code> values are dropped on receive.</li>
+<li>Legacy bare-<code>Request</code> peers still interoperate through
+<code>RequestEnvelope::try_from_wire</code>.</li>
+<li><code>sample_rate</code> clamp and <code>https</code>-only endpoint rejection land at
+startup, not at first span.</li>
+<li><code>feature_disabled</code> log line is emitted exactly once when the
+section is configured but the feature is off.</li>
+</ul>
+<p>What has <strong>not</strong> been verified:</p>
+<ul>
+<li>Live interop against a managed third-party OTLP backend
+(Jaeger UI, Tempo, Datadog APM, Honeycomb, New Relic) —
+collector-side parser quirks are possible. The in-process
+test proves wire-format correctness against a reference
+decoder (<code>opentelemetry-proto</code>), not vendor-specific UI
+ingest.</li>
+<li>Performance overhead under sustained load above 1% sample
+rate — only smoke-tested.</li>
+</ul>
+<h2 id="9-failure-modes"><a class="header" href="#9-failure-modes">9. Failure modes</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Failure</th><th>Behaviour</th></tr>
+</thead>
+<tbody>
+<tr><td>Collector unreachable</td><td>Exporter batches time out; spans are dropped; daemon logs a warning at most once per minute; no CLI-visible effect</td></tr>
+<tr><td>Collector returns 5xx</td><td>Exporter retries with backoff; after retry budget, spans are dropped</td></tr>
+<tr><td>Malformed <code>traceparent</code> on IPC</td><td>Dropped; daemon acts as trace root</td></tr>
+<tr><td>Handler panic inside a dispatched request</td><td><code>note_dispatch_panic</code> closes the span with non-Ok status and force-exports; the outer dispatch span carries the panic message in the <code>error_category</code> attribute (never the panic payload)</td></tr>
+<tr><td>Debug build, disallowed span attribute</td><td><strong>Panic.</strong> Intentional; caught in CI</td></tr>
+<tr><td>Release build, disallowed span attribute</td><td>Attribute dropped silently, no other effect</td></tr>
+<tr><td>Feature disabled at runtime</td><td><code>enabled = false</code> → no OTLP exporter thread, no IPC envelope overhead beyond an <code>Option::None</code></td></tr>
+<tr><td>Feature not compiled in</td><td>Config parsed, <code>feature_disabled</code> log line emitted once, everything else no-op</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="10-honest-limitations"><a class="header" href="#10-honest-limitations">10. Honest limitations</a></h2>
+<p>pre-alpha reality check:</p>
+<ul>
+<li><strong>In-process collector test, no managed-backend run.</strong> End-to-end
+OTLP delivery is now exercised against a live in-process
+<code>axum</code>-hosted collector (see §8), but no certified live run
+against a managed vendor backend (Datadog, Honeycomb, Tempo UI,
+New Relic) has landed.</li>
+<li><strong>FUSE uninstrumented.</strong> Mount callbacks in <code>crates/pcloud-fs/</code>
+do not participate in <code>pcloudd.dispatch</code> traces. Closing this
+gap is blocked on <code>bd-1du.4</code> landing the mounted-drive runtime
+in the first place.</li>
+<li><strong><code>Pkcs11Hsm</code> uninstrumented.</strong> The KMS provider stub does not
+emit spans. Documented follow-up; low priority because the
+provider itself returns <code>KmsError::NotImplemented</code> today (see
+<code>kms.md</code>).</li>
+<li><strong>No metrics, no logs pipeline.</strong> Only OpenTelemetry <strong>tracing</strong>
+landed here. Metrics and logs over OTLP are separate, not-yet-
+scoped roadmap items.</li>
+<li><strong>No TraceState propagation.</strong> W3C <code>tracestate</code> multi-vendor
+chaining is not parsed, not propagated, not emitted.</li>
+<li><strong>Background traces are rootless.</strong> Sync/writeback jobs emit
+their own trace roots; they cannot be correlated to a triggering
+CLI invocation via the wire format.</li>
+</ul>
+<h2 id="11-extension-points"><a class="header" href="#11-extension-points">11. Extension points</a></h2>
+<ul>
+<li><strong>Add a new backend</strong> → register the handler in
+<code>dispatch.rs</code>, emit <code>pcloudd.backend.&lt;name&gt;</code> with <code>&lt;name&gt;</code> added
+to the canonical list in §4.3. No schema change.</li>
+<li><strong>Add a new attribute</strong> → add the key to <code>attr_redact</code>’s
+allow-list <strong>and</strong> document it in §5.2. Without the allow-list
+addition, debug builds will panic.</li>
+<li><strong>Swap exporter protocol</strong> → <code>opentelemetry-otlp</code> supports
+gRPC; the daemon currently pins HTTP/protobuf for firewall
+friendliness. Flipping to gRPC is a config-schema change, not a
+code change in the instrumentation.</li>
+<li><strong>Instrument FUSE</strong> (follow-up) → needs <code>bd-1du.4</code> to land the
+mounted-drive runtime first; then wrap each FUSE callback in
+an <code>instrument</code> span under <code>pcloudd.fuse.&lt;op&gt;</code> and attach it to
+the dispatch parent via <code>set_thread_traceparent</code>.</li>
+</ul>
+<h2 id="12-cross-refs"><a class="header" href="#12-cross-refs">12. Cross-refs</a></h2>
+<p>Code:</p>
+<ul>
+<li><code>crates/pcloud-observability/src/tracing/</code> — library, exporter,
+<code>attr_redact</code>.</li>
+<li><code>crates/pcloud-ipc/src/methods.rs</code> — <code>RequestEnvelope</code>,
+<code>try_from_wire</code>.</li>
+<li><code>crates/pcloud-cli/src/globals.rs</code> — <code>--trace-id</code> parsing,
+generation, stderr emission.</li>
+<li><code>crates/pcloud-daemon/src/dispatch.rs</code> — dispatch span,
+per-backend span opening, <code>set_thread_traceparent</code>,
+<code>note_dispatch_panic</code>.</li>
+<li><code>packaging/man/pcloudc.1</code>, <code>packaging/man/pcloudd.1</code> — operator
+surface.</li>
+</ul>
+<p>Related docs:</p>
+<ul>
+<li><code>docs/book/src/reference/cli.md#global-flags</code> — CLI reference
+for <code>--trace-id</code>.</li>
+<li><code>docs/book/src/reference/ipc-protocol.md#requestenvelope</code> — wire
+shape.</li>
+<li><code>docs/book/src/operations/runbook.md</code> — triage workflow with
+traceparent.</li>
+<li><code>docs/enterprise/disaster-recovery.md</code> — snapshot audit events
+carry trace ids when tracing is enabled.</li>
+<li><code>docs/enterprise/ha.md</code> — restart paths preserve the ambient
+thread traceparent so post-crash replay traces are rooted at
+the right parent.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../enterprise/kms.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../plugins/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../enterprise/kms.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../plugins/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

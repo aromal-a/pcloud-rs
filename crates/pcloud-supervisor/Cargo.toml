@@ -1,0 +1,21 @@
+[package]
+name = "pcloud-supervisor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+description = "Multi-account supervisor scaffold (T2.8). Per-account state + IPC routing model."
+
+[dependencies]
+serde = { workspace = true }
+thiserror = { workspace = true }
+pcloud-config = { path = "../pcloud-config" }
+pcloud-daemon = { path = "../pcloud-daemon" }
+pcloud-ipc = { path = "../pcloud-ipc" }
+
+[dev-dependencies]
+serde_json = "1"
+
+[lints]
+workspace = true

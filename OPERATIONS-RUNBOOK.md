@@ -137,6 +137,47 @@ rm ~/.local/share/pcloud-rs/vault.dat
 pcloud-cli login <user>
 ```
 
+### Auth vault file deleted (disaster recovery)
+
+Symptom: the vault file (`~/.local/share/pcloud-rs/vault.dat` on the
+default file-vault backend) was deleted or never seeded — for example
+the operator wiped state to recover from a suspected compromise, or
+the file was lost in a partial backup restore.
+
+Behavior in code (`crates/pcloud-daemon/src/vault/file.rs`,
+`load_token` at line 82): a missing vault file is **not** an error.
+`load_token` returns `Ok(None)` on `ErrorKind::NotFound`, and bootstrap
+treats that as the cold "no persisted token" state. The daemon comes
+up with `auth=LoggedOut` in the inline status summary; no sync /
+crypto / mount work runs until the operator re-authenticates.
+Verified by booting `pcloudd` against an empty `XDG_DATA_HOME` (the
+`tests/dr_drill/scenarios/vault_loss.sh` drill exercises this path).
+
+This means there is no "refuse to start" gate to clear — the recovery
+procedure is simply to log in again:
+
+```bash
+# 1. Confirm the daemon is up and reports LoggedOut.
+pcloud-cli status              # auth=LoggedOut in the inline summary
+
+# 2. Re-authenticate. The interactive REPL prompts for password and,
+#    if 2FA is enabled on the account, for the TFA code.
+pcloud-cli login <user>
+```
+
+After a successful login the daemon writes a fresh vault (mode `0600`,
+parent `0700`, UID-bound) via the same `vault.store(token)` path
+`apply_bootstrap_credentials_with_vault` uses on first install. Token
+persistence remains opt-in (`config.features.durable_auth_tokens_enabled`);
+if you want the new token kept across restarts, pass `--save-password`
+to `pcloud-cli login` so the seed write is enabled.
+
+The drill `tests/dr_drill/scenarios/vault_loss.sh` exercises only the
+detection half — boot the daemon against a missing vault and assert
+the `auth=LoggedOut` cold state. The login half requires live
+credentials and is covered by the `live-e2e` workflow, not the DR
+drill.
+
 ### TFA required but never prompted
 
 Symptom: login returns `TfaRequired` but CLI exited without prompting.
@@ -178,6 +219,92 @@ Fix: **do not delete the store**. Capture the log and file a bead. As a
 temporary fallback, set `PCLOUD_ENV=development` and stop any active sync
 to reduce writes while extracting state before repair. (`pcloudd` has no
 `--read-only` flag; rely on environment-level configuration instead.)
+
+### Store file corrupted (disaster recovery)
+
+Symptom: on startup, `pcloudd` exits non-zero before binding the IPC
+socket and prints (to stderr):
+
+```
+daemon bootstrap failed: store bootstrap failed: sqlite operation failed: file is not a database
+```
+
+or, when the file opens but the on-disk pages are damaged:
+
+```
+daemon bootstrap failed: store bootstrap failed: ...
+```
+
+Behavior in code: `pcloud_store::bootstrap_profile`
+(`crates/pcloud-store/src/lib.rs:205`) calls `Connection::open`,
+applies pending migrations, and then runs
+`integrity::evaluate_connection_integrity`
+(`crates/pcloud-store/src/integrity.rs:31`) which issues
+`PRAGMA quick_check`. A header-with-garbage layout fails at
+`Connection::open`-time with `SqliteFailure { ... } "file is not a
+database"`; a structurally-corrupt body fails the `quick_check` and
+yields `IntegrityStatus::RepairRequired`. Either failure surfaces as
+`BootstrapError::Store` and the daemon refuses to bind the IPC socket
+— there is **no auto-delete and no auto-repair** by design.
+
+Recovery is operator-driven. There is intentionally no
+`pcloud-cli store repair` command in this fork; the store contains
+sync-root metadata and audit-chain entries that an automated rebuild
+cannot reconstruct without re-walking pCloud, so an operator must
+decide whether to discard the local state or restore from backup.
+
+```bash
+# 1. Stop any lingering daemon process.
+systemctl --user stop pcloudd 2>/dev/null || true
+pkill -TERM -x pcloudd       2>/dev/null || true
+
+# 2. Move the corrupt store aside (do NOT delete — the file may still
+#    contain recoverable rows the upstream sqlite tooling can extract
+#    via `.dump`/`.recover`).
+ts=$(date +%s)
+mv ~/.local/share/pcloud-rs/store.sqlite3 \
+   ~/.local/share/pcloud-rs/store.sqlite3.corrupt-$ts
+# WAL/SHM siblings are no longer valid against a different store file;
+# move them aside too so a fresh bootstrap does not reuse them.
+mv ~/.local/share/pcloud-rs/store.sqlite3-wal \
+   ~/.local/share/pcloud-rs/store.sqlite3-wal.corrupt-$ts 2>/dev/null || true
+mv ~/.local/share/pcloud-rs/store.sqlite3-shm \
+   ~/.local/share/pcloud-rs/store.sqlite3-shm.corrupt-$ts 2>/dev/null || true
+
+# 3a. Preferred: restore from a known-good backup taken via the
+#     `Backup and restore of local state` playbook.
+#     tar -xzf pcloud-rs-state-<date>.tgz -C ~
+
+# 3b. Fallback: bootstrap from cold. The daemon will create a fresh
+#     empty store on next start; sync roots, conflict state, and
+#     audit chain are lost and must be re-added via `pcloud-cli`.
+systemctl --user start pcloudd
+pcloud-cli status               # confirm `auth=LoggedOut` cold state
+pcloud-cli login <user>         # re-authenticate
+# Re-add sync roots:
+# pcloud-cli sync add <local> <remote>
+
+# 4. Capture the corrupt store and the bootstrap log for triage:
+sha256sum ~/.local/share/pcloud-rs/store.sqlite3.corrupt-$ts
+journalctl --user -u pcloudd -n 200 --since "10 minutes ago" \
+  > /tmp/pcloud-store-corruption-$ts.log
+# File a bead and attach BOTH the moved store and the log; never
+# attach the vault file (see "Backup and restore of local state").
+```
+
+The `pcloudc verify` command (`crates/pcloud-cli/src/verify.rs`) is a
+**separate** tool — it walks a synced *tree* and cross-checks local
+SHA256 digests against server digests. It does not inspect or repair
+the SQLite metadata store. Do not confuse the two: `pcloudc verify`
+needs a healthy store + authenticated daemon to function and will
+itself fail to start against a corrupt store.
+
+The drill `tests/dr_drill/scenarios/store_corruption.sh` exercises the
+detection half: corrupt the file in-place, attempt `pcloudd`
+bootstrap, and assert it exits non-zero with a structured error
+mentioning the store. The recovery half (move-aside + re-bootstrap +
+re-login) requires live credentials and is exercised manually under
+the procedure above.
 
 ### Crypto locked — requested op needs unlocked shell
 
@@ -625,3 +752,148 @@ A follow-up bead should track first-class CLI support for
 `change_crypto_pass` so this playbook can be replaced by a single
 command. Until that bead closes, treat the web UI as the source of
 truth for crypto password changes.
+
+## Live E2E account setup
+
+The weekly / on-demand `live-e2e` CI job (defined in
+`.github/workflows/ci.yml`) runs the suite under
+`crates/pcloud-live-e2e/` against a dedicated soak pCloud account.
+The job is a hard gate (CLAUDEREV iter-1 TEST-H-1, fire 25): a flake
+or outage causes the workflow to fail rather than silently pass. The
+operator response is to investigate and re-run, never to mute.
+
+### Provisioning the soak account
+
+1. Create a dedicated pCloud account that will hold no production
+   data. Free-tier is sufficient for the current matrix of tests.
+2. Disable TFA for this account. The live suite drives TFA-specific
+   verbs against a separate fixture path; the main soak account must
+   not require an interactive code at login time.
+3. Generate a strong password and rotate it on a 90-day cadence (or
+   sooner on any signal of credential leak). The current credential
+   pair is held only in the GitHub repository secret store as
+   `PCLOUD_TEST_USER` / `PCLOUD_TEST_PASSWORD`.
+4. Pre-create the test fixture folders the suite expects (the suite
+   creates its own ephemeral subfolders per-test, but the parent
+   path must exist). See `crates/pcloud-live-e2e/README.md` if a
+   bootstrap helper exists; otherwise the suite errors out with a
+   `parent folder missing` message that names the path to create.
+
+### Rotating the credentials
+
+1. From the pCloud web UI, change the soak account password.
+2. In the repository's GitHub Settings → Secrets and variables →
+   Actions, update `PCLOUD_TEST_PASSWORD`.
+3. Trigger a manual `workflow_dispatch` run of the `live-e2e` job to
+   confirm the new credential is accepted before the next scheduled
+   weekly run fires.
+4. Record the rotation in the operator log.
+
+### Reading a failed weekly run
+
+1. Open the workflow run in the GitHub Actions UI.
+2. Download the `live-e2e-logs-${run_id}` artifact (uploaded by the
+   `Upload test artifacts on failure` step). Logs are kept for 7
+   days from the run timestamp.
+3. The artifact bundles `target/debug/build/**/output` and any
+   `/tmp/pcloud-live-e2e-*` scratch files written by the suite. No
+   secrets are written to those paths by design.
+4. If the failure is a transient pCloud outage (5xx burst, rate-limit
+   exhaustion), file a brief operator note and re-run via
+   `workflow_dispatch`. If two consecutive runs fail with the same
+   non-pCloud-side signature, treat it as a real regression and open
+   an issue against the suite.
+
+### Rate-limit and isolation knobs
+
+* `--test-threads=1` is mandatory; the suite must not parallelise
+  API access against the soak account.
+* `PCLOUD_RATE_LIMIT_*` env vars (consumed by `pcloud-resilience`)
+  are sized for one full suite-pass to fit comfortably inside a
+  24-hour pCloud per-user quota window. A second pass within the
+  same window is fine; a third may begin to throttle and is the
+  signal to wait or escalate.
+
+## Release key rotation
+
+The `release-packaging.yml` workflow signs every `.deb`, `.rpm`, and
+the `SHA256SUMS` digest file with the project release GPG key
+(CLAUDEREV iter-1 DEPLOY-H-11.2). Downstream verifiers fetch the
+artifacts plus the matching `.sig` files from the GitHub release page
+and run `gpg --verify <artifact>.sig <artifact>` against the
+project's published public key.
+
+When any of the three signing secrets is unset the workflow prints
+a structured "skipping signing" message and uploads the artifacts
+unsigned. That is the dry-run / fork posture, not the production
+posture.
+
+### Required secrets
+
+Configured under repo Settings → Secrets and variables → Actions:
+
+* `RELEASE_GPG_PRIVATE_KEY` — ASCII-armored private key block
+  (output of `gpg --armor --export-secret-keys $KEY_ID`). Must
+  carry the signing-capable subkey.
+* `RELEASE_GPG_PASSPHRASE` — passphrase that unlocks the private
+  key. Stored as a separate secret so a key-only leak does not
+  trivially yield signing capability.
+* `RELEASE_GPG_KEY_ID` — long key fingerprint or short id. Passed
+  to `gpg --local-user` so a multi-key keyring cannot pick the
+  wrong subkey at sign time.
+
+### Provisioning (first-time setup)
+
+1. Generate a release-only keypair on a hardened operator workstation:
+   ```
+   gpg --quick-generate-key "pcloud-rs Release <release@pcloud-rs.invalid>" \
+     ed25519 cert,sign 2y
+   ```
+2. Note the long fingerprint:
+   ```
+   gpg --list-secret-keys --keyid-format LONG
+   ```
+3. Export the secret block (this is what populates the GitHub
+   secret; treat the output as a high-value credential):
+   ```
+   gpg --armor --export-secret-keys $KEY_ID > release-key.asc
+   ```
+4. Paste the contents of `release-key.asc` into the
+   `RELEASE_GPG_PRIVATE_KEY` GitHub secret, then `shred -u` the
+   local file.
+5. Set `RELEASE_GPG_PASSPHRASE` to the passphrase chosen in step 1
+   and `RELEASE_GPG_KEY_ID` to the fingerprint from step 2.
+6. Publish the **public** half of the key under
+   `docs/release-key.asc` (or the project website) so verifiers
+   can import it. Tag the publication commit so verifiers can
+   confirm the key bytes against the git history.
+
+### Rotation cadence
+
+Rotate the release key on a 2-year cadence (matching the `2y`
+expiry in the generation command above), or immediately on any
+signal of compromise. Rotation procedure:
+
+1. Generate the new keypair (step 1 above).
+2. Sign the **new public key** with the **old private key** so
+   downstream verifiers can chain trust.
+3. Update the three `RELEASE_GPG_*` secrets in GitHub.
+4. Publish the new public key alongside the cross-signature.
+5. Continue to honor the old key for a 30-day overlap window so
+   in-flight verifications don't break.
+6. Revoke the old key after the overlap, publishing the
+   revocation certificate.
+
+### Verifying a signed release
+
+End-user verification flow (also documented in the project README):
+
+```
+gpg --import docs/release-key.asc
+sha256sum -c SHA256SUMS                # check digests
+gpg --verify SHA256SUMS.sig SHA256SUMS # check signatures
+gpg --verify pcloud-rs_X.Y.Z_amd64.deb.sig pcloud-rs_X.Y.Z_amd64.deb
+```
+
+A failure on any of those three commands means the artifact has
+been tampered with; do not install it.

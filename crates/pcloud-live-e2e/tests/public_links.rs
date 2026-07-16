@@ -15,12 +15,12 @@ mod common;
 
 use std::time::SystemTime;
 
+use pcloud_embedded_sdk::EmbeddedDaemon;
 use pcloud_ipc::{Method, Request, ResponseStatus};
-use pcloud_sdk::EmbeddedDaemon;
 
 use crate::common::{
     ENV_PASSWORD, ENV_TOKEN, ENV_USER, TestDaemon, assert_no_secret_leak, optional_env,
-    scratch_folder, skip_if_not_live,
+    release_gate_enabled, scratch_folder, skip_if_not_live,
 };
 
 fn have_any_credentials() -> bool {
@@ -77,6 +77,10 @@ fn live_public_link_lifecycle() {
         return;
     }
     if !have_any_credentials() {
+        assert!(
+            !release_gate_enabled(),
+            "release public-link gate requires live credentials"
+        );
         eprintln!("[live-e2e] skipping public-links: need credentials");
         return;
     }
@@ -99,6 +103,11 @@ fn live_public_link_lifecycle() {
         })
     };
     if auth_resp.status != ResponseStatus::Ok || !sdk.is_authenticated() {
+        assert!(
+            !release_gate_enabled(),
+            "release public-link authentication failed or requires unresolved TFA: {}",
+            auth_resp.message
+        );
         eprintln!(
             "[live-e2e] skipping public-links: auth failed/TFA required: {}",
             auth_resp.message
@@ -113,6 +122,10 @@ fn live_public_link_lifecycle() {
     let uploaded = match sdk.upload_data_as(&scratch, filename.clone(), payload) {
         Ok(r) => r,
         Err(err) => {
+            assert!(
+                !release_gate_enabled(),
+                "release public-link fixture upload failed: {err}"
+            );
             eprintln!("[live-e2e] skipping public-links: upload failed: {err}");
             let _ = std::fs::remove_dir_all(&root);
             return;
@@ -132,6 +145,13 @@ fn live_public_link_lifecycle() {
     });
     assert_no_secret_leak(&create_resp);
     if create_resp.status != ResponseStatus::Ok {
+        let cleanup = sdk.remote().delete(&file_path, false);
+        assert!(
+            !release_gate_enabled(),
+            "release CreateFilePublicLink failed: status={} message={}; cleanup={cleanup:?}",
+            crate::common::status_label(&create_resp.status),
+            create_resp.message
+        );
         eprintln!(
             "[live-e2e] skipping (CreateFilePublicLink declined): status={} message={}",
             crate::common::status_label(&create_resp.status),
@@ -231,7 +251,20 @@ fn live_public_link_lifecycle() {
         if let Some(c) = code {
             let resp = sdk.dispatch(Request::DeletePublicLinkByCode { code: c });
             assert_no_secret_leak(&resp);
+            deleted = resp.status == ResponseStatus::Ok;
         }
+    }
+
+    assert!(
+        deleted || !release_gate_enabled(),
+        "release public-link cleanup did not delete the created link"
+    );
+    if let Err(error) = sdk.remote().delete(&file_path, false) {
+        assert!(
+            !release_gate_enabled(),
+            "release public-link fixture cleanup failed for {file_path}: {error}"
+        );
+        eprintln!("[live-e2e] warning: fixture cleanup failed for {file_path}: {error}");
     }
 
     let _ = std::fs::remove_dir_all(&root);

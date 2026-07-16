@@ -12,7 +12,7 @@
 #   None (path resolved via Get-AppInstallLocation).
 #
 # Outputs:
-#   Removes `C:\Program Files\pcloud-rs\`, unregisters the `pcloudd` service.
+#   Removes `C:\Program Files\pcloud-rs\`.
 #   Does NOT remove user state (%APPDATA%\pcloud-rs) by design; the daemon's
 #   auth vault and audit log must be manually purged if desired.
 #
@@ -22,7 +22,7 @@
 #   - /quiet avoids UAC re-prompt on re-uninstall.
 #
 # Side effects:
-#   - Stops and removes the `pcloudd` Windows service.
+#   - Leaves any running per-user daemon for the user to stop before uninstall.
 #   - Leaves user state intact (see above).
 #
 # Test:

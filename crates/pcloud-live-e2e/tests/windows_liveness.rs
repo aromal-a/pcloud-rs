@@ -41,8 +41,8 @@ use std::{
 };
 
 use pcloud_auth::SessionState;
+use pcloud_embedded_sdk::EmbeddedDaemon;
 use pcloud_ipc::{Method, Request, ResponseStatus};
-use pcloud_sdk::EmbeddedDaemon;
 
 use crate::common::{
     ENV_PASSWORD, ENV_TOKEN, ENV_USER, TestDaemon, assert_no_secret_leak, expect_ok, gate_enabled,

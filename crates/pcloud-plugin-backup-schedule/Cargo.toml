@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 description = "User-level cron scheduler plugin that triggers backup sync cycles on a time-tick driven schedule. Supports native cron syntax and a small natural-language DSL."
 
 [dependencies]

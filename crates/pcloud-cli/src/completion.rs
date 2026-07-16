@@ -72,6 +72,48 @@ pub fn build_cli() -> Command {
         .subcommand(sub("status", "Show current sync state"))
         .subcommand(sub("health", "Daemon health check"))
         .subcommand(sub("pending", "Check for pending transfers"))
+        .subcommand(
+            sub("ls", "List remote folder contents")
+                .arg(Arg::new("remote-path").default_value("/")),
+        )
+        .subcommand(
+            sub("get", "Download a remote file")
+                .arg(Arg::new("remote-path").required(true))
+                .arg(Arg::new("local-path"))
+                .arg(Arg::new("force").long("force").action(ArgAction::SetTrue)),
+        )
+        .subcommand(
+            sub("put", "Upload a local file")
+                .arg(Arg::new("local-path").required(true))
+                .arg(Arg::new("remote-path").required(true)),
+        )
+        .subcommand(
+            sub("cp", "Copy a remote file or folder")
+                .arg(Arg::new("from").required(true))
+                .arg(Arg::new("to").required(true)),
+        )
+        .subcommand(
+            sub("mv", "Move or rename a remote entry")
+                .arg(Arg::new("from").required(true))
+                .arg(Arg::new("to").required(true)),
+        )
+        .subcommand(
+            sub("rm", "Delete a remote entry")
+                .arg(Arg::new("remote-path").required(true))
+                .arg(
+                    Arg::new("recursive")
+                        .short('r')
+                        .long("recursive")
+                        .action(ArgAction::SetTrue),
+                ),
+        )
+        .subcommand(
+            sub("mkdir", "Create a remote folder").arg(Arg::new("remote-path").required(true)),
+        )
+        .subcommand(
+            sub("cat", "Stream a remote file to stdout")
+                .arg(Arg::new("remote-path").required(true)),
+        )
         .subcommand(sub("userinfo", "Show authenticated user info"))
         .subcommand(sub("pause", "Pause syncing"))
         .subcommand(sub("resume", "Resume syncing"))
@@ -612,61 +654,6 @@ pub fn build_cli() -> Command {
                     ),
                 )
                 .subcommand(sub("promo", "Fetch the promotional URL for this platform")),
-        )
-        .subcommand(
-            sub(
-                "log",
-                "Show git-log-style revision history for a synced file",
-            )
-            .arg(
-                Arg::new("path")
-                    .required(true)
-                    .help("Absolute pCloud-drive path"),
-            )
-            .arg(
-                Arg::new("limit")
-                    .long("limit")
-                    .value_parser(clap::value_parser!(u32))
-                    .help("Maximum number of revisions to return"),
-            ),
-        )
-        // ncx.65: `diff` and `restore` are CLI-side stubs that always
-        // exit `Unavailable` (pCloud's public API does not expose the
-        // revision-diff / restore endpoints to third-party clients).
-        // Hide them from tab-completion so operators do not discover a
-        // command that cannot do what its name suggests. The handlers
-        // remain wired in `app.rs` so existing scripts that call them
-        // still receive the structured `Unavailable` response and the
-        // tracker pointer, rather than a silent "unknown command"
-        // surprise. Remove `.hide(true)` (and update docs) when the
-        // upstream API exposes a revision API — follow-up tracked as
-        // `pcloud-rs-07o`.
-        .subcommand(
-            sub(
-                "diff",
-                "Show diff between two file revisions (stub — Unavailable)",
-            )
-            .hide(true)
-            .arg(
-                Arg::new("path")
-                    .required(true)
-                    .help("Absolute pCloud-drive path"),
-            )
-            .arg(Arg::new("rev-a").required(true).help("First revision ID"))
-            .arg(Arg::new("rev-b").required(true).help("Second revision ID")),
-        )
-        .subcommand(
-            sub(
-                "restore",
-                "Restore a file to a specific revision (stub — Unavailable)",
-            )
-            .hide(true)
-            .arg(
-                Arg::new("path")
-                    .required(true)
-                    .help("Absolute pCloud-drive path"),
-            )
-            .arg(Arg::new("rev").required(true).help("Target revision ID")),
         )
         .subcommand(sub("mount", "Mount the pCloud filesystem"))
         .subcommand(sub("unmount", "Unmount the pCloud filesystem"))

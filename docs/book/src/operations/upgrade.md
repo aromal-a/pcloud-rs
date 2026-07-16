@@ -17,7 +17,7 @@ rollout — has one place to look up:
 - the supported migration path from the legacy C client via
   `pcloudc migrate-from-c --from <PATH> [--dry-run] [--force-overwrite]`,
 - CLI-flag deprecation discipline,
-- service-manager restart semantics for systemd / launchd / SCM / rc.d.
+- restart semantics for systemd / launchd / per-user Windows / rc.d.
 
 Related:
 
@@ -51,8 +51,8 @@ Before you start an upgrade you must have:
 
 - a **recent store snapshot** (see
   [Backup snapshots](./backup-snapshots.md); GPG is mandatory),
-- privilege to stop/start the service manager unit on the host
-  (systemd user/system, launchd, SCM, or rc.d),
+- privilege to stop/start the daemon on the host (systemd user/system,
+  launchd, the per-user Windows CLI, or rc.d),
 - for fleet upgrades: MDM/inventory tags (`pcloud-rs_wave=<canary|A|B>`)
   already assigned so reporting can distinguish cohorts.
 
@@ -60,13 +60,16 @@ Before you start an upgrade you must have:
 
 ### Semver, literally
 
-The Rust workspace publishes `pcloud-daemon`, `pcloud-cli`, and the
-`pcloud-sdk` surface under a **single coordinated version**. Treat the
-version as a *tuple* of fingerprints, not a single integer.
+The daemon, CLI, and IPC schema currently share the workspace's 0.1 release
+line. The focused `pcloud-sdk` source contract has an independent 1.0 SemVer
+because it hides the wire schema behind SDK-owned types; it has not yet been
+published. Treat a deployed version as a *tuple* of fingerprints, not a single
+integer.
 
 - **MAJOR (`X.y.z`)** — backwards-incompatible change in any of:
   - the IPC wire protocol between `pcloud-cli` and `pcloud-daemon`,
-  - the `pcloud-sdk` public Rust API,
+  - the `pcloud-sdk` public Rust API (this changes the SDK major independently
+    and does not require the daemon/CLI package to use the same number),
   - the on-disk store schema (forward migration exists but older
     daemons cannot open a newer store),
   - the **vault file format**,
@@ -113,7 +116,7 @@ warning since `X.(Y-1).0`. Machine parsers should key off exit code
 |-----------|------------|--------------------------------------------------------------|--------------------------------------------------------------------------------------------------|
 | Linux     | systemd    | `systemctl --user restart pcloud-rs-daemon` (or system)       | `SIGTERM` → `TimeoutStopSec` (default 90s) → `SIGKILL`. Daemon drains on `SIGTERM`.              |
 | macOS     | launchd    | `launchctl kickstart -k gui/$(id -u)/com.pcloud.pcloudd`     | `SIGTERM` + grace; re-exec under the new LaunchAgent plist.                                     |
-| Windows   | SCM        | `sc stop pcloudd && sc start pcloudd`                        | SCM `SERVICE_CONTROL_STOP` → daemon acknowledges within `ServiceStopTimeoutMs` (default 30s).    |
+| Windows   | per-user   | `pcloudc stop; pcloudc start`                                | Authenticated shutdown drains the daemon; restart preserves the same SID and DPAPI scope.       |
 | FreeBSD   | rc.d       | `service pcloudd restart`                                    | `SIGTERM` then `SIGKILL` after `daemon_stop_wait` (default 30s).                                 |
 | OpenBSD   | rc.d       | `rcctl restart pcloudd`                                      | `SIGTERM`, 30 s grace, `SIGKILL`.                                                                |
 | NetBSD    | rc.d       | `/etc/rc.d/pcloudd restart`                                  | Same semantics as FreeBSD.                                                                       |

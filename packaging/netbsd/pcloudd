@@ -1,32 +1,5 @@
 #!/bin/sh
 # PLATFORM: NetBSD 10+
-#
-# rc.d service script for the pcloudd daemon (pkgsrc binary location).
-#
-# Install:
-#   install -m 0555 packaging/netbsd/pcloudd /etc/rc.d/pcloudd
-#   echo 'pcloudd=YES' >> /etc/rc.conf
-#   /etc/rc.d/pcloudd start
-#
-# Inputs:
-#   pcloudd (YES/NO) in /etc/rc.conf - master enable flag
-#
-# Outputs:
-#   PID file at /var/run/pcloudd.pid
-#
-# Security:
-#   - /var/run is created at boot but this script re-asserts it in
-#     `pcloudd_precmd` in case /var/run was wiped.
-#   - Run the daemon under a dedicated unprivileged account; use the
-#     pkgsrc install framework (pkg_add) to provision it, or create
-#     manually with useradd.
-#
-# Test:
-#   /etc/rc.d/pcloudd onestart
-#   /etc/rc.d/pcloudd status
-#   /etc/rc.d/pcloudd stop
-#
-# Side effects: writes /var/run/pcloudd.pid on start, removes on stop.
 
 # PROVIDE: pcloudd
 # REQUIRE: DAEMON LOGIN
@@ -36,20 +9,40 @@ $_rc_subr_loaded . /etc/rc.subr
 
 name="pcloudd"
 rcvar=$name
-# The pcloudd binary does NOT accept -p / --pidfile.  rc.subr writes the
-# pidfile itself via ${pidfile}; `serve` is required so pcloudd enters the
-# IPC serve loop instead of printing a one-shot summary and exiting.
-command="/usr/pkg/bin/pcloudd"
-command_args="serve"
-pidfile="/var/run/${name}.pid"
+
+load_rc_config "$name"
+
+: "${pcloudd_user:=pcloudd}"
+: "${pcloudd_group:=pcloudd}"
+: "${pcloudd_root:=/var/lib/pcloud-rs}"
+: "${pcloudd_env_file:=/usr/pkg/etc/pcloud-rs/pcloudd.env}"
+: "${pcloudd_wrapper:=/usr/pkg/libexec/pcloudd-wrapper.sh}"
+: "${pcloudd_logfile:=/var/log/pcloudd.log}"
+: "${pcloudd_rundir:=/var/run/pcloudd}"
+
+command="/usr/bin/env"
+procname="/usr/pkg/bin/pcloudd"
+pidfile="${pcloudd_rundir}/pcloudd.pid"
+required_files="${pcloudd_wrapper} ${pcloudd_env_file}"
 start_precmd="pcloudd_precmd"
 
 pcloudd_precmd()
 {
-	if [ ! -d /var/run ]; then
-		install -d -o root -g wheel -m 0755 /var/run
-	fi
+    if ! id "${pcloudd_user}" >/dev/null 2>&1; then
+        echo "pcloudd: service user does not exist: ${pcloudd_user}" >&2
+        return 1
+    fi
+    install -d -o "${pcloudd_user}" -g "${pcloudd_group}" -m 0700 \
+        "${pcloudd_root}" "${pcloudd_rundir}"
+    if [ ! -e "${pcloudd_logfile}" ]; then
+        install -o "${pcloudd_user}" -g "${pcloudd_group}" -m 0600 \
+            /dev/null "${pcloudd_logfile}"
+    fi
 }
 
-load_rc_config $name
+# NetBSD rc.subr permits shell directives in command_args. The background
+# shell PID is the wrapper PID; wrapper execs pcloudd without forking, so the
+# recorded PID remains authoritative for status and graceful SIGTERM stop.
+command_args="PCLOUDRS_DAEMON_BIN=/usr/pkg/bin/pcloudd PCLOUDRS_ENV_FILE=${pcloudd_env_file} ${pcloudd_wrapper} </dev/null >>${pcloudd_logfile} 2>&1 & echo \$! >${pidfile}"
+
 run_rc_command "$1"

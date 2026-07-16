@@ -57,7 +57,7 @@ The following areas of the `` workspace are in scope for
 security reports:
 
 - Auth flows: password, token, TFA code, recovery code, TFA SMS/device
-  resend (`crates/pcloud-auth`, `crates/pcloud-daemon/src/auth_backend.rs`,
+  resend (`crates/pcloud-auth`, `crates/pcloud-backends/src/auth_backend.rs`,
   `crates/pcloud-daemon/src/auth_vault.rs`).
 - Local IPC transport: socket permissions, peer credential checks,
   malformed-frame handling (`crates/pcloud-ipc`).

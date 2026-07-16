@@ -23,7 +23,9 @@
 
 use libfuzzer_sys::fuzz_target;
 use pcloud_ipc::methods::{Method, Request};
-use pcloud_ipc::protocol::{decode_request, decode_response, encode_request, MAX_IPC_PAYLOAD_LEN};
+use pcloud_ipc::protocol::{
+    MAX_IPC_PAYLOAD_LEN, decode_request, decode_response, encode_request_bare,
+};
 
 fn build_frame(data: &[u8]) -> Vec<u8> {
     // Interpret the first byte of input as a "mutation mode" so each fuzz
@@ -60,7 +62,9 @@ fn build_frame(data: &[u8]) -> Vec<u8> {
         }
         _ => {
             // A valid request encoded and then truncated / flipped.
-            let mut enc = encode_request(&Request::Plain { method: Method::GetStatus })
+            let mut enc = encode_request_bare(&Request::Plain {
+                method: Method::GetStatus,
+            })
                 .unwrap_or_default();
             let cut = body.first().copied().unwrap_or(0) as usize % (enc.len() + 1);
             enc.truncate(cut);

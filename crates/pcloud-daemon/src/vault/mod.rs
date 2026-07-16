@@ -47,6 +47,8 @@ pub mod dpapi;
 pub mod file;
 pub mod keychain;
 pub mod secret_service;
+#[cfg(windows)]
+mod windows_secure_file;
 
 pub use file::FileVault;
 
@@ -282,11 +284,11 @@ pub fn select_vault_for(
                 {
                     let ciphertext_path = file_fallback_path.with_extension("dpapi");
                     let vault = dpapi::DpapiVault::new(ciphertext_path);
-                    return Ok(VaultSelection {
+                    Ok(VaultSelection {
                         vault: Box::new(vault) as Box<dyn PlatformVault>,
                         effective: VaultBackend::Dpapi,
                         warning: None,
-                    });
+                    })
                 }
                 #[cfg(not(windows))]
                 Ok(make_file_fallback(

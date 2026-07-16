@@ -1,7 +1,12 @@
 # ADR 0010: FUSE Write-Path Daemon Wiring Pending (`bd-1du.4.6`)
 
-- Status: Proposed
+- Status: Superseded by ADR 0020
 - Date: 2026-04-15
+
+ADR 0020 records the implemented decision: writes are journal-first, `fsync`
+is server-durable, staging is bounded with `ENOSPC`, chunked uploads resume by
+acknowledged offset, and both concrete and object-safe FUSE compositions use
+the same write service.
 
 ## Context
 

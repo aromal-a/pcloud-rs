@@ -1,8 +1,8 @@
 # **PLATFORM MATRIX:**
 # - Linux: full support (tier 1) — `legacy-shm` opt-in feature uses SysV shm.
 # - FreeBSD: tier 2 — SysV shm also available.
-# - macOS: tier 1 planned — `legacy-shm` not applicable; rpc_message_t codec stays portable.
-# - Windows: tier 1 planned — `legacy-shm` not applicable (no SysV shm).
+# - macOS: portable codec only; `legacy-shm` is not applicable.
+# - Windows: portable codec only; `legacy-shm` is not applicable (no SysV shm).
 # SysV-shm code paths must be source-level `#[cfg(target_os = "linux")]`-gated;
 # the `legacy-shm` feature must only be enabled on Linux/FreeBSD builds.
 
@@ -12,6 +12,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
+rust-version.workspace = true
 description = "C-CLI compatibility shim primitives (rpc_message_t codec, SysV shm producer). Isolated crate, not wired into the daemon by default."
 
 [lib]

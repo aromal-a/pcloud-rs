@@ -2,8 +2,9 @@
 # ------------------------------------------------------------------------------
 # verify-reproducibility.sh
 #
-# Builds `pcloudc` and `pcloudd` twice with the `release-repro` profile and
-# verifies that both builds produce byte-identical binaries (SHA-256 match).
+# Builds `pcloudc` and `pcloudd` twice with `cargo auditable` and the
+# `release-repro` profile, then verifies that both builds produce
+# byte-identical binaries (SHA-256 match).
 #
 # Rationale and pinning contract:
 #   docs/book/src/development/reproducible-builds.md
@@ -12,6 +13,7 @@
 #   - SOURCE_DATE_EPOCH=0 (fixed) so we do not depend on git state.
 #     CI release pipelines override this with the tag commit time.
 #   - --locked blocks dependency re-resolution between the two builds.
+#   - cargo-auditable matches the release workflow's auditable binary format.
 #   - --profile release-repro engages the deterministic profile pinned in
 #     Cargo.toml (strip=symbols, debug=false, codegen-units=1,
 #     lto=true, panic=abort).
@@ -42,7 +44,7 @@ if [ ! -f "${WORKSPACE}/Cargo.toml" ]; then
   exit 2
 fi
 
-for tool in cargo sha256sum; do
+for tool in cargo cargo-auditable sha256sum; do
   if ! command -v "${tool}" >/dev/null 2>&1; then
     printf 'ERROR: required tool not in PATH: %s\n' "${tool}" >&2
     exit 2
@@ -74,11 +76,12 @@ log() { printf '[verify-repro] %s\n' "$*"; }
 
 build_once() {
   local label="$1"
-  log "build ${label}: cargo build --locked --release --profile ${PROFILE} -p pcloud-cli -p pcloud-daemon"
+  log "build ${label}: cargo auditable build --locked --profile ${PROFILE} -p pcloud-cli -p pcloud-daemon"
   (
     cd "${WORKSPACE}"
     cargo clean --profile "${PROFILE}" --quiet 2>/dev/null || true
-    cargo build \
+    CARGO_PROFILE_RELEASE_REPRO_ACTIVE=1 \
+      cargo auditable build \
       --locked \
       --profile "${PROFILE}" \
       -p pcloud-cli --bin pcloudc \

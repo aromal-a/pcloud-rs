@@ -144,6 +144,12 @@ pub enum BackupBackendError {
     #[error(transparent)]
     /// `Network` variant.
     Network(#[from] TransportError),
+    /// Resilient-wrapper-only condition (circuit-breaker open, rate-limit
+    /// exceeded, retry-budget exhausted). CLAUDEREV deferred-set D5.6
+    /// (fire 54). Carries the human-readable description from
+    /// `pcloud_proto::resilient_transport::ResilientError`.
+    #[error("resilient transport refused request: {0}")]
+    Resilient(String),
 }
 
 /// Result of a successful cascade-aware `create_backup` call.
@@ -375,15 +381,31 @@ pub enum DeleteBackupCascadeError {
 enum BackupTransportMode {
     Development(DevelopmentBackupTransport),
     Network(BinaryApiTransport),
+    /// Production network transport wrapped in a circuit-breaker /
+    /// rate-limiter / retry-budget envelope. CLAUDEREV deferred-set
+    /// D5.6 (fire 54) — sixth of 7 per-backend `ResilientTransport`
+    /// migrations.
+    ResilientNetwork(
+        Box<pcloud_proto::resilient_transport::ResilientTransport<BinaryApiTransport>>,
+    ),
 }
 
 impl ProtocolTransport for BackupTransportMode {
     type Error = BackupBackendError;
 
     fn execute(&self, request: &EncodedRequest) -> Result<Value, Self::Error> {
+        use pcloud_proto::resilient_transport::ResilientError;
         match self {
             Self::Development(transport) => transport.execute(request).map_err(Into::into),
             Self::Network(transport) => transport.execute(request).map_err(Into::into),
+            Self::ResilientNetwork(transport) => {
+                transport.execute(request).map_err(|err| match err {
+                    ResilientError::Inner(transport_err) => {
+                        BackupBackendError::Network(transport_err)
+                    }
+                    other => BackupBackendError::Resilient(other.to_string()),
+                })
+            }
         }
     }
 }
@@ -393,6 +415,9 @@ impl ApiServerHintConsumer for BackupTransportMode {
         match self {
             Self::Development(transport) => transport.apply_api_server_hint(api_server),
             Self::Network(transport) => transport.apply_api_server_hint(api_server),
+            Self::ResilientNetwork(transport) => {
+                transport.inner_arc().apply_api_server_hint(api_server)
+            }
         }
     }
 }
@@ -444,6 +469,18 @@ impl BackupRuntime {
 
         Self {
             api: BackupApi::new(transport),
+        }
+    }
+
+    /// Construct a `BackupRuntime` whose transport is wrapped in
+    /// `pcloud_proto::resilient_transport::ResilientTransport`. CLAUDEREV
+    /// deferred-set D5.6 (fire 54). Same pattern as the prior 5 backends.
+    #[must_use]
+    pub fn from_resilient_transport(
+        resilient: pcloud_proto::resilient_transport::ResilientTransport<BinaryApiTransport>,
+    ) -> Self {
+        Self {
+            api: BackupApi::new(BackupTransportMode::ResilientNetwork(Box::new(resilient))),
         }
     }
 

@@ -147,6 +147,18 @@ pub enum Command {
     /// open beads). For deletion-safe archival today, use
     /// `pcloudc backup snapshot-create` (GPG-encrypted tarball).
     SyncChangeType,
+    /// `pcloudc sync exclude add <sync-id> <pattern>` — append a glob
+    /// to a sync root's exclusion list (T1.1). Daemon handler:
+    /// `Request::SyncExcludeAdd`.
+    SyncExcludeAdd,
+    /// `pcloudc sync exclude remove <sync-id> <pattern>` — drop a glob
+    /// from a sync root's exclusion list (T1.1). Daemon handler:
+    /// `Request::SyncExcludeRemove`.
+    SyncExcludeRemove,
+    /// `pcloudc sync exclude list <sync-id>` — list a sync root's
+    /// exclusion globs (T1.1). Daemon handler:
+    /// `Request::SyncExcludeList`.
+    SyncExcludeList,
     /// `pcloudc userinfo` — fetch authenticated-user profile.
     /// Daemon handler: [`pcloud_ipc::Method::GetUserInfo`].
     UserInfo,
@@ -329,6 +341,22 @@ pub enum Command {
     /// Mirrors C `psync_stat_path` (`pclsync/psynclib.h:743`).
     /// Resolves through local metadata cache, falls back to API.
     Stat,
+    /// `pcloudc ls [REMOTE_PATH]` — list direct remote children.
+    RemoteLs,
+    /// `pcloudc get <REMOTE_PATH> <LOCAL_PATH>` — streaming download.
+    RemoteGet,
+    /// `pcloudc put <LOCAL_PATH> <REMOTE_PATH>` — streaming upload.
+    RemotePut,
+    /// `pcloudc cp <REMOTE_FROM> <REMOTE_TO>` — bounded remote copy.
+    RemoteCp,
+    /// `pcloudc mv <REMOTE_FROM> <REMOTE_TO>` — remote move/rename.
+    RemoteMv,
+    /// `pcloudc rm <REMOTE_PATH> [-r|--recursive]` — remote deletion.
+    RemoteRm,
+    /// `pcloudc mkdir <REMOTE_PATH>` — create a remote directory.
+    RemoteMkdir,
+    /// `pcloudc cat <REMOTE_PATH>` — stream remote bytes to stdout.
+    RemoteCat,
     /// `pcloudc reload` — send SIGHUP to the daemon to trigger a
     /// config hot-reload. Looks up the daemon pidfile from
     /// `<state_dir>/daemon.pid`, sends SIGHUP via `kill(2)`, and
@@ -355,89 +383,6 @@ pub enum Command {
         /// `$HOME/.pcloud`).
         from: Option<std::path::PathBuf>,
     },
-    /// `pcloudc log <PATH> [--limit N]` — git-log-style revision history
-    /// for a synced file. Daemon handler: `Request::FileHistory`.
-    /// Honest scope: pCloud's public API does not expose the
-    /// `listrevisions` endpoint to third-party clients; the daemon
-    /// currently returns `Unavailable` with a tracker pointer
-    /// (bd-1du.10). The CLI surface, IPC envelope and rendering are
-    /// wired so enabling the endpoint is a one-change-site operation
-    /// on the backend.
-    /// Positional args (path, limit) live on [`SecretInputs`].
-    FileHistory,
-    /// `pcloudc diff <PATH> <REV_A> <REV_B>` — placeholder stub for the
-    /// revision-diff follow-up. Handled entirely CLI-side; never reaches
-    /// the daemon. Always exits `Unavailable` for now.
-    ///
-    /// # Why this is a stub
-    ///
-    /// Not exposed; requires pCloud upstream API surface for file
-    /// revisions. The pCloud HTTP API does not currently publish a
-    /// revision-diff endpoint to third-party clients — only the
-    /// official pCloud apps can diff two revisions of a file, and no
-    /// `listrevisions` / `getfilerevision` style method is available
-    /// on the public API index.
-    ///
-    /// # Rehydration acceptance criteria (pcloud-rs-07o)
-    ///
-    /// Re-enable this subcommand when upstream publishes:
-    ///
-    /// - `listrevisions` (or equivalent) returning the revision chain
-    ///   for a given `fileid`,
-    /// - a `getfilerevision` / `diffrevisions` method capable of
-    ///   fetching or diffing a historical revision body.
-    ///
-    /// At that point:
-    /// 1. drop the `#[doc(hidden)]` attribute below,
-    /// 2. remove the `.hide(true)` call on `diff` in
-    ///    `crates/pcloud-cli/src/completion.rs`,
-    /// 3. wire a real backend handler through a `Request::FileDiff`
-    ///    IPC variant (currently routed to `Request::Plain` as a
-    ///    sentinel — see the `to_request` impl below),
-    /// 4. add live-e2e coverage under
-    ///    `crates/pcloud-live-e2e/tests/`.
-    ///
-    /// ncx.65: hidden from rustdoc and from `completion.rs` so operators
-    /// do not discover a command whose only behaviour is `Unavailable`.
-    /// Follow-up tracked as `pcloud-rs-07o` (tracking-upstream).
-    #[doc(hidden)]
-    FileDiff,
-    /// `pcloudc restore <PATH> <REV>` — placeholder stub for the
-    /// revision-restore follow-up. Handled entirely CLI-side; never
-    /// reaches the daemon. Always exits `Unavailable` for now.
-    ///
-    /// # Why this is a stub
-    ///
-    /// Not exposed; requires pCloud upstream API surface for file
-    /// revisions. A revision-restore flow needs both a way to
-    /// enumerate historical revisions and a way to promote a past
-    /// revision to the current version. Neither is currently exposed
-    /// on the public pCloud API.
-    ///
-    /// # Rehydration acceptance criteria (pcloud-rs-07o)
-    ///
-    /// Re-enable this subcommand when upstream publishes:
-    ///
-    /// - `listrevisions` (or equivalent) so the CLI can validate the
-    ///   `<REV>` argument before the restore call,
-    /// - a `revertfile` / `restorefilerevision` method that promotes
-    ///   a given historical revision to the current file body.
-    ///
-    /// At that point:
-    /// 1. drop the `#[doc(hidden)]` attribute below,
-    /// 2. remove the `.hide(true)` call on `restore` in
-    ///    `crates/pcloud-cli/src/completion.rs`,
-    /// 3. wire a real backend handler through a `Request::FileRestore`
-    ///    IPC variant (currently routed to `Request::Plain` as a
-    ///    sentinel — see the `to_request` impl below),
-    /// 4. add live-e2e coverage under
-    ///    `crates/pcloud-live-e2e/tests/`.
-    ///
-    /// ncx.65: hidden from rustdoc and from `completion.rs`. See
-    /// [`Command::FileDiff`] for rationale. Follow-up tracked as
-    /// `pcloud-rs-07o` (tracking-upstream).
-    #[doc(hidden)]
-    FileRestore,
     /// `pcloudc verify <PATH> [--recursive] [--fix] [--yes]` — walk a
     /// synced tree and cross-check the local SHA256 of each file against
     /// the server-reported digest. R9 enhancement #12. Handled CLI-side
@@ -535,9 +480,10 @@ pub enum Command {
     /// to the running daemon. Daemon handler: `Request::UploadList`.
     UploadList,
     /// `pcloudc upload write-from-file <UPLOAD_ID> <SOURCE_FILEID>
-    /// <SOURCE_HASH> <OFFSET> <COUNT>` — drive a server-side copy of
+    /// <SOURCE_HASH> <UPLOAD_OFFSET> <SOURCE_OFFSET> <COUNT>` — drive a server-side copy of
     /// `<COUNT>` bytes from `(SOURCE_FILEID, SOURCE_HASH)` into the
-    /// open upload session `<UPLOAD_ID>` at offset `<OFFSET>`. Daemon
+    /// open upload session `<UPLOAD_ID>` at offset `<UPLOAD_OFFSET>`, reading
+    /// from source offset `<SOURCE_OFFSET>`. Daemon
     /// handler: `Request::UploadWriteFromFile`. audit-06 H-4.2 +
     /// bd-1du row 93.
     UploadWriteFromFile,
@@ -635,9 +581,11 @@ pub enum Command {
     /// registration (local-only, no network call).
     /// Daemon handler: `Request::DeleteBackupDevice`.
     BackupDeleteDevice,
-    /// `pcloudc publink create-tree-from-paths <NAME> <PATHS...>` — create a
-    /// tree link by resolving paths to ids via the daemon path resolver.
-    /// Daemon handler: `Request::CreateTreePublicLink` (after path resolution).
+    /// `pcloudc create-tree-link-from-paths <NAME> [--root PATH] [--folder PATH] [--file PATH]...`
+    /// — create a tree link by resolving root/folder/file paths to ids via
+    /// the daemon path resolver. Bare paths remain folder targets for
+    /// compatibility. Daemon handler:
+    /// `Request::CreateTreePublicLinkFromPathTargets`.
     CreateTreeLinkFromPaths,
     // ── Crypto dual-backend (Wave 2 / Stage 4b.4) ──────────────────────
     /// `pcloudc crypto setup [--backend {pclsync-compat|enhanced}]
@@ -765,17 +713,16 @@ pub struct SecretInputs {
     pub filesystem_status_local_path: String,
     /// Absolute remote pCloud-drive path for `Command::Stat`.
     pub stat_remote_path: String,
-    /// Absolute remote pCloud-drive path for `Command::FileHistory` /
-    /// `Command::FileDiff` / `Command::FileRestore`.
-    pub file_history_path: String,
-    /// Optional row cap for `Command::FileHistory`.
-    pub file_history_limit: Option<u32>,
-    /// Left-hand revision hex id for `Command::FileDiff`.
-    pub file_diff_rev_a: String,
-    /// Right-hand revision hex id for `Command::FileDiff`.
-    pub file_diff_rev_b: String,
-    /// Target revision hex id for `Command::FileRestore`.
-    pub file_restore_rev: String,
+    /// First remote path used by the remote command family.
+    pub remote_fs_source: String,
+    /// Second remote path used by `cp`/`mv`, or remote destination for put.
+    pub remote_fs_destination: String,
+    /// Local path used by `get`/`put`.
+    pub remote_fs_local_path: std::path::PathBuf,
+    /// Replace an existing local target for `get`.
+    pub remote_fs_overwrite: bool,
+    /// Permit recursive remote folder deletion.
+    pub remote_fs_recursive: bool,
     /// Positional local path for `Command::Verify` (R9 #12).
     pub verify_local_path: String,
     /// `--recursive` flag for `Command::Verify`.
@@ -818,14 +765,19 @@ pub struct SecretInputs {
     pub upload_write_from_file_source_fileid: u64,
     /// Source content hash for the server-side copy.
     pub upload_write_from_file_source_hash: u64,
-    /// Destination offset inside the upload session.
+    /// Destination offset inside the upload session (`uploadoffset`).
     pub upload_write_from_file_offset: u64,
+    /// Source offset inside the remote source file (`offset`).
+    pub upload_write_from_file_source_offset: u64,
     /// Bytes to copy (must be ≤ `PSYNC_MAX_COPY_FROM_REQ`).
     pub upload_write_from_file_count: u64,
     /// Path for `Command::ConflictResolve`.
     pub conflict_path: String,
     /// Policy for `Command::ConflictResolve`.
     pub conflict_resolve_policy: String,
+    /// T1.1 selective sync: glob pattern for `Command::SyncExcludeAdd` /
+    /// `Command::SyncExcludeRemove`. Empty for `Command::SyncExcludeList`.
+    pub sync_exclude_pattern: String,
     // ── Crypto change-password fields ────────────────────────────────────
     /// New crypto passphrase for `Command::CryptoChangePassword` /
     /// `Command::CryptoChangePasswordUnlocked`. Transit-only secret.
@@ -875,8 +827,12 @@ pub struct SecretInputs {
     /// Device folder id for `Command::BackupStopDevice`.
     pub backup_device_folder_id: u64,
     // ── Tree link from paths ──────────────────────────────────────────────
+    /// Optional root folder path for `Command::CreateTreeLinkFromPaths`.
+    pub tree_link_root: Option<String>,
     /// Paths to resolve for `Command::CreateTreeLinkFromPaths`.
     pub tree_link_paths: Vec<String>,
+    /// File paths to resolve for `Command::CreateTreeLinkFromPaths`.
+    pub tree_link_files: Vec<String>,
     // ── Crypto setup-v2 (Stage 4b.4) ─────────────────────────────────────
     /// Selected crypto backend for `Command::CryptoSetupV2`. Defaults to
     /// [`CryptoBackendIpc::PclsyncCompat`]. The interactive picker writes
@@ -1030,6 +986,17 @@ impl Command {
                 // matches the daemon default (Full / bilateral) if we
                 // somehow reach this arm without a parsed flavor.
                 sync_type: inputs.sync_type_required.unwrap_or(SyncType::Full),
+            },
+            Self::SyncExcludeAdd => Request::SyncExcludeAdd {
+                sync_id: inputs.sync_id,
+                pattern: inputs.sync_exclude_pattern.clone(),
+            },
+            Self::SyncExcludeRemove => Request::SyncExcludeRemove {
+                sync_id: inputs.sync_id,
+                pattern: inputs.sync_exclude_pattern.clone(),
+            },
+            Self::SyncExcludeList => Request::SyncExcludeList {
+                sync_id: inputs.sync_id,
             },
             Self::UserInfo => Request::Plain {
                 method: Method::GetUserInfo,
@@ -1219,6 +1186,38 @@ impl Command {
             Self::Stat => Request::StatPath {
                 path: inputs.stat_remote_path.clone(),
             },
+            Self::RemoteLs => Request::ListFolderByPath {
+                path: inputs.remote_fs_source.clone(),
+            },
+            Self::RemoteGet => Request::DownloadFileByPath {
+                remote_path: inputs.remote_fs_source.clone(),
+                local_path: inputs.remote_fs_local_path.clone(),
+                overwrite: inputs.remote_fs_overwrite,
+            },
+            Self::RemotePut => Request::UploadFileByPath {
+                local_path: inputs.remote_fs_local_path.clone(),
+                remote_path: inputs.remote_fs_destination.clone(),
+            },
+            Self::RemoteCp => Request::CopyPath {
+                from: inputs.remote_fs_source.clone(),
+                to: inputs.remote_fs_destination.clone(),
+            },
+            Self::RemoteMv => Request::RenamePath {
+                from: inputs.remote_fs_source.clone(),
+                to: inputs.remote_fs_destination.clone(),
+            },
+            Self::RemoteRm => Request::DeletePath {
+                path: inputs.remote_fs_source.clone(),
+                recursive: inputs.remote_fs_recursive,
+            },
+            Self::RemoteMkdir => Request::CreateFolderByPath {
+                path: inputs.remote_fs_destination.clone(),
+            },
+            Self::RemoteCat => Request::ReadFileRange {
+                path: inputs.remote_fs_source.clone(),
+                offset: 0,
+                length: 8 * 1024 * 1024,
+            },
             // `Doctor` is handled entirely CLI-side in `main.rs` and
             // must never reach this dispatch; mapping it to `GetHealth`
             // is a defensive fallback equivalent to `Start`.
@@ -1228,16 +1227,6 @@ impl Command {
             // `MigrateFromC` is likewise CLI-side only; mapping to a
             // harmless `GetHealth` defends against a main.rs regression.
             Self::MigrateFromC { .. } => Request::Plain {
-                method: Method::GetHealth,
-            },
-            Self::FileHistory => Request::FileHistory {
-                path: inputs.file_history_path.clone(),
-                limit: inputs.file_history_limit,
-            },
-            // `FileDiff` / `FileRestore` are CLI-side stubs; they never
-            // reach the daemon. Mapping to `GetHealth` is a defensive
-            // fallback equivalent to `Doctor`.
-            Self::FileDiff | Self::FileRestore => Request::Plain {
                 method: Method::GetHealth,
             },
             // `Verify` is handled CLI-side by `crate::verify::run`. The
@@ -1319,6 +1308,7 @@ impl Command {
                 source_fileid: inputs.upload_write_from_file_source_fileid,
                 source_hash: inputs.upload_write_from_file_source_hash,
                 offset: inputs.upload_write_from_file_offset,
+                source_offset: Some(inputs.upload_write_from_file_source_offset),
                 count: inputs.upload_write_from_file_count,
             },
             Self::ConflictList => Request::ConflictList,
@@ -1378,7 +1368,7 @@ impl Command {
                 method: Method::VerifyEmail,
             },
             Self::AccountVerifyEmailRestricted => Request::VerifyEmailRestricted {
-                verify_token: inputs.account_verify_token.clone(),
+                verify_token: inputs.account_verify_token.clone().into(),
             },
             Self::AccountLostPassword => Request::LostPassword {
                 email: inputs.username.clone(),
@@ -1435,9 +1425,11 @@ impl Command {
             // Resolves each pCloud-drive path to a remote folder id on the
             // daemon side via the authenticated path resolver, then creates
             // the tree public link. bd-1du row 149.
-            Self::CreateTreeLinkFromPaths => Request::CreateTreePublicLinkFromPaths {
+            Self::CreateTreeLinkFromPaths => Request::CreateTreePublicLinkFromPathTargets {
                 name: inputs.tree_link_name.clone(),
-                paths: inputs.tree_link_paths.clone(),
+                root: inputs.tree_link_root.clone(),
+                folders: inputs.tree_link_paths.clone(),
+                files: inputs.tree_link_files.clone(),
                 expires: inputs.tree_link_expire,
             },
         }
@@ -1540,11 +1532,6 @@ mod tests {
             remote_folder_path: String::new(),
             folder_metadata_remote_path: String::new(),
             filesystem_status_local_path: String::new(),
-            file_history_path: String::new(),
-            file_history_limit: None,
-            file_diff_rev_a: String::new(),
-            file_diff_rev_b: String::new(),
-            file_restore_rev: String::new(),
             verify_local_path: String::new(),
             verify_recursive: false,
             verify_fix: false,
@@ -1565,10 +1552,17 @@ mod tests {
             upload_write_from_file_source_fileid: 0,
             upload_write_from_file_source_hash: 0,
             upload_write_from_file_offset: 0,
+            upload_write_from_file_source_offset: 0,
             upload_write_from_file_count: 0,
             conflict_path: String::new(),
+            sync_exclude_pattern: String::new(),
             conflict_resolve_policy: String::new(),
             stat_remote_path: String::new(),
+            remote_fs_source: String::new(),
+            remote_fs_destination: String::new(),
+            remote_fs_local_path: std::path::PathBuf::new(),
+            remote_fs_overwrite: false,
+            remote_fs_recursive: false,
             new_crypto_password: SecretString::new(String::new()),
             crypto_change_hint: String::new(),
             crypto_change_code: String::new(),
@@ -1589,7 +1583,9 @@ mod tests {
             backup_create_local_path: String::new(),
             backup_create_parent_folder_name: None,
             backup_device_folder_id: 0,
+            tree_link_root: None,
             tree_link_paths: Vec::new(),
+            tree_link_files: Vec::new(),
             crypto_setup_backend: CryptoBackendIpc::PclsyncCompat,
             crypto_setup_acknowledge_not_interop: false,
             crypto_setup_hint: None,
@@ -1659,5 +1655,169 @@ mod tests {
         }
         // SAFETY: cleanup; still under the guard.
         unsafe { std::env::remove_var("PCLOUD_FORCE_UMOUNT") };
+    }
+
+    #[test]
+    fn every_command_variant_lowers_to_a_typed_request() {
+        let inputs = fresh_inputs();
+        let commands = [
+            Command::Help,
+            Command::Status,
+            Command::Health,
+            Command::Pending,
+            Command::Slo,
+            Command::ListLinks,
+            Command::ListUploadLinks,
+            Command::ShowLink,
+            Command::DeleteLink,
+            Command::CreateFileLink,
+            Command::CreateFolderLink,
+            Command::ChangeLinkExpire,
+            Command::ChangeLinkPassword,
+            Command::ChangeLinkUpload,
+            Command::CreateUploadLink,
+            Command::DeleteUploadLink,
+            Command::CreateTreeLink,
+            Command::ListLinkAccess,
+            Command::AddLinkAccess,
+            Command::RemoveLinkAccess,
+            Command::ListBookmarks,
+            Command::RemoveBookmark,
+            Command::ChangeBookmark,
+            Command::SyncList,
+            Command::SyncAdd,
+            Command::SyncRemove,
+            Command::SyncStatus,
+            Command::SyncChangeType,
+            Command::SyncExcludeAdd,
+            Command::SyncExcludeRemove,
+            Command::SyncExcludeList,
+            Command::UserInfo,
+            Command::Pause,
+            Command::Resume,
+            Command::LoginBegin,
+            Command::Logout,
+            Command::SendTwoFactorSms,
+            Command::SendTwoFactorNotification,
+            Command::SubmitPassword,
+            Command::SubmitAuthToken,
+            Command::SubmitTwoFactorCode,
+            Command::SubmitRecoveryCode,
+            Command::SubmitCryptoPassword,
+            Command::AuthSave,
+            Command::LockCrypto,
+            Command::Shutdown,
+            Command::Drain,
+            Command::Start,
+            Command::ListIncomingShares,
+            Command::ListOutgoingShares,
+            Command::ListIncomingShareRequests,
+            Command::ListOutgoingShareRequests,
+            Command::ListContacts,
+            Command::ListMyTeams,
+            Command::ShareFolder,
+            Command::CancelShareRequest,
+            Command::DeclineShareRequest,
+            Command::AcceptShareRequest,
+            Command::RemoveShare,
+            Command::ModifyShare,
+            Command::AccountStopShare,
+            Command::AccountModifyShare,
+            Command::AccountTeamShare,
+            Command::ListNotifications,
+            Command::MarkNotificationsRead { upto_id: 1 },
+            Command::CryptoStatus,
+            Command::AuditVerify,
+            Command::SessionStatus,
+            Command::Mount,
+            Command::MountForceUnmount,
+            Command::Unmount,
+            Command::RunLocalScan,
+            Command::SendPublink,
+            Command::CreateRemoteFolder,
+            Command::GetFolderIdByPath,
+            Command::GetFolderFlags,
+            Command::GetFolderOwnerId,
+            Command::FilesystemStatus,
+            Command::Stat,
+            Command::RemoteLs,
+            Command::RemoteGet,
+            Command::RemotePut,
+            Command::RemoteCp,
+            Command::RemoteMv,
+            Command::RemoteRm,
+            Command::RemoteMkdir,
+            Command::RemoteCat,
+            Command::Reload,
+            Command::Doctor,
+            Command::MigrateFromC {
+                dry_run: true,
+                force_overwrite: false,
+                from: None,
+            },
+            Command::Verify {
+                path: std::path::PathBuf::new(),
+                recursive: false,
+                fix: false,
+                yes: false,
+            },
+            Command::SnapshotCreate,
+            Command::SnapshotRestore,
+            Command::SnapshotVerify,
+            Command::SnapshotPrune,
+            Command::BackupSnapshotCreate,
+            Command::BackupSnapshotRestore,
+            Command::BackupSnapshotVerify,
+            Command::BackupSnapshotPrune,
+            Command::IntegrityStatus,
+            Command::IntegrityRunOnce,
+            Command::IntegritySkip,
+            Command::HaStatus,
+            Command::AuditVerifierStatus,
+            Command::UploadCreate,
+            Command::UploadPause,
+            Command::UploadResume,
+            Command::UploadCancel,
+            Command::UploadList,
+            Command::UploadWriteFromFile,
+            Command::ConflictList,
+            Command::ConflictResolve,
+            Command::CryptoReset,
+            Command::CryptoPrivKeyFlags,
+            Command::CryptoSendChangePrivate,
+            Command::CryptoChangePassword,
+            Command::CryptoChangePasswordUnlocked,
+            Command::CryptoHint,
+            Command::SyncSuggest,
+            Command::SyncIsSyncable,
+            Command::AccountVerifyEmail,
+            Command::AccountVerifyEmailRestricted,
+            Command::AccountLostPassword,
+            Command::AccountChangePassword,
+            Command::AccountRegister,
+            Command::AccountApiServers,
+            Command::AccountSetApiServer,
+            Command::AccountSetLanguage,
+            Command::AccountPromo,
+            Command::DownloadLink,
+            Command::DownloadFile,
+            Command::BackupDelete,
+            Command::BackupCreate,
+            Command::BackupStopDevice,
+            Command::BackupDeleteDevice,
+            Command::CreateTreeLinkFromPaths,
+            Command::CryptoSetupV2,
+            Command::CryptoGetFolderKey,
+            Command::CryptoGetFileKey,
+        ];
+
+        for command in commands {
+            let debug = format!("{command:?}");
+            let request = command.into_request(&inputs);
+            assert!(
+                !format!("{request:?}").is_empty(),
+                "{debug} must lower to a debuggable request"
+            );
+        }
     }
 }

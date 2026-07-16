@@ -4,19 +4,20 @@ Documentation=https://github.com/ezechiel203/pcloud-rs
 After=network-online.target
 Wants=network-online.target
 
-# This unit is intended to be installed as a user-scoped service:
-#   systemctl --user enable --now pcloudd.service
-# For system-wide deployments, DynamicUser=yes below provides an ephemeral
-# unprivileged identity. Flip User=/Group= if you need a fixed account.
+# This unit is system-scoped only:
+#   sudo systemctl enable --now pcloudd.service
+# It uses DynamicUser=yes, StateDirectory=, LogsDirectory=, and other
+# directives that are invalid or ineffective in `systemctl --user` units.
+# Use packaging/systemd/pcloudd-user.service for per-user deployments.
 #
-# This unit uses Type=notify: the daemon emits sd_notify(3) READY=1 after
-# binding its IPC socket and WATCHDOG=1 on each serve-loop iteration so
-# systemd knows the loop is still making progress. Socket activation
-# (pcloudd.socket) is intentionally NOT required: the daemon binds its own
-# owner-only Unix socket during startup. Graceful shutdown is handled by
-# the daemon's SIGTERM/SIGINT handlers, which flip an internal shutdown flag
-# that lets the IPC serve loop drain in-flight work and exit cleanly within
-# TimeoutStopSec.
+# This unit uses Type=simple because the Unix `pcloudd serve` path binds its
+# own IPC socket and enters the serve loop directly; it does not emit READY=1
+# during that startup path. WATCHDOG=1 notifications are still accepted below
+# for loop-progress monitoring. Socket activation (pcloudd.socket) is
+# intentionally NOT required until the daemon implements LISTEN_FDS support.
+# Graceful shutdown is handled by the daemon's SIGTERM/SIGINT handlers, which
+# flip an internal shutdown flag that lets the IPC serve loop drain in-flight
+# work and exit cleanly within TimeoutStopSec.
 #
 # ---
 # FUSE DEPLOYMENTS: this shipped unit intentionally BLOCKS /dev/fuse and the
@@ -28,13 +29,11 @@ Wants=network-online.target
 # ---
 
 [Service]
-Type=notify
-# NotifyAccess=main is required when DynamicUser=yes and PrivateUsers=yes are
-# both set. Without it, systemd defaults to NotifyAccess=none and silently
-# drops all sd_notify(3) datagrams — READY=1 and WATCHDOG=1 never arrive,
-# causing the service to time out during startup.
-NotifyAccess=main
-WatchdogSec=30s
+Type=simple
+# WatchdogSec is intentionally unset until the daemon derives its accept-loop
+# timeout from $WATCHDOG_USEC and emits heartbeats faster than half the
+# configured watchdog interval. Keeping WatchdogSec=30s here can restart a
+# healthy idle daemon.
 ExecStart=/usr/bin/pcloudd serve
 Restart=on-failure
 RestartSec=5s
@@ -116,10 +115,16 @@ PrivateUsers=yes
 
 # --- Network ---
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
-IPAddressDeny=any
-IPAddressAllow=localhost
-# Operators MUST broaden IPAddressAllow= to cover the pCloud API endpoints
-# (e.g. binapi.pcloud.com, eapi.pcloud.com) via a drop-in override.
+# IPAddressDeny / IPAddressAllow are intentionally NOT set in the
+# default unit. Earlier revisions shipped `IPAddressDeny=any` paired
+# with `IPAddressAllow=localhost` here, which silently broke a
+# default install — every API call to *.pcloud.com was dropped at
+# the cgroup before it left the host. Operators who want a strict
+# egress allow-list should drop in
+# `packaging/systemd/override.conf.example`, which re-enables
+# `IPAddressDeny=any` and lists the published pCloud API CIDRs.
+# Default behaviour: route via the host firewall, not the unit.
+# Audit reference: CLAUDEREV/00-executive-summary.md DEPLOY-H-11.3.
 
 # --- Syscall filter (deny-by-default allowlist) ---
 SystemCallArchitectures=native
@@ -142,9 +147,11 @@ RestrictNamespaces=yes
 RestrictRealtime=yes
 
 # --- Environment defaults ---
-# PCLOUD_ROOT sets the daemon's working root for state/vault discovery.
-# Override per-deployment; the runtime directory is the recommended default.
-#Environment=PCLOUD_ROOT=%S/pcloud-rs
+# PCLOUD_ROOT sets the daemon's working root for config/state/runtime/cache.
+# Anchor it to systemd's managed persistent state directory so DynamicUser=yes,
+# ProtectSystem=strict, and ProtectHome=tmpfs do not leave discovery dependent
+# on an inaccessible home directory.
+Environment=PCLOUD_ROOT=%S/pcloud-rs
 
 # --- Credentials (operator responsibility) ---
 # Provide secrets via systemd-creds. NEVER via Environment=.
@@ -156,4 +163,4 @@ RestrictRealtime=yes
 # The daemon reads $CREDENTIALS_DIRECTORY/pcloud-rs-token if present.
 
 [Install]
-WantedBy=default.target
+WantedBy=multi-user.target

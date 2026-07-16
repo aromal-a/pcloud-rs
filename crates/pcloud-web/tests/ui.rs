@@ -10,6 +10,7 @@
 
 use std::path::PathBuf;
 
+use pcloud_secret::secret_string::SecretString;
 use pcloud_web::{WebConfig, bind_for_test, generate_web_token};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -20,7 +21,7 @@ async fn start() -> (std::net::SocketAddr, String, tokio::task::JoinHandle<()>) 
     let cfg = WebConfig {
         socket_path: PathBuf::new(),
         bind_addr: "127.0.0.1:0".parse().unwrap(),
-        web_token: token.clone(),
+        web_token: SecretString::new(token.clone()),
         ..WebConfig::default()
     };
     let (listener, addr, app) = bind_for_test(cfg).await.expect("bind");
@@ -38,33 +39,39 @@ async fn raw_request(addr: std::net::SocketAddr, req: &str) -> String {
     String::from_utf8_lossy(&buf).into_owned()
 }
 
-/// Extract `Set-Cookie: pcw_csrf=<hex>`-style cookie from a raw HTTP
-/// response. Returns the 32-hex-char value or panics with the full
-/// response for debugging.
-fn extract_csrf_cookie(resp: &str) -> String {
+/// Extract a `Set-Cookie: name=value` cookie from a raw HTTP response.
+/// Returns the cookie value or panics with the full response for debugging.
+fn extract_cookie(resp: &str, name: &str) -> String {
+    let needle = format!("{name}=");
     for line in resp.lines() {
         let lower = line.to_ascii_lowercase();
-        if lower.starts_with("set-cookie:") && lower.contains("pcw_csrf=") {
+        if lower.starts_with("set-cookie:") && lower.contains(&needle) {
             // Recover the value on the case-preserving original line.
-            if let Some(start) = line.find("pcw_csrf=") {
-                let rest = &line[start + "pcw_csrf=".len()..];
+            if let Some(start) = line.find(&needle) {
+                let rest = &line[start + needle.len()..];
                 let end = rest.find(';').unwrap_or(rest.len());
                 return rest[..end].trim().to_string();
             }
         }
     }
-    panic!("no pcw_csrf cookie in response: {resp}");
+    panic!("no {name} cookie in response: {resp}");
+}
+
+fn extract_csrf_cookie(resp: &str) -> String {
+    extract_cookie(resp, "pcw_csrf")
 }
 
 #[tokio::test]
 async fn sync_list_renders_html_with_csrf_token() {
-    let (addr, _token, handle) = start().await;
+    let (addr, web_token, handle) = start().await;
 
-    let resp = raw_request(
-        addr,
-        "GET /sync HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-    )
-    .await;
+    let req = format!(
+        "GET /sync HTTP/1.1\r\n\
+         Host: localhost\r\n\
+         X-PCloud-Web-Token: {web_token}\r\n\
+         Connection: close\r\n\r\n"
+    );
+    let resp = raw_request(addr, &req).await;
 
     assert!(resp.starts_with("HTTP/1.1 200 "), "unexpected: {resp}");
     assert!(
@@ -77,8 +84,49 @@ async fn sync_list_renders_html_with_csrf_token() {
     let token = extract_csrf_cookie(&resp);
     assert_eq!(token.len(), 32, "token not 32 hex: {token}");
     assert!(token.chars().all(|c| c.is_ascii_hexdigit()));
+    assert_eq!(extract_cookie(&resp, "pcw_session"), web_token);
     // Form is rendered.
     assert!(resp.contains("<form method=\"post\" action=\"/sync\""));
+    assert!(resp.contains("name=\"csrf_token\""));
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn hostile_host_header_is_rejected() {
+    let (addr, _web_token, handle) = start().await;
+
+    let req = "GET /health HTTP/1.1\r\n\
+               Host: attacker.example\r\n\
+               Connection: close\r\n\r\n";
+    let resp = raw_request(addr, req).await;
+    assert!(
+        resp.starts_with("HTTP/1.1 400 "),
+        "expected hostile Host rejection, got: {resp}"
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn daemon_backed_get_routes_reject_missing_web_token() {
+    let (addr, _token, handle) = start().await;
+
+    for path in [
+        "/",
+        "/sync",
+        "/publinks",
+        "/activity",
+        "/settings",
+        "/api/status",
+    ] {
+        let req = format!("GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+        let resp = raw_request(addr, &req).await;
+        assert!(
+            resp.starts_with("HTTP/1.1 401 "),
+            "expected 401 for {path}, got: {resp}"
+        );
+    }
 
     handle.abort();
 }
@@ -110,11 +158,14 @@ async fn sync_add_rejects_request_without_web_token() {
 async fn sync_add_rejects_request_without_csrf() {
     // With valid web token but no CSRF, the server must return 403.
     let (addr, token, handle) = start().await;
+    let host = format!("localhost:{}", addr.port());
+    let origin = format!("http://{host}");
 
     let body = "local_path=%2Ftmp%2Fa&remote_path=%2Fa&sync_type=full";
     let req = format!(
         "POST /sync HTTP/1.1\r\n\
-         Host: localhost\r\n\
+         Host: {host}\r\n\
+         Origin: {origin}\r\n\
          Content-Type: application/x-www-form-urlencoded\r\n\
          X-PCloud-Web-Token: {token}\r\n\
          Content-Length: {len}\r\n\
@@ -138,20 +189,25 @@ async fn publink_create_then_delete_round_trip() {
     let (addr, web_token, handle) = start().await;
 
     // First grab a CSRF cookie from GET /publinks.
-    let get_resp = raw_request(
-        addr,
-        "GET /publinks HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-    )
-    .await;
+    let get = format!(
+        "GET /publinks HTTP/1.1\r\n\
+         Host: localhost\r\n\
+         X-PCloud-Web-Token: {web_token}\r\n\
+         Connection: close\r\n\r\n"
+    );
+    let get_resp = raw_request(addr, &get).await;
     assert!(get_resp.starts_with("HTTP/1.1 200 "));
     let csrf = extract_csrf_cookie(&get_resp);
 
     // CREATE with matching cookie+header+web_token: must reach handler, IPC
     // fails → 502.
+    let host = format!("localhost:{}", addr.port());
+    let origin = format!("http://{host}");
     let body = "path=%2Ffoo.txt&expiry=&password=";
     let create = format!(
         "POST /publinks HTTP/1.1\r\n\
-         Host: localhost\r\n\
+         Host: {host}\r\n\
+         Origin: {origin}\r\n\
          Content-Type: application/x-www-form-urlencoded\r\n\
          Cookie: pcw_csrf={csrf}\r\n\
          X-CSRF-Token: {csrf}\r\n\
@@ -184,7 +240,8 @@ async fn publink_create_then_delete_round_trip() {
     // DELETE with matching cookie+header+token: passes, IPC 502.
     let del = format!(
         "DELETE /publinks/42 HTTP/1.1\r\n\
-         Host: localhost\r\n\
+         Host: {host}\r\n\
+         Origin: {origin}\r\n\
          Cookie: pcw_csrf={csrf}\r\n\
          X-CSRF-Token: {csrf}\r\n\
          X-PCloud-Web-Token: {web_token}\r\n\
@@ -200,15 +257,89 @@ async fn publink_create_then_delete_round_trip() {
 }
 
 #[tokio::test]
-async fn activity_returns_json_when_accept_is_application_json() {
-    let (addr, _token, handle) = start().await;
+async fn cross_origin_mutation_is_rejected() {
+    let (addr, web_token, handle) = start().await;
+    let host = format!("localhost:{}", addr.port());
 
-    let resp = raw_request(
-        addr,
+    let get = format!(
+        "GET /sync HTTP/1.1\r\n\
+         Host: {host}\r\n\
+         X-PCloud-Web-Token: {web_token}\r\n\
+         Connection: close\r\n\r\n"
+    );
+    let get_resp = raw_request(addr, &get).await;
+    assert!(get_resp.starts_with("HTTP/1.1 200 "));
+    let csrf = extract_csrf_cookie(&get_resp);
+    let session = extract_cookie(&get_resp, "pcw_session");
+
+    let body = format!("csrf_token={csrf}&local_path=%2Ftmp%2Fa&remote_path=%2Fa&sync_type=full");
+    let post = format!(
+        "POST /sync HTTP/1.1\r\n\
+         Host: {host}\r\n\
+         Origin: http://attacker.example\r\n\
+         Content-Type: application/x-www-form-urlencoded\r\n\
+         Cookie: pcw_csrf={csrf}; pcw_session={session}\r\n\
+         Content-Length: {len}\r\n\
+         Connection: close\r\n\r\n{body}",
+        len = body.len()
+    );
+    let resp = raw_request(addr, &post).await;
+    assert!(
+        resp.starts_with("HTTP/1.1 403 "),
+        "expected cross-origin rejection, got: {resp}"
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn browser_like_form_post_uses_hidden_csrf_and_session_cookie() {
+    let (addr, web_token, handle) = start().await;
+    let host = format!("localhost:{}", addr.port());
+    let origin = format!("http://{host}");
+
+    let get = format!(
+        "GET /sync HTTP/1.1\r\n\
+         Host: {host}\r\n\
+         X-PCloud-Web-Token: {web_token}\r\n\
+         Connection: close\r\n\r\n"
+    );
+    let get_resp = raw_request(addr, &get).await;
+    assert!(get_resp.starts_with("HTTP/1.1 200 "));
+    let csrf = extract_csrf_cookie(&get_resp);
+    let session = extract_cookie(&get_resp, "pcw_session");
+
+    let body = format!("csrf_token={csrf}&local_path=%2Ftmp%2Fa&remote_path=%2Fa&sync_type=full");
+    let post = format!(
+        "POST /sync HTTP/1.1\r\n\
+         Host: {host}\r\n\
+         Origin: {origin}\r\n\
+         Content-Type: application/x-www-form-urlencoded\r\n\
+         Cookie: pcw_csrf={csrf}; pcw_session={session}\r\n\
+         Content-Length: {len}\r\n\
+         Connection: close\r\n\r\n{body}",
+        len = body.len()
+    );
+    let resp = raw_request(addr, &post).await;
+    assert!(
+        resp.starts_with("HTTP/1.1 502 "),
+        "expected browser-like form to pass web/CSRF/origin gates and reach IPC, got: {resp}"
+    );
+
+    handle.abort();
+}
+
+#[tokio::test]
+async fn activity_returns_json_when_accept_is_application_json() {
+    let (addr, web_token, handle) = start().await;
+
+    let json_get = format!(
         "GET /activity HTTP/1.1\r\nHost: localhost\r\n\
-         Accept: application/json\r\nConnection: close\r\n\r\n",
-    )
-    .await;
+         Accept: application/json\r\n\
+         X-PCloud-Web-Token: {web_token}\r\n\
+         Connection: close\r\n\r\n"
+    );
+    let resp = raw_request(addr, &json_get).await;
     assert!(resp.starts_with("HTTP/1.1 200 "));
     assert!(
         resp.to_ascii_lowercase()
@@ -220,11 +351,13 @@ async fn activity_returns_json_when_accept_is_application_json() {
     assert!(body.trim_start().starts_with('{'), "body: {body}");
 
     // Default (HTML) path when no Accept header is present.
-    let html_resp = raw_request(
-        addr,
-        "GET /activity HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-    )
-    .await;
+    let html_get = format!(
+        "GET /activity HTTP/1.1\r\n\
+         Host: localhost\r\n\
+         X-PCloud-Web-Token: {web_token}\r\n\
+         Connection: close\r\n\r\n"
+    );
+    let html_resp = raw_request(addr, &html_get).await;
     assert!(
         html_resp
             .to_ascii_lowercase()
@@ -237,12 +370,14 @@ async fn activity_returns_json_when_accept_is_application_json() {
 
 #[tokio::test]
 async fn settings_redacts_secret_fields() {
-    let (addr, _token, handle) = start().await;
-    let resp = raw_request(
-        addr,
-        "GET /settings HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
-    )
-    .await;
+    let (addr, web_token, handle) = start().await;
+    let get = format!(
+        "GET /settings HTTP/1.1\r\n\
+         Host: localhost\r\n\
+         X-PCloud-Web-Token: {web_token}\r\n\
+         Connection: close\r\n\r\n"
+    );
+    let resp = raw_request(addr, &get).await;
     assert!(resp.starts_with("HTTP/1.1 200 "));
     // Secret-bearing keys must appear redacted.
     assert!(resp.contains("auth_token"));

@@ -20,7 +20,13 @@ use std::thread;
 
 use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
 
-use pcloud_fs::page_cache::{DEFAULT_PAGE_SIZE, PageCache, PageCacheConfig, PageKey};
+use pcloud_fs::page_cache::{DEFAULT_PAGE_SIZE, PageCacheConfig, PageCacheGeneric, PageKey};
+
+// CLAUDEREV deferred-set D1.4 (fire 45): the legacy non-generic `PageCache`
+// was deleted. The bench now exercises `PageCacheGeneric<PageKey>` — same
+// machinery, same eviction semantics, just generalised so the workspace
+// has a single canonical cache primitive.
+type PageCache = PageCacheGeneric<PageKey>;
 
 const MIB: usize = 1024 * 1024;
 const GIB: u64 = 1024 * 1024 * 1024;
@@ -60,7 +66,7 @@ fn bench_sequential_cold_fill_hit(c: &mut Criterion) {
                     file_id: 1,
                     page_index: i as u64,
                 };
-                black_box(cache.get(key));
+                black_box(cache.get(&key));
             }
         })
     });
@@ -103,7 +109,7 @@ fn bench_random_read_1gib(c: &mut Criterion) {
                     file_id: 1,
                     page_index: idx,
                 };
-                if cache.get(key).is_none() {
+                if cache.get(&key).is_none() {
                     // On miss: synthesise a fill so subsequent hits improve.
                     cache.put(key, make_page(idx as u8, DEFAULT_PAGE_SIZE));
                 }
@@ -178,7 +184,7 @@ fn bench_concurrent_read_4_threads(c: &mut Criterion) {
                             file_id: 1,
                             page_index: seed % 32,
                         };
-                        black_box(c.get(key));
+                        black_box(c.get(&key));
                     }
                 }));
             }

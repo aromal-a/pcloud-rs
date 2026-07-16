@@ -14,8 +14,8 @@ views plus CRUD mutations for sync and publinks.
 
 ## What this is
 
-A single-user Axum HTTP server that binds to `127.0.0.1` and exposes
-the routes listed below. Every page is server-rendered plain HTML —
+A single-user Axum HTTP server that binds to `127.0.0.1` by default and
+exposes the routes listed below. Every page is server-rendered plain HTML —
 no client-side JS (the CSP blocks it outright).
 
 ### Route map
@@ -38,54 +38,66 @@ no client-side JS (the CSP blocks it outright).
 ### CSRF — double-submit cookie
 
 Every `GET` that renders HTML sets `pcw_csrf=<32 hex>; HttpOnly;
-SameSite=Strict; Path=/`. Every mutating handler requires the caller
-to echo that value in the `X-CSRF-Token` request header. The two
-values are compared constant-time. Missing/malformed/mismatched tokens
-return `403 Forbidden`.
+SameSite=Strict; Path=/` and renders the same value into hidden form
+fields. Every mutating handler accepts either a matching
+`X-CSRF-Token` request header or the hidden form value. The two values
+are compared constant-time. Missing/malformed/mismatched tokens return
+`403 Forbidden`.
 
-Because the cookie is `HttpOnly; SameSite=Strict` only same-origin
-(loopback-only) callers can observe and re-submit it.
+Because the cookie is `HttpOnly; SameSite=Strict`, and mutations also
+require same-origin `Origin` or `Referer`, browser form submissions work
+without JavaScript or custom headers while cross-origin posts are rejected.
 
 ## What this is not
 
 This crate is **not** the final Leptos SSR application described in
 PLAN_A_PLUS §P4.5. It is the scaffold on which that work will be
 built. There is no client-side JS (deliberately blocked by CSP), no
-auth surface, no write actions, and no real templating yet.
+external auth surface, and no real templating yet.
 
 ## How to run
 
 ```bash
 cargo run -p pcloud-web
+cargo run -p pcloud-web -- --help
 ```
 
-By default the server binds to `127.0.0.1:17650`. The daemon IPC
-socket path is configured via `WebConfig::socket_path` — callers that
-embed `pcloud-web` are expected to reuse the daemon's configured
-runtime-dir socket.
+By default the server binds to `127.0.0.1:17650` and resolves the daemon
+IPC socket from `PCLOUD_ROOT` or the XDG runtime/cache directories. Use
+`--socket <PATH>` to override it, `--web-token-file <PATH>` to reuse an
+existing token, and `--allow-host <HOST>` for a reverse proxy or LAN test
+host.
 
-Embedders may override the bind address via a `--bind` CLI flag (or
-the `WebConfig::bind_addr` field). **Overriding to a non-loopback
-address is refused with a startup panic.** Do not attempt to expose
-this surface on a LAN or public IP: it is unauthenticated beyond the
-CSRF cookie, and the CSRF cookie is a same-origin control only —
-not an auth layer. If you must reach the UI from a different host,
-use an SSH port-forward (`ssh -L 17650:127.0.0.1:17650 host`).
+For lab testing from another host, bind to all IPv4 interfaces and allow the
+Host header your browser will send:
+
+```bash
+cargo run -p pcloud-web -- \
+  --bind 0.0.0.0:17650 \
+  --allow-host 192.0.2.10:17650
+```
+
+Do not use this as an enterprise auth boundary. The web/session token and
+CSRF cookie are still the only HTTP-layer controls; production exposure should
+go through a TLS/auth reverse proxy.
 
 ## Security posture
 
-- Localhost-only. Attempting to bind to any non-loopback address
-  panics at startup.
+- Localhost by default; all-interface/LAN binds are allowed only when
+  explicitly configured for testing or behind a controlled proxy.
 - No CORS, same-origin only.
+- Host allow-list enforcement: loopback/local `Host` values are accepted;
+  additional reverse-proxy or LAN test hosts must be configured explicitly.
+- Mutating routes require same-origin `Origin` or `Referer`.
 - Every HTML response carries a minimal CSP:
   `default-src 'self'; script-src 'none'; style-src 'self' 'unsafe-inline'`.
 - `X-Content-Type-Options: nosniff` on HTML responses.
+- Daemon-backed routes require `X-PCloud-Web-Token` or the HttpOnly
+  `pcw_session` cookie issued after a token-authenticated HTML GET.
 - The web process runs as the same local user as the daemon; IPC
   permission enforcement lives in `pcloud-ipc`.
-- **Loopback-only panic guard**: `WebConfig::bind_addr` is validated
-  at startup; any non-loopback address (including `0.0.0.0`, `::`,
-  LAN IPs, or public IPs) triggers an explicit panic before the
-  listener is created. See ADR 0004.
+- All-interface binds such as `0.0.0.0:17650` are supported for testing,
+  but remote browser hosts must be listed with `--allow-host`.
 
 ## Accessibility
 

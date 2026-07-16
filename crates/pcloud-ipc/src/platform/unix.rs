@@ -1,5 +1,5 @@
-//! **PLATFORM: FreeBSD, OpenBSD, NetBSD, macOS.**
-//! **GATING: `#[cfg(any(target_os = "freebsd", target_os = "openbsd", target_os = "netbsd", target_os = "macos"))]`.**
+//! **PLATFORM: FreeBSD, OpenBSD, NetBSD, DragonFly BSD, macOS.**
+//! **GATING:** selected by `platform/mod.rs` for BSD and macOS targets.
 //!
 //! BSD/macOS peer authentication via `getpeereid(3)` on AF_UNIX.
 //! NOT suitable for Linux (no `getpeereid`; use SO_PEERCRED — see `platform::linux`).

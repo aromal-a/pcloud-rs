@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This file is the current handoff and execution dossier for the `pcloud-rs` C codebase and the `` Rust rewrite.
+This file is the current handoff and execution dossier for the `pcloud-rs` C codebase and the Rust rewrite.
 
 It is intended for another agent to:
 
@@ -42,22 +42,54 @@ Rust parity truth files:
 
 Rust rewrite plans:
 
-- `/home/ezechiel203/Projects/FORKS/pcloud-rs/RUST-PLANS/`
-- `/home/ezechiel203/Projects/FORKS/pcloud-rs/RUST-PLANS/30-C-FEATURE-PARITY-EXECUTION-PLAN.md`
+- `RUST-PLANS/` was the original handoff directory and has been
+  removed from the tree. Active execution plans now live alongside
+  the parity truth files (`STATUS.md`, `C_FEATURE_PARITY_REVIEW.md`,
+  `C_FEATURE_PARITY_MATRIX.csv`) and the closure checklist
+  (`docs/parity/bd-1du-10-closure-checklist.md`).
 
 Issue tracker source of truth:
 
-- `bd`
+- `bd` (live records under `.beads/issues.jsonl`). The `bd-1du.*`
+  IDs referenced in older sections of this file are historical;
+  current beads use the `pcloud-rs-ncx.*` naming and the
+  `gptrev-01` namespace. Treat the older ID strings as parity
+  provenance, not live tickets.
 
-## Current Truth (2026-04-18, post Audit 06)
+## Current Truth (2026-05-01, post Fire 91)
 
-The Rust implementation is **substantially complete** and the tracker is down to the final parity-proof phase, but it is still **not** honest to call it "full parity", "production ready", or "drop-in replacement" while the last proof beads remain open.
+The Rust implementation is **substantially complete** and is in the final
+parity-proof phase. As of Fire 91 (2026-05-01) all CSV `Partial` rows are
+closed (tally `156 / 0 / 0 / 30 (186 rows)`), but it is still **not** honest
+to call it "full parity", "production ready", or "drop-in replacement" while
+cross-platform hardware verification and human reviewer sign-off remain open.
 
-Open parity epics/tasks (3 beads):
+Open parity work (no live beads — see note below):
 
-- `bd-1du` - Close verified C-to-Rust feature parity gaps (epic)
-- `bd-1du.4` - Replace filesystem shell with real mounted-drive parity (substantially landed; cross-platform hardware verification remaining)
-- `bd-1du.10` - Prove and gate final C parity claims (see [`STATUS.md`](STATUS.md) for the authoritative Partial row count + human sign-off remaining)
+- **CSV parity is functionally complete** (was bead `bd-1du`, now historical).
+  Zero `Partial` rows remain in
+  [`C_FEATURE_PARITY_MATRIX.csv`](C_FEATURE_PARITY_MATRIX.csv) as of
+  2026-05-01. Row 94 (`transfers,SDK UploadSession`,
+  `crates/pcloud-sdk/src/upload_session.rs`) flipped to Implemented in
+  Fire 91 after wiring the chunked driver, threading `ConflictMode`
+  end-to-end, and adding a mock-server integration test. Rows 124, 138,
+  142, 147, 148, 168 previously listed as Partial flipped to Implemented on
+  2026-04-30 in CLAUDEREV remediation fires 12-15 (rows 138, 147, 148, 168),
+  fire 47 (row 142), and fire 56 (row 124).
+- **Mounted-drive cross-platform hardware verification** (was bead
+  `bd-1du.4`, now historical). Linux is live-verified; macOS and Windows
+  bring-up plus BSD rc.d supervision are tracked under
+  `bd-xplat-windows` / `bd-xplat-bsd` in the active `pcloud-rs-ncx.*`
+  bead family.
+- **Final parity proof gate** (was bead `bd-1du.10`, now historical). See
+  [`STATUS.md`](STATUS.md) for the authoritative tally and human sign-off
+  remaining; the active closure checklist is at
+  [`docs/parity/bd-1du-10-closure-checklist.md`](docs/parity/bd-1du-10-closure-checklist.md).
+
+The `bd-1du.*` IDs above were renamed during the bead-renaming sweep and
+do not exist in `.beads/issues.jsonl` today (verified by
+`grep '"id":"bd-1du' .beads/issues.jsonl` → 0 matches). Treat the older
+IDs as parity provenance, not live tickets. CLAUDEREV iter-3 fix.
 
 Single source of truth for counts: [`STATUS.md`](STATUS.md). Per-row
 rejected rationale lives in `REJECTED-RATIONALES-14042026.md`. Do not
@@ -66,13 +98,20 @@ hard-code count numbers in this file; link to `STATUS.md` instead.
 Important corrections:
 
 - crypto is active on the retained Rust path,
-- shares/business/team parity is implemented on the retained path,
-- public-link parity is implemented on the retained path,
+- plain shares/business/team parity is implemented on the retained path;
+  crypto share/team-share rows 124, 138, and 142 flipped to Implemented on
+  2026-04-30 (CLAUDEREV fires 15, 47, 56),
+- core public-link parity is implemented on the retained path; the three
+  previously-partial specialty public-link helpers (rows 147, 148, 168)
+  flipped to Implemented on 2026-04-30 (CLAUDEREV fires 12-14),
 - backup/device/account parity is implemented on the retained path,
 - `psync_send_publink` is implemented (row 42, `account_backend.rs`),
 - sync helper parity is implemented on the retained path,
 - Linux FUSE read+write is live-verified end-to-end on a real kernel mount,
-- the remaining parity work is narrow: see [`STATUS.md`](STATUS.md) for open Partial rows plus cross-platform mount hardware verification and final reviewer sign-off.
+- the remaining parity work is narrow: see [`STATUS.md`](STATUS.md) — CSV
+  parity is functionally complete (zero Partial rows as of 2026-05-01,
+  Fire 91); cross-platform mount hardware verification and final reviewer
+  sign-off are the remaining gates.
 
 Do **not** claim:
 
@@ -81,7 +120,7 @@ Do **not** claim:
 - “enterprise ready”
 - “drop-in replacement”
 
-unless `bd-1du.10` is actually satisfied by code, tests, docs, and parity matrix evidence.
+unless the final parity gate is satisfied by code, tests, docs, and parity matrix evidence.
 
 ## What Has Been Done
 
@@ -182,7 +221,7 @@ Still not full parity with C syncfolder lifecycle because:
 
 - the runtime engine is still simplified versus the C daemon,
 - mounted-drive-coupled sync behavior is still part of the open FUSE proof work,
-- some end-to-end proof remains tracked under `bd-1du.10` even though the current sync helper matrix rows are implemented.
+- some end-to-end proof remains in the final parity gate even though the current sync helper matrix rows are implemented.
 
 Primary files:
 
@@ -199,13 +238,13 @@ Implemented:
 - `changepublink` password set/clear
 - `changepublink` upload policy changes
 - upload-link create/list/delete
-- tree-link create, including path-to-id resolver support
+- tree-link create, including root/folder/file path-to-id resolver support
 - upload-access helpers
 - bookmark/pin helpers
-- screenshot public-link helper
-- folder up/down link helper
 
-The remaining public-link work is now mainly truth-proofing under `bd-1du.10`, not a broad feature gap.
+Remaining public-link work is narrow but real: rows 147, 148, and 168 have
+backend/proto helpers for folder-link options, folder up/down links, and
+screenshot links, but no user-facing IPC/daemon/CLI/SDK routes yet.
 
 ### Crypto parity progress
 
@@ -220,7 +259,6 @@ Implemented on the active Rust path:
 - password rotation helpers,
 - fingerprint verification and reset paths,
 - active daemon/IPC/SDK crypto control surfaces.
-- crypto-aware share/team-share temppass flow.
 
 Previously listed as missing but now implemented:
 
@@ -228,7 +266,12 @@ Previously listed as missing but now implemented:
 - `send_change_user_private` (`SendChangeUserPrivateRequest` in `pcloud-proto/src/methods/crypto.rs`),
 - `priv_key_flags` (`CryptoShell::priv_key_flags`).
 
-Residual proof work (wire-level round-trip verification) is tracked under `bd-1du.10`.
+Crypto-share/team-share rows 124, 138, and 142 flipped to Implemented on
+2026-04-30 in CLAUDEREV remediation fire 15 (row 138, non-RSA crypto-share
+end-to-end IPC), fire 47 (row 142, crypto team-share end-to-end IPC), and
+fire 56 (row 124, RSA-4096-OAEP crypto-share with multi-RPC orchestrator).
+Live two-account/team E2E proof remains gated on the standing live-e2e
+harness — same posture as every other recently-implemented Implemented row.
 
 Primary files:
 
@@ -354,36 +397,44 @@ Primary target files:
 
 #### `bd-1du.10` Final parity proof
 
-Current state (Audit 05, 2026-04-18):
+Current state (post Fire 91, 2026-05-01):
 
 - The parity matrix has been reconciled against the source tree. The
-  honest count is **see `STATUS.md` for the authoritative count
-  (currently 5 Partial rows)**. Do not hard-code this number here.
-- All 28 `Rejected` rows have a 1:1 rationale in
+  honest count is in `STATUS.md`: **156 Implemented / 0 Partial /
+  0 Missing / 30 Rejected (186 rows)**.
+- All 30 `Rejected` rows have a 1:1 rationale in
   `REJECTED-RATIONALES-14042026.md`. No Rejected row is unjustified.
 - All retained matrix rows that are marked `Implemented` have real,
-  reachable code. A 20-row spot-check was clean; three stale path
-  citations (rows 69, 70, 75 — post-refactor daemon → backends moves)
-  were repaired in the CSV.
-- Five `Partial` rows remain (rows 26, 27, 93, 124, 142):
-    - Row 26 (`auth,psync_tfa_has_devices`) — no implementing code.
-    - Row 27 (`auth,psync_tfa_type`) — no implementing code.
-    - Row 93 (`transfers,upload_writefromfile` server-side-copy IPC
-      wiring) — IPC variant rewired to C primitive shape; daemon
-      handler is a stub.
-    - Row 124 (`crypto,psync_crypto_share_folder`) — `share_temppass`
-      uses HMAC-SHA256, not RSA-4096 (`bd-1du.5`).
-    - Row 142 (`crypto,psync_crypto_account_teamshare`) — same root
-      cause as row 124.
+  reachable code. Historical spot-check notes remain below, but current
+  counts come only from `STATUS.md` and the CSV.
+- **Zero** `Partial` rows remain. Row 94 (`transfers,SDK UploadSession`,
+  `crates/pcloud-sdk/src/upload_session.rs`) flipped to Implemented in
+  Fire 91 (2026-05-01) after wiring the chunked driver
+  (`upload_create` → per-chunk `upload_write` → `upload_save`), threading
+  `ConflictMode::IfHashNumeric` through the wire-level `upload_save`
+  request, and adding a mock-server integration test exercising
+  `EmbeddedDaemon::start_upload` end to end.
+- Rows 124, 138, 142, 147, 148, 168 previously listed here as Partial
+  flipped to Implemented on 2026-04-30:
+    - Rows 147, 148, 168 — CLAUDEREV remediation fires 12, 13, 14
+      (folder-public-link-full, folder-updown-link, screenshot-public-link
+      IPC routes + daemon dispatch + privileged classification).
+    - Row 138 — CLAUDEREV remediation fire 15 (`Request::CryptoShareFolder`
+      non-RSA IPC route + daemon dispatch).
+    - Row 142 — CLAUDEREV deferred-set fire 47
+      (`Request::CryptoAccountTeamShare` IPC route + daemon dispatch +
+      `team_share_verb.rs` live verb-reached test).
+    - Row 124 — CLAUDEREV deferred-set fire 56
+      (`Request::CryptoShareFolderRsa` IPC route + multi-RPC orchestrator
+      with `crypto_getpubkey` → `wrap_share_invitation_b64` →
+      `SharesRuntime::crypto_share_folder_rsa`).
 
 Remaining work to close the gate:
 
-- land a `Request::UploadWriteFromFile` IPC variant, wire it through
-  `TransferRuntime` and the CLI, live-verify server-side copy (row 93);
-- close remaining open Partial rows — see [`STATUS.md`](STATUS.md) for
-  the authoritative list;
 - sweep docs for any "production ready" / "full parity" claims (none
   found by this audit, but gate must re-verify at close-time);
+- complete cross-platform mount hardware verification (macOS / Windows /
+  BSD), tracked under `bd-xplat-windows` / `bd-xplat-bsd`;
 - run the nine-gate CI once more against the final tree;
 - obtain human reviewer sign-off (out of AI scope).
 
@@ -392,9 +443,10 @@ line-level closure checklist.
 
 ### P1 blockers
 
-There are no remaining non-filesystem parity beads below P0. Open
-Partial rows are tracked under `bd-1du.10` — see [`STATUS.md`](STATUS.md)
-for the authoritative list.
+Zero CSV `Partial` rows remain as of 2026-05-01 (Fire 91 closed Row 94,
+SDK `UploadSession`). No live `.beads` entry is required for parity-row
+tracking. Historical `bd-1du.*` and `gptrev-01` labels are provenance
+only; see [`STATUS.md`](STATUS.md) for the authoritative tally.
 
 ## Feature Parity Matrix Summary
 
@@ -402,19 +454,19 @@ The authoritative matrix is:
 
 - `/home/ezechiel203/Projects/FORKS/pcloud-rs/C_FEATURE_PARITY_MATRIX.csv`
 
-High-level status (2026-04-18):
+High-level status (2026-05-01):
 
 - `Auth`: implemented, live-verified
 - `CLI`: implemented for the retained legacy surface
 - `Sync root management`: implemented on the retained path
 - `Sync engine`: implemented on the retained path, background sync loop wired at daemon startup
-- `Transfers`: implemented; row 93 (`upload_writefromfile` server-side copy IPC wiring) Partial — see [`STATUS.md`](STATUS.md)
-- `Public links`: implemented; see [`STATUS.md`](STATUS.md) for open Partial rows
+- `Transfers`: implemented; row 94 (`SDK UploadSession` public route) flipped to Implemented 2026-05-01 (Fire 91) — see [`STATUS.md`](STATUS.md)
+- `Public links`: core/id/path tree-link surfaces implemented; specialty rows 147/148/168 flipped to Implemented 2026-04-30 (CLAUDEREV fires 12-14)
 - `Filesystem / mounted drive`: Linux live-verified; macOS/Windows scaffolded, hardware verification remaining
-- `Crypto`: implemented on the retained path
-- `Shares / business / teams`: implemented on the retained path
+- `Crypto`: implemented on the retained path; crypto-share/team-share rows 124 and 142 flipped to Implemented 2026-04-30 (CLAUDEREV fires 47 + 56)
+- `Shares / business / teams`: plain retained path implemented; crypto-share duplicate row 138 flipped to Implemented 2026-04-30 (CLAUDEREV fire 15)
 - `Backup / device`: implemented on the retained path
-- `SDK breadth`: implemented on the retained path
+- `SDK breadth`: implemented on the retained path; row 94 `UploadSession` flipped to Implemented 2026-05-01 (Fire 91)
 
 The parity review narrative is:
 
@@ -589,7 +641,10 @@ What “line by line” should mean in practice:
 
 Do **not** rubber-stamp “similar capabilities” until this is actually done.
 
-## Parallel Work Plan For Another Agent
+## Historical Parallel Work Plan For Another Agent
+
+This split preserves the old ownership vocabulary for context only; the
+`bd-1du.*` labels are not live beads.
 
 Recommended parallel split:
 
@@ -597,7 +652,7 @@ Recommended parallel split:
 
 Own:
 
-- `bd-1du.4`
+- historical `bd-1du.4` scope
 
 Scope:
 
@@ -618,7 +673,7 @@ Do not touch:
 
 Own:
 
-- `bd-1du.10`
+- historical `bd-1du.10` scope
 
 Scope:
 
@@ -628,7 +683,8 @@ Scope:
 - block false parity claims,
 - verify docs and release wording.
 
-This agent must not close `bd-1du.10` until all retained rows are justified.
+This agent must not close the final parity gate until every retained row has
+current evidence.
 
 ## Validation Commands
 
@@ -653,9 +709,7 @@ Tracker:
 ```bash
 cd /home/ezechiel203/Projects/FORKS/pcloud-rs
 bd list --status=open
-bd show bd-1du
-bd show bd-1du.4
-bd show bd-1du.10
+rg -n '"id":"bd-1du' .beads/issues.jsonl
 ```
 
 ## Documentation Discipline

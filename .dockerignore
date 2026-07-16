@@ -1,0 +1,11 @@
+.git
+.github
+target
+**/target
+docs/book/book
+docs/architecture-atlas/book
+lcov.info
+lcov-*.info
+coverage-*.json
+*.profraw
+*.profdata

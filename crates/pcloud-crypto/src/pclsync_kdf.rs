@@ -25,12 +25,12 @@
 //! See also `docs/crypto-reference-pclsync.md §1.1` and the KAT seed in §8.
 //!
 //! ## Security posture
-//! - Password is consumed through [`pcloud_secret::SecretString`] — the
+//! - Password is consumed through `pcloud_secret::SecretString` — the
 //!   caller never hands us a raw `String`.
-//! - The PBKDF2 output buffer lives inside a [`Dk48`] newtype that derives
-//!   [`ZeroizeOnDrop`] so the full 48-byte intermediate (which is exactly the
+//! - The PBKDF2 output buffer lives inside a `Dk48` newtype that derives
+//!   `ZeroizeOnDrop` so the full 48-byte intermediate (which is exactly the
 //!   KEK material) is scrubbed when the function returns.
-//! - The public [`UnlockedKek`] likewise derives [`ZeroizeOnDrop`] so the
+//! - The public `UnlockedKek` likewise derives `ZeroizeOnDrop` so the
 //!   eventual consumer cannot accidentally leak the KEK into a heap leak or
 //!   a core dump longer than its stack frame.
 //! - `#![forbid(unsafe_code)]` is enforced at module scope.
@@ -77,7 +77,7 @@ pub struct UnlockedKek {
 
 /// Fixed-size zeroizing wrapper around the raw 48-byte PBKDF2 output.
 ///
-/// Kept private to this module — callers interact with [`UnlockedKek`] only.
+/// Kept private to this module — callers interact with `UnlockedKek` only.
 #[derive(ZeroizeOnDrop)]
 struct Dk48([u8; PCLSYNC_DK_LEN]);
 

@@ -60,13 +60,16 @@
 // **GATING:** none (portable).
 
 use std::io;
+#[cfg(unix)]
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 static SHUTDOWN_REQUESTED: AtomicBool = AtomicBool::new(false);
 static RELOAD_REQUESTED: AtomicBool = AtomicBool::new(false);
+#[cfg(unix)]
 static INSTALL_ONCE: Once = Once::new();
+#[cfg(unix)]
 static INSTALL_OK: AtomicBool = AtomicBool::new(false);
 
 // Drain state machine. Encoded as a `u8` so the SIGTERM handler can flip
@@ -259,6 +262,7 @@ pub fn reset_for_test() {
     RELOAD_REQUESTED.store(false, Ordering::SeqCst);
 }
 
+#[cfg(unix)]
 extern "C" fn handle_term(_sig: libc::c_int) {
     // async-signal-safe: atomic stores only. We also flip the drain
     // state here so the serve loop observes draining without a
@@ -275,6 +279,7 @@ extern "C" fn handle_term(_sig: libc::c_int) {
     );
 }
 
+#[cfg(unix)]
 extern "C" fn handle_hup(_sig: libc::c_int) {
     RELOAD_REQUESTED.store(true, Ordering::SeqCst);
 }
@@ -340,10 +345,9 @@ fn install_ignore(sig: libc::c_int) -> io::Result<()> {
 /// On success returns `Ok(())`. On failure the OS error is returned and the
 /// daemon should abort rather than continue unprotected.
 ///
-/// Unix-only: relies on POSIX `sigaction(2)`. Windows daemon lifecycle
-/// is driven by the Windows Service control-dispatcher in
-/// `pcloud-daemon-win`; this symbol is a no-op there and callers must
-/// gate invocations with `#[cfg(unix)]`.
+/// Unix-only implementation: relies on POSIX `sigaction(2)`. The portable
+/// Windows daemon uses IPC shutdown/drain and an external cooperative flag;
+/// the optional experimental SCM host drives the same flag.
 #[cfg(unix)]
 pub fn install_default_handlers() -> io::Result<()> {
     let mut first_err: Option<io::Error> = None;
@@ -371,9 +375,9 @@ pub fn install_default_handlers() -> io::Result<()> {
     Ok(())
 }
 
-/// Windows stub. The real Windows process-lifecycle hooks live in
-/// `pcloud-daemon-win` (Service control dispatcher); calling this from
-/// shared code is a no-op.
+/// Non-Unix stub. Windows lifecycle is driven by IPC shutdown/drain and the
+/// cooperative flag passed to the serve loop; the optional experimental SCM
+/// host uses that same mechanism.
 #[cfg(not(unix))]
 pub fn install_default_handlers() -> io::Result<()> {
     Ok(())

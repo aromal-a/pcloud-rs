@@ -5,7 +5,8 @@ Authentication primitives and session state types for the pcloud-rs Rust rewrite
 ## What this crate does
 
 - Defines typed credentials, session tokens, and TFA challenge state.
-- Provides serializable auth state consumed by `pcloud-daemon` and `pcloud-sdk`.
+- Provides serializable auth state consumed by `pcloud-daemon` and the
+  internal `pcloud-embedded-sdk`.
 - Owns no network or I/O logic: transports live in `pcloud-proto` and the daemon's `auth_backend`.
 
 ## Public API entry points

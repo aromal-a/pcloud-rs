@@ -1,0 +1,134 @@
+name: Memory profiling (heaptrack)
+
+# T3.6 — Memory profiling.
+#
+# Runs `tools/memprofile/run.sh` under heaptrack against a hermetic
+# pcloudd profile and compares peak RSS against the recorded baseline
+# at `tools/memprofile/baseline.json`. A >=10% RSS regression fails
+# the job.
+#
+# Heaptrack is **Linux-only**, so this workflow runs only on
+# `ubuntu-latest`. macOS / Windows hosts intentionally have no equivalent
+# job — see docs/book/src/operations/memory-profiling.md.
+#
+# Triggers:
+#   - workflow_dispatch: operator-driven; can override RUN_DURATION_SECS
+#     to run the full 24-hour soak (86400). The default short run is
+#     suitable for the weekly cron.
+#   - schedule (Mon 06:00 UTC weekly): keeps the baseline live and
+#     surfaces any week-over-week regression.
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_duration_secs:
+        description: "Heaptrack run duration in seconds (default 900 = 15 min; 86400 = 24h soak)"
+        required: false
+        default: "900"
+      update_baseline:
+        description: "Update tools/memprofile/baseline.json with the new run (operator-only)"
+        required: false
+        default: "false"
+        type: boolean
+  schedule:
+    # Weekly: Mon 06:00 UTC.
+    - cron: "0 6 * * 1"
+
+# Memory-profile runs are mutually exclusive — a manual rerun must not
+# race the cron job over the same baseline file.
+concurrency:
+  group: memprofile
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  memprofile:
+    name: heaptrack run + baseline gate
+    runs-on: ubuntu-latest
+    # 24-hour operator-driven soak runs need ample budget; weekly cron
+    # finishes well inside this. GitHub-hosted ubuntu-latest tops out at
+    # 360 minutes for public repos, so anything beyond a 6-hour soak
+    # must run on a self-hosted long-running runner. Document and
+    # tolerate that constraint.
+    timeout-minutes: 360
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@1.96.1
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: memprofile-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install heaptrack + jq
+        run: |
+          # apt-fast is preinstalled on ubuntu-latest images and falls
+          # back to apt-get when unavailable.
+          if command -v apt-fast >/dev/null 2>&1; then
+            sudo apt-fast install -y heaptrack jq
+          else
+            sudo apt-get update
+            sudo apt-get install -y heaptrack jq
+          fi
+          heaptrack --version
+          jq --version
+
+      - name: Run memory profile
+        env:
+          RUN_DURATION_SECS: ${{ github.event.inputs.run_duration_secs || '900' }}
+          MEMPROFILE_OUT_DIR: ${{ github.workspace }}/memprofile-out
+        run: |
+          chmod +x tools/memprofile/run.sh
+          if [[ "${{ github.event.inputs.update_baseline }}" == "true" ]]; then
+            # Operator-only path. CI cron must NOT pass this flag.
+            tools/memprofile/run.sh --update-baseline
+          else
+            tools/memprofile/run.sh
+          fi
+
+      - name: Surface metrics summary
+        if: always()
+        run: |
+          echo "::group::Baseline"
+          if [[ -f tools/memprofile/baseline.json ]]; then
+            cat tools/memprofile/baseline.json
+          else
+            echo "(no baseline yet — first run will initialise it)"
+          fi
+          echo "::endgroup::"
+
+      - name: Upload heaptrack artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: memprofile-${{ github.run_id }}
+          path: |
+            memprofile-out/heaptrack.json
+            memprofile-out/pcloudd.heaptrack*
+            memprofile-out/pcloudd.stdout
+            memprofile-out/pcloudd.stderr
+            memprofile-out/heaptrack_print.stderr
+          retention-days: 90
+          if-no-files-found: warn
+
+      - name: Commit updated baseline (operator-only)
+        if: |
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.update_baseline == 'true' &&
+          github.ref == 'refs/heads/development'
+        run: |
+          # Operator-driven baseline bumps surface as a PR via a follow-up
+          # manual step — this job intentionally does NOT push directly.
+          # Print the diff so the operator can copy it into a PR.
+          echo "::group::baseline.json diff"
+          git --no-pager diff -- tools/memprofile/baseline.json || true
+          echo "::endgroup::"

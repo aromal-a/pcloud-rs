@@ -35,10 +35,14 @@
 // **GATING:** none (portable).
 
 use std::collections::HashMap;
+#[cfg(test)]
+use std::io::Read as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use pcloud_backends::folder_backend::FolderRuntime;
+use pcloud_backends::remote_fs::{RemoteFs, UploadConflict};
 use pcloud_backends::sync_backend::SyncRuntime;
 use pcloud_backends::transfer_backend::TransferRuntime;
 use pcloud_cache::CacheShell;
@@ -51,7 +55,8 @@ use pcloud_engine::stall_detector::StallDetector;
 use pcloud_fs::FilesystemShell;
 use pcloud_fs::fs_watcher::{FsWatcher, WatcherConfig, fs_events_to_local_scan_entries};
 use pcloud_model::ids::SyncId;
-use pcloud_model::sync::EntryKind;
+use pcloud_model::sync::{EntryKind, PlannedOperation, SyncCandidate};
+use pcloud_model::transfer::FailureDisposition;
 use pcloud_secret::secret_string::SecretString;
 use pcloud_store::DiffStateRepository;
 use pcloud_store::repositories::audit::AuditRepository;
@@ -87,6 +92,8 @@ pub struct RealSyncLoopRuntime {
     auth_token: SharedAuthToken,
     /// Sync protocol backend (diff polling, folder validation).
     sync_runtime: SyncRuntime,
+    /// Folder control-plane used by the canonical remote filesystem.
+    folder_runtime: FolderRuntime,
     /// Transfer protocol backend (upload/download execution).
     transfer_runtime: TransferRuntime,
     /// Per-sync-root engine state (planner, scheduler, transfers).
@@ -98,6 +105,10 @@ pub struct RealSyncLoopRuntime {
     /// Long-lived SQLite connection to the store's WAL database.
     /// Used for reading sync roots and persisting diff cursors.
     store_conn: Connection,
+    /// Store path used by journal-backed resumable RemoteFs uploads.
+    store_path: PathBuf,
+    /// Runtime directory containing the fsync upload journal.
+    runtime_dir: PathBuf,
     /// Per-sync-root filesystem watchers. The `FsWatcher` handle keeps
     /// the inotify/FSEvents subscription alive; dropping it stops the
     /// watch. The `Receiver` yields debounced `FsEvent`s.
@@ -108,6 +119,16 @@ pub struct RealSyncLoopRuntime {
             std::sync::mpsc::Receiver<pcloud_engine::fs_events::FsEvent>,
         ),
     >,
+    /// Candidate observations collected during the current root cycle.
+    ///
+    /// Remote diff and local scan both append here; the sync loop calls
+    /// `finish_root_observations` once per root so the planner sees both
+    /// sides in one pass and can surface conflicts instead of replacing
+    /// one side with the other.
+    pending_observations: HashMap<SyncId, Vec<SyncCandidate>>,
+    /// Remote diff batches whose cursor may be committed only after the
+    /// combined observation set has been accepted by the engine.
+    pending_diff_commits: HashMap<SyncId, Vec<PendingDiffCommit>>,
     /// Incremental scan tracker: gates full filesystem walks at the
     /// configured `full_scan_interval_secs` and queues watcher events
     /// between full scans.
@@ -130,6 +151,19 @@ pub struct RealSyncLoopRuntime {
     /// under this directory via [`TransferRuntime::download_to_path`]
     /// rather than buffering whole bodies in memory.
     download_staging_dir: PathBuf,
+    /// T1.4 — `[bandwidth.schedule]` snapshot. Read once per tick by
+    /// the bandwidth-schedule applier; the schedule itself never
+    /// mutates between bootstraps.
+    bandwidth_schedule: pcloud_config::bandwidth_schedule::BandwidthScheduleConfig,
+    /// T1.4 — drives `BandwidthPacer::set_limit` per-tick from the
+    /// schedule. Shares the pacer with `transfer_runtime` so byte loops
+    /// observe the cap immediately.
+    bandwidth_schedule_applier: crate::bandwidth_schedule_applier::BandwidthScheduleApplier,
+    /// T1.4.c — platform metered-network detector. Linux uses
+    /// NetworkManager via busctl; other platforms return a constant
+    /// `false` until a native bridge lands. Replaceable via
+    /// `set_metered_hint` so tests can inject a deterministic stub.
+    metered_hint: Box<dyn crate::metered_network::MeteredHint>,
 }
 
 /// Files strictly below this threshold are mirrored into the in-memory
@@ -150,6 +184,12 @@ const DEAD_LETTER_KEY: &str = "sync.planner.overflow";
 /// `Vec<PlannedOperation>` sorted by `(sync_id, priority, path)` so the
 /// on-disk form is deterministic. pcloud-rs-774.
 const SCHEDULER_QUEUE_KEY: &str = "sync.scheduler.queue";
+
+#[derive(Debug, Clone)]
+struct PendingDiffCommit {
+    previous_cursor: u64,
+    batch: pcloud_engine::diff_poller::RemoteDiffBatch,
+}
 
 impl std::fmt::Debug for RealSyncLoopRuntime {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -293,22 +333,53 @@ impl RealSyncLoopRuntime {
             }
         }
 
+        // T1.4.b.2 — share one `BandwidthPacer` between the
+        // transfer runtime (where bytes are paced) and the schedule
+        // applier (which mutates the pacer's cap per tick). Construct
+        // the pacer with `None` (unlimited) so the very first
+        // `apply_now` call is the source of truth — that way an
+        // operator who configures a tighter cap sees it apply on the
+        // first tick instead of waiting for the schedule's "no-rule"
+        // default to fire.
+        let pacer = std::sync::Arc::new(pcloud_resilience::BandwidthPacer::new(None));
+        let transfer_runtime =
+            TransferRuntime::from_config(config).with_bandwidth_pacer(Some(pacer.clone()));
+        let bandwidth_schedule_applier =
+            crate::bandwidth_schedule_applier::BandwidthScheduleApplier::new(pacer);
+
         Ok(Self {
             auth_token,
             sync_runtime: SyncRuntime::from_config(config),
-            transfer_runtime: TransferRuntime::from_config(config),
+            folder_runtime: FolderRuntime::from_config(config),
+            transfer_runtime,
             engine,
             cache: CacheShell::default(),
             filesystem: FilesystemShell::default(),
             store_conn: conn,
+            store_path: db_path.to_path_buf(),
+            runtime_dir: config.paths.runtime_dir.clone(),
             watchers: HashMap::new(),
+            pending_observations: HashMap::new(),
+            pending_diff_commits: HashMap::new(),
             scan_tracker: IncrementalScanTracker::new(full_scan_interval),
             watcher_config: WatcherConfig::default(),
             sync_loop_config: config.sync_loop.clone(),
             audit,
             stall_detector,
             download_staging_dir,
+            bandwidth_schedule: config.bandwidth_schedule.clone(),
+            bandwidth_schedule_applier,
+            metered_hint: crate::metered_network::default_metered_hint(),
         })
+    }
+
+    /// T1.4.c — replace the platform-default metered-network detector.
+    ///
+    /// Used by tests that need a deterministic boolean. Production
+    /// call sites should never reach this; the platform default is
+    /// installed at bootstrap.
+    pub fn set_metered_hint(&mut self, hint: Box<dyn crate::metered_network::MeteredHint>) {
+        self.metered_hint = hint;
     }
 
     /// Persist the current planner dead-letter overflow buffer into the
@@ -425,11 +496,305 @@ impl RealSyncLoopRuntime {
         }
     }
 
+    fn stage_observations(&mut self, sync_id: SyncId, candidates: Vec<SyncCandidate>) {
+        if candidates.is_empty() {
+            return;
+        }
+        self.pending_observations
+            .entry(sync_id)
+            .or_default()
+            .extend(candidates);
+    }
+
+    fn record_transfer_failure_for_recovery(
+        &mut self,
+        operation: &PlannedOperation,
+        failure: pcloud_engine::recovery::RecoveryFailure,
+        detail: impl Into<String>,
+    ) {
+        let decision = self.engine.classify_failure(operation, failure);
+        let path = operation.path().to_owned();
+        let message = format!("{}; recovery={:?}", detail.into(), decision.disposition);
+        if !self.engine.mark_transfer_failed(&path, message) {
+            log::warn!("audit: mark_transfer_failed dropped for untracked transfer path={path:?}");
+        }
+        if matches!(
+            decision.disposition,
+            FailureDisposition::RetryNow | FailureDisposition::RetryLater
+        ) {
+            self.engine.requeue_for_retry(operation.clone());
+            self.persist_scheduler_queue();
+        }
+    }
+
+    fn mark_operation_completed(&mut self, operation: &PlannedOperation) -> bool {
+        let path = operation.path();
+        if self.engine.mark_transfer_completed(path) {
+            self.engine
+                .ack_dispatched_path(operation.sync_id(), operation.path());
+            self.stall_detector.mark_progress();
+            self.persist_scheduler_queue();
+            true
+        } else {
+            log::warn!("sync loop: completed operation was not tracked path={path:?}");
+            false
+        }
+    }
+
+    fn mark_operation_failed_no_retry(
+        &mut self,
+        operation: &PlannedOperation,
+        detail: impl Into<String>,
+    ) {
+        let path = operation.path();
+        let message = detail.into();
+        if !self.engine.mark_transfer_failed(path, message.clone()) {
+            log::warn!("sync loop: failed operation was not tracked path={path:?}: {message}");
+        }
+        self.engine
+            .ack_dispatched_path(operation.sync_id(), operation.path());
+        self.persist_scheduler_queue();
+    }
+
+    fn execute_local_directory_creates(&mut self) -> Result<usize, String> {
+        let tasks = self.engine.downloads.pending_directory_creates.clone();
+        let mut completed = 0usize;
+        for task in tasks {
+            self.stall_detector.mark_progress();
+            if let PlannedOperation::CreateLocalDirectory { sync_id, path, .. } = &task.operation {
+                let root = match load_sync_root(&self.store_conn, *sync_id) {
+                    Ok(root) => root,
+                    Err(err) => {
+                        self.record_transfer_failure_for_recovery(
+                            &task.operation,
+                            err.failure,
+                            err.message,
+                        );
+                        continue;
+                    }
+                };
+                let target = match safe_local_target_path(Path::new(&root.local_path), path) {
+                    Ok(target) => target,
+                    Err(err) => {
+                        self.record_transfer_failure_for_recovery(
+                            &task.operation,
+                            err.failure,
+                            err.message,
+                        );
+                        continue;
+                    }
+                };
+                if let Err(err) = std::fs::create_dir_all(&target) {
+                    let err = io_error_to_pending_fs_error(err, "create local directory");
+                    self.record_transfer_failure_for_recovery(
+                        &task.operation,
+                        err.failure,
+                        err.message,
+                    );
+                    continue;
+                }
+                match std::fs::symlink_metadata(&target) {
+                    Ok(meta) if meta.is_dir() => {
+                        if self.mark_operation_completed(&task.operation) {
+                            completed += 1;
+                        }
+                    }
+                    Ok(_) => {
+                        self.record_transfer_failure_for_recovery(
+                            &task.operation,
+                            pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+                            format!(
+                                "local mkdir target is not a directory: {}",
+                                target.display()
+                            ),
+                        );
+                    }
+                    Err(err) => {
+                        let err = io_error_to_pending_fs_error(err, "stat local directory");
+                        self.record_transfer_failure_for_recovery(
+                            &task.operation,
+                            err.failure,
+                            err.message,
+                        );
+                    }
+                }
+            }
+        }
+        Ok(completed)
+    }
+
+    fn execute_local_deletes(&mut self) -> Result<usize, String> {
+        let tasks = self.engine.downloads.pending_local_deletes.clone();
+        let mut completed = 0usize;
+        for task in tasks {
+            self.stall_detector.mark_progress();
+            if let PlannedOperation::DeleteLocal { sync_id, path } = &task.operation {
+                let root = match load_sync_root(&self.store_conn, *sync_id) {
+                    Ok(root) => root,
+                    Err(err) => {
+                        self.record_transfer_failure_for_recovery(
+                            &task.operation,
+                            err.failure,
+                            err.message,
+                        );
+                        continue;
+                    }
+                };
+                let target = match safe_local_target_path(Path::new(&root.local_path), path) {
+                    Ok(target) => target,
+                    Err(err) => {
+                        self.record_transfer_failure_for_recovery(
+                            &task.operation,
+                            err.failure,
+                            err.message,
+                        );
+                        continue;
+                    }
+                };
+                let meta = match std::fs::symlink_metadata(&target) {
+                    Ok(meta) => meta,
+                    Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                        if self.mark_operation_completed(&task.operation) {
+                            completed += 1;
+                        }
+                        continue;
+                    }
+                    Err(err) => {
+                        let err = io_error_to_pending_fs_error(err, "stat local delete target");
+                        self.record_transfer_failure_for_recovery(
+                            &task.operation,
+                            err.failure,
+                            err.message,
+                        );
+                        continue;
+                    }
+                };
+                let delete_result = if meta.file_type().is_dir() {
+                    std::fs::remove_dir_all(&target)
+                } else {
+                    std::fs::remove_file(&target)
+                };
+                match delete_result {
+                    Ok(()) => {
+                        if self.mark_operation_completed(&task.operation) {
+                            completed += 1;
+                        }
+                    }
+                    Err(err) => {
+                        let err = io_error_to_pending_fs_error(err, "delete local path");
+                        self.record_transfer_failure_for_recovery(
+                            &task.operation,
+                            err.failure,
+                            err.message,
+                        );
+                    }
+                }
+            }
+        }
+        Ok(completed)
+    }
+
+    fn execute_remote_deletes(&mut self, auth_token: &SecretString) -> Result<usize, String> {
+        let tasks = self.engine.uploads.pending_remote_deletes.clone();
+        let mut completed = 0usize;
+        for task in tasks {
+            self.stall_detector.mark_progress();
+            if let PlannedOperation::DeleteRemote { sync_id, path } = &task.operation {
+                let root = match load_sync_root(&self.store_conn, *sync_id) {
+                    Ok(root) => root,
+                    Err(err) => {
+                        self.mark_operation_failed_no_retry(&task.operation, err.message);
+                        continue;
+                    }
+                };
+                let remote_path = match remote_child_path(&root.remote_path, path) {
+                    Ok(path) => path,
+                    Err(err) => {
+                        self.mark_operation_failed_no_retry(&task.operation, err.message);
+                        continue;
+                    }
+                };
+                let result = RemoteFs::new(
+                    &self.folder_runtime,
+                    &self.transfer_runtime,
+                    auth_token.clone_secret(),
+                )
+                .delete(&remote_path, true);
+                match result {
+                    Ok(outcome) => {
+                        if let pcloud_backends::remote_fs::DeleteOutcome::Deleted(id) = outcome {
+                            let _ = FileMetadataRepository::delete(&self.store_conn, id.value());
+                        }
+                        if self.mark_operation_completed(&task.operation) {
+                            completed += 1;
+                        }
+                    }
+                    Err(err) => {
+                        self.record_transfer_failure_for_recovery(
+                            &task.operation,
+                            pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+                            err.to_string(),
+                        );
+                    }
+                }
+            }
+        }
+        Ok(completed)
+    }
+
+    fn execute_remote_directory_creates(
+        &mut self,
+        auth_token: &SecretString,
+    ) -> Result<usize, String> {
+        let tasks = self.engine.uploads.pending_directory_creates.clone();
+        let mut completed = 0;
+        for task in tasks {
+            self.stall_detector.mark_progress();
+            if let PlannedOperation::CreateRemoteDirectory { sync_id, path } = &task.operation {
+                let root = match load_sync_root(&self.store_conn, *sync_id) {
+                    Ok(root) => root,
+                    Err(error) => {
+                        self.mark_operation_failed_no_retry(&task.operation, error.message);
+                        continue;
+                    }
+                };
+                let remote_path = match remote_child_path(&root.remote_path, path) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        self.mark_operation_failed_no_retry(&task.operation, error.message);
+                        continue;
+                    }
+                };
+                match RemoteFs::new(
+                    &self.folder_runtime,
+                    &self.transfer_runtime,
+                    auth_token.clone_secret(),
+                )
+                .mkdir(&remote_path)
+                {
+                    Ok(_) => {
+                        if self.mark_operation_completed(&task.operation) {
+                            completed += 1;
+                        }
+                    }
+                    Err(error) => self.record_transfer_failure_for_recovery(
+                        &task.operation,
+                        pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+                        error.to_string(),
+                    ),
+                }
+            }
+        }
+        Ok(completed)
+    }
+
     /// Stop and remove the watcher for `sync_id`. Called when a sync
     /// root is removed.
     pub fn remove_watcher(&mut self, sync_id: SyncId) {
         self.watchers.remove(&sync_id);
         self.scan_tracker.untrack(sync_id);
+        self.pending_observations.remove(&sync_id);
+        self.pending_diff_commits.remove(&sync_id);
     }
 }
 
@@ -478,24 +843,22 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
         // single SQLite transaction. If the engine rejects the batch or
         // the transaction fails, the cursor stays put and the same batch
         // is refetched on the next cycle — at-least-once semantics.
-        let delete_policy =
-            DeletePolicy::for_sync_type(root.sync_type, self.sync_loop_config.propagate_deletes);
-        let operations = self
+        let candidates = self
             .engine
-            .ingest_remote_diff_filtered(&batch, &delete_policy)
+            .diff_poller
+            .normalize_batch(&batch)
             .map_err(|e| format!("{e:?}"))?;
-        let op_count = operations.len();
+        let candidate_count = candidates.len();
+        self.stage_observations(root.sync_id, candidates);
+        self.pending_diff_commits
+            .entry(root.sync_id)
+            .or_default()
+            .push(PendingDiffCommit {
+                previous_cursor: cursor,
+                batch,
+            });
 
-        // Audit-04 P2-6 (bd-pcloud-rs-s1p.44): persist any candidates
-        // that were deferred at the per-tick cap so a crash here does
-        // not drop them silently.
-        self.persist_planner_overflow();
-
-        // Commit cursor advance + metadata-cache deletes atomically.
-        commit_diff_batch(&self.store_conn, root.sync_id, cursor, &batch)
-            .map_err(|e| e.to_string())?;
-
-        Ok(op_count)
+        Ok(candidate_count)
     }
 
     fn run_local_scan(&mut self, root: &SyncRootRecord) -> Result<usize, String> {
@@ -525,17 +888,74 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
             }
         };
 
-        let delete_policy =
-            DeletePolicy::for_sync_type(root.sync_type, self.sync_loop_config.propagate_deletes);
-        let operations = self
+        // T1.1.c.3 selective sync: build a policy from the sync root's
+        // configured `exclude_globs`. When the list is empty the policy
+        // is allow-all and the filter is a zero-cost no-op. A pattern
+        // that fails to compile is logged once per scan and skipped (the
+        // CLI / IPC layer compile-checks new patterns before persisting,
+        // so this branch is defensive against operator-edited DB rows).
+        let selective_policy =
+            match pcloud_engine::selective::SelectivePolicy::from_exclude_patterns(
+                &root.exclude_globs,
+            ) {
+                Ok(p) => p,
+                Err(err) => {
+                    log::warn!(
+                        "sync-loop: sync_id={} has invalid exclude_globs ({err}); falling back to allow-all",
+                        root.sync_id.get()
+                    );
+                    pcloud_engine::selective::SelectivePolicy::allow_all()
+                }
+            };
+        let candidates = self
             .engine
-            .ingest_local_scan_with_delete_policy(&entries, &delete_policy)
+            .local_scanner
+            .normalize_entries_filtered(&entries, &selective_policy)
             .map_err(|e| format!("{e:?}"))?;
-        let op_count = operations.len();
-        self.persist_planner_overflow();
-        // pcloud-rs-774: persist the updated scheduler queue so newly
-        // planned operations survive a crash between ticks.
-        self.persist_scheduler_queue();
+        let candidate_count = candidates.len();
+        self.stage_observations(root.sync_id, candidates);
+        Ok(candidate_count)
+    }
+
+    fn finish_root_observations(&mut self, root: &SyncRootRecord) -> Result<usize, String> {
+        let candidates = self
+            .pending_observations
+            .remove(&root.sync_id)
+            .unwrap_or_default();
+        let commits = self
+            .pending_diff_commits
+            .remove(&root.sync_id)
+            .unwrap_or_default();
+
+        let mut op_count = 0usize;
+        if !candidates.is_empty() {
+            let delete_policy = DeletePolicy::for_sync_type(
+                root.sync_type,
+                self.sync_loop_config.propagate_deletes,
+            );
+            let operations = self
+                .engine
+                .ingest_candidates_filtered(&candidates, &delete_policy);
+            op_count = operations.len();
+            self.persist_planner_overflow();
+            // pcloud-rs-774: persist the updated scheduler queue so newly
+            // planned operations survive a crash between ticks.
+            self.persist_scheduler_queue();
+        }
+
+        // Commit cursor advance + metadata-cache deletes atomically only
+        // after the combined local+remote observation set has been
+        // accepted by the engine.
+        for commit in commits {
+            commit_diff_batch(
+                &self.store_conn,
+                root.sync_id,
+                commit.previous_cursor,
+                &commit.batch,
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
         Ok(op_count)
     }
 
@@ -564,8 +984,9 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
     }
 
     fn execute_downloads(&mut self, auth_token: &SecretString) -> Result<usize, String> {
+        let mut completed = self.execute_local_deletes()?;
+        completed += self.execute_local_directory_creates()?;
         let tasks = self.engine.downloads.active_downloads.clone();
-        let mut completed = 0usize;
 
         for task in tasks {
             // P2-d (H4): mark progress on each per-task entry, not just
@@ -576,111 +997,122 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
             // only called when the scheduler dispatched a new batch.
             self.stall_detector.mark_progress();
             if let pcloud_model::sync::PlannedOperation::DownloadFile {
+                sync_id,
                 path,
                 remote_file_id: Some(file_id),
                 ..
             } = &task.operation
             {
-                match self.transfer_runtime.get_file_link(
+                let root = match load_sync_root(&self.store_conn, *sync_id) {
+                    Ok(root) => root,
+                    Err(error) => {
+                        self.mark_operation_failed_no_retry(&task.operation, error.message);
+                        continue;
+                    }
+                };
+                let remote_path = match remote_child_path(&root.remote_path, path) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        self.mark_operation_failed_no_retry(&task.operation, error.message);
+                        continue;
+                    }
+                };
+                let total_size =
+                    match FileMetadataRepository::get_by_id(&self.store_conn, file_id.get()) {
+                        Ok(Some(metadata)) if !metadata.is_folder => metadata.size,
+                        Ok(_) => {
+                            self.record_transfer_failure_for_recovery(
+                                &task.operation,
+                                pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+                                format!("missing authoritative size for remote file {remote_path}"),
+                            );
+                            continue;
+                        }
+                        Err(error) => return Err(error.to_string()),
+                    };
+                let staged_path =
+                    staged_download_path(&self.download_staging_dir, file_id.get(), path);
+                let result = RemoteFs::new(
+                    &self.folder_runtime,
+                    &self.transfer_runtime,
                     auth_token.clone_secret(),
+                )
+                .download_by_id_to_path(
                     file_id.get(),
-                    None,
-                ) {
-                    Ok(link) => {
-                        // bd-pcloud-rs-s1p.87: stream download to a per-file
-                        // on-disk staging path rather than buffering the
-                        // full body in memory. The peak memory held by the
-                        // transport is bounded by the HTTP read buffer
-                        // (64 KiB) plus the BufWriter buffer (64 KiB),
-                        // independent of body size.
-                        let staged_path =
-                            staged_download_path(&self.download_staging_dir, file_id.get(), path);
-                        match self.transfer_runtime.download_to_path(&link, &staged_path) {
-                            Ok((_signed, written)) => {
-                                // Mirror into in-memory caches only for
-                                // small payloads. Larger files stay on
-                                // disk; downstream consumers (FUSE, writeback)
-                                // can read from the staged path on demand.
-                                if written < DOWNLOAD_INMEM_MIRROR_THRESHOLD {
-                                    match std::fs::read(&staged_path) {
-                                        Ok(bytes) => {
-                                            let cache_key = format!("download:{path}");
-                                            self.cache.cache_page(cache_key, bytes.clone());
-                                            self.cache.stage_file(path.clone(), bytes.clone());
-                                            self.filesystem.seed_staged_file(path.clone(), bytes);
-                                        }
-                                        Err(err) => {
-                                            log::warn!(
-                                                "sync loop: staged download at {staged_path:?} readable failed: {err}; skipping in-memory mirror"
-                                            );
-                                        }
-                                    }
-                                } else {
-                                    log::debug!(
-                                        "sync loop: staged {written}-byte download at {staged_path:?} kept on-disk (above {}B in-memory mirror threshold)",
-                                        DOWNLOAD_INMEM_MIRROR_THRESHOLD
-                                    );
+                    total_size,
+                    &remote_path,
+                    &staged_path,
+                    true,
+                );
+                match result {
+                    Ok(download) => {
+                        let written = download.bytes_written;
+                        // Mirror into in-memory caches only for
+                        // small payloads. Larger files stay on
+                        // disk; downstream consumers (FUSE, writeback)
+                        // can read from the staged path on demand.
+                        if written < DOWNLOAD_INMEM_MIRROR_THRESHOLD {
+                            match std::fs::read(&staged_path) {
+                                Ok(bytes) => {
+                                    let cache_key = format!("download:{path}");
+                                    self.cache.cache_page(cache_key, bytes.clone());
+                                    self.cache.stage_file(path.clone(), bytes.clone());
+                                    self.filesystem.seed_staged_file(path.clone(), bytes);
                                 }
-                                // Audit-06 §4-opus HIGH: record real
-                                // byte-level progress for this transfer
-                                // so a long-running download that
-                                // exceeds the wall-clock stall window
-                                // is still recognised as non-stalled
-                                // via its byte counter.
-                                self.stall_detector.observe_bytes(path, written);
-                                if self.engine.mark_transfer_completed(path) {
-                                    completed += 1;
-                                    // P2-b (H2): durable ack — remove
-                                    // the dispatched entry so the
-                                    // persisted scheduler snapshot no
-                                    // longer carries this op on the
-                                    // next persist. Audit-06 §4-sonnet
-                                    // M-04-S04: scope the ack to the
-                                    // owning sync root so a cross-root
-                                    // path collision cannot evict a
-                                    // sibling root's un-acked entry.
-                                    self.engine
-                                        .ack_dispatched_path(task.operation.sync_id(), path);
-                                    // P2-d (H4): bytes transferred
-                                    // count as progress; reset the
-                                    // stall timer.
-                                    self.stall_detector.mark_progress();
-                                    // Byte-progress state is retired
-                                    // alongside the dispatched slot.
-                                    self.stall_detector.forget_transfer(path);
-                                }
-                            }
-                            Err(err) => {
-                                // Drop any byte-progress state for the
-                                // failed transfer so the next attempt
-                                // starts clean.
-                                self.stall_detector.forget_transfer(path);
-                                // Best-effort cleanup of any partial file.
-                                let _ = std::fs::remove_file(&staged_path);
-                                let decision = self.engine.classify_failure(
-                                    &task.operation,
-                                    pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
-                                );
-                                let message = format!("{err}; recovery={:?}", decision.disposition);
-                                if !self.engine.mark_transfer_failed(path, message) {
+                                Err(err) => {
                                     log::warn!(
-                                        "audit: mark_transfer_failed dropped for untracked transfer path={path:?}"
+                                        "sync loop: staged download at {staged_path:?} readable failed: {err}; skipping in-memory mirror"
                                     );
                                 }
                             }
+                        } else {
+                            log::debug!(
+                                "sync loop: staged {written}-byte download at {staged_path:?} kept on-disk (above {}B in-memory mirror threshold)",
+                                DOWNLOAD_INMEM_MIRROR_THRESHOLD
+                            );
+                        }
+                        // Audit-06 §4-opus HIGH: record real
+                        // byte-level progress for this transfer
+                        // so a long-running download that
+                        // exceeds the wall-clock stall window
+                        // is still recognised as non-stalled
+                        // via its byte counter.
+                        self.stall_detector.observe_bytes(path, written);
+                        if self.engine.mark_transfer_completed(path) {
+                            completed += 1;
+                            // P2-b (H2): durable ack — remove
+                            // the dispatched entry so the
+                            // persisted scheduler snapshot no
+                            // longer carries this op on the
+                            // next persist. Audit-06 §4-sonnet
+                            // M-04-S04: scope the ack to the
+                            // owning sync root so a cross-root
+                            // path collision cannot evict a
+                            // sibling root's un-acked entry.
+                            self.engine
+                                .ack_dispatched_path(task.operation.sync_id(), path);
+                            // P2-d (H4): bytes transferred
+                            // count as progress; reset the
+                            // stall timer.
+                            self.stall_detector.mark_progress();
+                            // Byte-progress state is retired
+                            // alongside the dispatched slot.
+                            self.stall_detector.forget_transfer(path);
+                            self.persist_scheduler_queue();
                         }
                     }
                     Err(err) => {
-                        let decision = self.engine.classify_failure(
+                        // Drop any byte-progress state for the
+                        // failed transfer so the next attempt
+                        // starts clean.
+                        self.stall_detector.forget_transfer(path);
+                        // Best-effort cleanup of any partial file.
+                        let _ = std::fs::remove_file(&staged_path);
+                        self.record_transfer_failure_for_recovery(
                             &task.operation,
                             pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+                            err.to_string(),
                         );
-                        let message = format!("{err}; recovery={:?}", decision.disposition);
-                        if !self.engine.mark_transfer_failed(path, message) {
-                            log::warn!(
-                                "audit: mark_transfer_failed dropped for untracked transfer path={path:?}"
-                            );
-                        }
                     }
                 }
             }
@@ -690,8 +1122,9 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
     }
 
     fn execute_uploads(&mut self, auth_token: &SecretString) -> Result<usize, String> {
+        let mut completed = self.execute_remote_deletes(auth_token)?;
+        completed += self.execute_remote_directory_creates(auth_token)?;
         let tasks = self.engine.uploads.active_uploads.clone();
-        let mut completed = 0usize;
 
         for task in tasks {
             // P2-d (H4): per-task progress mark — see
@@ -701,147 +1134,82 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
                 path,
                 remote_parent_folder_id,
                 remote_name,
-                ..
+                sync_id,
             } = &task.operation
             {
-                // Resolve parent folder id from path.
+                // Resolve the authoritative parent id already carried by the
+                // planner, plus the full remote path used for durable replay.
                 let parent_folder_id = match resolve_upload_parent(path, *remote_parent_folder_id) {
                     Ok(id) => id,
                     Err(failure) => {
-                        let decision = self.engine.classify_failure(&task.operation, failure);
-                        let message = format!(
-                            "missing upload destination metadata; recovery={:?}",
-                            decision.disposition
-                        );
-                        if !self.engine.mark_transfer_failed(path, message) {
-                            log::warn!(
-                                "audit: mark_transfer_failed dropped for untracked transfer path={path:?}"
-                            );
-                        }
-                        continue;
-                    }
-                };
-
-                // Resolve the upload payload source (filesystem staging
-                // preferred, cache staging fallback). Both accessors
-                // return a borrowed `&[u8]` directly — no `Vec` clones.
-                //
-                // Bead pcloud-rs-s1p.88: we intentionally avoid the
-                // previous `read_staged_path(0, usize::MAX)` call, which
-                // copied the entire staged file into a fresh `Vec` via
-                // `ReadResult.bytes`, and the subsequent `.to_vec()` in
-                // the cache fallback. For large uploads (GiBs) this
-                // was a peak-RSS hazard. The current wire layer
-                // (`upload_bytes`) still requires a single `&[u8]`
-                // slice, so we borrow directly from staging instead of
-                // cloning; follow-up work to pipeline chunked
-                // `upload_write` calls is tracked separately.
-                let payload_len = match resolve_upload_payload_len(
-                    &self.filesystem,
-                    &self.cache,
-                    path,
-                ) {
-                    Some(len) => len,
-                    None => {
-                        let decision = self.engine.classify_failure(
+                        self.record_transfer_failure_for_recovery(
                             &task.operation,
-                            pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+                            failure,
+                            "missing upload destination metadata",
                         );
-                        let message = format!(
-                            "missing staged upload payload; recovery={:?}",
-                            decision.disposition
-                        );
-                        if !self.engine.mark_transfer_failed(path, message) {
-                            log::warn!(
-                                "audit: mark_transfer_failed dropped for untracked transfer path={path:?}"
-                            );
-                        }
                         continue;
                     }
                 };
-
-                match self.transfer_runtime.upload_create(
+                let root = match load_sync_root(&self.store_conn, *sync_id) {
+                    Ok(root) => root,
+                    Err(error) => {
+                        self.mark_operation_failed_no_retry(&task.operation, error.message);
+                        continue;
+                    }
+                };
+                let remote_relative = match path.rsplit_once('/') {
+                    Some((parent, _)) => format!("{parent}/{remote_name}"),
+                    None => remote_name.clone(),
+                };
+                let remote_path = match remote_child_path(&root.remote_path, &remote_relative) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        self.mark_operation_failed_no_retry(&task.operation, error.message);
+                        continue;
+                    }
+                };
+                let local_path = match safe_local_source_path(Path::new(&root.local_path), path) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        self.record_transfer_failure_for_recovery(
+                            &task.operation,
+                            error.failure,
+                            error.message,
+                        );
+                        continue;
+                    }
+                };
+                let remote = RemoteFs::new(
+                    &self.folder_runtime,
+                    &self.transfer_runtime,
                     auth_token.clone_secret(),
-                    parent_folder_id,
-                    remote_name.clone(),
-                    payload_len as u64,
-                ) {
-                    Ok(session) => {
-                        // Re-borrow the staged bytes for the single
-                        // `upload_bytes` call. We deliberately do not
-                        // hold a borrow across the `upload_create`
-                        // boundary so that the `&mut self` receiver
-                        // remains available.
-                        let upload_result = match borrow_upload_payload(
-                            &self.filesystem,
-                            &self.cache,
-                            path,
-                        ) {
-                            Some(bytes) => self.transfer_runtime.upload_bytes(
-                                auth_token.clone_secret(),
-                                &session,
-                                bytes,
-                            ),
-                            None => {
-                                // Race: payload evicted between the
-                                // length probe and the write. Treat
-                                // as a transient failure.
-                                let decision = self.engine.classify_failure(
-                                    &task.operation,
-                                    pcloud_engine::recovery::RecoveryFailure::InvalidPath,
-                                );
-                                let message = format!(
-                                    "staged upload payload evicted mid-upload; recovery={:?}",
-                                    decision.disposition
-                                );
-                                if !self.engine.mark_transfer_failed(path, message) {
-                                    log::warn!(
-                                        "audit: mark_transfer_failed dropped for untracked transfer path={path:?}"
-                                    );
-                                }
-                                continue;
-                            }
-                        };
-                        match upload_result {
-                            Ok(_frame) => {
-                                if self.engine.mark_transfer_completed(path) {
-                                    completed += 1;
-                                    // P2-b (H2): durable ack. Audit-06
-                                    // §4-sonnet M-04-S04: scope to
-                                    // owning sync root to avoid
-                                    // cross-root path collisions.
-                                    self.engine
-                                        .ack_dispatched_path(task.operation.sync_id(), path);
-                                    // P2-d (H4): bytes transferred →
-                                    // stall timer reset on completion.
-                                    self.stall_detector.mark_progress();
-                                }
-                            }
-                            Err(err) => {
-                                let decision = self.engine.classify_failure(
-                                    &task.operation,
-                                    pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
-                                );
-                                let message = format!("{err}; recovery={:?}", decision.disposition);
-                                if !self.engine.mark_transfer_failed(path, message) {
-                                    log::warn!(
-                                        "audit: mark_transfer_failed dropped for untracked transfer path={path:?}"
-                                    );
-                                }
-                            }
+                )
+                .with_durability(&self.store_path, &self.runtime_dir);
+                match remote.and_then(|remote| {
+                    remote.upload_file_resumable_to_parent(
+                        parent_folder_id,
+                        &remote_path,
+                        &local_path,
+                        UploadConflict::Overwrite,
+                    )
+                }) {
+                    Ok(result) => {
+                        self.stall_detector
+                            .observe_bytes(path, result.bytes_written);
+                        if self.engine.mark_transfer_completed(path) {
+                            completed += 1;
+                            self.engine
+                                .ack_dispatched_path(task.operation.sync_id(), path);
+                            self.stall_detector.mark_progress();
+                            self.persist_scheduler_queue();
                         }
                     }
                     Err(err) => {
-                        let decision = self.engine.classify_failure(
+                        self.record_transfer_failure_for_recovery(
                             &task.operation,
                             pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+                            err.to_string(),
                         );
-                        let message = format!("{err}; recovery={:?}", decision.disposition);
-                        if !self.engine.mark_transfer_failed(path, message) {
-                            log::warn!(
-                                "audit: mark_transfer_failed dropped for untracked transfer path={path:?}"
-                            );
-                        }
                     }
                 }
             }
@@ -912,6 +1280,25 @@ impl SyncLoopRuntime for RealSyncLoopRuntime {
             ));
         }
         Ok(())
+    }
+
+    fn tick_bandwidth_schedule(&mut self, on_metered_override: bool) {
+        // T1.4.b.2 — drive the pacer once per cycle. Cheap when the
+        // schedule is disabled (BandwidthScheduleConfig::current_cap
+        // returns None and the applier short-circuits) and bounded by
+        // one mutex lock + one atomic store on the rare ticks where
+        // the cap actually changes.
+        //
+        // T1.4.c — consult the platform metered-network detector,
+        // OR-ing in the caller-supplied override. The override is
+        // retained so tests + future call sites that already know the
+        // metered state (e.g. an explicit `pcloudc network metered
+        // on` IPC) can short-circuit without going through the
+        // detector.
+        let on_metered = on_metered_override || self.metered_hint.is_metered();
+        let _ = self
+            .bandwidth_schedule_applier
+            .apply_now(&self.bandwidth_schedule, on_metered);
     }
 }
 
@@ -1063,7 +1450,7 @@ fn walk_recursive(
     parent_remote_folder_id: Option<pcloud_model::ids::RemoteFolderId>,
     conn: &Connection,
     entries: &mut Vec<LocalScanEntry>,
-    visited_inodes: &mut std::collections::HashSet<u64>,
+    _visited_inodes: &mut std::collections::HashSet<u64>,
 ) -> Result<(), String> {
     let dir_entries = std::fs::read_dir(current)
         .map_err(|e| format!("failed to read {}: {e}", current.display()))?;
@@ -1117,7 +1504,7 @@ fn walk_recursive(
             {
                 use std::os::unix::fs::MetadataExt;
                 let inode = symlink_meta.ino();
-                if !visited_inodes.insert(inode) {
+                if !_visited_inodes.insert(inode) {
                     log::warn!(
                         "walk_local_tree: inode cycle detected at {} (inode {}); skipping",
                         path.display(),
@@ -1155,7 +1542,7 @@ fn walk_recursive(
                 child_parent,
                 conn,
                 entries,
-                visited_inodes,
+                _visited_inodes,
             )?;
         }
     }
@@ -1348,6 +1735,302 @@ fn staged_download_path(staging_dir: &Path, file_id: u64, path: &str) -> PathBuf
 }
 
 // ---------------------------------------------------------------------------
+// Helpers: pending local/remote mkdir-delete execution
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+struct PendingFsOpError {
+    failure: pcloud_engine::recovery::RecoveryFailure,
+    message: String,
+}
+
+fn load_sync_root(conn: &Connection, sync_id: SyncId) -> Result<SyncRootRecord, PendingFsOpError> {
+    let repo = SyncGraphRepository::load(conn).map_err(|err| PendingFsOpError {
+        failure: pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+        message: format!("failed to load sync roots: {err}"),
+    })?;
+    repo.tracked_sync_roots
+        .into_iter()
+        .find(|root| root.sync_id == sync_id)
+        .ok_or_else(|| PendingFsOpError {
+            failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+            message: format!("sync root {} not found", sync_id.get()),
+        })
+}
+
+fn safe_local_target_path(root: &Path, relative_path: &str) -> Result<PathBuf, PendingFsOpError> {
+    if !pcloud_engine::is_valid_relative_path(relative_path) {
+        return Err(PendingFsOpError {
+            failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+            message: format!("invalid local operation relative path: {relative_path}"),
+        });
+    }
+    let root = root
+        .canonicalize()
+        .map_err(|err| io_error_to_pending_fs_error(err, "canonicalize sync root"))?;
+    let mut candidate = root.clone();
+    let segments: Vec<&str> = relative_path.split('/').collect();
+    for (index, segment) in segments.iter().enumerate() {
+        candidate.push(segment);
+        let is_final = index + 1 == segments.len();
+        if is_final {
+            continue;
+        }
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(PendingFsOpError {
+                    failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+                    message: format!(
+                        "local operation parent is a symlink and will not be followed: {}",
+                        candidate.display()
+                    ),
+                });
+            }
+            Ok(meta) if meta.is_dir() => {}
+            Ok(_) => {
+                return Err(PendingFsOpError {
+                    failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+                    message: format!(
+                        "local operation parent is not a directory: {}",
+                        candidate.display()
+                    ),
+                });
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(io_error_to_pending_fs_error(err, "stat local parent")),
+        }
+    }
+    if !candidate.starts_with(&root) {
+        return Err(PendingFsOpError {
+            failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+            message: format!("local operation escapes sync root: {relative_path}"),
+        });
+    }
+    Ok(candidate)
+}
+
+fn remote_child_path(remote_root: &str, relative_path: &str) -> Result<String, PendingFsOpError> {
+    if !pcloud_engine::is_valid_relative_path(relative_path) {
+        return Err(PendingFsOpError {
+            failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+            message: format!("invalid remote operation relative path: {relative_path}"),
+        });
+    }
+    let root = remote_root.trim();
+    let root = if root.is_empty() { "/" } else { root };
+    if root == "/" {
+        Ok(format!("/{relative_path}"))
+    } else {
+        Ok(format!("{}/{}", root.trim_end_matches('/'), relative_path))
+    }
+}
+
+fn io_error_to_pending_fs_error(err: std::io::Error, context: &'static str) -> PendingFsOpError {
+    let failure = match err.kind() {
+        std::io::ErrorKind::PermissionDenied => {
+            pcloud_engine::recovery::RecoveryFailure::PermissionDenied
+        }
+        std::io::ErrorKind::InvalidInput => pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+        _ => pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+    };
+    PendingFsOpError {
+        failure,
+        message: format!("{context}: {err}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers: safe local upload source fallback
+// ---------------------------------------------------------------------------
+
+#[derive(Debug)]
+#[cfg(test)]
+struct LocalUploadPayload {
+    bytes: Vec<u8>,
+    snapshot: LocalUploadSnapshot,
+}
+
+#[derive(Debug)]
+#[cfg(test)]
+struct LocalUploadSnapshot {
+    path: PathBuf,
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+#[derive(Debug)]
+struct LocalUploadPayloadError {
+    failure: pcloud_engine::recovery::RecoveryFailure,
+    message: String,
+}
+
+#[cfg(test)]
+fn read_local_upload_payload_from_root(
+    root: &Path,
+    relative_path: &str,
+) -> Result<LocalUploadPayload, LocalUploadPayloadError> {
+    let source_path = safe_local_source_path(root, relative_path)?;
+    let symlink_meta = std::fs::symlink_metadata(&source_path)
+        .map_err(|err| io_error_to_local_payload_error(err, "stat local upload source"))?;
+    if symlink_meta.file_type().is_symlink() {
+        return Err(LocalUploadPayloadError {
+            failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+            message: format!(
+                "local upload source is a symlink and will not be followed: {}",
+                source_path.display()
+            ),
+        });
+    }
+    if !symlink_meta.is_file() {
+        return Err(LocalUploadPayloadError {
+            failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+            message: format!(
+                "local upload source is not a regular file: {}",
+                source_path.display()
+            ),
+        });
+    }
+
+    let mut file = open_local_source_no_follow(&source_path)?;
+    let before = file
+        .metadata()
+        .map_err(|err| io_error_to_local_payload_error(err, "metadata local upload source"))?;
+    if !before.is_file() {
+        return Err(LocalUploadPayloadError {
+            failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+            message: format!(
+                "local upload source is not a regular file after open: {}",
+                source_path.display()
+            ),
+        });
+    }
+
+    let mut bytes = Vec::with_capacity(before.len().min(8 * 1024 * 1024) as usize);
+    file.read_to_end(&mut bytes)
+        .map_err(|err| io_error_to_local_payload_error(err, "read local upload source"))?;
+    let after = file
+        .metadata()
+        .map_err(|err| io_error_to_local_payload_error(err, "metadata local upload source"))?;
+    let snapshot = LocalUploadSnapshot {
+        path: source_path,
+        len: after.len(),
+        modified: after.modified().ok(),
+    };
+    let before_modified = before.modified().ok();
+    if before.len() != after.len() || before_modified != snapshot.modified {
+        return Err(LocalUploadPayloadError {
+            failure: pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+            message: "local upload source changed while being read; retrying".to_owned(),
+        });
+    }
+    if bytes.len() as u64 != snapshot.len {
+        return Err(LocalUploadPayloadError {
+            failure: pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+            message: "local upload source length changed while being read; retrying".to_owned(),
+        });
+    }
+
+    Ok(LocalUploadPayload { bytes, snapshot })
+}
+
+#[cfg(test)]
+fn validate_local_upload_snapshot(
+    snapshot: &LocalUploadSnapshot,
+) -> Result<(), LocalUploadPayloadError> {
+    let meta = std::fs::symlink_metadata(&snapshot.path)
+        .map_err(|err| io_error_to_local_payload_error(err, "stat local upload source"))?;
+    if meta.file_type().is_symlink() || !meta.is_file() {
+        return Err(LocalUploadPayloadError {
+            failure: pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+            message: format!(
+                "local upload source changed type during upload: {}",
+                snapshot.path.display()
+            ),
+        });
+    }
+    if meta.len() != snapshot.len || meta.modified().ok() != snapshot.modified {
+        return Err(LocalUploadPayloadError {
+            failure: pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+            message: format!(
+                "local upload source changed during upload: {}",
+                snapshot.path.display()
+            ),
+        });
+    }
+    Ok(())
+}
+
+fn safe_local_source_path(
+    root: &Path,
+    relative_path: &str,
+) -> Result<PathBuf, LocalUploadPayloadError> {
+    if !pcloud_engine::is_valid_relative_path(relative_path) {
+        return Err(LocalUploadPayloadError {
+            failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+            message: format!("invalid local upload relative path: {relative_path}"),
+        });
+    }
+    let root = root
+        .canonicalize()
+        .map_err(|err| io_error_to_local_payload_error(err, "canonicalize local upload root"))?;
+    let mut candidate = root.clone();
+    for segment in relative_path.split('/') {
+        candidate.push(segment);
+    }
+    let parent = candidate.parent().ok_or_else(|| LocalUploadPayloadError {
+        failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+        message: format!("local upload path has no parent: {relative_path}"),
+    })?;
+    let parent = parent
+        .canonicalize()
+        .map_err(|err| io_error_to_local_payload_error(err, "canonicalize local upload parent"))?;
+    if !parent.starts_with(&root) {
+        return Err(LocalUploadPayloadError {
+            failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+            message: format!("local upload source escapes sync root: {relative_path}"),
+        });
+    }
+    let name = candidate
+        .file_name()
+        .ok_or_else(|| LocalUploadPayloadError {
+            failure: pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+            message: format!("local upload path has no file name: {relative_path}"),
+        })?;
+    Ok(parent.join(name))
+}
+
+#[cfg(test)]
+fn open_local_source_no_follow(path: &Path) -> Result<std::fs::File, LocalUploadPayloadError> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    options
+        .open(path)
+        .map_err(|err| io_error_to_local_payload_error(err, "open local upload source"))
+}
+
+fn io_error_to_local_payload_error(
+    err: std::io::Error,
+    context: &'static str,
+) -> LocalUploadPayloadError {
+    let failure = match err.kind() {
+        std::io::ErrorKind::PermissionDenied => {
+            pcloud_engine::recovery::RecoveryFailure::PermissionDenied
+        }
+        std::io::ErrorKind::InvalidInput => pcloud_engine::recovery::RecoveryFailure::InvalidPath,
+        _ => pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+    };
+    LocalUploadPayloadError {
+        failure,
+        message: format!("{context}: {err}"),
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Helpers: resolve upload payload from filesystem or cache
 // ---------------------------------------------------------------------------
 
@@ -1364,6 +2047,7 @@ fn staged_download_path(staging_dir: &Path, file_id: u64, path: &str) -> PathBuf
 /// 3× the file size in heap usage. The new API is zero-copy: both
 /// the length probe and the subsequent borrow of the payload bytes
 /// reuse the existing staging buffer in place.
+#[cfg(test)]
 fn resolve_upload_payload_len(
     filesystem: &FilesystemShell,
     cache: &CacheShell,
@@ -1379,6 +2063,7 @@ fn resolve_upload_payload_len(
 /// the filesystem shell's staging area first and falling back to the
 /// cache's staging buffer. Returns `None` if the buffer was evicted
 /// between the length probe and the borrow.
+#[cfg(test)]
 fn borrow_upload_payload<'a>(
     filesystem: &'a FilesystemShell,
     cache: &'a CacheShell,
@@ -1426,7 +2111,12 @@ fn read_upload_payload_chunks<'a>(
 mod tests {
     use super::*;
     use pcloud_model::sync::SyncType;
+    use pcloud_model::sync::{
+        ChangeKind, ChangeSource, EntryKind as ModelEntryKind, PlannedOperation, SyncCandidate,
+    };
+    use pcloud_model::transfer::{TransferState, TransferTask};
     use pcloud_store::bootstrap_profile;
+    use pcloud_store::repositories::sync_graph::SyncGraphRepository;
     use std::sync::Arc;
     use tempfile::TempDir;
 
@@ -1612,6 +2302,302 @@ mod tests {
         assert!(read_upload_payload_chunks(&fs, &cache, "missing.bin", 4 * 1024 * 1024).is_none());
     }
 
+    #[test]
+    fn local_upload_payload_reads_regular_file_inside_root() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("sync-root");
+        std::fs::create_dir_all(root.join("docs")).unwrap();
+        std::fs::write(root.join("docs/report.txt"), b"ordinary local bytes").unwrap();
+
+        let payload = read_local_upload_payload_from_root(&root, "docs/report.txt")
+            .expect("ordinary sync-root file should be readable");
+
+        assert_eq!(payload.bytes, b"ordinary local bytes");
+        validate_local_upload_snapshot(&payload.snapshot).expect("snapshot unchanged");
+    }
+
+    #[test]
+    fn local_upload_payload_rejects_symlink_source() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("sync-root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(tmp.path().join("outside.txt"), b"outside").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(tmp.path().join("outside.txt"), root.join("link.txt")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(tmp.path().join("outside.txt"), root.join("link.txt"))
+            .unwrap();
+
+        let err = read_local_upload_payload_from_root(&root, "link.txt")
+            .expect_err("symlink upload source must be rejected");
+        assert!(matches!(
+            err.failure,
+            pcloud_engine::recovery::RecoveryFailure::InvalidPath
+        ));
+    }
+
+    #[test]
+    fn retryable_failure_requeues_operation() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("retry.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-slr-retry-test"),
+            pcloud_config::Environment::Development,
+        );
+        let token = shared_auth_token();
+        let mut runtime = RealSyncLoopRuntime::new(Arc::clone(&token), &config, &db_path).unwrap();
+        let operation = PlannedOperation::UploadFile {
+            sync_id: SyncId::new(1),
+            path: "retry.txt".to_owned(),
+            remote_parent_folder_id: None,
+            remote_name: "retry.txt".to_owned(),
+        };
+        runtime.engine.uploads.active_uploads.push(TransferTask {
+            operation: operation.clone(),
+            state: TransferState::Streaming,
+            last_error: None,
+        });
+
+        runtime.record_transfer_failure_for_recovery(
+            &operation,
+            pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError,
+            "temporary transport failure",
+        );
+
+        assert_eq!(
+            runtime.engine.scheduler.queued_operations.first(),
+            Some(&operation)
+        );
+        assert_eq!(runtime.engine.uploads.failed_count(), 0);
+    }
+
+    #[test]
+    fn finish_root_observations_pairs_local_and_remote_candidates() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("combined.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-slr-combined-test"),
+            pcloud_config::Environment::Development,
+        );
+        let token = shared_auth_token();
+        let mut runtime = RealSyncLoopRuntime::new(Arc::clone(&token), &config, &db_path).unwrap();
+        let root = SyncRootRecord {
+            sync_id: SyncId::new(7),
+            local_path: tmp.path().join("root").to_string_lossy().to_string(),
+            remote_path: "/remote".to_owned(),
+            paused: false,
+            sync_type: SyncType::Full,
+            exclude_globs: Vec::new(),
+        };
+        runtime.stage_observations(
+            root.sync_id,
+            vec![
+                SyncCandidate {
+                    sync_id: root.sync_id,
+                    source: ChangeSource::Remote,
+                    path: "same.txt".to_owned(),
+                    entry_kind: ModelEntryKind::File,
+                    change_kind: ChangeKind::Upsert,
+                    remote_file_id: None,
+                    remote_folder_id: None,
+                },
+                SyncCandidate {
+                    sync_id: root.sync_id,
+                    source: ChangeSource::Local,
+                    path: "same.txt".to_owned(),
+                    entry_kind: ModelEntryKind::File,
+                    change_kind: ChangeKind::Upsert,
+                    remote_file_id: None,
+                    remote_folder_id: None,
+                },
+            ],
+        );
+
+        runtime
+            .finish_root_observations(&root)
+            .expect("combined observations should plan");
+
+        assert_eq!(runtime.engine.unresolved_conflict_count(), 1);
+    }
+
+    #[test]
+    fn execute_uploads_falls_back_to_local_source_file() {
+        let tmp = TempDir::new().unwrap();
+        let sync_root = tmp.path().join("sync-root");
+        std::fs::create_dir_all(&sync_root).unwrap();
+        std::fs::write(sync_root.join("plain.txt"), b"from local file").unwrap();
+
+        let db_path = tmp.path().join("local-upload.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let conn = Connection::open(&db_path).unwrap();
+        SyncGraphRepository {
+            tracked_sync_roots: vec![SyncRootRecord {
+                sync_id: SyncId::new(11),
+                local_path: sync_root.to_string_lossy().to_string(),
+                remote_path: "/remote".to_owned(),
+                paused: false,
+                sync_type: SyncType::Full,
+                exclude_globs: Vec::new(),
+            }],
+        }
+        .save(&conn)
+        .unwrap();
+
+        let config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-slr-local-upload-test"),
+            pcloud_config::Environment::Development,
+        );
+        let token = shared_auth_token();
+        let mut runtime = RealSyncLoopRuntime::new(Arc::clone(&token), &config, &db_path).unwrap();
+        runtime.engine.uploads.active_uploads.push(TransferTask {
+            operation: PlannedOperation::UploadFile {
+                sync_id: SyncId::new(11),
+                path: "plain.txt".to_owned(),
+                remote_parent_folder_id: None,
+                remote_name: "plain.txt".to_owned(),
+            },
+            state: TransferState::Streaming,
+            last_error: None,
+        });
+
+        let completed = runtime
+            .execute_uploads(&SecretString::new("dev-token".to_owned()))
+            .expect("dev upload should complete");
+
+        assert_eq!(completed, 1);
+        assert_eq!(runtime.engine.uploads.completed_count(), 1);
+    }
+
+    #[test]
+    fn execute_downloads_runs_pending_local_mkdir_and_delete() {
+        let tmp = TempDir::new().unwrap();
+        let sync_root = tmp.path().join("sync-root");
+        std::fs::create_dir_all(sync_root.join("old")).unwrap();
+        std::fs::write(sync_root.join("old/file.txt"), b"delete me").unwrap();
+
+        let db_path = tmp.path().join("local-pending.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let conn = Connection::open(&db_path).unwrap();
+        SyncGraphRepository {
+            tracked_sync_roots: vec![SyncRootRecord {
+                sync_id: SyncId::new(21),
+                local_path: sync_root.to_string_lossy().to_string(),
+                remote_path: "/remote".to_owned(),
+                paused: false,
+                sync_type: SyncType::Full,
+                exclude_globs: Vec::new(),
+            }],
+        }
+        .save(&conn)
+        .unwrap();
+
+        let config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-slr-local-pending-test"),
+            pcloud_config::Environment::Development,
+        );
+        let token = shared_auth_token();
+        let mut runtime = RealSyncLoopRuntime::new(Arc::clone(&token), &config, &db_path).unwrap();
+        runtime
+            .engine
+            .downloads
+            .pending_directory_creates
+            .push(TransferTask {
+                operation: PlannedOperation::CreateLocalDirectory {
+                    sync_id: SyncId::new(21),
+                    path: "new/nested".to_owned(),
+                    remote_folder_id: None,
+                },
+                state: TransferState::Streaming,
+                last_error: None,
+            });
+        runtime
+            .engine
+            .downloads
+            .pending_local_deletes
+            .push(TransferTask {
+                operation: PlannedOperation::DeleteLocal {
+                    sync_id: SyncId::new(21),
+                    path: "old".to_owned(),
+                },
+                state: TransferState::Streaming,
+                last_error: None,
+            });
+
+        let completed = runtime
+            .execute_downloads(&SecretString::new("dev-token".to_owned()))
+            .expect("local pending ops should execute");
+
+        assert_eq!(completed, 2);
+        assert!(sync_root.join("new/nested").is_dir());
+        assert!(!sync_root.join("old").exists());
+        assert_eq!(runtime.engine.downloads.completed_count(), 2);
+        assert_eq!(runtime.engine.downloads.active_count(), 0);
+    }
+
+    #[test]
+    fn execute_uploads_runs_remote_mkdir_and_idempotent_delete() {
+        let tmp = TempDir::new().unwrap();
+        let sync_root = tmp.path().join("sync-root");
+        std::fs::create_dir_all(&sync_root).unwrap();
+
+        let db_path = tmp.path().join("remote-pending.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let conn = Connection::open(&db_path).unwrap();
+        SyncGraphRepository {
+            tracked_sync_roots: vec![SyncRootRecord {
+                sync_id: SyncId::new(22),
+                local_path: sync_root.to_string_lossy().to_string(),
+                remote_path: "/".to_owned(),
+                paused: false,
+                sync_type: SyncType::Full,
+                exclude_globs: Vec::new(),
+            }],
+        }
+        .save(&conn)
+        .unwrap();
+
+        let config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-slr-remote-pending-test"),
+            pcloud_config::Environment::Development,
+        );
+        let token = shared_auth_token();
+        let mut runtime = RealSyncLoopRuntime::new(Arc::clone(&token), &config, &db_path).unwrap();
+        runtime
+            .engine
+            .uploads
+            .pending_directory_creates
+            .push(TransferTask {
+                operation: PlannedOperation::CreateRemoteDirectory {
+                    sync_id: SyncId::new(22),
+                    path: "new-remote-dir".to_owned(),
+                },
+                state: TransferState::Streaming,
+                last_error: None,
+            });
+        runtime
+            .engine
+            .uploads
+            .pending_remote_deletes
+            .push(TransferTask {
+                operation: PlannedOperation::DeleteRemote {
+                    sync_id: SyncId::new(22),
+                    path: "missing-remote.txt".to_owned(),
+                },
+                state: TransferState::Streaming,
+                last_error: None,
+            });
+
+        let completed = runtime
+            .execute_uploads(&SecretString::new("dev-token".to_owned()))
+            .expect("canonical remote pending operations should execute");
+
+        assert_eq!(completed, 2);
+        assert_eq!(runtime.engine.uploads.failed_count(), 0);
+        assert_eq!(runtime.engine.uploads.active_count(), 0);
+    }
+
     /// Verify that `RealSyncLoopRuntime` implements `SyncLoopRuntime`
     /// and can be constructed with dev-mode backends.
     #[test]
@@ -1660,6 +2646,7 @@ mod tests {
             remote_path: "/Remote/42".to_owned(),
             paused: false,
             sync_type: SyncType::Full,
+            exclude_globs: Vec::new(),
         };
 
         let db_path = tmp.path().join("walk.db");
@@ -1696,6 +2683,7 @@ mod tests {
             remote_path: "/Remote/1".to_owned(),
             paused: false,
             sync_type: SyncType::Full,
+            exclude_globs: Vec::new(),
         };
         assert!(walk_local_tree(&root, &conn).is_err());
     }
@@ -1742,6 +2730,7 @@ mod tests {
             remote_path: "/Remote".to_owned(),
             paused: false,
             sync_type: SyncType::Full,
+            exclude_globs: Vec::new(),
         };
         FileMetadataRepository::upsert(
             &conn,
@@ -2049,6 +3038,7 @@ mod tests {
             remote_path: "/Remote/99".to_owned(),
             paused: false,
             sync_type: SyncType::Full,
+            exclude_globs: Vec::new(),
         };
 
         // Before ensure_watcher, no watcher present.
@@ -2088,6 +3078,7 @@ mod tests {
             remote_path: "/Remote/88".to_owned(),
             paused: false,
             sync_type: SyncType::Full,
+            exclude_globs: Vec::new(),
         };
 
         // Should not panic, should just log and skip.
@@ -2115,5 +3106,149 @@ mod tests {
         // private, but we verify construction succeeded and the
         // tracker was initialized by checking that it has no scanned roots.
         assert!(!runtime.scan_tracker.has_scanned(SyncId::new(1)));
+    }
+
+    /// T1.4.b.2 — `tick_bandwidth_schedule` must drive the
+    /// `BandwidthPacer` shared with the transfer runtime.
+    #[test]
+    fn tick_bandwidth_schedule_pushes_cap_to_transfer_runtime_pacer() {
+        use crate::sync_loop::SyncLoopRuntime;
+        use pcloud_config::bandwidth_schedule::{BandwidthRule, BandwidthScheduleConfig, Weekday};
+
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("bw-tick.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+
+        let mut config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-slr-bw-tick"),
+            pcloud_config::Environment::Development,
+        );
+        config.bandwidth_schedule = BandwidthScheduleConfig {
+            enabled: true,
+            default_cap_bytes_per_sec: Some(1_000_000),
+            metered_cap_bytes_per_sec: None,
+            // Match every weekday + every minute so the test does not
+            // depend on the wall clock for rule selection. The
+            // applier still consults the wall clock to compute
+            // `(weekday, minute)`, but the rule matches all of them.
+            rules: vec![BandwidthRule {
+                start_minute_of_day: 0,
+                end_minute_of_day: 1439,
+                cap_bytes_per_sec: Some(500_000),
+                days: vec![
+                    Weekday::Mon,
+                    Weekday::Tue,
+                    Weekday::Wed,
+                    Weekday::Thu,
+                    Weekday::Fri,
+                    Weekday::Sat,
+                    Weekday::Sun,
+                ],
+            }],
+        };
+        let token = shared_auth_token();
+        let mut runtime = RealSyncLoopRuntime::new(Arc::clone(&token), &config, &db_path).unwrap();
+
+        // Pacer starts unlimited — TransferRuntime::with_bandwidth_pacer
+        // installs the pacer that the applier will mutate.
+        let pacer = runtime
+            .transfer_runtime
+            .bandwidth_pacer()
+            .expect("transfer runtime must share a pacer");
+        assert_eq!(pacer.limit(), None, "pacer starts unlimited");
+
+        // Drive one tick — minute is wall-clock; a rule that matches
+        // every minute and every weekday means the rule fires.
+        runtime.tick_bandwidth_schedule(false);
+        assert_eq!(
+            pacer.limit(),
+            Some(500_000),
+            "rule should drive the pacer cap to 500 KB/s"
+        );
+
+        // Idempotent: repeated tick must not change the cap.
+        runtime.tick_bandwidth_schedule(false);
+        assert_eq!(pacer.limit(), Some(500_000));
+    }
+
+    /// T1.4.c — when the metered hint reports `true`, the applier
+    /// must pick `metered_cap_bytes_per_sec` over any time-rule.
+    #[test]
+    fn tick_bandwidth_schedule_metered_hint_overrides_time_rule() {
+        use crate::metered_network::MeteredHint;
+        use crate::sync_loop::SyncLoopRuntime;
+        use pcloud_config::bandwidth_schedule::{BandwidthRule, BandwidthScheduleConfig, Weekday};
+
+        #[derive(Debug)]
+        struct OnMeter;
+        impl MeteredHint for OnMeter {
+            fn is_metered(&self) -> bool {
+                true
+            }
+        }
+
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("bw-metered.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let mut config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-slr-bw-metered"),
+            pcloud_config::Environment::Development,
+        );
+        config.bandwidth_schedule = BandwidthScheduleConfig {
+            enabled: true,
+            default_cap_bytes_per_sec: Some(5_000_000),
+            metered_cap_bytes_per_sec: Some(256_000),
+            // An "unlimited" boost rule for every minute of every day —
+            // metered hint must override it.
+            rules: vec![BandwidthRule {
+                start_minute_of_day: 0,
+                end_minute_of_day: 1439,
+                cap_bytes_per_sec: Some(0), // unlimited
+                days: vec![
+                    Weekday::Mon,
+                    Weekday::Tue,
+                    Weekday::Wed,
+                    Weekday::Thu,
+                    Weekday::Fri,
+                    Weekday::Sat,
+                    Weekday::Sun,
+                ],
+            }],
+        };
+        let token = shared_auth_token();
+        let mut runtime = RealSyncLoopRuntime::new(Arc::clone(&token), &config, &db_path).unwrap();
+        runtime.set_metered_hint(Box::new(OnMeter));
+
+        runtime.tick_bandwidth_schedule(false);
+        let pacer = runtime.transfer_runtime.bandwidth_pacer().unwrap();
+        // Without the metered hint the rule's `Some(0)` would yield
+        // unlimited (None); the metered hint forces 256 KB/s.
+        assert_eq!(pacer.limit(), Some(256_000));
+    }
+
+    /// T1.4.b.2 — disabled schedule leaves the pacer alone after the
+    /// first apply (which pushes `None` once and never again).
+    #[test]
+    fn tick_bandwidth_schedule_disabled_pushes_unlimited_once() {
+        use crate::sync_loop::SyncLoopRuntime;
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("bw-tick-off.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+
+        let config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-slr-bw-tick-off"),
+            pcloud_config::Environment::Development,
+        );
+        // bandwidth_schedule defaults to enabled = false.
+        let token = shared_auth_token();
+        let mut runtime = RealSyncLoopRuntime::new(Arc::clone(&token), &config, &db_path).unwrap();
+        let pacer = runtime.transfer_runtime.bandwidth_pacer().unwrap();
+
+        runtime.tick_bandwidth_schedule(false);
+        // Disabled schedule resolves to None (= unlimited) and pushes
+        // None to the pacer — but pacer was already None, so this is
+        // a no-op past the very first apply (which always emits
+        // Changed because last_applied was uninitialized).
+        assert_eq!(pacer.limit(), None);
     }
 }

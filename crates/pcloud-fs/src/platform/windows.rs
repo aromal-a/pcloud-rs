@@ -3,17 +3,16 @@
 //! is gated at the `mod windows;` line in `platform/mod.rs`.
 //!
 //! ============================================================================
-//!  PHASE-3 SCAFFOLDING -- FSP_FILE_SYSTEM dispatcher wired but not tested
-//!  on Windows. Requires WinFSP 2.x installed. Full bring-up pending Phase-4
-//!  live verification.
+//!  FSP_FILE_SYSTEM dispatcher for WinFSP 2.x. Native CI owns a strict live
+//!  read/write/unmount smoke test; account-backed mount qualification remains
+//!  a separate release gate.
 //!
 //!  This file wires `FspFileSystemCreate` / `SetMountPoint` /
 //!  `StartDispatcher` into the [`PlatformMount`] seam and returns a real
 //!  [`MountHandle`] whose Drop calls `StopDispatcher` + `Delete` and
-//!  reclaims the leaked adapter box. It has NOT been compiled on a Windows
-//!  toolchain and has NOT been exercised against `winfsp-x64.dll`; the
-//!  callback thunks are minimal-viable (read/readdir/open return sensible
-//!  NT statuses for now).
+//!  reclaims the leaked adapter box. The callback surface is implemented for
+//!  normal file and directory I/O. Passing native CI is the evidence for the
+//!  WinFSP ABI; this source comment alone is not a qualification claim.
 //!
 //!  Before any claim of Windows parity (`bd-1du.4` / `bd-1du.10`):
 //!   1. Build the crate with `--target x86_64-pc-windows-msvc`.
@@ -21,10 +20,10 @@
 //!      `winfsp-x64.dll` is on `%PATH%`.
 //!   3. Validate struct sizes / field offsets against the installed
 //!      `winfsp/fsctl.h` and `winfsp/winfsp.h`.
-//!   4. Exercise mount/read/write/unmount under Windows integration tests
-//!      (Phase-4 live verification).
+//!   4. Exercise mount/read/write/unmount under the strict Windows live gate.
 //!   5. Confirm signal-equivalent teardown (CTRL-C / service stop) actually
 //!      cleans the mount point.
+//!
 //! ============================================================================
 //!
 //! # Design
@@ -39,8 +38,7 @@
 //! * **Open / Create merge lookup+open.** WinFSP's `Open` receives the full
 //!   NT path; the shim resolves it through [`FuseAdapter::lookup`] and
 //!   returns a file context pointer that carries the adapter's
-//!   `FileHandleId`. `Create` additionally asks the backend to materialize
-//!   a new entry (not wired in the scaffold).
+//!   `FileHandleId`. `Create` asks the backend to materialize a new entry.
 //! * **Cleanup handles delete-on-close.** WinFSP calls `Cleanup` with the
 //!   `FspCleanupDelete` flag when the NT `FILE_DELETE_ON_CLOSE` disposition
 //!   is set; the shim then issues the backend removal.
@@ -69,6 +67,8 @@
 // `#[allow(missing_docs)]` — same rationale as the parent windows
 // module: WinFSP FFI structs mirror upstream C headers; per-field docs
 // would duplicate the upstream content. Relaxed until Tier-2 promotion.
+#[path = "windows_mountinfo.rs"]
+mod windows_mountinfo;
 #[path = "winfsp_ffi.rs"]
 #[allow(missing_docs)]
 pub mod winfsp_ffi;
@@ -109,9 +109,15 @@ const FSP_CLEANUP_DELETE: u32 = 0x01;
 
 /// WinFSP `FSP_FSCTL_VOLUME_PARAMS.Flags` bits (subset). Values taken
 /// verbatim from WinFSP `fsctl.h`.
+#[cfg(test)]
 const VP_FLAG_CASE_SENSITIVE_SEARCH: u32 = 0x0000_0001;
 const VP_FLAG_CASE_PRESERVED_NAMES: u32 = 0x0000_0002;
 const VP_FLAG_UNICODE_ON_DISK: u32 = 0x0000_0004;
+const WINFSP_FILE_SYSTEM_NAME: &str = "pcloud-rs";
+const _: () = assert!(
+    WINFSP_FILE_SYSTEM_NAME.len() < winfsp_ffi::FSP_FSCTL_VOLUME_FSNAME_SIZE / size_of::<u16>(),
+    "WinFSP filesystem marker must leave room for a UTF-16 NUL terminator"
+);
 
 // ---------------------------------------------------------------------------
 //  PlatformMount impl
@@ -170,8 +176,8 @@ impl PlatformMount for WindowsPlatformMount {
     }
 
     /// Windows defaults: no `allow_other` (WinFSP enforces via ACLs),
-    /// case-insensitive (Windows convention). Volume label is
-    /// `"pCloud"` and is applied at dispatcher-start time through
+    /// case-insensitive (Windows convention). The private filesystem marker
+    /// `"pcloud-rs"` is applied at dispatcher-start time through
     /// [`VolumeParams::file_system_name`] -- it is not carried on the
     /// cross-platform [`MountOptions`] struct because that struct is
     /// OS-agnostic.
@@ -204,33 +210,33 @@ impl PlatformMount for WindowsPlatformMount {
 //  MountinfoReader
 // ---------------------------------------------------------------------------
 
-/// Windows mountinfo reader. Placeholder until WinFSP-based enumeration
-/// (`GetLogicalDriveStringsW` + `QueryDosDeviceW`) is wired to produce the
-/// `/proc/self/mountinfo`-shaped payload the cross-platform parser
-/// consumes.
+/// Windows mountinfo reader backed by the Win32 volume enumerator.
+///
+/// It identifies only volumes whose filesystem name is the private
+/// `pcloud-rs` marker configured by this WinFSP adapter, then emits the
+/// `/proc/self/mountinfo`-shaped payload consumed by the shared orphan
+/// detector. `GetVolumePathNamesForVolumeNameW` covers both drive-letter and
+/// directory mount points.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct WindowsMountinfoReader;
 
 impl MountinfoReader for WindowsMountinfoReader {
     fn read(&self) -> io::Result<String> {
-        // Empty payload is a valid "no pCloud mounts" answer for the
-        // orphan detector until real enumeration lands.
-        Ok(String::new())
+        windows_mountinfo::read()
     }
 }
 
 // ---------------------------------------------------------------------------
-//  Mount entry point (scaffold)
+//  Mount entry point
 // ---------------------------------------------------------------------------
 
 /// Mount `adapter` at `mountpoint` via WinFSP.
 ///
-/// This is **scaffold only**: it wires [`FspFileSystemCreate`],
-/// [`FspFileSystemSetMountPoint`], and [`FspFileSystemStartDispatcher`]
-/// but the callback thunks are minimal-viable. Full parity with the Linux
-/// path requires propagating NT-specific semantics (security descriptors,
-/// sharing modes, reparse handling) into [`FuseAdapter`], which is
-/// tracked under `bd-1du.4`.
+/// It wires [`FspFileSystemCreate`], [`FspFileSystemSetMountPoint`], and
+/// [`FspFileSystemStartDispatcher`] to the shared adapter callbacks. Native
+/// CI owns ABI and ordinary read/write/unmount qualification. NT-only
+/// features such as alternate data streams and reparse-point passthrough are
+/// explicitly unsupported rather than silently emulated.
 pub fn mount_with_winfsp<A: FuseAdapter>(
     mountpoint: &Path,
     adapter: A,
@@ -275,13 +281,17 @@ pub fn mount_with_winfsp_dyn(
 
     let mut fs: PFspFileSystem = std::ptr::null_mut();
 
-    // SAFETY: `FspFileSystemCreate` accepts a NUL-terminated UTF-16 device
-    // name, a pointer to a caller-owned `VolumeParams`, a pointer to a
-    // caller-owned interface table, and writes the resulting file-system
-    // handle into `fs`. We keep `volume_params` on the stack for the
-    // duration of the call and leak `interface_table` so its address
-    // outlives the file system.
-    let device_name_utf16: Vec<u16> = "pcloud-rs\0".encode_utf16().collect();
+    // SAFETY: `FspFileSystemCreate` accepts WinFSP's NUL-terminated disk
+    // control-device name, a pointer to a caller-owned `VolumeParams`, a
+    // pointer to a caller-owned interface table, and writes the resulting
+    // file-system handle into `fs`. The private `pcloud-rs` identity belongs
+    // in `VolumeParams::file_system_name`; it is not a control-device name.
+    // We keep `volume_params` on the stack for the duration of the call and
+    // leak `interface_table` so its address outlives the file system.
+    let device_name_utf16: Vec<u16> = winfsp_ffi::FSP_FSCTL_DISK_DEVICE_NAME
+        .encode_utf16()
+        .chain(Some(0))
+        .collect();
     let status = unsafe {
         (lib.fsp_create)(
             winfsp_ffi::PCWSTR(device_name_utf16.as_ptr()),
@@ -357,7 +367,54 @@ pub fn mount_with_winfsp_dyn(
     // Transfer ownership of `fs` and `adapter_raw` to the `MountHandle`;
     // the guard must no longer touch them.
     guard.disarm();
-    Ok(MountHandle::from_windows(fs, mp_utf16, adapter_raw, lib))
+
+    // Register with the process-wide WinFSP reaper so signal-driven
+    // shutdown (Ctrl-C / SCM Stop) can call `FspFileSystemStopDispatcher`
+    // even if `MountHandle::Drop` never runs (e.g. abort flow). The
+    // reaper closure and `MountHandle::teardown_windows` arbitrate
+    // exclusive ownership of `fs` via the shared `done` flag — whichever
+    // path swaps it from `false` to `true` performs the unsafe
+    // stop+delete; the other becomes a no-op. CLAUDEREV iter-3 / iter-5
+    // FUSE-C-1 fix.
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let done = Arc::new(AtomicBool::new(false));
+    let done_for_closure = Arc::clone(&done);
+    let lib_for_closure = Arc::clone(&lib);
+
+    // Raw `*mut c_void` is `!Send`; carry only its address across the
+    // `FnMut + Send + 'static` boundary and reconstruct the opaque handle
+    // after the atomic ownership hand-off. WinFSP handles are process-local
+    // opaque addresses, and the `done` flag ensures exactly one teardown
+    // path ever reconstructs and uses this value.
+    let fs_address = fs as usize;
+    let reaper_stop: reaper::StopDispatcher = Box::new(move || {
+        if done_for_closure.swap(true, Ordering::AcqRel) {
+            // The owning Drop path already stopped+deleted; nothing to do.
+            return;
+        }
+        let fs_ptr = fs_address as *mut c_void;
+        // SAFETY: we just won the `done` swap, so `fs_ptr` is still a
+        // live WinFSP handle and no other path will touch it. Stop must
+        // precede Delete (WinFSP requirement); after Delete, `fs_ptr`
+        // is invalid and must not be dereferenced again. The captured
+        // adapter box is leaked here — acceptable on signal-driven
+        // shutdown (the OS reaps the process).
+        // SAFETY: see paragraph above.
+        unsafe {
+            (lib_for_closure.fsp_stop_dispatcher)(fs_ptr);
+            (lib_for_closure.fsp_delete)(fs_ptr);
+        }
+    });
+    let reaper_id = reaper::register_mount(mountpoint, reaper_stop);
+
+    Ok(MountHandle::from_windows(
+        fs,
+        mp_utf16,
+        adapter_raw,
+        lib,
+        reaper_id,
+        done,
+    ))
 }
 
 /// RAII cleanup guard for the partially-initialised WinFSP mount path.
@@ -449,6 +506,7 @@ impl Drop for MountFailureGuard {
 /// The returned reference is valid for the duration of the callback
 /// (WinFSP guarantees the user-context pointer is stable until
 /// `FspFileSystemDelete`).
+// SAFETY: see "# Safety" doc comment above.
 #[inline]
 unsafe fn adapter_from_fs<'a>(fs: PFspFileSystem) -> Option<&'a dyn FuseAdapter> {
     if fs.is_null() {
@@ -558,6 +616,10 @@ struct FileContext {
     context_seq: u64,
     /// Cached [`FileHandleId`] opened against the backend on first Read/Write.
     handle_id: std::cell::Cell<Option<crate::fuse_adapter::FileHandleId>>,
+    /// Tracks write-side mutations that must be flushed on WinFSP Flush or
+    /// best-effort Close. Explicit Flush can report failures; Close can only
+    /// log them because the WinFSP close callback is void.
+    dirty_write: std::cell::Cell<bool>,
 }
 
 impl FileContext {
@@ -567,6 +629,7 @@ impl FileContext {
             is_dir,
             context_seq: FILE_CONTEXT_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             handle_id: std::cell::Cell::new(None),
+            dirty_write: std::cell::Cell::new(false),
         }
     }
 
@@ -581,6 +644,19 @@ impl FileContext {
         let h = adapter.open(self.ino)?;
         self.handle_id.set(Some(h));
         Ok(h)
+    }
+
+    fn mark_dirty(&self) {
+        self.dirty_write.set(true);
+    }
+
+    fn flush_if_dirty(&self, adapter: &dyn FuseAdapter) -> Result<(), i32> {
+        if self.is_dir || !self.dirty_write.get() {
+            return Ok(());
+        }
+        adapter.flush_write(self.ino)?;
+        self.dirty_write.set(false);
+        Ok(())
     }
 }
 
@@ -621,6 +697,7 @@ const fn libc_enoent() -> i32 {
 ///
 /// # Safety
 /// `info` must be a writable pointer that lives for the call.
+// SAFETY: see "# Safety" doc comment above.
 unsafe fn fill_file_info(info: *mut FileInfo, attr: &EntryAttr) {
     if info.is_null() {
         return;
@@ -653,6 +730,7 @@ unsafe fn fill_file_info(info: *mut FileInfo, attr: &EntryAttr) {
 /// # Safety
 /// `ptr` must have been produced by `Box::into_raw` in [`cb_open`] and must
 /// not have been freed yet.
+// SAFETY: see "# Safety" doc comment above.
 #[inline]
 unsafe fn file_context_ref<'a>(ptr: *mut c_void) -> Option<&'a FileContext> {
     if ptr.is_null() {
@@ -672,15 +750,16 @@ extern "system" fn cb_get_volume_info(fs: PFspFileSystem, info: *mut VolumeInfo)
         if info.is_null() {
             return STATUS_INVALID_PARAMETER;
         }
-        // Query the adapter for real pCloud quota. Fall back to a
-        // Explorer-friendly default when the adapter hasn't implemented
-        // `statfs` (it returns `ENOSYS`), so mount probes still succeed.
-        //
+        // Query the adapter for real pCloud quota. Failure is surfaced to
+        // Explorer rather than replaced with a plausible synthetic value.
         // SAFETY: inside a WinFSP callback `fs` carries the adapter
         // installed in `mount_with_winfsp_dyn`.
         let (total, free) = match unsafe { adapter_from_fs(fs) } {
-            Some(a) => a.statfs().unwrap_or((u64::MAX / 2, u64::MAX / 4)),
-            None => (u64::MAX / 2, u64::MAX / 4),
+            Some(adapter) => match adapter.statfs() {
+                Ok(quota) => quota,
+                Err(errno) => return errno_to_status(errno),
+            },
+            None => return winfsp_ffi::STATUS_IO_DEVICE_ERROR,
         };
         // SAFETY: WinFSP guarantees `info` is a writable `VolumeInfo` for
         // the callback's duration. The `volume_label` array is fixed-size
@@ -797,8 +876,7 @@ fn build_current_user_security_descriptor() -> Result<Vec<u8>, ()> {
     use windows::Win32::Security::Authorization::ConvertStringSecurityDescriptorToSecurityDescriptorW;
     use windows::Win32::Security::PSID;
     use windows::Win32::Security::{
-        GetTokenInformation, PSECURITY_DESCRIPTOR, SID_AND_ATTRIBUTES, TOKEN_QUERY, TOKEN_USER,
-        TokenUser,
+        GetTokenInformation, PSECURITY_DESCRIPTOR, TOKEN_QUERY, TOKEN_USER, TokenUser,
     };
     use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
@@ -1017,6 +1095,9 @@ extern "system" fn cb_create(
             attr.ino,
             matches!(attr.kind, FsEntryKind::Directory),
         ));
+        if !ctx.is_dir {
+            ctx.mark_dirty();
+        }
         if !file_context.is_null() {
             // SAFETY: WinFSP guarantees a writable `*mut c_void` slot; we
             // transfer ownership of the heap-allocated context to WinFSP
@@ -1059,6 +1140,7 @@ extern "system" fn cb_overwrite(
         if let Err(errno) = adapter.truncate(ctx.ino, 0) {
             return errno_to_status(errno);
         }
+        ctx.mark_dirty();
         // Per WinFSP semantics, when `replace_file_attributes` is TRUE the
         // caller's `file_attributes` REPLACES the on-disk attribute set;
         // when FALSE it is OR'd into the current set. We forward the
@@ -1142,6 +1224,7 @@ extern "system" fn cb_write(
 
         match adapter.write(ctx.ino, effective_offset, &buf) {
             Ok(_n) => {
+                ctx.mark_dirty();
                 // Report the full request length as transferred; the adapter
                 // either wrote all bytes or returned an error.
                 if !bytes_transferred.is_null() {
@@ -1189,6 +1272,7 @@ extern "system" fn cb_set_file_size(
         if let Err(errno) = adapter.truncate(ctx.ino, new_size) {
             return errno_to_status(errno);
         }
+        ctx.mark_dirty();
         let attr = match adapter.getattr(ctx.ino) {
             Ok(a) => a,
             Err(errno) => return errno_to_status(errno),
@@ -1278,7 +1362,7 @@ extern "system" fn cb_set_basic_info(
         // so the Explorer "save" dialog doesn't fail on read-only backends.
         match adapter.set_basic_info(ctx.ino, info) {
             Ok(_) => {}
-            Err(libc_enosys) if libc_enosys == 38 /* ENOSYS */ => {}
+            Err(38) /* ENOSYS */ => {}
             Err(errno) => return errno_to_status(errno),
         }
 
@@ -1492,11 +1576,19 @@ extern "system" fn cb_close(fs: PFspFileSystem, file_context: *mut c_void) {
         // `cb_open` / `cb_create`; WinFSP invokes `Close` exactly once per
         // opened handle, so this is the single point of ownership return.
         let boxed = unsafe { Box::from_raw(file_context as *mut FileContext) };
-        // Release the cached backend handle, if we lazily opened one for
-        // Read/Write. Best-effort: ENOSYS / ENOENT are non-fatal here.
-        if let Some(h) = boxed.handle_id.get() {
-            // SAFETY: dispatcher-thread callback, adapter still installed.
-            if let Some(adapter) = unsafe { adapter_from_fs(fs) } {
+        // SAFETY: dispatcher-thread callback, adapter still installed.
+        if let Some(adapter) = unsafe { adapter_from_fs(fs) } {
+            if let Err(errno) = boxed.flush_if_dirty(adapter) {
+                log::error!(
+                    "WinFSP Close: dirty flush failed for context_seq={} ino={} errno={}",
+                    boxed.context_seq,
+                    boxed.ino,
+                    errno
+                );
+            }
+            // Release the cached backend handle, if we lazily opened one
+            // for reads. Best-effort: ENOSYS / ENOENT are non-fatal here.
+            if let Some(h) = boxed.handle_id.get() {
                 let _ = adapter.release(h);
             }
         }
@@ -1572,12 +1664,35 @@ extern "system" fn cb_read(
 }
 
 extern "system" fn cb_flush(
-    _fs: PFspFileSystem,
-    _file_context: *mut c_void,
-    _file_info: *mut FileInfo,
+    fs: PFspFileSystem,
+    file_context: *mut c_void,
+    file_info: *mut FileInfo,
 ) -> NTSTATUS {
-    // Read-only MVP: a flush is always a no-op success.
-    guarded(|| STATUS_SUCCESS)
+    guarded(|| {
+        // SAFETY: see `cb_open`.
+        let adapter = match unsafe { adapter_from_fs(fs) } {
+            Some(a) => a,
+            None => return STATUS_INVALID_PARAMETER,
+        };
+        // SAFETY: `file_context` was produced by `Box::into_raw` in
+        // `cb_open` / `cb_create` and remains owned by WinFSP until Close.
+        let ctx = match unsafe { file_context_ref(file_context) } {
+            Some(c) => c,
+            None => return STATUS_INVALID_PARAMETER,
+        };
+        if let Err(errno) = ctx.flush_if_dirty(adapter) {
+            return errno_to_status(errno);
+        }
+        if !file_info.is_null() {
+            let attr = match adapter.getattr(ctx.ino) {
+                Ok(a) => a,
+                Err(errno) => return errno_to_status(errno),
+            };
+            // SAFETY: caller-provided writable FileInfo when non-null.
+            unsafe { fill_file_info(file_info, &attr) };
+        }
+        STATUS_SUCCESS
+    })
 }
 
 extern "system" fn cb_get_file_info(
@@ -1812,11 +1927,14 @@ fn build_volume_params(_options: &MountOptions) -> VolumeParams {
         flags: VP_FLAG_UNICODE_ON_DISK | VP_FLAG_CASE_PRESERVED_NAMES,
         prefix: [0; winfsp_ffi::FSP_FSCTL_VOLUME_PREFIX_SIZE / 2],
         file_system_name: [0; winfsp_ffi::FSP_FSCTL_VOLUME_FSNAME_SIZE / 2],
-        reserved_tail: [0; 256],
+        reserved_tail: [0; 48],
     };
-    let label: Vec<u16> = "pCloud".encode_utf16().collect();
-    let n = label.len().min(vp.file_system_name.len());
-    vp.file_system_name[..n].copy_from_slice(&label[..n]);
+    let label: Vec<u16> = WINFSP_FILE_SYSTEM_NAME.encode_utf16().collect();
+    assert!(
+        label.len() < vp.file_system_name.len(),
+        "WinFSP filesystem marker must fit with a NUL terminator"
+    );
+    vp.file_system_name[..label.len()].copy_from_slice(&label);
     vp
 }
 
@@ -1897,10 +2015,10 @@ fn errno_to_status(errno: i32) -> NTSTATUS {
 }
 
 // ---------------------------------------------------------------------------
-//  Signal / Ctrl-C reaper stub (M-5.1)
+//  Signal / Ctrl-C reaper (M-5.1)
 // ---------------------------------------------------------------------------
 
-/// Windows Ctrl-C / service-stop signal reaper stub.
+/// Windows Ctrl-C / service-stop signal reaper.
 ///
 /// Mirrors the Linux `install_reaper_once` + `reaper_main` pattern but
 /// uses Windows `SetConsoleCtrlHandler` instead of `sigaction`. When the
@@ -1908,26 +2026,12 @@ fn errno_to_status(errno: i32) -> NTSTATUS {
 /// handler sets [`SHUTDOWN_REQUESTED`] to `true`; the reaper thread
 /// polls and logs a warning so operators know the process is unwinding.
 ///
-/// **TIER-3 status (pcloud-rs-ncx.29, audit-06):** Windows signal-driven
-/// mount cleanup is **scaffolded-only and not live-verified**, consistent
-/// with the Windows IPC Tier-3 disposition documented in `CLAUDE.md`
-/// under "IPC and local security". The `SetConsoleCtrlHandler` hook is
-/// installed and the reaper logs on shutdown, but:
-///   - it does **not** call `FspFileSystemStopDispatcher`,
-///   - it does **not** call `FspFileSystemRemoveMountPoint`,
-///   - it does **not** drain an ACTIVE_MOUNTS registry (none exists on
-///     Windows — the WinFSP mount wiring is scaffolded, not live).
-///
-/// Closing the gap requires `bd-xplat-windows`: wire WinFSP through the
-/// accept loop, maintain an ACTIVE_MOUNTS equivalent keyed by
-/// `FSP_FILE_SYSTEM*`, and in [`windows_reaper_main`] call
-/// `FspFileSystemStopDispatcher` then `FspFileSystemRemoveMountPoint`
-/// per entry. Until then, a process crash or abnormal exit may leave a
-/// stale mount point that the operator must clean up manually
-/// (`fsutil reparsepoint delete` or WinFSP admin tooling).
-///
-/// The reaper here ensures we do not silently swallow termination events
-/// on Windows the way we do on Linux.
+/// Active WinFSP handles are registered at mount time. On a console or
+/// service-stop event the reaper drains that registry and runs the
+/// `FspFileSystemStopDispatcher` + `FspFileSystemDelete` sequence once per
+/// mount. An atomic ownership flag arbitrates this path against normal
+/// `MountHandle::Drop`, preventing double deletion. Unit tests cover the
+/// registry contract; native CI covers ordinary mount/read/write/unmount.
 pub mod reaper {
     use std::collections::HashMap;
     use std::path::{Path, PathBuf};
@@ -2137,11 +2241,11 @@ pub mod reaper {
         }
     }
 
-    /// `SetConsoleCtrlHandler` Windows API shim.
-    ///
-    /// Declared here so the reaper module compiles without importing the
-    /// full `windows` crate (which has a different feature-flag surface
-    /// than the parent module).
+    // `SetConsoleCtrlHandler` Windows API shim.
+    //
+    // Declared here so the reaper module compiles without importing the
+    // full `windows` crate (which has a different feature-flag surface
+    // than the parent module).
     // Rust 2024 edition: extern blocks must be `unsafe extern`.
     #[cfg(target_os = "windows")]
     unsafe extern "system" {
@@ -2159,6 +2263,19 @@ pub mod reaper {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mountinfo_helpers_preserve_windows_paths() {
+        let multi: Vec<u16> = "Z:\\\0C:\\Mount Point\\\0\0".encode_utf16().collect();
+        assert_eq!(
+            windows_mountinfo::parse_wide_multisz(&multi),
+            vec!["Z:\\".to_owned(), "C:\\Mount Point\\".to_owned()]
+        );
+        assert_eq!(
+            windows_mountinfo::escape_mountinfo_field("C:\\Mount Point\\123"),
+            "C:\\134Mount\\040Point\\134123"
+        );
+    }
 
     #[test]
     fn drive_letter_root_detection() {
@@ -2258,6 +2375,15 @@ mod tests {
         assert_eq!(
             vp.max_component_length, 255,
             "max filename length must be 255"
+        );
+        let fs_name_end = vp
+            .file_system_name
+            .iter()
+            .position(|unit| *unit == 0)
+            .unwrap_or(vp.file_system_name.len());
+        assert_eq!(
+            String::from_utf16_lossy(&vp.file_system_name[..fs_name_end]),
+            "pcloud-rs"
         );
     }
 

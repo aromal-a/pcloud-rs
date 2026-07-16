@@ -1,0 +1,13 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish = false
+rust-version.workspace = true
+description = "Repository-owned local CI/CD orchestrator for pcloud-rs."
+
+[dependencies]
+
+[lints]
+workspace = true

@@ -22,7 +22,7 @@
   <Product Id="*"
            Name="pcloud-rs"
            Language="1033"
-           Version="!(bind.FileVersion.PcloudDaemonExe)"
+           Version="$(var.ProductVersion)"
            Manufacturer="pcloud-rs contributors"
            UpgradeCode="{A3F7E21C-8B4D-4F6A-9C2E-1D5B3A8F07E9}">
 
@@ -35,8 +35,21 @@
     <MajorUpgrade DowngradeErrorMessage="A newer version of pcloud-rs is already installed." />
     <MediaTemplate EmbedCab="yes" />
 
-    <!-- WinFSP is required for the mounted-drive / FUSE-equivalent feature. -->
-    <PackageDependency Id="winfsp" />
+    <!--
+      WinFSP writes its primary settings under the 32-bit registry view even
+      on x64/ARM64 systems. The standalone MSI therefore fails early with a
+      useful message when WinFSP is absent. The public Burn bundle installs
+      the checksum-pinned WinFSP MSI before this package.
+    -->
+    <Property Id="WINFSPINSTALLDIR" Secure="yes">
+      <RegistrySearch Id="WinFspInstallDirSearch"
+                      Root="HKLM"
+                      Key="SOFTWARE\WinFsp"
+                      Name="InstallDir"
+                      Type="raw"
+                      Win64="no" />
+    </Property>
+    <Condition Message="WinFSP is required. Install WinFSP, or run the pcloud-rs bundled installer instead of the standalone MSI."><![CDATA[Installed OR WINFSPINSTALLDIR]]></Condition>
 
     <!-- Icon: not yet shipped. Uncomment once pcloud-rs.ico is committed.
     <Icon Id="pcloud-rs.ico" SourceFile="pcloud-rs.ico" />
@@ -65,38 +78,11 @@
           </Component>
 
           <!--
-            Windows Service wrapper.
-            launchd plist analog on Windows = ServiceInstall + ServiceControl.
+            Deliberately no machine-wide SCM service. IPC, DPAPI, and WinFSP
+            mounts are bound to the interactive user's SID. pcloudc start
+            launches pcloudd in that user's security context; a virtual
+            service account would create an unreachable pipe and vault.
           -->
-          <Component Id="PcloudSvcExe" Guid="*" Win64="yes">
-            <File Id="PcloudSvcExe"
-                  Name="pcloudd-svc.exe"
-                  Source="$(var.StageDir)\pcloudd-svc.exe"
-                  KeyPath="yes" />
-            <!--
-              Security: run as the virtual service account "NT SERVICE\pcloudd"
-              instead of LocalSystem. Virtual service accounts have minimal
-              privileges (no network logon, no admin rights) and do not require
-              a password. LocalSystem is intentionally NOT used because it has
-              unrestricted local access and is a common privilege-escalation
-              target.
-            -->
-            <ServiceInstall Id="PcloudSvcInstall"
-                            Name="pcloudd"
-                            DisplayName="pcloud-rs daemon"
-                            Description="pCloud sync daemon (Rust)"
-                            Type="ownProcess"
-                            Start="auto"
-                            Account="NT SERVICE\pcloudd"
-                            ErrorControl="normal"
-                            Vital="yes" />
-            <ServiceControl Id="PcloudSvcControl"
-                            Name="pcloudd"
-                            Start="install"
-                            Stop="both"
-                            Remove="uninstall"
-                            Wait="yes" />
-          </Component>
         </Directory>
       </Directory>
 
@@ -108,11 +94,12 @@
                       Target="[INSTALLFOLDER]pcloudc.exe"
                       WorkingDirectory="INSTALLFOLDER" />
             <RemoveFolder Id="RemoveAppProgramMenuDir" On="uninstall" />
-            <RegistryValue Root="HKCU"
+            <RegistryValue Root="HKLM"
                            Key="Software\pcloud-rs"
                            Name="installed"
                            Type="integer"
                            Value="1"
+                           Win64="yes"
                            KeyPath="yes" />
           </Component>
         </Directory>
@@ -122,7 +109,6 @@
     <Feature Id="MainFeature" Title="pcloud-rs" Level="1">
       <ComponentRef Id="PcloudDaemonExe" />
       <ComponentRef Id="PcloudCliExe" />
-      <ComponentRef Id="PcloudSvcExe" />
       <ComponentRef Id="StartMenuShortcut" />
     </Feature>
   </Product>

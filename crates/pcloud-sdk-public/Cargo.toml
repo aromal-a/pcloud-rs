@@ -1,0 +1,23 @@
+[package]
+name = "pcloud-sdk"
+version = "1.0.0"
+edition.workspace = true
+license.workspace = true
+publish = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Stable blocking Rust SDK for pCloud drive operations through pcloudd."
+readme = "README.md"
+keywords = ["pcloud", "cloud-storage", "filesystem", "sdk"]
+categories = ["api-bindings", "filesystem"]
+
+[dependencies]
+base64 = "0.22"
+pcloud-ipc = { version = "0.1.0", path = "../pcloud-ipc" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

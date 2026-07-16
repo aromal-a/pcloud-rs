@@ -3,11 +3,13 @@
 //! `pcloud-daemon::dispatch`. Adding a new daemon capability means
 //! adding a variant here first.
 //!
-//! **Platform banner:** Linux today; cross-platform parity is tracked
-//! under `TODO(bd-xplat)`.
+//! **Platform banner:** portable typed protocol. Unix transports use
+//! owner-only domain sockets and Windows uses an owner-SID named pipe.
 
-// **PLATFORM:** Linux
-// **GATING:** none (portable; uses Linux-only idioms — see TODO(bd-xplat)).
+// **PLATFORM:** all
+// **GATING:** none; native transport and peer identity live in platform modules.
+
+use std::fmt;
 
 use pcloud_model::public_links::PublicLinkUploadPolicy;
 use pcloud_model::sync::SyncType;
@@ -123,19 +125,6 @@ pub enum Method {
     /// `Method` variant so the daemon's `Plain { method }` dispatch can
     /// resolve it alongside other status probes.
     SessionStatus,
-    /// Return the revision history of a file by absolute remote path.
-    /// Mirrors the C `listrevisions` wire command
-    /// (`pclsync/pnetlibs.c:2481`, `download_file_revisions`).
-    ///
-    /// **Honest scope:** pCloud does not publicly document a
-    /// third-party-accessible `listrevisions` endpoint; the daemon
-    /// currently returns [`ResponseStatus::Unavailable`] with a
-    /// tracker pointer (`bd-1du.10`). The IPC surface is wired so the
-    /// retained backend can flip it to live-dispatch once the API path
-    /// is confirmed and implemented. Arguments are carried on
-    /// [`Request::FileHistory`] because a path + limit pair does not
-    /// fit the [`Request::Plain`] shape.
-    FileHistory,
     /// H14 PR4 — return the background-integrity-sweeper progress as
     /// JSON in [`Response::message`]. Payload is a
     /// [`IntegrityStatusPayload`]. Always safe to call; returns zero
@@ -254,10 +243,10 @@ pub struct AuditVerifyRange {
 ///   3. The CLI-side long-lived secret storage (`SecretInputs`) already uses
 ///      `SecretString`; the transit copy here is ephemeral.
 ///
-/// If this invariant regresses (e.g. `Request` values start being stored on
-/// long-lived state or logged via `Debug`), these fields must be converted
-/// to `SecretString` and a serde-skip or redacted-serialize wrapper added.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+/// `Request` has a manual [`Debug`] implementation that redacts the entire
+/// payload. Do not re-add derived `Debug`: several transit-only fields use
+/// plain `String` for wire/backward-compatibility.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum Request {
     /// Argumentless dispatch wrapper: every [`Method`] variant that does
@@ -409,6 +398,35 @@ pub enum Request {
         /// New direction: download-only, upload-only, or bidirectional.
         sync_type: SyncType,
     },
+    /// T1.1 selective sync: append a glob pattern to a sync root's
+    /// exclusion list. Pattern is silently ignored if it duplicates an
+    /// existing entry; an empty pattern returns
+    /// [`ResponseStatus::InvalidRequest`]. The engine consults the
+    /// updated list on the next planner pass.
+    SyncExcludeAdd {
+        /// Sync root id to mutate.
+        sync_id: u64,
+        /// Glob pattern (e.g. `*.tmp`, `build/**`). Compiled by the
+        /// engine via `globset`; invalid syntax surfaces as
+        /// [`ResponseStatus::InvalidRequest`] at apply time.
+        pattern: String,
+    },
+    /// T1.1 selective sync: remove a glob pattern from a sync root's
+    /// exclusion list. Returns
+    /// [`ResponseStatus::Conflict`] if the pattern was not present.
+    SyncExcludeRemove {
+        /// Sync root id to mutate.
+        sync_id: u64,
+        /// Exact pattern to remove (string-equal match).
+        pattern: String,
+    },
+    /// T1.1 selective sync: list a sync root's exclusion globs.
+    /// Response message is the patterns joined by `'\n'`; an empty
+    /// message means no patterns are configured.
+    SyncExcludeList {
+        /// Sync root id to read.
+        sync_id: u64,
+    },
     /// Scan a local directory and return a list of candidate sync folders.
     /// Mirrors the C `psync_get_sync_suggestions` helper's shape (shallow
     /// top-level summary). The underlying heuristic differs from the C
@@ -456,6 +474,48 @@ pub enum Request {
     CreateFolderPublicLink {
         /// Absolute remote path of the folder.
         path: String,
+    },
+    /// Create a download link for a folder at `path` with full expire /
+    /// maxdownloads / maxtraffic / password options. Mirrors C
+    /// `psync_folder_public_link_full`. CLAUDEREV iter-2 H-4 fix:
+    /// closes parity row 147 reachability gap.
+    CreateFolderPublicLinkWithOptions {
+        /// Absolute remote path of the folder.
+        path: String,
+        /// Optional UNIX-seconds expiry.
+        expire: Option<u64>,
+        /// Optional download-count cap.
+        maxdownloads: Option<u64>,
+        /// Optional aggregate byte quota.
+        maxtraffic: Option<u64>,
+        /// Optional cleartext password gate. Debug is redacted via
+        /// [`RedactedString`]; daemon-side immediately destructures
+        /// into `SecretString` before any storage. `None` = no
+        /// password.
+        password: Option<RedactedString>,
+    },
+    /// Create an up/down (invitation) link for a folder and email it to
+    /// the recipient. Mirrors C `psync_folder_updownlink_link`.
+    /// CLAUDEREV iter-2 H-4 fix: closes parity row 148 reachability gap.
+    CreateFolderUpDownLink {
+        /// Remote folder id whose contents are shared.
+        folder_id: u64,
+        /// Recipient email address (free-form; not a credential).
+        mail: String,
+        /// `true` to grant upload, `false` for download-only access.
+        can_upload: bool,
+    },
+    /// Create a screenshot public link for the file at `path`. Mirrors
+    /// C `psync_screenshot_public_link`. CLAUDEREV iter-2 H-4 fix:
+    /// closes parity row 168 reachability gap.
+    CreateScreenshotPublicLink {
+        /// Absolute remote path of the screenshot target.
+        path: String,
+        /// `true` to enable the auto-delete delay.
+        has_delay: bool,
+        /// Delay in seconds before the link auto-expires (only used
+        /// when `has_delay = true`).
+        delay_seconds: u64,
     },
     /// Set or clear the expiry on an existing public link.
     ChangePublicLinkExpire {
@@ -569,6 +629,31 @@ pub enum Request {
         /// Optional crypto-folder password hint.
         hint: Option<String>,
     },
+    /// Send a *crypto* share invitation for an encrypted folder. Mirrors
+    /// C `psync_crypto_share_folder`. CLAUDEREV iter-2 H-5 fix:
+    /// closes parity row 138 reachability gap. Daemon-side this dispatches
+    /// through `SharesRuntime::crypto_share_folder` which performs the
+    /// temppass KEK-rewrap before the wire call. RSA-4096-OAEP path
+    /// (row 124 / `crypto_share_folder_rsa`) is intentionally NOT yet
+    /// reachable through this variant — it remains tracked separately.
+    CryptoShareFolder {
+        /// Remote folder id to share.
+        folder_id: u64,
+        /// Display name for the share.
+        name: String,
+        /// Recipient email address.
+        mail: String,
+        /// Free-text message carried in the invitation email.
+        message: String,
+        /// Permission bitmask (read / create / modify / delete / manage).
+        permissions_bits: u32,
+        /// Cleartext temppass; transit-only. Debug is redacted via
+        /// [`RedactedString`]; daemon-side immediately destructures into
+        /// `SecretString` before any storage or RPC.
+        temppass: RedactedString,
+        /// Optional password hint (free text, not a credential).
+        hint: Option<String>,
+    },
     /// Cancel a pending outgoing share request.
     CancelShareRequest {
         /// Share-request id to cancel.
@@ -627,6 +712,58 @@ pub enum Request {
         /// Permission bitmask.
         permissions_bits: u32,
         /// Optional crypto-folder password hint.
+        hint: Option<String>,
+    },
+    /// RSA-4096-OAEP variant of [`Request::CryptoShareFolder`].
+    /// Mirrors C `psync_crypto_share_folder` on the
+    /// `pclsync-v2` (full-RSA) wire shape. CLAUDEREV deferred-set D6
+    /// (fire 56): closes parity row 124 reachability gap. Daemon-side
+    /// this dispatches through `SharesRuntime::crypto_share_folder_rsa`
+    /// after fetching the recipient's `pub_key_ver1` blob via
+    /// `CryptoRuntime::get_pub_key(CryptoPubKeyRecipient::Mail(mail))`,
+    /// then RSA-4096-OAEP-wrapping the sharer's folder sym-key against
+    /// the recipient's pubkey via
+    /// `pcloud_crypto::share_rsa::wrap_share_invitation_b64`.
+    CryptoShareFolderRsa {
+        /// Remote folder id to share.
+        folder_id: u64,
+        /// Display name for the share.
+        name: String,
+        /// Recipient email address. The daemon resolves this to the
+        /// recipient's RSA-4096 `pub_key_ver1` blob via
+        /// `crypto_getpubkey` before invoking the wrap.
+        mail: String,
+        /// Free-text message carried in the invitation email.
+        message: String,
+        /// Permission bitmask (read / create / modify / delete / manage).
+        permissions_bits: u32,
+        /// Optional password hint (free text, not a credential).
+        hint: Option<String>,
+    },
+    /// Crypto-aware variant of [`Request::AccountTeamShare`]. Mirrors
+    /// C `psync_crypto_account_teamshare`. CLAUDEREV deferred-set D3
+    /// (fire 47): closes parity row 142 reachability gap. Daemon-side
+    /// this dispatches through `SharesRuntime::crypto_account_teamshare`
+    /// which performs the temppass KEK-rewrap before the wire call.
+    /// RSA-4096-OAEP team-share path (row 124 / `crypto_share_folder_rsa`
+    /// extension) is intentionally NOT yet reachable through this
+    /// variant — it remains tracked under D6.
+    CryptoAccountTeamShare {
+        /// Remote folder id to share.
+        folder_id: u64,
+        /// Display name for the team share.
+        name: String,
+        /// Recipient business team id.
+        team_id: u64,
+        /// Free-text invitation message.
+        message: String,
+        /// Permission bitmask (read / create / modify / delete / manage).
+        permissions_bits: u32,
+        /// Cleartext temppass; transit-only. Debug is redacted via
+        /// [`RedactedString`]; daemon-side immediately destructures into
+        /// `SecretString` before any storage or RPC.
+        temppass: RedactedString,
+        /// Optional password hint (free text, not a credential).
         hint: Option<String>,
     },
     /// Typed key/value read. Mirrors the C
@@ -781,21 +918,6 @@ pub enum Request {
         /// Absolute local path to classify.
         path: String,
     },
-    /// List the revision history of a file by absolute remote path.
-    /// Mirrors the C `listrevisions` wire command
-    /// (`pclsync/pnetlibs.c:2481`, `download_file_revisions`). The
-    /// response `message` is a JSON array of revision objects —
-    /// `[{"rev_id":"<hex>","mtime":<unix>,"size":<bytes>,"user":"…",
-    /// "comment":"…"}, …]` — when the daemon successfully resolves the
-    /// history. Honest scope: the retained backend currently returns
-    /// [`ResponseStatus::Unavailable`] with a tracker pointer
-    /// (`bd-1du.10`) until the public API gate is cleared.
-    FileHistory {
-        /// Absolute pCloud-drive path of the file.
-        path: String,
-        /// Optional hard cap on the number of revisions returned.
-        limit: Option<u32>,
-    },
     /// Walk a local path and cross-check each file's SHA256 against the
     /// server-reported checksum for its mapped remote counterpart. Mirrors
     /// the R9 `pcloudc verify` CLI surface. Per-file classification is one
@@ -935,8 +1057,8 @@ pub enum Request {
         /// default for this single conflict.
         policy: String,
     },
-    /// Stat an absolute pCloud-drive path: resolve through local
-    /// metadata cache, fall back to API. Mirrors C `psync_stat_path`
+    /// Stat an absolute pCloud-drive path through the live canonical
+    /// remote-filesystem service. Mirrors C `psync_stat_path`
     /// (`pclsync/psynclib.h:743`).
     StatPath {
         /// Absolute pCloud-drive path to stat.
@@ -962,8 +1084,8 @@ pub enum Request {
         path: String,
     },
     /// Delete a remote file identified by absolute pCloud-drive path.
-    /// Resolves `path` → `file_id` against the local metadata cache
-    /// (with API fallback) and dispatches `deletefile`. Mirrors C
+    /// Resolves `path` → `file_id` through live remote metadata and
+    /// dispatches `deletefile`. Mirrors C
     /// `psync_delete_file`.
     ///
     /// Authenticated. Idempotent — `ResponseStatus::Ok` on success
@@ -1020,14 +1142,13 @@ pub enum Request {
     /// SMB-side write-buffering layer lands (P7 follow-up). A
     /// caller asking for an offset-based write on a path the
     /// plugin has never written from offset 0 sees
-    /// [`VfsError::NotSupported`] from the smbr side; this IPC
+    /// `VfsError::NotSupported` from the smbr side; this IPC
     /// variant doesn't model it at all.
     ///
     /// Authenticated. Failure modes:
     /// [`ResponseStatus::InvalidRequest`] for malformed paths or a
     /// missing leaf; [`ResponseStatus::InternalError`] for
-    /// upload-session lifecycle failures (incl. parent folder not
-    /// in cache); [`ResponseStatus::Unauthorized`] when no auth
+    /// upload-session lifecycle failures; [`ResponseStatus::Unauthorized`] when no auth
     /// token is active.
     ///
     /// Tracker: bd-smbr-pcloud P7.
@@ -1040,7 +1161,7 @@ pub enum Request {
     },
     /// Read a byte range from a remote file by absolute
     /// pCloud-drive `path`. The daemon resolves `path` to a numeric
-    /// `file_id` against the local metadata cache, fetches a signed
+    /// `file_id` through live remote metadata, fetches a signed
     /// download link via `getfilelink`, and issues a single
     /// `Range: bytes=<offset>-<offset+length-1>` HTTPS GET against
     /// the chosen content server. The body is base64-encoded into
@@ -1054,8 +1175,7 @@ pub enum Request {
     /// [`ResponseStatus::InvalidRequest`] when `path` is not
     /// absolute, the resolved entry is a folder, or
     /// `length == 0`;
-    /// [`ResponseStatus::InternalError`] when the path is not in
-    /// the metadata cache or the HTTPS GET fails;
+    /// [`ResponseStatus::InternalError`] when the HTTPS GET fails;
     /// [`ResponseStatus::Unauthorized`] when no auth token is
     /// active.
     ///
@@ -1074,7 +1194,7 @@ pub enum Request {
     },
     /// Create a remote folder identified by its absolute
     /// pCloud-drive `path`. The daemon splits `path` into parent +
-    /// leaf, resolves the parent against the local metadata cache,
+    /// leaf, resolves the parent through live remote metadata,
     /// and dispatches `createfolder`. Idempotent on existing folder
     /// of the same name; conflicts only when the leaf exists as a
     /// *file*.
@@ -1082,9 +1202,6 @@ pub enum Request {
     /// Authenticated. Failure modes:
     /// [`ResponseStatus::InvalidRequest`] when `path` is not
     /// absolute, is the root, or has no leaf component;
-    /// [`ResponseStatus::InternalError`] when the parent folder is
-    /// not present in the metadata cache (the SMB plugin is
-    /// expected to have warmed it via `stat`/`list_directory` first);
     /// [`ResponseStatus::Conflict`] when the leaf exists as a file.
     ///
     /// Tracker: bd-smbr-pcloud P5.
@@ -1116,6 +1233,41 @@ pub enum Request {
         /// new entry name.
         to: String,
     },
+    /// Copy a remote file or folder tree between absolute drive paths using
+    /// bounded streaming reads and chunked writes. The daemon returns a JSON
+    /// [`RemoteCopyPayload`] in [`Response::message`].
+    CopyPath {
+        /// Existing absolute source path.
+        from: String,
+        /// New absolute destination path.
+        to: String,
+    },
+    /// Delete either kind of remote entry through the canonical live path
+    /// resolver. Missing paths are successful no-ops.
+    DeletePath {
+        /// Absolute remote path.
+        path: String,
+        /// Permit recursive folder deletion. Ignored for files.
+        recursive: bool,
+    },
+    /// Stream a local file into a remote path without embedding its contents
+    /// in the IPC frame.
+    UploadFileByPath {
+        /// Local source path readable by the owner-matched daemon process.
+        local_path: std::path::PathBuf,
+        /// Absolute remote destination path.
+        remote_path: String,
+    },
+    /// Stream a remote file into a local destination without buffering the
+    /// body in IPC or daemon memory.
+    DownloadFileByPath {
+        /// Absolute remote source path.
+        remote_path: String,
+        /// Local destination path writable by the owner-matched daemon.
+        local_path: std::path::PathBuf,
+        /// Whether an existing destination may be replaced.
+        overwrite: bool,
+    },
     /// Send a password-reset email for the given account. Mirrors C
     /// `psync_lost_password`. No auth required.
     LostPassword {
@@ -1125,8 +1277,11 @@ pub enum Request {
     /// Verify email using a restricted verify-token (not the session
     /// auth token). Mirrors C `psync_verify_email_restricted`.
     VerifyEmailRestricted {
-        /// Server-issued verify token.
-        verify_token: String,
+        /// Server-issued verify token. Disclosure enables an attacker
+        /// to confirm an email address they do not own; treat as a
+        /// transit-only secret per the audit H1 wrapper rule.
+        /// CLAUDEREV iter-1 SEC-H fix: was raw `String`.
+        verify_token: RedactedString,
     },
     /// Change the account password. Requires an authenticated session.
     /// Mirrors C `psync_change_password`. Transit-only secrets; see
@@ -1226,9 +1381,6 @@ pub enum Request {
     /// The C params are `uploadid` / `fileid` / `hash` / `uploadoffset` /
     /// `offset` / `count` (plus `auth` + `id`). This IPC variant carries
     /// the same information without the auth token (added by the daemon).
-    ///
-    /// Tracker: bd-1du row 93. Daemon handler is still a stub pending
-    /// `TransferRuntime::upload_write_from_file` wiring.
     UploadWriteFromFile {
         /// Upload session id (`uploadid`) returned by a prior
         /// [`Request::UploadCreate`].
@@ -1241,6 +1393,13 @@ pub enum Request {
         /// Byte offset into the upload session at which writing begins
         /// (`uploadoffset`). `0` for the start of a fresh session.
         offset: u64,
+        /// Byte offset into the remote source file (`offset`). This is
+        /// intentionally independent from `offset`/`uploadoffset` so
+        /// callers can express the full C server-side-copy shape. Absent
+        /// values are treated by the daemon as the legacy `source_offset =
+        /// offset` compatibility mode.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        source_offset: Option<u64>,
         /// Number of bytes to copy from the source file (`count`). Must
         /// be ≤ `PSYNC_MAX_COPY_FROM_REQ`; splitting is the caller's
         /// responsibility (`pupload.c:1125-1131`).
@@ -1261,6 +1420,23 @@ pub enum Request {
         /// Absolute pCloud-drive paths whose folder ids will be resolved
         /// and included in the tree link.
         paths: Vec<String>,
+        /// Optional UNIX-seconds expiry.
+        expires: Option<u64>,
+    },
+    /// Create a tree public link by resolving the exact C target shape on
+    /// the daemon side: optional root folder path, folder paths, and file
+    /// paths. This is the file/root-capable row 149 route; the older
+    /// [`Request::CreateTreePublicLinkFromPaths`] variant remains as a
+    /// folder-only compatibility alias for existing IPC clients.
+    CreateTreePublicLinkFromPathTargets {
+        /// Display name of the generated tree link.
+        name: String,
+        /// Optional absolute pCloud-drive root folder path.
+        root: Option<String>,
+        /// Absolute pCloud-drive folder paths to include.
+        folders: Vec<String>,
+        /// Absolute pCloud-drive file paths to include.
+        files: Vec<String>,
         /// Optional UNIX-seconds expiry.
         expires: Option<u64>,
     },
@@ -1336,6 +1512,188 @@ pub enum Request {
         /// fetched and unwrapped.
         file_id: u64,
     },
+    /// T2.4.b — opt a folder into the per-folder crypto policy.
+    ///
+    /// Pure mutate request: the daemon updates its in-memory
+    /// `FolderCryptoPolicy` registry and persists the JSON snapshot
+    /// to the `value_kv` key `crypto.folder_policy.v1`. Does **not**
+    /// block on auth or crypto unlock — per-folder KEK derivation
+    /// (the next milestone past T2.4) is a separate step that
+    /// re-reads this registry at unlock time.
+    ///
+    /// Folder ids are bare `u64`; the daemon converts to/from
+    /// `pcloud_model::ids::RemoteFolderId` at the call site.
+    CryptoFolderEnable {
+        /// Remote folder id to opt into crypto.
+        folder_id: u64,
+        /// Optional parent folder id used by the inheritance walk
+        /// (`FolderCryptoPolicy::is_encrypted`). `None` for top-level
+        /// folders.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        parent_folder_id: Option<u64>,
+    },
+    /// T2.4.b — opt a folder out of the per-folder crypto policy.
+    ///
+    /// Pure mutate request. After removal, `is_encrypted(folder_id)`
+    /// falls back to inherited state from the parent chain (or
+    /// plaintext if no ancestor is opted in). Does **not** block on
+    /// auth or crypto unlock.
+    CryptoFolderDisable {
+        /// Remote folder id whose explicit policy entry should be
+        /// removed.
+        folder_id: u64,
+    },
+    /// T2.4.b — list the current per-folder crypto policy registry.
+    ///
+    /// Pure query request. Response `message` is a JSON-encoded
+    /// `pcloud_crypto::folder_policy::FolderCryptoPolicy` snapshot
+    /// (deterministic on-wire form via its `BTreeMap` backing).
+    /// Does **not** block on auth or crypto unlock.
+    CryptoFolderList,
+}
+
+impl Request {
+    /// Per-`Request` privilege classification. `true` for variants
+    /// that perform privileged, state-mutating, or security-sensitive
+    /// operations (shutdown, credential / crypto lifecycle, auth
+    /// persistence, sync removal, backup / device, etc).
+    ///
+    /// CLAUDEREV iter-1 IPC-H-7.1 fix: the capability table now lives
+    /// **with the type** rather than scattered through
+    /// `pcloud-daemon::serve::is_privileged_request`. Adding a new
+    /// `Request` variant therefore forces the author to either
+    /// classify it explicitly here or accept the
+    /// deny-by-audit default at the wildcard arm.
+    ///
+    /// # Enforcement note (current threat model)
+    ///
+    /// In the current single-user owner-only IPC model — socket mode
+    /// `0600`, peer-uid matched on `accept(2)` — every peer that gets
+    /// past the owner-uid check is already the trusted daemon-owner
+    /// user. The daemon's *enforcement* of "privileged" is therefore
+    /// audit-only at the moment: every privileged request is logged
+    /// with peer uid + pid before dispatch. A second-factor elevation
+    /// gate (admin token, sudo-equivalent prompt, biometric
+    /// confirmation, …) only becomes meaningful in deployments that
+    /// allow-list multiple uids on the same socket; that's design /
+    /// product scope and is tracked outside this method's contract.
+    /// See `pcloud-daemon::serve::serve_request` for the audit-log
+    /// call site that consumes this method's verdict.
+    ///
+    /// # Default for unmatched variants
+    ///
+    /// Anything not listed in the positive `matches!` table below is
+    /// treated as non-privileged (no audit log entry, no enforcement
+    /// gate). Adding a new privileged surface therefore requires an
+    /// explicit edit to this method — there is no silent default-on
+    /// path. Conversely, an oversight that omits a variant from the
+    /// privileged list will silently skip auditing it; reviewers must
+    /// classify every new state-mutating variant here at PR time.
+    #[must_use]
+    pub fn is_privileged(&self) -> bool {
+        matches!(
+            self,
+            Request::Plain {
+                method: Method::Shutdown
+                    | Method::CryptoReset
+                    | Method::SetAuthPersistence
+                    | Method::SendCryptoChangeUserPrivate
+            } | Request::AccountChangePassword { .. }
+                | Request::CryptoSetup { .. }
+                | Request::CryptoSetupV2 { .. }
+                | Request::CryptoGetFolderKey { .. }
+                | Request::CryptoGetFileKey { .. }
+                | Request::CryptoChangePassword { .. }
+                | Request::CryptoChangePasswordUnlocked { .. }
+                | Request::CryptoFolderEnable { .. }
+                | Request::CryptoFolderDisable { .. }
+                | Request::AuthPersistence { .. }
+                | Request::SyncRootRemove { .. }
+                | Request::DeleteBackup { .. }
+                | Request::UploadWriteFromFile { .. }
+                | Request::CreateFolderPublicLinkWithOptions { .. }
+                | Request::CreateFolderUpDownLink { .. }
+                | Request::CreateScreenshotPublicLink { .. }
+                | Request::CryptoShareFolder { .. }
+                | Request::CryptoShareFolderRsa { .. }
+                | Request::CryptoAccountTeamShare { .. }
+                | Request::CreateTreePublicLinkFromPaths { .. }
+                | Request::CreateTreePublicLinkFromPathTargets { .. }
+                | Request::CreateBackup { .. }
+                | Request::StopDevice { .. }
+                | Request::DeleteBackupDevice
+                | Request::LostPassword { .. }
+                | Request::VerifyEmailRestricted { .. }
+        )
+    }
+}
+
+impl fmt::Debug for Request {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Request(<redacted>)")
+    }
+}
+
+#[cfg(test)]
+mod request_debug_tests {
+    use super::Request;
+
+    fn assert_request_debug_redacts(request: Request, secret: &str) {
+        let rendered = format!("{request:?}");
+        assert!(
+            !rendered.contains(secret),
+            "Request Debug leaked secret {secret:?}: {rendered:?}"
+        );
+        assert!(
+            rendered.contains("<redacted>"),
+            "Request Debug should make redaction explicit: {rendered:?}"
+        );
+    }
+
+    #[test]
+    fn two_factor_debug_redacts_code() {
+        assert_request_debug_redacts(
+            Request::TwoFactorCodeSubmission {
+                value: "654321".to_owned(),
+                trust_device: false,
+                recovery_code: false,
+            },
+            "654321",
+        );
+    }
+
+    #[test]
+    fn crypto_change_debug_redacts_confirmation_codes() {
+        assert_request_debug_redacts(
+            Request::CryptoChangePassword {
+                old_password: "old-pass".into(),
+                new_password: "new-pass".into(),
+                hint: "hint".to_owned(),
+                code: "CONFIRM-SECRET".to_owned(),
+                flags: 0,
+            },
+            "CONFIRM-SECRET",
+        );
+        assert_request_debug_redacts(
+            Request::CryptoChangePasswordUnlocked {
+                new_password: "new-pass".into(),
+                hint: "hint".to_owned(),
+                code: "UNLOCKED-CONFIRM".to_owned(),
+                flags: 0,
+            },
+            "UNLOCKED-CONFIRM",
+        );
+    }
+
+    #[test]
+    fn verify_email_restricted_debug_redacts_token() {
+        assert_request_debug_redacts(
+            Request::VerifyEmailRestricted {
+                verify_token: "verify-token-secret".into(),
+            },
+            "verify-token-secret",
+        );
+    }
 }
 
 /// Wire-level mirror of `pcloud_crypto::CryptoBackend`, carried on
@@ -1536,6 +1894,18 @@ pub struct StatPathPayload {
     pub created: i64,
     /// `true` if this entry is a folder.
     pub is_folder: bool,
+    /// Whether pCloud marks this entry as owned by the current account.
+    #[serde(default)]
+    pub is_mine: bool,
+    /// Whether pCloud marks this entry as shared.
+    #[serde(default)]
+    pub is_shared: bool,
+    /// Whether the entry is inside pCloud Crypto.
+    #[serde(default)]
+    pub encrypted: bool,
+    /// Effective pCloud permission bitmap, when supplied by the server.
+    #[serde(default)]
+    pub permissions: Option<u32>,
     /// How the path was resolved: `"cache"` or `"api"`.
     pub source: String,
 }
@@ -1556,8 +1926,7 @@ pub struct ReadRangePayload {
     /// Number of decoded body bytes — `data_b64.decoded_len()`.
     /// Reported separately so callers can sanity-check the encoding.
     pub bytes_returned: u64,
-    /// File's total size (in bytes), as reported by the metadata
-    /// cache that resolved the read.
+    /// File's total size (in bytes), as reported by live metadata.
     pub total_size: u64,
     /// `true` when the read reached or crossed EOF
     /// (`offset + bytes_returned >= total_size`). Lets the SMB
@@ -1565,14 +1934,56 @@ pub struct ReadRangePayload {
     pub eof: bool,
 }
 
+/// Aggregate counters returned by [`Request::CopyPath`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteCopyPayload {
+    /// Files copied.
+    pub files: u64,
+    /// Folders created.
+    pub folders: u64,
+    /// Total file bytes copied.
+    pub bytes: u64,
+}
+
+/// Receipt returned by [`Request::UploadFileByPath`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteUploadPayload {
+    /// Server upload-session id used for the committed write.
+    pub upload_id: u64,
+    /// File id returned by pCloud when supplied by the upload response.
+    pub file_id: Option<u64>,
+    /// Number of source bytes acknowledged before commit.
+    pub bytes: u64,
+    /// Lowercase SHA-1 verified locally and against server upload state.
+    #[serde(default)]
+    pub sha1_hex: String,
+    /// Durable offset reused from an interrupted prior attempt.
+    #[serde(default)]
+    pub resumed_from: u64,
+}
+
+/// Receipt returned by [`Request::DownloadFileByPath`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteDownloadPayload {
+    /// Published local destination path.
+    pub path: std::path::PathBuf,
+    /// Number of bytes synced before publication.
+    pub bytes: u64,
+    /// Lowercase SHA-256 of the published local file.
+    #[serde(default)]
+    pub sha256_hex: String,
+    /// Durable offset reused from an interrupted attempt.
+    #[serde(default)]
+    pub resumed_from: u64,
+}
+
 /// One entry in the JSON array returned for
 /// [`Request::ListFolderByPath`]. Shape mirrors `StatPathPayload` so
 /// readers familiar with one can consume the other.
 ///
 /// The full payload is `Vec<ListFolderEntry>` serialised to JSON in
-/// [`Response::message`]. Sort order matches what the daemon's
-/// metadata cache returns, which in turn matches the API's
-/// `listfolder` response (server-defined; do **not** rely on
+/// [`Response::message`]. Sort order matches the live API's `listfolder`
+/// response (server-defined; do **not** rely on
 /// alphabetical order client-side).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ListFolderEntry {
@@ -1590,6 +2001,18 @@ pub struct ListFolderEntry {
     pub created: i64,
     /// `true` if this entry is a folder.
     pub is_folder: bool,
+    /// Whether pCloud marks this entry as owned by the current account.
+    #[serde(default)]
+    pub is_mine: bool,
+    /// Whether pCloud marks this entry as shared.
+    #[serde(default)]
+    pub is_shared: bool,
+    /// Whether the entry is inside pCloud Crypto.
+    #[serde(default)]
+    pub encrypted: bool,
+    /// Effective pCloud permission bitmap, when supplied by the server.
+    #[serde(default)]
+    pub permissions: Option<u32>,
 }
 
 #[cfg(test)]
@@ -1925,5 +2348,69 @@ impl RequestEnvelope {
 impl From<Request> for RequestEnvelope {
     fn from(request: Request) -> Self {
         Self::new(request)
+    }
+}
+
+#[cfg(test)]
+mod is_privileged_tests {
+    //! CLAUDEREV iter-1 IPC-H-7.1: spot-check the typed capability table.
+    //! These tests guard against accidental drift — moving a privileged
+    //! variant to the non-privileged side (or vice versa) without
+    //! reviewer attention. Adjust here whenever
+    //! `Request::is_privileged` changes.
+    use super::{Method, Request};
+
+    #[test]
+    fn shutdown_method_is_privileged() {
+        assert!(
+            Request::Plain {
+                method: Method::Shutdown
+            }
+            .is_privileged()
+        );
+    }
+
+    #[test]
+    fn crypto_reset_is_privileged() {
+        assert!(
+            Request::Plain {
+                method: Method::CryptoReset
+            }
+            .is_privileged()
+        );
+    }
+
+    #[test]
+    fn account_change_password_is_privileged() {
+        let req = Request::AccountChangePassword {
+            current_password: "old".into(),
+            new_password: "new".into(),
+        };
+        assert!(req.is_privileged());
+    }
+
+    #[test]
+    fn delete_backup_device_is_privileged() {
+        assert!(Request::DeleteBackupDevice.is_privileged());
+    }
+
+    #[test]
+    fn get_status_plain_is_not_privileged() {
+        assert!(
+            !Request::Plain {
+                method: Method::GetStatus
+            }
+            .is_privileged()
+        );
+    }
+
+    #[test]
+    fn get_user_info_is_not_privileged() {
+        assert!(
+            !Request::Plain {
+                method: Method::GetUserInfo
+            }
+            .is_privileged()
+        );
     }
 }

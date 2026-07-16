@@ -8,8 +8,8 @@
 //! `Send + Sync` — and safe to share across threads. Each call opens
 //! its own transport; there is no shared mutable state.
 //!
-//! Portable façade; Windows named-pipe parity is scaffolding. The
-//! encoding is JSON, not CBOR (the historical crate doc referred to
+//! Portable façade with native Unix-socket and Windows named-pipe transports.
+//! The encoding is JSON, not CBOR (the historical crate doc referred to
 //! CBOR in error — see `protocol.rs`).
 
 // **PLATFORM:** all
@@ -19,6 +19,7 @@ use crate::{
     methods::{Request, RequestEnvelope, Response},
     protocol::{ProtocolError, decode_response, encode_request, encode_request_bare},
 };
+use zeroize::Zeroizing;
 
 /// Stateless IPC client: encodes a [`Request`], hands the framed bytes to
 /// a caller-provided transport, and decodes the framed [`Response`].
@@ -103,8 +104,8 @@ impl IpcClient {
     where
         F: FnOnce(&[u8]) -> Result<Vec<u8>, ProtocolError>,
     {
-        let request_bytes = self.prepare_request(request)?;
-        let response_bytes = responder(&request_bytes)?;
+        let request_bytes = Zeroizing::new(self.prepare_request(request)?);
+        let response_bytes = responder(request_bytes.as_slice())?;
         self.parse_response(&response_bytes)
     }
 
@@ -119,8 +120,8 @@ impl IpcClient {
     where
         F: FnOnce(&[u8]) -> Result<Vec<u8>, ProtocolError>,
     {
-        let request_bytes = self.prepare_envelope(envelope)?;
-        let response_bytes = responder(&request_bytes)?;
+        let request_bytes = Zeroizing::new(self.prepare_envelope(envelope)?);
+        let response_bytes = responder(request_bytes.as_slice())?;
         self.parse_response(&response_bytes)
     }
 }

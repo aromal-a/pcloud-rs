@@ -3,16 +3,16 @@
 // signal-safe unmount cleanup.
 //! # pcloud-fs
 //!
-//! Filesystem shell for the Rust pcloud-rs path: inode model, journal,
-//! page cache, staging, writeback, mount service scaffolding, and a FUSE
-//! adapter. The daemon composes these into a live Linux FUSE mount via
+//! Filesystem layer for the Rust pcloud-rs path: inode model, journal,
+//! page cache, staging, writeback, mount service, and native adapters. The
+//! daemon composes these into a live mount via
 //! `pcloud-daemon::mount_runtime::pcloud_shim_adapter_factory`, which
-//! binds [`write_path::WritePathService`] to the transfer backend,
-//! per-mount staging directory and on-disk write journal — so
+//! binds [`write_path::WritePathService`] to the daemon's canonical
+//! `RemoteFs` backend, per-mount staging directory, and on-disk write
+//! journal — so
 //! `create` / `write` / `flush` / `fsync` / `unlink` / `rename` are
-//! serviced by the real writer rather than returning `ENOSYS`
-//! (bd-1du.4.6 footnote `[fuse-wiring]`; final parity gate remains
-//! `bd-1du.10`). Mid-write flushes beyond the default 64 MiB
+//! serviced by the real writer rather than returning `ENOSYS`. Mid-write
+//! flushes beyond the default 64 MiB
 //! `flush_threshold_bytes` stream through the chunked
 //! `upload_create` + `upload_write` (4 MiB) + `upload_save` pipeline
 //! wired in the `WritePathService` chunked flush path when the
@@ -21,19 +21,20 @@
 //! surfaced on the observability layer via [`slo_hook::observe_flush`].
 //!
 //! **Architecture:** see `docs/book/src/architecture/crate-map.md`.
-//! Consumed by `pcloud-daemon::mount_runtime`; the FUSE adapter bridges
-//! to the `fuser` crate on Linux via `fuser_shim`.
+//! Consumed by `pcloud-daemon::mount_runtime`; the portable adapter bridges
+//! to `fuser` on Linux/BSD, fuse-t on macOS, and WinFSP on Windows.
 //!
 //! **Stability:** T1 internal — API is in flux until mount parity lands.
 //!
-//! **MSRV:** Rust 1.82 (workspace-pinned; edition 2024).
+//! **MSRV:** Rust 1.89 for the portable crate; full workspace and release
+//! validation use the repository-pinned Rust 1.96.1 toolchain.
 //!
 //! **Features:** none.
 //!
 //! **Platform:** public API type-checks on all supported targets
 //! (Linux / macOS / Windows / BSD) via `platform/{linux,macos,windows,bsd}`.
-//! The live FUSE runtime is Linux-only; macOS (FSKit), Windows (WinFsp),
-//! and BSD paths are currently scaffolding.
+//! illumos/Solaris and unrecognized targets retain the portable API but use
+//! [`platform::UnsupportedPlatformMount`] for kernel mounts.
 
 #![allow(clippy::collapsible_if)]
 #![deny(missing_docs)]
@@ -50,13 +51,19 @@ pub mod backend;
 pub mod errors;
 pub mod fs_watcher;
 pub mod fuse_adapter;
-// `fuser_shim` uses `fuser` (Linux/FreeBSD only) and `libc::statvfs64`
-// (Linux-only). Gate the module so cross-compilation targets (macOS,
+// `fuser_shim` uses `fuser` on Linux and the four supported BSDs. Gate the
+// module so cross-compilation targets (macOS,
 // Windows, bare-metal) do not attempt to compile it. The `fuser` dep is
 // already gated to `cfg(target_os = "linux")` in Cargo.toml; the module
 // gate must match so the compiler does not try to resolve the import on
 // unsupported platforms (bd-xplat-$OS, Phase 0).
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 pub mod fuser_shim;
 pub mod inode;
 pub mod integrity_sweeper;

@@ -15,8 +15,8 @@
 #   $checksum64 - SHA256 of the MSI; must be updated per release.
 #
 # Outputs:
-#   Program Files layout populated by the MSI; Windows service `pcloudd`
-#   registered (see packaging/windows/wix/pcloud-rs.wxs).
+#   Program Files layout populated by the MSI. The user starts the daemon with
+#   `pcloudc start`; no SCM service is registered.
 #
 # Security:
 #   - The `SHA256_PLACEHOLDER` string MUST be replaced with the real
@@ -30,7 +30,7 @@
 # Side effects:
 #   - Writes to `C:\Program Files\pcloud-rs\`.
 #   - Installs the WinFSP dependency (declared in pcloud-rs.nuspec).
-#   - Creates the `pcloudd` Windows service.
+#   - Does not create a Windows service; IPC/DPAPI/WinFSP are user-scoped.
 #
 # Test:
 #   choco pack .\packaging\chocolatey\pcloud-rs.nuspec
@@ -40,7 +40,7 @@
 $ErrorActionPreference = 'Stop'
 
 $packageName = 'pcloud-rs'
-$url64       = 'https://github.com/pcloudcom/pcloud-rs/releases/download/vX.Y.Z/pcloud-rs-X.Y.Z-x64.msi'
+$url64       = 'https://github.com/ezechiel203/pcloud-rs/releases/download/vX.Y.Z/pcloud-rs-X.Y.Z-x64.msi'
 $checksum64  = 'SHA256_PLACEHOLDER'
 
 $packageArgs = @{

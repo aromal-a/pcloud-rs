@@ -1,0 +1,124 @@
+# macOS reproducible-build gate (T3.5).
+#
+# Mirrors the existing Linux `reproducible-build` job in `.github/workflows/ci.yml`
+# (lines 138-187) for macOS-latest. Two independent runner contexts build the
+# `release-repro` profile; if the two SHA-256 manifests over `pcloudc` /
+# `pcloudd` differ, the merge job fails.
+#
+# AI-scope: this workflow + scripts/diff-repro-builds.sh. The actual macOS-latest
+# runners are user-provided. The Linux pattern is the source of truth — do not
+# add macOS-only flags that are not documented in
+# `docs/book/src/development/reproducible-builds.md`.
+#
+# Rationale for matrix strategy:
+#   Two independent runner contexts catch hidden host-state dependencies
+#   (rustup cache, registry index, /tmp content) that a single runner with
+#   `cargo clean` does not. This matches the Linux job in ci.yml.
+
+name: repro-build-macos
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [development, main]
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/**"
+      - ".github/workflows/repro-build-macos.yml"
+      - "scripts/diff-repro-builds.sh"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/**"
+      - ".github/workflows/repro-build-macos.yml"
+      - "scripts/diff-repro-builds.sh"
+
+# Pin SOURCE_DATE_EPOCH at the workflow level so both matrix entries see the
+# identical value. Using `git log -1 --pretty=%ct` would diverge if the two
+# runners checked out at different commit SHAs (they would not under
+# `actions/checkout@v4`, but pinning a constant is cheaper and matches the
+# documented `SOURCE_DATE_EPOCH=1700000000` baseline used by the cross-platform
+# reproducibility doc section).
+env:
+  SOURCE_DATE_EPOCH: "1700000000"
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+
+jobs:
+  build:
+    name: macos repro build (slot ${{ matrix.slot }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        slot: [a, b]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@1.96.1
+
+      - name: Install cargo-auditable
+        run: cargo install cargo-auditable --version 0.7.5 --locked
+
+      - name: Build pcloudc + pcloudd via release-repro profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          # macOS uses `ld64`, not GNU ld — `--build-id=*` is a no-op there;
+          # debuginfo + codegen-units pinning in `release-repro` carry the
+          # determinism contract on Mach-O. We still set --remap-path-prefix
+          # to scrub the absolute checkout path out of debug strings.
+          export RUSTFLAGS="--remap-path-prefix=${GITHUB_WORKSPACE}="
+          CARGO_PROFILE_RELEASE_REPRO_ACTIVE=1 \
+            cargo auditable build \
+              --locked \
+              --profile release-repro \
+              -p pcloud-cli --bin pcloudc \
+              -p pcloud-daemon --bin pcloudd
+
+      - name: Snapshot binaries + emit SHA-256 manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p repro-out
+          cp -p target/release-repro/pcloudc repro-out/pcloudc
+          cp -p target/release-repro/pcloudd repro-out/pcloudd
+          # macOS-latest ships `shasum`, not `sha256sum`. Normalise output.
+          (cd repro-out && shasum -a 256 pcloudc pcloudd) | tee repro-out/SHA256SUMS
+
+      - name: Upload binaries (90-day retention for failed-diff investigation)
+        uses: actions/upload-artifact@v4
+        with:
+          name: repro-macos-${{ github.run_id }}-${{ matrix.slot }}
+          path: repro-out/
+          retention-days: 90
+
+  diff:
+    name: macos repro diff (compare slots a/b)
+    runs-on: macos-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download slot-a artefact
+        uses: actions/download-artifact@v4
+        with:
+          name: repro-macos-${{ github.run_id }}-a
+          path: dir-a
+
+      - name: Download slot-b artefact
+        uses: actions/download-artifact@v4
+        with:
+          name: repro-macos-${{ github.run_id }}-b
+          path: dir-b
+
+      - name: Diff SHA-256 manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/diff-repro-builds.sh
+          scripts/diff-repro-builds.sh dir-a dir-b pcloudc pcloudd

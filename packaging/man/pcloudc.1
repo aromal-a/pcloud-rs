@@ -940,7 +940,6 @@ for encrypted folders).
 .BR status ", "
 .BR authsave .
 .SS Signing in
-.PP
 Authentication on the daemon is a state machine, not a single call. A fresh
 daemon starts in
 .I unauthenticated
@@ -1346,7 +1345,7 @@ that returned
 .B Output shape:
 JSON object with
 .IR sent: true ", "
-.IR tfa_type: "\"sms\""
+.IR tfa_type: " \(dqsms\(dq"
 on success.
 .RS
 .nf
@@ -1388,7 +1387,7 @@ state with
 .B Output shape:
 JSON object with
 .IR sent: true ", "
-.IR tfa_type: "\"notification\"" .
+.IR tfa_type: " \(dqnotification\(dq" .
 .RS
 .nf
 pcloudc send-tfa-notification
@@ -1518,7 +1517,6 @@ subcommand; use
 or
 .BR session-status .
 .SS Sync folders
-.PP
 .B Concept primer \- sync vs mount.
 A
 .I sync root
@@ -1883,7 +1881,7 @@ daemon reachable, authenticated session, existing
 a human-readable
 .I message
 reporting the before/after labels (
-.BR full ", " "download-only" ", " "upload-only" ").
+\fBfull\fR, \fBdownload-only\fR, \fBupload-only\fR).
 No-op (same flavor) returns
 .B Ok
 with a "already has sync type X" message.
@@ -2083,7 +2081,8 @@ if it duplicates or nests inside an existing root. Mirrors C
 .RS
 .TP 4
 .I PATH
-absolute local path to classify. Required; falls back to an interactive prompt if omitted.
+absolute local path to classify. Required; falls back to an interactive
+prompt if omitted.
 .RE
 .B Output shape:
 status
@@ -2109,7 +2108,6 @@ if pcloudc \-q sync is-syncable "$dir"; then pcloudc sync add "$dir" /Drive; fi
 .B Related:
 .BR "sync suggest" ", " "sync add" .
 .SS Mounted drive
-.PP
 .B Honest scope.
 The mounted-drive runtime in this release is a
 .B pre-alpha Linux-only scaffold
@@ -2310,7 +2308,6 @@ PCLOUD_FORCE_UMOUNT=yes pcloudc unmount /home/alice/pCloudDrive   # force + expl
 .B Related:
 .BR mount ", " "fs status" .
 .SS fs family
-.PP
 .B Concept primer \- fs operates on local paths.
 The
 .B fs
@@ -2560,7 +2557,8 @@ see whether crypto is locked, unlocked, or uninitialized.
 .B crypto reset
 .RB "(single\-token: " crypto-reset )
 .B When to use this:
-wipe the local crypto fingerprint and folder registry. Recovery-only operation \(em
+wipe the local crypto fingerprint and folder registry. Recovery-only
+operation \(em
 the server-side encrypted data is not deleted. After a reset, the next
 .B crypto start
 re-downloads and re-verifies the fingerprint from the server.
@@ -2631,7 +2629,6 @@ but valid only when the crypto shell is already unlocked. The old passphrase
 is not required. Mirrors C
 .BR psync_crypto_change_crypto_pass_unlocked .
 .SS Files, folders, and transfers
-.PP
 .B Concept primer \- folder operates on remote paths.
 The
 .B folder
@@ -2911,7 +2908,6 @@ verify the local audit log chain.
 as above; see
 .BR session-status .
 .SS Snapshots (disaster recovery) \(em see \fBSNAPSHOTS\fR section
-.PP
 The
 .B snapshot
 family (tar \(-> zstd \(-> SHA3\-256 \(-> sidecar manifest, optional GPG
@@ -3081,57 +3077,17 @@ pcloudc verify ~/Photos \-\-recursive \-\-fix \-\-yes
 .fi
 .RE
 .TP
-.B log \fIPATH\fR \fR[\fB\-\-limit \fIN\fR]
-.B When to use this:
-list prior revisions of a single remote file.
-.B Status:
-scaffolded. The CLI parses the command and the daemon dispatches
-.B Method::FileHistory ;
-the backend currently returns
-.B 6 Unavailable
-because pCloud's
-.B listrevisions
-endpoint is undocumented and awaiting public approval. Tracked under
-.BR bd-1du.10 .
-.RS
-.nf
-pcloudc log /Documents/Plan.md
-pcloudc log /Documents/Plan.md \-\-limit 20
-.fi
-.RE
-.TP
-.B diff \fIPATH\fR \fIREV_A\fR \fIREV_B\fR
-.B When to use this:
-compare two revision ids returned by
-.BR log .
-Same
-.B 6 Unavailable
-gating as
-.B log
-until the upstream endpoint is approved.
-.RS
-.nf
-pcloudc diff /Documents/Plan.md 101 104
-.fi
-.RE
-.TP
-.B restore \fIPATH\fR \fIREV\fR
-.B When to use this:
-replace the current remote object with a named prior revision.
-.B Status:
-stubbed. Same
-.B 6 Unavailable
-gating as
-.B log
-and
-.BR diff ;
-see
-.BR bd-1du.10 .
-.RS
-.nf
-pcloudc restore /Documents/Plan.md 101
-.fi
-.RE
+.B log / diff / restore (not shipped)
+The
+.BR log ", " diff ", and " restore
+subcommands have been removed from this fork. pCloud's
+.BR listrevisions / revertfile
+endpoints are not exposed to third-party clients; see
+.B docs/future-pcloud-clone-api.md
+("Removed scaffolds"). For the recommended recovery procedure see
+.B "Recovering an older version of a file"
+in the operations runbook (web UI revision history plus
+.BR "pcloudc backup snapshot-restore" ).
 .SS Migration and shell integration
 .TP
 .BR "migrate-from-c " \fR[\fIARGS\fR]
@@ -3248,7 +3204,6 @@ limits.
 .\" =====================================================================
 .\" =====================================================================
 .SH COMMAND REFERENCE (LINK / SHARE / BACKUP / CRYPTO / INTEGRITY / VERIFY / HISTORY)
-.PP
 Deep per\-command reference for the link, share, backup, crypto,
 integrity, verify, and file\-history families. Every command is mapped to
 a concrete daemon request type in
@@ -3264,7 +3219,6 @@ and
 (free text or a JSON blob documented per\-command).
 .\" ---------------------------------------------------------------------
 .SS 1. Public links (concept primer)
-.PP
 Public links are one\-time\-URL shares that do
 .B not
 require the recipient to have a pCloud account. Four flavours:
@@ -3831,7 +3785,6 @@ pcloudc \-\-json publink\-send XKzA1B2C3 \-\-to ops@example.com \-\-message "res
 .BR show-link ", " create-file-link ", " list-links .
 .\" =====================================================================
 .SS 2. Shares (concept primer)
-.PP
 Shares are
 .B account\-to\-account
 folder grants: both sides must have a pCloud identity. Typical shape:
@@ -4198,7 +4151,6 @@ on non\-business accounts)
 .BR share-folder ", " account-teamshare .
 .\" =====================================================================
 .SS 3. Backup snapshots (see \fBSNAPSHOTS\fR section)
-.PP
 The
 .B snapshot
 family (tar \(-> zstd \(-> SHA3\-256 \(-> sidecar manifest, optional GPG wrap)
@@ -4257,7 +4209,6 @@ or is exercised via the SDK
 .\" ---------------------------------------------------------------------
 .\" =====================================================================
 .SS 4. Crypto folder (concept primer)
-.PP
 Client\-side
 .B AES-256-GCM
 encryption of a dedicated "crypto folder" tree under your account.
@@ -4730,7 +4681,6 @@ pcloudc crypto change-password-unlocked  # no old-pass prompt
 .BR "crypto change-password" ", " "crypto start" ", " "crypto send-change-private" .
 .\" =====================================================================
 .SS 4.10 Account management
-.PP
 The
 .B account
 group exposes lifecycle and preference helpers for the pCloud account
@@ -4846,7 +4796,6 @@ pcloudc \-\-json account api-servers | jq '.[].hostname'
 .fi
 .\" =====================================================================
 .SS 4.11 Downloads
-.PP
 The
 .B download
 group (alias:
@@ -4911,7 +4860,6 @@ pcloudc dl file 123456 /tmp/output.zip
 .RE
 .\" =====================================================================
 .SS 5. Integrity sweeper (concept primer)
-.PP
 Background scrub worker that periodically hashes local files and
 compares the result against the server\-side checksum, emitting
 .B NDJSON
@@ -5111,126 +5059,25 @@ was not passed;
 (missing path; path outside a sync root).
 .TP
 .B Related
-.BR "integrity run-once" ", " "audit verify" ", " log ", " restore .
+.BR "integrity run-once" ", " "audit verify" .
 .\" =====================================================================
-.SS 7. File history (log / diff / restore) \(em HONESTY NOTE
-.PP
-.BR log ,
-.BR diff ,
-and
-.BR restore
-are
-.B scaffolded:
-CLI parsing and the daemon's
-.B FileHistory
-dispatch path are complete, but the backend currently returns
-.B "6 Unavailable"
-with the message
-.BR "file-history: not yet supported by pCloud public API (tracked under bd-1du.10)" .
-The underlying pCloud
-.B listrevisions
-endpoint is undocumented and awaiting public approval; enabling it is a
-one\-change\-site operation on
-.BR FolderRuntime::list_revisions .
-Until then, every call exits
-.B 6 Unavailable .
-.\" ---------------------------------------------------------------------
-.SS 7.1 log \fIPATH\fR \fR[\fB\-\-limit \fIN\fR]
-.TP
-.B Purpose
-(When implemented) list prior revisions of a single remote file.
-.TP
-.B Syntax
-.nf
-pcloudc log <PATH>
-pcloudc log <PATH> \-\-limit <N>
-pcloudc file\-log <PATH>                # alias
-pcloudc file\-history <PATH>            # alias
-.fi
-.TP
-.B Preconditions
-Authenticated session; path must be a non\-empty absolute remote path
-.RB ( "3 InvalidRequest"
-on empty).
-.TP
-.B Output shape (today)
-.B status=Unavailable
-with the message documented above; exit code
-.BR 6 .
-.TP
-.B Examples
-.nf
-pcloudc log /Documents/Plan.md
-pcloudc log /Documents/Plan.md \-\-limit 20
-# Treat Unavailable as a known TBD, not a failure:
-pcloudc log /Documents/Plan.md; [ $? -eq 6 ] && echo "(revision API pending)"
-.fi
-.TP
-.B Failure modes
-Today: always
-.BR 6 Unavailable ;
-future:
-.B 5 Auth ", " 4 Network ", " 3 InvalidRequest .
-.TP
-.B Related
-.BR diff ", " restore .
-.\" ---------------------------------------------------------------------
-.SS 7.2 diff \fIPATH\fR \fIREV_A\fR \fIREV_B\fR
-.TP
-.B Purpose
-(When implemented) compare two revision ids (from
-.BR log )
-for the same remote file.
-.TP
-.B Syntax
-.nf
-pcloudc diff <PATH> <REV_A> <REV_B>
-.fi
-.TP
-.B Output shape (today)
-.B 6 Unavailable .
-.TP
-.B Examples
-.nf
-pcloudc diff /Documents/Plan.md 101 104
-pcloudc diff /Reports/Q1.pdf 12 17
-pcloudc \-\-json diff /Reports/Q1.pdf 12 17
-.fi
-.TP
-.B Failure modes
-Today:
-.B 6 Unavailable .
-.TP
-.B Related
-.BR log ", " restore .
-.\" ---------------------------------------------------------------------
-.SS 7.3 restore \fIPATH\fR \fIREV\fR
-.TP
-.B Purpose
-(When implemented) replace the current remote object with a named prior
-revision.
-.TP
-.B Syntax
-.nf
-pcloudc restore <PATH> <REV>
-.fi
-.TP
-.B Output shape (today)
-.B 6 Unavailable .
-.TP
-.B Examples
-.nf
-pcloudc restore /Documents/Plan.md 101
-pcloudc restore /Reports/Q1.pdf 12
-pcloudc \-\-json restore /Reports/Q1.pdf 12
-.fi
-.TP
-.B Failure modes
-Today:
-.B 6 Unavailable .
-.TP
-.B Related
-.BR log ", " diff ", " verify .
+.SS 7. File history (log / diff / restore) \(em REMOVED
+The
+.BR log ", " diff ", and " restore
+subcommands and the
+.B Method::FileHistory
+/
+.B RevisionProvider
+plumbing have been removed from this fork. pCloud's
+.BR listrevisions / revertfile
+endpoints are not exposed to third-party clients and the scaffolds
+were never reachable. See
+.B docs/future-pcloud-clone-api.md
+("Removed scaffolds") for context, and the operations runbook
+section
+.B "Recovering an older version of a file"
+for the recommended recovery procedure (web UI revision history plus
+.BR "pcloudc backup snapshot-restore" ).
 .\" =====================================================================
 .SS 8. audit verify
 .TP
@@ -5284,7 +5131,6 @@ pcloudc \-\-json audit verify
 .\" =====================================================================
 .\" =====================================================================
 .SH SNAPSHOTS
-.PP
 The
 .B snapshot
 family produces self\-describing, offline\-verifiable point\-in\-time
@@ -5372,7 +5218,6 @@ is stable; cron wrappers written against this section will keep working
 once the executor lands.
 .\" ---------------------------------------------------------------------
 .SS snapshot \(em bare form
-.PP
 .B snapshot
 with no subcommand is accepted as a shortcut for
 .B "snapshot create"
@@ -5774,7 +5619,6 @@ unwritable mid\-prune),
 .BR "snapshot create" ", " "snapshot verify" .
 .\" ---------------------------------------------------------------------
 .SS Choosing a compression level
-.PP
 .B zstd
 level controls the speed/size tradeoff on the
 .I compression
@@ -5807,7 +5651,6 @@ use long\-range mode and more memory; budget accordingly on small
 hosts.
 .\" ---------------------------------------------------------------------
 .SS Using GPG
-.PP
 When
 .B \-\-gpg\-recipient <EMAIL>
 is passed to
@@ -5862,7 +5705,6 @@ auth vault as equivalent to the vault itself.
 .RE
 .\" ---------------------------------------------------------------------
 .SS Deprecation of \fRbackup snapshot-*\fR
-.PP
 The legacy
 .B backup snapshot-create ,
 .B backup snapshot-verify ,
@@ -5883,7 +5725,6 @@ verbs now. No behavioural change is implied \(em same daemon handler,
 same artifact layout, same exit codes.
 .\" =====================================================================
 .SH FIELD SELECTION
-.PP
 .B pcloudc
 ships a built\-in, dependency\-free field selector so that shell scripts,
 cron jobs, CI pipelines, and systemd timers can pick a single value out
@@ -6198,7 +6039,6 @@ selector layer.
 .RE
 .\" =====================================================================
 .SH EXAMPLES
-.PP
 Every recipe below uses
 .B pcloudc
 primitives only \(em the built\-in field selector takes the place of
@@ -6470,7 +6310,6 @@ pcloudc sync\-list count              # after (decreased by 1)
 .RE
 .\" =====================================================================
 .SH TROUBLESHOOTING
-.PP
 Always start with
 .B pcloudc doctor
 \(em it runs the full check battery (socket, vault, config, daemon PID,
@@ -6792,7 +6631,6 @@ Full syntax and security notes for every variable live in
 .BR pcloud.conf (5).
 .\" =====================================================================
 .SH FILES
-.PP
 The tables below enumerate every path
 .B pcloudc
 and
@@ -6953,7 +6791,6 @@ Mounted drives require WinFsp. Paths are stored under
 ownership checks on the vault use ACLs instead of POSIX mode bits.
 .\" =====================================================================
 .SH PARTIAL TRANSFER RESUME
-.PP
 .B Uploads.
 The daemon maintains a crash\-safe per\-inode progress sidecar
 .RI ( ino\- <inode> .upload\-progress )
@@ -7000,7 +6837,6 @@ callers still restart interrupted downloads from byte 0. See
 for the per\-call\-site migration status.
 .\" =====================================================================
 .SH OBSERVABILITY / DISTRIBUTED TRACING
-.PP
 When the daemon is built with the
 .B tracing\-otlp
 Cargo feature and
@@ -7180,7 +7016,6 @@ clear. For full details of file modes, HMAC keys, and transport policy see
 .BR pcloud.conf (5).
 .\" =====================================================================
 .SH SEE ALSO
-.PP
 .B Companion pages.
 .RS
 .IP \(bu 2

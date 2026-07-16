@@ -166,18 +166,33 @@ pub enum AccountBackendError {
     #[error(transparent)]
     /// `Network` variant.
     Network(#[from] TransportError),
+    /// Resilient-wrapper-only condition (circuit-breaker open, rate-limit
+    /// exceeded, retry-budget exhausted). CLAUDEREV deferred-set D5.7
+    /// (fire 55) — final per-backend migration; closes D5. Carries the
+    /// human-readable description from
+    /// `pcloud_proto::resilient_transport::ResilientError`.
+    #[error("resilient transport refused request: {0}")]
+    Resilient(String),
 }
 
 #[derive(Debug, Clone)]
 enum AccountTransportMode {
     Development(DevelopmentAccountTransport),
     Network(BinaryApiTransport),
+    /// Production network transport wrapped in a circuit-breaker /
+    /// rate-limiter / retry-budget envelope. CLAUDEREV deferred-set
+    /// D5.7 (fire 55) — final per-backend `ResilientTransport`
+    /// migration; closes D5.
+    ResilientNetwork(
+        Box<pcloud_proto::resilient_transport::ResilientTransport<BinaryApiTransport>>,
+    ),
 }
 
 impl ProtocolTransport for AccountTransportMode {
     type Error = AccountBackendError;
 
     fn execute(&self, request: &EncodedRequest) -> Result<Value, Self::Error> {
+        use pcloud_proto::resilient_transport::ResilientError;
         match self {
             Self::Development(transport) => transport
                 .execute(request)
@@ -185,6 +200,14 @@ impl ProtocolTransport for AccountTransportMode {
             Self::Network(transport) => transport
                 .execute(request)
                 .map_err(AccountBackendError::from),
+            Self::ResilientNetwork(transport) => {
+                transport.execute(request).map_err(|err| match err {
+                    ResilientError::Inner(transport_err) => {
+                        AccountBackendError::Network(transport_err)
+                    }
+                    other => AccountBackendError::Resilient(other.to_string()),
+                })
+            }
         }
     }
 }
@@ -194,6 +217,9 @@ impl ApiServerHintConsumer for AccountTransportMode {
         match self {
             Self::Development(transport) => transport.apply_api_server_hint(api_server),
             Self::Network(transport) => transport.apply_api_server_hint(api_server),
+            Self::ResilientNetwork(transport) => {
+                transport.inner_arc().apply_api_server_hint(api_server)
+            }
         }
     }
 }
@@ -245,6 +271,22 @@ impl AccountRuntime {
 
         Self {
             api: AccountApi::new(transport),
+        }
+    }
+
+    /// Construct an `AccountRuntime` whose transport is wrapped in
+    /// `pcloud_proto::resilient_transport::ResilientTransport`. CLAUDEREV
+    /// deferred-set D5.7 (fire 55) — final per-backend migration. After
+    /// this constructor lands the daemon's full production API surface
+    /// (auth, transfer, public-link, shares, sync, backup, account)
+    /// goes through the workspace-shared `GlobalRetryBudget` +
+    /// per-endpoint circuit-breakers.
+    #[must_use]
+    pub fn from_resilient_transport(
+        resilient: pcloud_proto::resilient_transport::ResilientTransport<BinaryApiTransport>,
+    ) -> Self {
+        Self {
+            api: AccountApi::new(AccountTransportMode::ResilientNetwork(Box::new(resilient))),
         }
     }
 

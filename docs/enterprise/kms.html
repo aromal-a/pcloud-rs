@@ -1,0 +1,699 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Key Management Service - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/../../enterprise/kms.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <blockquote>
+<p><strong>Pre-alpha scaffold — not live / not production-verified.</strong> This document
+describes design and unit-tested code that has not been validated against a
+real production deployment. Do not treat it as a shippable capability.
+See <code>CLAUDE.md</code> and <code>docs/enterprise/README.md</code> for the honesty rules.</p>
+</blockquote>
+<h1 id="enterprise-kms--hsm-integration"><a class="header" href="#enterprise-kms--hsm-integration">Enterprise KMS / HSM Integration</a></h1>
+<p>Status: <strong>LANDED (AwsKms / HashicorpVault / Pkcs11Hsm)</strong> /
+<strong>LANDED (CryptoShell DEK routing — sector path wired)</strong> /
+<strong>PRE-ALPHA (no live HSM proof)</strong>.</p>
+<p>Code lives under <code>crates/pcloud-kms/</code>. All three providers —
+<code>AwsKms</code>, <code>HashicorpVault</code>, and <code>Pkcs11Hsm</code> — are implemented behind
+opt-in Cargo features (<code>aws</code>, <code>vault</code>, <code>pkcs11</code>). The <code>Pkcs11Hsm</code>
+provider binds to a vendor-supplied PKCS#11 module at runtime via the
+<code>cryptoki</code> crate (Apache-2.0 / MIT) and performs AES-GCM wrap/unwrap
+inside the HSM using <code>C_Encrypt</code> / <code>C_Decrypt</code>. The <code>KmsProvider</code>
+trait and the <code>unwrap_cached</code> TTL cache are wired through the
+runtime’s KMS selector.</p>
+<p><strong>DEK routing through <code>CryptoShell</code> is now wired.</strong> <code>CryptoShell</code>
+carries an injected <code>Box&lt;dyn KmsProvider&gt;</code> field (default:
+<code>NullKms</code>), constructor <code>with_kms_provider(…)</code> and in-place setter
+<code>set_kms_provider(…)</code> let the daemon replace the default with a
+concrete provider built from the profile’s <code>[crypto.kms]</code> section.
+<code>CryptoShell::kms_wrap_dek</code> and <code>kms_unwrap_dek</code> route through the
+injected provider; <code>kms_unwrap_dek</code> uses the shared
+<code>unwrap_cached</code> TTL (<code>DEFAULT_CACHE_TTL</code> = 300 s) so repeated sector
+opens do not round-trip to the KMS on every call. The field is
+<code>#[serde(skip)]</code> — a deserialised <code>CryptoShell</code> always comes back with
+<code>NullKms</code> and must be re-injected by the runtime (prevents a stale
+wrapped-DEK from a previous provider being replayed against a new
+deployment).</p>
+<p>Honest remaining gap: the routing and provider surfaces are
+<strong>integration-tested</strong> (<code>pcloud-crypto/tests/kms_routing.rs</code> — 8
+tests covering NullKms raw regression, mock-provider KMS round-trip,
+cache TTL proof, enable/seal/open/stop/restart cycle, and
+reset-reverts-to-raw; plus the AWS / Vault opt-in integration tests
+that require live credentials). There is still <strong>no end-to-end live
+HSM proof</strong>, the <code>Pkcs11Hsm</code> bad-module-path test is the only pkcs11
+regression that runs in CI, and the pre-alpha honesty rule says we do
+<strong>not</strong> yet claim “production HSM support”.</p>
+<h2 id="feature-flags"><a class="header" href="#feature-flags">Feature flags</a></h2>
+<p>All three providers are <strong>off by default</strong> and gated at compile time:</p>
+<ul>
+<li><code>aws</code> — enables <code>AwsKms</code> (pulls in <code>aws-sdk-kms</code>, <code>aws-config</code>).</li>
+<li><code>vault</code> — enables <code>HashicorpVault</code> (pulls in <code>reqwest</code> with
+<code>rustls-tls</code>, blocking).</li>
+<li><code>pkcs11</code> — enables the real <code>Pkcs11Hsm</code> provider (pulls in
+<code>cryptoki</code>). When the feature is <strong>off</strong> the crate still exports a
+<code>Pkcs11Hsm</code> type whose constructor returns
+<code>KmsError::NotImplemented("pkcs11 (rebuild with --features pkcs11)")</code>
+— misconfigured deployments fail loudly instead of silently
+downgrading to <code>NullKms</code>.</li>
+</ul>
+<p>The <code>pcloud-config</code> crate exposes a parallel set of feature names so
+the <code>[crypto.kms]</code> factory can build the right provider:</p>
+<ul>
+<li><code>kms-factory</code> — compile the <code>CryptoKmsConfig::build_provider</code> helper.</li>
+<li><code>aws-kms</code> / <code>vault-kms</code> / <code>pkcs11-kms</code> — pass through to the
+matching feature on <code>pcloud-kms</code>.</li>
+</ul>
+<p>A release build with no KMS feature compiles <code>NullKms</code> only plus the
+<code>Pkcs11Hsm</code> “feature disabled” stub; the crate stays slim for
+non-enterprise builds.</p>
+<h2 id="declarative-config"><a class="header" href="#declarative-config">Declarative config</a></h2>
+<p>Profiles carry an optional <code>[crypto]</code> section:</p>
+<pre><code class="language-toml">[crypto.kms]
+provider = "vault"
+url = "https://vault.example.com:8200"
+transit_key = "pcloud-rs-kek"
+token_env = "PCLOUD_VAULT_TOKEN"
+</code></pre>
+<p>Secrets (Vault token, PKCS#11 PIN) are <strong>never</strong> stored in the config
+file. The config names an environment variable (<code>token_env</code>,
+<code>pin_env</code>) and the factory reads the secret into
+<code>pcloud_secret::secret_string::SecretString</code> at provider-construction
+time.</p>
+<h2 id="1-problem-statement"><a class="header" href="#1-problem-statement">1. Problem statement</a></h2>
+<p>The current <code>pcloud-crypto</code> crate derives the crypto-folder master
+wrapping key entirely on the client, using Argon2id with the user’s
+crypto password as the only input entropy. That model has three
+enterprise-unfriendly consequences:</p>
+<ol>
+<li><strong>The password <em>is</em> the key.</strong> Anyone who learns the crypto password
+(phishing, reused password, shoulder-surf, malware with a key logger)
+immediately has the wrapping key for every file in every crypto
+folder that password has ever protected. No server-side revocation
+can cut that access off, because the server never had the key.</li>
+<li><strong>No revocation primitive.</strong> To revoke a departed engineer’s access
+to a crypto folder we would have to re-encrypt every file in the
+folder under a new key and push the ciphertext back to pCloud. For
+any non-trivial dataset this is operationally infeasible.</li>
+<li><strong>No central audit.</strong> Every unwrap happens on the endpoint. There is
+no authoritative log of “who decrypted folder X at 14:22 UTC” — only
+local syslog, which the user themselves can delete.</li>
+</ol>
+<p>Enterprise operators want the wrapping key held by a KMS or PKCS#11 HSM
+so that (a) the key never leaves the security boundary, (b) access is
+revocable by flipping an IAM rule, and (c) every decrypt emits a
+tamper-evident audit record owned by the KMS, not the endpoint.</p>
+<h2 id="2-architecture--envelope-encryption"><a class="header" href="#2-architecture--envelope-encryption">2. Architecture — envelope encryption</a></h2>
+<p>The integration follows the standard <strong>envelope / wrapping</strong> pattern and
+changes <em>only</em> the handling of the master key:</p>
+<pre><code>            ┌────────── pcloudd ──────────┐
+ file  ───► │ per-sector AES-256-GCM      │ ───► pCloud object store
+            │   with random DEK           │
+            │                              │
+            │ DEK ──► KMS.Encrypt() ──► wrapped-DEK (stored in metadata)
+            │ DEK ◄── KMS.Decrypt() ◄── wrapped-DEK (read on unlock)
+            └──────────────────────────────┘
+                         ▲
+                         │ KMS wrapping key never leaves the KMS
+                         │
+                 ┌───────┴────────┐
+                 │ AWS KMS /      │
+                 │ Vault Transit /│
+                 │ PKCS#11 HSM    │
+                 └────────────────┘
+</code></pre>
+<p>The per-file sector encryption, its AEAD choice (AES-256-GCM), and the
+filename encoding stay exactly as they are today in <code>pcloud-crypto</code>.
+The only behaviour that changes is how the per-folder DEK is
+wrapped and unwrapped. This preserves backward compatibility with
+ciphertext already on pCloud: a folder created in the local-Argon2 mode
+can still be opened locally, and a folder created in KMS mode cannot be
+opened by a client that has no KMS access — which is exactly the
+property we want.</p>
+<p>The trait surface lives in <code>pcloud-kms</code>:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub trait KmsProvider: Send + Sync {
+    fn name(&amp;self) -&gt; &amp;'static str;
+    fn encrypt_dek(&amp;self, key_id: &amp;KeyId, dek: &amp;PlaintextDek,
+                   context: Option&lt;&amp;str&gt;) -&gt; Result&lt;WrappedDek, KmsError&gt;;
+    fn decrypt_dek(&amp;self, key_id: &amp;KeyId, wrapped: &amp;WrappedDek,
+                   context: Option&lt;&amp;str&gt;) -&gt; Result&lt;PlaintextDek, KmsError&gt;;
+    fn health_check(&amp;self) -&gt; Result&lt;(), KmsError&gt;;
+}
+<span class="boring">}</span></code></pre>
+<p>The crate ships four impls:</p>
+<ul>
+<li><code>AwsKms</code> — <strong>landed</strong> behind the <code>aws</code> feature. Uses <code>aws-sdk-kms</code>
+(<code>Encrypt</code> / <code>Decrypt</code>) with <code>EncryptionContext</code>. The SDK is async;
+the trait is sync, so the provider bridges via
+<code>tokio::runtime::Handle::try_current()</code> and falls back to a
+lazily-built single-thread runtime for non-Tokio callers.
+Credentials come exclusively from the default provider chain (IMDSv2,
+env, shared credentials, SSO). The config file <strong>never</strong> carries AWS
+credentials; attempting to do so is a load error.</li>
+<li><code>HashicorpVault</code> — <strong>landed</strong> behind the <code>vault</code> feature. Blocking
+<code>reqwest</code> client with <code>rustls-tls</code> against
+<code>/v1/transit/encrypt/&lt;key&gt;</code> and <code>/v1/transit/decrypt/&lt;key&gt;</code>. Vault
+token is read from <code>VAULT_TOKEN</code> (or <code>VAULT_TOKEN_FILE</code>) and sent as
+<code>X-Vault-Token</code>; it is never logged, never persisted in the config
+file, and wrapped in <code>SecretString</code>.</li>
+<li><code>Pkcs11Hsm</code> — <strong>stub</strong>. Trait impl compiles under the <code>pkcs11</code>
+feature but every call returns <code>KmsError::NotImplemented</code>. The
+documented intent (<code>C_WrapKey</code> / <code>C_UnwrapKey</code>,
+<code>CKM_AES_KEY_WRAP_KWP</code>) and the PIN-from-keyring rule remain in
+place; no PKCS#11 module linkage is performed yet.</li>
+<li><code>NullKms</code> — explicit “no KMS configured” mode. Returns
+<code>NotImplemented</code> for every call; it is <strong>not</strong> a fallback for a
+broken KMS, it is the selector for the legacy local-Argon2 path, and
+it is the default when no feature is enabled.</li>
+</ul>
+<h3 id="unwrap_cached-ttl-cache"><a class="header" href="#unwrap_cached-ttl-cache"><code>unwrap_cached</code> TTL cache</a></h3>
+<p>Both live providers are fronted by an <code>unwrap_cached(key_id, wrapped, context)</code> helper that keys on <code>(provider name, key_id, wrapped blob hash, context)</code> and returns an in-memory <code>SecretBytes</code> DEK. Entries
+expire after <code>cache_ttl_seconds</code> (default 3600s, operator-configurable).
+<code>PolicyDenied</code> and <code>Malformed</code> invalidate matching entries immediately.
+Plaintext DEKs never hit disk; only the wrapped blob may be cached on
+disk, <code>0600</code>, under <code>state_dir</code>.</p>
+<h2 id="3-iam--per-device-least-privilege"><a class="header" href="#3-iam--per-device-least-privilege">3. IAM — per-device least privilege</a></h2>
+<p>Every device that mounts crypto folders gets its own identity. The
+device’s KMS policy allows exactly two operations:</p>
+<ul>
+<li><code>Encrypt</code> against the configured wrapping key,</li>
+<li><code>Decrypt</code> against the configured wrapping key.</li>
+</ul>
+<p>Explicitly denied:</p>
+<ul>
+<li><code>GenerateDataKey</code> / <code>GenerateDataKeyWithoutPlaintext</code> — we generate
+the DEK locally with <code>OsRng</code>, we do not ask the KMS for one, so this
+permission is never needed and enabling it widens the blast radius.</li>
+<li><code>CreateKey</code>, <code>ScheduleKeyDeletion</code>, <code>PutKeyPolicy</code> — never needed
+from a client.</li>
+<li><code>Decrypt</code> across other tenants’ keys — scoped by
+<code>kms:EncryptionContext:device_id</code> so device A cannot unwrap blobs
+created for device B even if they share a CMK.</li>
+</ul>
+<p>Revoking a device is one IAM flip: detach its policy. The next unwrap
+call fails with <code>KmsError::PolicyDenied</code>, the daemon moves the folder
+to read-only (§6), and the user sees a clear “access revoked” status.
+No client data re-encryption is required.</p>
+<h2 id="4-offline-mode"><a class="header" href="#4-offline-mode">4. Offline mode</a></h2>
+<p>A KMS round-trip per unlock is acceptable at login time, but round-
+tripping for every file read is not — and some fleets need to work on
+planes with no network at all. The design caches <strong>wrapped</strong> and
+<strong>plaintext</strong> DEKs for a configurable TTL:</p>
+<ul>
+<li><strong>Wrapped cache</strong>: <code>~/.local/state/pcloud-rs/kms-cache/&lt;folder&gt;.wrap</code>,
+mode <code>0600</code>. Just the wrapped blob. Always safe to cache — it is
+ciphertext. TTL defaults to 24h, configurable via
+<code>[crypto.kms] cache_ttl_hours</code>.</li>
+<li><strong>Plaintext cache</strong>: in-memory only, inside the already-existing
+<code>SecretBytes</code> wrapper, evicted on screen lock / daemon exit / TTL.
+Never written to disk.</li>
+</ul>
+<p>When the KMS is unreachable and the cache TTL has not expired, unlocks
+succeed against the cache. When the TTL has expired, the folder goes
+read-only (§6). Cache entries are invalidated whenever the KMS returns
+<code>PolicyDenied</code>, so a revocation propagates as soon as the device
+regains connectivity.</p>
+<h2 id="5-key-rotation"><a class="header" href="#5-key-rotation">5. Key rotation</a></h2>
+<p>Rotation is <strong>server-side only</strong> and requires no client data
+re-encryption, because of the envelope pattern:</p>
+<ol>
+<li>Operator rotates the wrapping key inside the KMS (AWS KMS
+automatic annual rotation / Vault Transit <code>rotate</code> / HSM new key
+version).</li>
+<li>New <code>Encrypt</code> calls produce wrapped blobs tagged with the new key
+version.</li>
+<li>Old wrapped blobs still unwrap against the old key version, which
+the KMS keeps for decrypt-only.</li>
+<li>Optional background re-wrap job walks the crypto folder metadata
+and reissues wrapped-DEKs under the new version; this is purely
+housekeeping and can run at the operator’s convenience.</li>
+</ol>
+<p>No sector data is ever rewritten during rotation. Compare this to the
+legacy model, where “rotation” means re-encrypting every file.</p>
+<h2 id="6-failure-handling"><a class="header" href="#6-failure-handling">6. Failure handling</a></h2>
+<p>Every unwrap goes through a small state machine:</p>
+<ul>
+<li><strong>KMS healthy</strong> → normal operation.</li>
+<li><strong>KMS unreachable, cache valid</strong> → serve from cache, log a warning,
+emit a <code>kms.degraded</code> metric.</li>
+<li><strong>KMS unreachable, cache expired</strong> → the affected folder drops to
+<strong>read-only</strong>. Existing open file handles keep their in-memory DEKs
+but no new unwraps succeed. The daemon escalates via the existing
+<code>pcloud-observability</code> channel (structured log + optional
+PagerDuty/webhook), and the CLI surfaces a clear error.</li>
+<li><strong><code>PolicyDenied</code></strong> → treat as permanent revocation: invalidate the
+cache, move folder to read-only, emit a <code>kms.revoked</code> audit event.
+Never retry silently.</li>
+<li><strong><code>Malformed</code></strong> → fatal; do not retry. This almost certainly means
+tampering or an MITM in front of the KMS endpoint.</li>
+</ul>
+<p>Read-only mode is strictly safer than “fall back to Argon2” — the
+latter would let a KMS outage silently downgrade security, which is
+exactly the failure mode enterprise buyers want to eliminate.</p>
+<h2 id="7-operator-configuration"><a class="header" href="#7-operator-configuration">7. Operator configuration</a></h2>
+<p>New section in <code>pcloud-rs.toml</code>:</p>
+<pre><code class="language-toml">[crypto.kms]
+provider           = "aws"             # "null" | "aws" | "vault" | "pkcs11"
+key_arn            = "arn:aws:kms:eu-west-1:123456789012:key/abcd-..."  # aws only
+vault_addr         = "https://vault.example.internal:8200"              # vault only
+vault_path         = "transit/keys/pcloud-rs-wrap"                       # vault only
+pkcs11_slot        = 0                                                  # pkcs11 only
+pkcs11_label       = "pcloud-rs-wrap"                                    # pkcs11 only
+cache_ttl_seconds  = 3600
+</code></pre>
+<p><code>provider = "null"</code> (or an absent <code>[crypto.kms]</code> section) is the
+default and maps to the legacy local-Argon2 path. Exactly one of
+<code>key_arn</code> / (<code>vault_addr</code> + <code>vault_path</code>) / (<code>pkcs11_slot</code> +
+<code>pkcs11_label</code>) must be set when <code>provider</code> is non-null; the daemon
+refuses to start otherwise. The config file <strong>must not</strong> carry AWS
+access keys or Vault tokens — those come from IMDS / env / shared
+credentials (AWS) and <code>VAULT_TOKEN</code> (Vault). Any credential-shaped key
+in the config file is a load error.</p>
+<h2 id="8-security-rules"><a class="header" href="#8-security-rules">8. Security rules</a></h2>
+<p>These are non-negotiable and enforced by review:</p>
+<ul>
+<li><strong>KMS credentials never live in the config file.</strong> AWS → default
+provider chain (IMDSv2, env, SSO). Vault → <code>VAULT_TOKEN</code> env or
+AppRole. PKCS#11 → PIN from OS keyring or env. A config-file-based
+credential is a rejected PR.</li>
+<li><strong>Plaintext DEKs never hit disk.</strong> Wrapped in <code>SecretBytes</code>
+(zeroize-on-drop, redacted <code>Debug</code>), scoped to the narrowest
+possible function.</li>
+<li><strong>Wrapped DEKs may be cached on disk</strong>, <code>0600</code>, in the user’s state
+directory. They are ciphertext.</li>
+<li><strong>Never log key material.</strong> The provider <code>name()</code> and the <code>KeyId</code>
+are safe to log; everything else is not.</li>
+<li><strong>Audit persistence failures are surfaced</strong>, not swallowed, matching
+the workspace-wide rule in <code>CLAUDE.md</code>.</li>
+<li><strong>Transport</strong>: TLS is mandatory for all three provider SDKs; no
+downgrade flags.</li>
+</ul>
+<h2 id="9-interface--trait-shape"><a class="header" href="#9-interface--trait-shape">9. Interface / trait shape</a></h2>
+<p>Authoritative declarations:</p>
+<ul>
+<li><code>KmsProvider</code> trait — <code>crates/pcloud-kms/src/lib.rs:158</code></li>
+<li><code>KmsError</code> — <code>crates/pcloud-kms/src/lib.rs:47</code></li>
+<li><code>KeyId</code> — <code>crates/pcloud-kms/src/lib.rs:96</code></li>
+<li><code>WrappedDek</code> (ciphertext, persistable) —
+<code>crates/pcloud-kms/src/lib.rs:113</code></li>
+<li><code>PlaintextDek</code> (zeroize-on-drop) —
+<code>crates/pcloud-kms/src/lib.rs:121</code></li>
+<li><code>DEFAULT_CACHE_TTL</code> (300 s) —
+<code>crates/pcloud-kms/src/lib.rs:151</code></li>
+<li><code>unwrap_cached(ttl)</code> (process-local, mutex-guarded) —
+<code>crates/pcloud-kms/src/lib.rs:198</code></li>
+<li><code>NullKms</code> (default, explicit refusal to be a “fallback”) —
+<code>crates/pcloud-kms/src/lib.rs:278</code></li>
+<li><code>AwsKms</code> (feature <code>aws</code>) —
+<code>crates/pcloud-kms/src/lib.rs:334</code>
+<ul>
+<li><code>::new(region)</code> at <code>:356</code></li>
+<li>Tokio handle bridge at <code>:393</code>
+(<code>tokio::runtime::Handle::try_current</code> fast path + fallback)</li>
+</ul>
+</li>
+<li><code>HashicorpVault</code> (feature <code>vault</code>, blocking rustls client) —
+<code>crates/pcloud-kms/src/lib.rs:512</code>
+<ul>
+<li><code>::new(addr, path, token, …)</code> at <code>:542</code></li>
+</ul>
+</li>
+<li><code>Pkcs11Hsm</code> (stub today) —
+<code>crates/pcloud-kms/src/lib.rs:677</code>
+<ul>
+<li><code>::new(key_id)</code> at <code>:688</code></li>
+</ul>
+</li>
+</ul>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Simplified; see crates/pcloud-kms/src/lib.rs:158.
+pub trait KmsProvider: Send + Sync {
+    fn name(&amp;self) -&gt; &amp;'static str;
+    fn key_id(&amp;self) -&gt; &amp;KeyId;
+    fn generate_dek(&amp;self) -&gt; Result&lt;(PlaintextDek, WrappedDek), KmsError&gt;;
+    fn decrypt_dek(&amp;self, wrapped: &amp;WrappedDek) -&gt; Result&lt;PlaintextDek, KmsError&gt;;
+    fn unwrap_cached(
+        &amp;self,
+        wrapped: &amp;WrappedDek,
+        ttl: Duration,
+    ) -&gt; Result&lt;PlaintextDek, KmsError&gt; { /* default impl — cached */ }
+}
+<span class="boring">}</span></code></pre>
+<h2 id="10-onboarding-recipe"><a class="header" href="#10-onboarding-recipe">10. Onboarding recipe</a></h2>
+<h3 id="beginner--deploy-in-5-steps-aws-kms"><a class="header" href="#beginner--deploy-in-5-steps-aws-kms">Beginner — deploy in 5 steps (AWS KMS)</a></h3>
+<ol>
+<li>Create a CMK with <code>KeyUsage=ENCRYPT_DECRYPT</code> and <code>KeySpec=SYMMETRIC_DEFAULT</code>.</li>
+<li>Grant the pCloud host role <code>kms:GenerateDataKey</code>, <code>kms:Decrypt</code>,
+<code>kms:DescribeKey</code> — <strong>not</strong> <code>kms:Encrypt</code>. We never encrypt
+plaintext with the CMK; we encrypt with the DEK.</li>
+<li>Build the daemon with <code>--features aws</code>. Credentials come <strong>only</strong>
+from the default provider chain: IMDSv2, env, SSO. <em>Never</em> the
+config file.</li>
+<li>Add <code>[crypto.kms]</code> with <code>provider = "aws"</code> and <code>key_arn</code>. Restart
+<code>pcloudcd</code>.</li>
+<li>Encrypt a test file; inspect the CryptoShell header — it must carry
+a wrapped DEK, not a password-derived key.</li>
+</ol>
+<h3 id="expert--terraform-iam"><a class="header" href="#expert--terraform-iam">Expert — Terraform IAM</a></h3>
+<pre><code class="language-hcl">data "aws_iam_policy_document" "pcloud-rs_kms" {
+  statement {
+    sid     = "PcloudccDek"
+    actions = ["kms:GenerateDataKey", "kms:Decrypt", "kms:DescribeKey"]
+    resources = [aws_kms_key.pcloud-rs.arn]
+    # Explicitly omit kms:Encrypt, kms:ScheduleKeyDeletion, kms:*
+  }
+}
+
+resource "aws_iam_role_policy" "pcloud-rs_kms" {
+  role   = aws_iam_role.pcloud-rs_host.name
+  policy = data.aws_iam_policy_document.pcloud-rs_kms.json
+}
+</code></pre>
+<p>For Vault:</p>
+<pre><code class="language-hcl">resource "vault_mount" "transit_pcloud-rs" { path = "transit"; type = "transit" }
+resource "vault_transit_secret_backend_key" "pcloud-rs" {
+  backend = vault_mount.transit_pcloud-rs.path
+  name    = "pcloud-rs-wrap"
+  type    = "aes256-gcm96"
+  deletion_allowed = false
+}
+</code></pre>
+<p><code>VAULT_TOKEN</code> is delivered via systemd <code>LoadCredential=</code> or the
+<code>vault-agent</code> sidecar — <strong>not</strong> the pcloud-rs config file.</p>
+<h2 id="11-verification"><a class="header" href="#11-verification">11. Verification</a></h2>
+<ol>
+<li><strong>NullKms unless configured</strong> — start pcloudcd without
+<code>[crypto.kms]</code>; <code>pcloudc crypto status</code> must print <code>provider=null</code>
+(see <code>crates/pcloud-kms/src/lib.rs:278</code>).</li>
+<li><strong>Cache TTL</strong> — two back-to-back decrypts of the same DEK must
+produce exactly one CloudTrail <code>kms:Decrypt</code> event within the
+<code>cache_ttl_seconds</code> window. Cross-check
+<code>crates/pcloud-kms/src/lib.rs:198</code>.</li>
+<li><strong>Credential prohibition</strong> — try setting <code>aws_access_key_id</code> in
+<code>[crypto.kms]</code>; the config loader must reject it at parse time.</li>
+<li><strong>Feature gating</strong> — <code>cargo check -p pcloud-kms</code> (default features)
+must not pull in <code>aws-sdk-kms</code> or <code>vault-client</code> transitively.</li>
+<li><strong>Tokio bridge</strong> — under a non-tokio caller (sync CLI), a single
+<code>generate_dek()</code> must succeed; confirmation via <code>cargo test -p pcloud-kms --features aws aws_generate_dek_from_sync</code>.</li>
+</ol>
+<h2 id="12-failure-modes--remediation"><a class="header" href="#12-failure-modes--remediation">12. Failure modes + remediation</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symptom / <code>KmsError</code></th><th>Root cause</th><th>Remediation</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ProviderUnavailable</code></td><td>AWS throttling, Vault sealed, PKCS#11 token absent</td><td>Consult offline cache; alert ops. Do <strong>not</strong> auto-fallback to a weaker provider.</td></tr>
+<tr><td><code>KeyNotFound</code></td><td>CMK revoked or Vault key deleted</td><td>Escalate immediately; any cached DEKs continue to work for <code>cache_ttl_seconds</code> only.</td></tr>
+<tr><td><code>IamDenied</code></td><td>Missing <code>kms:Decrypt</code> on the role</td><td>Fix the IAM policy per §3 / §10.</td></tr>
+<tr><td>Credentials in config</td><td>Operator pasted an AWS key</td><td>Config load error; scrub key from <code>git log</code>, rotate.</td></tr>
+<tr><td><code>Pkcs11Hsm</code> returns <code>Unimplemented</code></td><td>Feature is a stub today</td><td>Track <code>pcloud-kms</code> tracker; no production use.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="13-honest-limitations-pre-alpha"><a class="header" href="#13-honest-limitations-pre-alpha">13. Honest limitations (pre-alpha)</a></h2>
+<ul>
+<li><strong>CryptoShell DEK routing is wired and tested.</strong> <code>NullKms</code> remains
+the compiled-in default (single-user deployments); when a real
+provider is injected via <code>set_kms_provider</code>, <code>seal_sector</code> /
+<code>open_sector</code> route per-file key derivation through the KMS-wrapped
+DEK via <code>derive_sector_file_key</code> → <code>unwrap_active_dek</code> →
+<code>KmsProvider::unwrap_cached</code>. <code>enable_kms_mode</code> generates a fresh
+32-byte DEK from the OS CSPRNG and wraps it through the injected
+provider. <code>stop()</code> evicts the cache so the plaintext DEK does not
+outlive the session. Config <code>[crypto].mode = "raw" | "kms"</code> gates
+the path; <code>mode = "kms"</code> requires a non-null <code>[crypto.kms]</code> block
+(validated at load time by <code>CryptoConfig::validate</code>). Integration
+tests in <code>pcloud-crypto/tests/kms_routing.rs</code> cover: NullKms raw
+regression, mock-provider KMS round-trip with cache TTL proof,
+enable/seal/open/stop/restart/re-open cycle, and reset-reverts-to-raw.</li>
+<li><strong><code>Pkcs11Hsm</code> is a stub</strong> — the struct exists
+(<code>crates/pcloud-kms/src/lib.rs:677</code>), method bodies return
+<code>KmsError::Unimplemented</code>.</li>
+<li><strong>No HSM signing use case is shipped.</strong> KMS providers are used only
+for DEK wrap/unwrap. Do not route signing keys through this trait;
+that belongs in a future <code>SigningProvider</code> trait.</li>
+<li><strong>Credentials-in-config is a design prohibition</strong>, not a detected
+runtime drift. Review gates enforce it.</li>
+</ul>
+<h2 id="14-extension-points"><a class="header" href="#14-extension-points">14. Extension points</a></h2>
+<ul>
+<li><strong>New provider</strong> (GCP KMS, Azure Key Vault). Add a Cargo feature,
+implement <code>KmsProvider</code> (<code>crates/pcloud-kms/src/lib.rs:158</code>). Never
+read credentials from the config file — always from the platform’s
+native credential chain (workload identity, metadata service,
+managed identity).</li>
+<li><strong>Custom cache policy.</strong> Override <code>unwrap_cached</code> for a provider
+with short-TTL DEKs. The default impl lives at
+<code>crates/pcloud-kms/src/lib.rs:198</code> and is sufficient for most
+providers.</li>
+<li><strong>HSM signing.</strong> Out of scope for <code>KmsProvider</code>. File a design note
+and propose <code>SigningProvider</code>; do not bolt signing onto this trait.</li>
+</ul>
+<h2 id="15-cross-refs"><a class="header" href="#15-cross-refs">15. Cross-refs</a></h2>
+<ul>
+<li>CLI: <code>docs/book/src/cli/crypto.md</code></li>
+<li>Runbook — KMS outage: <code>docs/runbooks/kms-outage.md</code></li>
+<li>Crypto module: <code>crates/pcloud-crypto/src/lib.rs</code></li>
+<li>Data residency companion: <code>docs/enterprise/data-residency.md</code> (owned
+by another agent)</li>
+<li>Parity row: <code>C_FEATURE_PARITY_MATRIX.csv</code>
+(<code>crypto.kms.*</code> rows — <code>Rejected</code> on legacy C, net-new in Rust)</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../enterprise/ha.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../enterprise/tracing.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../enterprise/ha.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../enterprise/tracing.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

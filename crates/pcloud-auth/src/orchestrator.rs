@@ -243,7 +243,7 @@ where
                 user_id,
                 ..
             } => {
-                let auth_token = SecretString::new(auth_token);
+                // CLAUDEREV iter-1 SEC-H fix: auth_token arrives as SecretString from proto.
                 let userinfo = self.api.userinfo(auth_token.expose_secret())?;
                 let event = session.apply(AuthCommand::MarkAuthenticated {
                     user_id: userinfo.user_id.or(user_id).map(UserId::new),
@@ -259,8 +259,7 @@ where
                 challenge_token,
                 trust_device,
                 ..
-            } => Ok(session
-                .issue_two_factor_challenge(SecretString::new(challenge_token), trust_device)),
+            } => Ok(session.issue_two_factor_challenge(challenge_token, trust_device)),
             PasswordLoginOutcome::Failed { message, .. } => session
                 .apply(AuthCommand::MarkAuthenticationFailed { message })
                 .map_err(Into::into),
@@ -362,7 +361,7 @@ where
                 user_id,
                 ..
             } => {
-                let auth_token = SecretString::new(auth_token);
+                // CLAUDEREV iter-1 SEC-H fix: auth_token arrives as SecretString from proto.
                 let userinfo = self.api.userinfo(auth_token.expose_secret())?;
                 let event = session.apply(AuthCommand::MarkAuthenticated {
                     user_id: userinfo.user_id.or(user_id).map(UserId::new),
@@ -378,8 +377,7 @@ where
                 challenge_token,
                 trust_device,
                 ..
-            } => Ok(session
-                .issue_two_factor_challenge(SecretString::new(challenge_token), trust_device)),
+            } => Ok(session.issue_two_factor_challenge(challenge_token, trust_device)),
             PasswordLoginOutcome::Failed { message, .. } => {
                 // Preserve `pending_challenge` so the caller can retype
                 // the code against the SAME server-side challenge token.
@@ -429,7 +427,7 @@ where
                 user_id,
                 ..
             } => {
-                let auth_token = SecretString::new(auth_token);
+                // CLAUDEREV iter-1 SEC-H fix: auth_token arrives as SecretString from proto.
                 let userinfo = self.api.userinfo(auth_token.expose_secret())?;
                 let event = session.apply(AuthCommand::MarkAuthenticated {
                     user_id: userinfo.user_id.or(user_id).map(UserId::new),
@@ -445,8 +443,7 @@ where
                 challenge_token,
                 trust_device,
                 ..
-            } => Ok(session
-                .issue_two_factor_challenge(SecretString::new(challenge_token), trust_device)),
+            } => Ok(session.issue_two_factor_challenge(challenge_token, trust_device)),
             PasswordLoginOutcome::Failed { message, .. } => session
                 .apply(AuthCommand::MarkAuthenticationFailed { message })
                 .map_err(Into::into),

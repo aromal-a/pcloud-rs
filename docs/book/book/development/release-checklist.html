@@ -1,0 +1,818 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Release Checklist - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/development/release-checklist.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="cross-platform-release-checklist"><a class="header" href="#cross-platform-release-checklist">Cross-Platform Release Checklist</a></h1>
+<blockquote>
+<p><strong>Honesty note:</strong> <code>pcloud-rs-rust</code> is <strong>pre-alpha</strong>. There is <strong>no release
+tag yet</strong>. The current development tree is not a clean integrated release
+commit, the SDK is not published, and native/package qualification remains
+incomplete. Every entry in
+<code>CHANGELOG.md</code> lives under <code>[Unreleased]</code>. This page is the standing
+gauntlet that will apply when the first tag is cut — read it, test it
+against dry-runs, but do <strong>not</strong> cut <code>v0.1.0-alpha.1</code> until every blocking row
+below is genuinely green.</p>
+<p>When the first tag lands, promote the header to the released version and
+open a retro bead with any step that had to be hand-patched.</p>
+</blockquote>
+<h2 id="1-purpose"><a class="header" href="#1-purpose">1. Purpose</a></h2>
+<p>This page is the complete pre-release gauntlet for the project. Release
+managers use it as the on-duty runbook; maintainers reference it when
+reviewing release-preparation PRs. Every row states:</p>
+<ul>
+<li><strong>why it matters</strong> (the specific incident class it prevents),</li>
+<li><strong>exact command</strong> (so there is no tribal-knowledge gap),</li>
+<li><strong>gate status</strong> (<code>blocking</code>, <code>warning</code>, or <code>informational</code>).</li>
+</ul>
+<p>A release manager on duty owns every blocking row. If a step cannot be
+completed, the release does not ship — open a bead and reschedule.</p>
+<h2 id="2-prerequisites"><a class="header" href="#2-prerequisites">2. Prerequisites</a></h2>
+<h3 id="toolchain-pin"><a class="header" href="#toolchain-pin">Toolchain pin</a></h3>
+<ul>
+<li><code>rust-toolchain.toml</code>: exact <code>channel = "1.91.0"</code>, components
+<code>clippy, rustfmt</code>.</li>
+<li>Workspace <code>Cargo.toml</code>: <code>edition = "2024"</code>, <code>rust-version = "1.89"</code>.</li>
+<li><code>pcloud-plugin-wasmtime</code> is the sole MSRV exception at Rust 1.91 because the
+advisory-fixed Wasmtime 43 line requires it. CI checks the portable
+workspace-minus-Wasmtime at 1.89 and that isolated plugin at 1.91.</li>
+<li>Release builds use <code>--profile release-repro</code> (inherits from
+<code>release-dist</code>; see <code>reproducible-builds.md</code>).</li>
+</ul>
+<h3 id="system-dependencies"><a class="header" href="#system-dependencies">System dependencies</a></h3>
+<ul>
+<li><code>gpg</code> (≥ 2.2) — for tag and <code>SHA256SUMS.asc</code> signing.</li>
+<li><code>cargo-deny</code> — license / advisory / sources audit.</li>
+<li><code>cargo-audit</code> — RustSec advisory database check.</li>
+<li><code>cargo-llvm-cov</code> — coverage reporting; the scheduled/manual CI job hard-gates
+the workspace and critical-crate floors, and the release manager repeats it.</li>
+<li><code>cargo-mutants</code> (weekly; not on the blocking path).</li>
+<li><code>mdbook</code> — build the contributor handbook artefact.</li>
+<li><code>cargo-deb</code>, <code>cargo-generate-rpm</code>, <code>linuxdeploy</code> — Linux packaging.</li>
+<li><code>WiX</code> (Windows), Developer ID + <code>notarytool</code> (macOS).</li>
+<li><code>fuse3</code> headers — only if the release includes <code>pcloud-fs</code> mount binary.</li>
+</ul>
+<p>Verify once on the release host:</p>
+<pre><code class="language-sh">rustc --version
+cargo deny --version
+cargo audit --version
+cargo llvm-cov --version
+mdbook --version
+gpg --list-secret-keys release@pcloud-rs.example
+</code></pre>
+<h2 id="3-conceptual-preamble--where-a-release-sits-in-the-lifecycle"><a class="header" href="#3-conceptual-preamble--where-a-release-sits-in-the-lifecycle">3. Conceptual preamble — where a release sits in the lifecycle</a></h2>
+<pre><code> bead close      parity proof      tag cut       repro build     sign
+ ────────▶  ──────────────────▶  ─────────▶  ───────────────▶  ────▶
+              (bd-1du.10)                    (release-repro)
+                                                    │
+                                                    ▼
+                                            smoke tests on clean VMs
+                                                    │
+                                                    ▼
+                                             package managers PRs
+                                                    │
+                                                    ▼
+                                              announcement + retro
+</code></pre>
+<p>A release is a distinct supply-chain artefact, not a commit. The steps below
+are what separates a commit from an artefact trustworthy enough to ship.</p>
+<h2 id="4-detailed-walkthrough"><a class="header" href="#4-detailed-walkthrough">4. Detailed walkthrough</a></h2>
+<h3 id="40-pre-flight-blocking"><a class="header" href="#40-pre-flight-blocking">4.0 Pre-flight (blocking)</a></h3>
+<ul>
+<li><input disabled="" type="checkbox"> All <code>bd-1du.*</code> parity beads relevant to the release are closed.
+<strong>In particular</strong>, <code>bd-1du.10</code> must be satisfied — no release that
+claims parity may ship without it.</li>
+<li><input disabled="" type="checkbox"> <code>CLAUDE.md</code>, <code>STATUS.md</code>, <code>C_FEATURE_PARITY_MATRIX.csv</code>,
+and <code>C_FEATURE_PARITY_REVIEW.md</code> agree on the feature state. If
+they disagree, stop and reconcile; <code>STATUS.md</code> wins.</li>
+<li><input disabled="" type="checkbox"> No open <code>P0</code> bead in any subsystem.</li>
+<li><input disabled="" type="checkbox"> <code>git status --porcelain</code> is empty. The tag candidate contains no
+unstaged, staged-but-uncommitted, or untracked release input.</li>
+<li><input disabled="" type="checkbox"> The focused <code>pcloud-sdk</code> has an intentional SemVer and a reviewed public
+API diff. Publish and verify the dependency chain in order:
+<code>pcloud-model</code> -&gt; <code>pcloud-ipc</code> -&gt; <code>pcloud-sdk</code>. For each crate, run
+<code>cargo package --locked</code>, publish from the clean tag candidate, wait for
+registry indexing, then verify a fresh project can resolve the registry
+package without workspace paths. The broad <code>pcloud-embedded-sdk</code> remains
+<code>publish = false</code> and is not part of this chain.</li>
+</ul>
+<p><em>Why:</em> a release whose own dossier lies is an outage waiting to happen. The
+one-file mismatch between <code>STATUS.md</code> and the matrix is the most common
+source of false parity claims in this tree.</p>
+<h3 id="41-source-tree--the-gauntlet-blocking"><a class="header" href="#41-source-tree--the-gauntlet-blocking">4.1 Source tree — the gauntlet (blocking)</a></h3>
+<pre><code class="language-sh">cd .
+cargo fmt --all --check
+cargo check  --workspace --all-targets --locked
+cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo test   --workspace --locked
+cargo doc    --workspace --locked --no-deps --document-private-items
+cargo audit  --deny warnings \
+  --ignore RUSTSEC-2023-0071
+cargo deny   --locked check
+</code></pre>
+<p>Row-by-row:</p>
+<ul>
+<li>
+<p><input disabled="" type="checkbox"> <strong><code>cargo fmt --all --check</code></strong> — deterministic diff discipline.
+<em>Prevents:</em> bikeshed reviewer comments delaying the tag window.</p>
+</li>
+<li>
+<p><input disabled="" type="checkbox"> <strong><code>cargo check --workspace --all-targets --locked</code></strong> — every target,
+every feature combination actually compiles.
+<em>Prevents:</em> “tests compile but the main bin doesn’t on Windows”.</p>
+</li>
+<li>
+<p><input disabled="" type="checkbox"> <strong><code>cargo clippy ... -- -D warnings</code></strong> — zero clippy warnings across
+the workspace. The gate has held at zero across every wave.
+<em>Prevents:</em> the <code>-D warnings</code> erosion that kills code-quality trends.</p>
+</li>
+<li>
+<p><input disabled="" type="checkbox"> <strong><code>cargo test --workspace --locked</code></strong> — unit + integration + doctest
+pyramid. See <code>testing.md</code> for the layer breakdown; use the current
+command output rather than hard-coded historical counts.
+<em>Prevents:</em> regressions that slip past a single-crate test run.</p>
+</li>
+<li>
+<p><input disabled="" type="checkbox"> <strong><code>cargo doc --workspace --no-deps --document-private-items</code></strong> with
+<strong>zero warnings</strong> in rustdoc output. Capture to a file and grep for
+<code>warning:</code> to be safe:</p>
+<pre><code>```sh
+</code></pre>
+</li>
+</ul>
+<p>cargo doc –workspace –locked –no-deps –document-private-items 2&gt;&amp;1 <br>| tee /tmp/doc.log
+! grep -E ‘^warning:’ /tmp/doc.log
+```
+<em>Prevents:</em> dead intra-doc links that break under the mdBook build.</p>
+<ul>
+<li><input disabled="" type="checkbox"> <strong><code>cargo audit --deny warnings ... --ignore &lt;time-boxed IDs&gt;</code></strong> —
+RustSec database clean except for the reviewed exceptions listed in
+<code>audit.toml</code> and mirrored in workflow flags. cargo-audit 0.22 does not
+read <code>audit.toml</code> automatically, so the flags are required.
+<em>Prevents:</em> shipping an unreviewed known-CVE transitive dep.</li>
+<li><input disabled="" type="checkbox"> <strong><code>cargo deny --locked check</code></strong> — licences, advisories, bans, sources (see
+<code>deny.toml</code>; GPL-only families are blocked at the workspace level).
+<em>Prevents:</em> accidental GPL-only dep leaking into an MIT/Apache-2.0
+artefact.</li>
+</ul>
+<h4 id="411-cargo-deny-check-expectations"><a class="header" href="#411-cargo-deny-check-expectations">4.1.1 <code>cargo deny check</code> expectations</a></h4>
+<p><code>deny.toml</code> is the single source of truth for supply-chain policy.
+The release gauntlet expects the following on a clean tree:</p>
+<ul>
+<li><strong>Exit 0.</strong> <code>cargo deny --locked check</code> must print
+<code>advisories ok, bans ok, licenses ok, sources ok</code>. Anything else blocks
+the release.</li>
+<li><strong>No <code>advisory-not-detected</code> warnings.</strong> Every entry in
+<code>[advisories].ignore</code> must still apply to a crate in the current lock
+graph. A stale entry means either the dep is gone (drop the ignore) or
+the advisory moved to a different crate (update the comment). Stale
+entries erode trust in the policy.</li>
+<li><strong>No <code>unmatched-skip</code> warnings.</strong> Every entry under <code>[bans].skip</code> must
+match at least one duplicate. Upgrade cascades routinely resolve
+duplicates; stale <code>skip</code> rows hide genuine new duplicates behind a
+silent free pass.</li>
+<li><strong>Every <code>[advisories].ignore</code> entry carries a <code>review: YYYY-MM-DD</code>
+comment.</strong> The reviewer named at the top of the <code>ignore</code> block sweeps
+the list on that date and either removes the entry or re-stamps it with
+a new review date and a one-line justification for the extension.</li>
+<li><strong><code>[bans].multiple-versions = "warn"</code>, justified.</strong> The current policy
+is intentionally <code>"warn"</code> (not <code>"deny"</code>) because four upstream stacks
+(AWS SDK, zbus/secret-service, regorus, Windows target graph) pin
+incompatible majors that we do not control. The justification comment
+in <code>deny.toml</code> lists each stack and its upstream tracker. <strong>Flipping to
+<code>"deny"</code> requires</strong> at least one of those stacks to collapse a major
+<strong>and</strong> an audit of the remaining <code>skip</code> list to remove any entries
+that become stale. Do not change the policy without updating the
+comment.</li>
+<li><strong><code>[bans].wildcards = "deny"</code> with <code>allow-wildcard-paths = true</code>.</strong> Path
+deps inside the workspace legitimately use <code>version = "*"</code>; external
+wildcards still hard-fail. Do not relax either knob.</li>
+<li><strong><code>audit.toml</code> mirrors the workflow ignore flags.</strong> cargo-audit does
+not read <code>audit.toml</code> automatically in the current CLI path, so
+<code>cargo xtask host</code> passes the reviewed RustSec IDs as explicit <code>--ignore</code>
+flags. If you add an advisory exception, update <code>audit.toml</code>, <code>deny.toml</code>,
+and the xtask audit invocation in the same change.</li>
+</ul>
+<p>Sweep command used by the release manager to verify the above:</p>
+<pre><code class="language-sh">cd .
+cargo deny --locked check 2&gt;&amp;1 | tee /tmp/deny.log
+! grep -E 'advisory-not-detected|unmatched-skip' /tmp/deny.log
+</code></pre>
+<p>If either of those two warning classes fires, the deny policy is out of
+date — fix it in the release PR, not in a follow-up.</p>
+<h3 id="42-coverage-blocking"><a class="header" href="#42-coverage-blocking">4.2 Coverage (blocking)</a></h3>
+<pre><code class="language-sh">cargo xtask coverage
+</code></pre>
+<ul>
+<li><input disabled="" type="checkbox"> Workspace line floor: <strong>≥ 90 %</strong>. See <code>testing.md §6</code>. A current
+successful local run is mandatory.</li>
+<li><input disabled="" type="checkbox"> Per-crate floors override the workspace number for security-critical
+crates: <code>pcloud-secret 90 %</code>, <code>pcloud-crypto 85 %</code>,
+<code>pcloud-auth 85 %</code>, <code>pcloud-resilience 80 %</code>, <code>pcloud-ipc 80 %</code>.</li>
+<li><input disabled="" type="checkbox"> The floor never lowers automatically; if a release requires a
+temporary dip, land an explicit commit updating
+<code>ci/coverage-floor.toml</code> with a changelog entry first.</li>
+</ul>
+<p><em>Why:</em> coverage is a crude but leading indicator. A drop on a release tag is
+the single strongest signal of deletion-without-replacement.</p>
+<h3 id="43-benchmark-regression-guard-manual-target-not-automated"><a class="header" href="#43-benchmark-regression-guard-manual-target-not-automated">4.3 Benchmark regression guard (manual target; not automated)</a></h3>
+<pre><code class="language-sh">cargo bench -p pcloud-fs --bench chunked_flush
+cargo bench -p pcloud-fs --bench page_cache
+cargo bench -p pcloud-embedded-sdk --bench upload_session
+</code></pre>
+<ul>
+<li><input disabled="" type="checkbox"> Compare against <code>target/criterion/</code> baselines committed to the
+release branch. <strong>No benchmark regresses more than 10%</strong> versus the
+previous release baseline. No GitHub Actions benchmark workflow
+exists today, so this is a manual release-manager check until a
+baseline/threshold workflow lands.</li>
+<li><input disabled="" type="checkbox"> Any regression between 5 % and 10 % is a <strong>warning</strong>: document it in
+the release ticket and the CHANGELOG <code>### Performance</code> bullet.</li>
+<li><input disabled="" type="checkbox"> See <code>architecture/performance.md</code> for the wave-1 optimisation dossier
+and the expected numbers per benchmark.</li>
+</ul>
+<p><em>Why:</em> we tightened the page cache and chunked flush paths deliberately; a
+silent regression there undoes months of work.</p>
+<h3 id="44-documentation-build-blocking"><a class="header" href="#44-documentation-build-blocking">4.4 Documentation build (blocking)</a></h3>
+<pre><code class="language-sh">mdbook build docs/book
+</code></pre>
+<ul>
+<li><input disabled="" type="checkbox"> mdBook builds clean with <strong>zero warnings</strong>.</li>
+<li><input disabled="" type="checkbox"> Every code snippet with a language tag must actually compile or be
+marked <code>text</code>. The current workflow runs <code>mdbook build</code>; snippet
+compile-checking must not be claimed until a dedicated checker lands.</li>
+<li><input disabled="" type="checkbox"> <code>docs/book/book/</code> artefact is deterministic — same <code>SOURCE_DATE_EPOCH</code>
+applies here too.</li>
+</ul>
+<p><em>Why:</em> a docs build that warns in CI is a docs build that breaks for
+downstream packagers who script over it.</p>
+<h3 id="45-rustdoc-sanity-blocking"><a class="header" href="#45-rustdoc-sanity-blocking">4.5 Rustdoc sanity (blocking)</a></h3>
+<ul>
+<li><input disabled="" type="checkbox"> <code>cargo doc --workspace --no-deps --document-private-items</code> emits
+<strong>0 warnings</strong>. The gate is already folded into §4.1 but repeated
+here because it’s a frequent miss on release day when a private
+item’s docs drift.</li>
+</ul>
+<h3 id="46-parity-matrix-blocking"><a class="header" href="#46-parity-matrix-blocking">4.6 Parity matrix (blocking)</a></h3>
+<ul>
+<li><input disabled="" type="checkbox"> <code>C_FEATURE_PARITY_MATRIX.csv</code>: row counts match <code>STATUS.md</code>.</li>
+<li><input disabled="" type="checkbox"> No row regressed from <code>Implemented</code> → <code>Partial</code> since the previous
+release baseline. Additions and closures are fine; the matrix must
+be <strong>unchanged or growing</strong>.</li>
+<li><input disabled="" type="checkbox"> <code>REJECTED-RATIONALES-14042026.md</code> covers every <code>Rejected</code> row with a
+dated justification.</li>
+<li><input disabled="" type="checkbox"> <code>C_FEATURE_PARITY_REVIEW.md</code> narrative agrees with the matrix.</li>
+</ul>
+<p><em>Why:</em> the parity matrix is the single audit artefact downstream auditors
+will consult. A silent regression there is worse than a missing feature.</p>
+<h3 id="47-live-e2e-target-blocking-current-ci-advisory"><a class="header" href="#47-live-e2e-target-blocking-current-ci-advisory">4.7 Live E2E (target blocking; current CI advisory)</a></h3>
+<pre><code class="language-sh">PCLOUD_LIVE_E2E=1 \
+PCLOUD_TEST_USER=staging-bot@example.com \
+PCLOUD_TEST_PASSWORD=… \
+cargo test -p pcloud-live-e2e --locked -- --ignored --test-threads=1
+</code></pre>
+<ul>
+<li><input disabled="" type="checkbox"> Green against the <strong>staging</strong> pCloud account within the last 24 h.</li>
+<li><input disabled="" type="checkbox"> TFA smoke case included for any release touching <code>pcloud-auth</code>.</li>
+<li><input disabled="" type="checkbox"> Credentials come from the release team’s 1Password vault only;
+never from a personal account.</li>
+</ul>
+<h3 id="48-changelog--version-bump-blocking"><a class="header" href="#48-changelog--version-bump-blocking">4.8 CHANGELOG + version bump (blocking)</a></h3>
+<p><strong>Version bump policy</strong> (SemVer, with pre-alpha caveat):</p>
+<ul>
+<li><strong>Pre-1.0</strong>: <code>0.MINOR.PATCH</code>. Breaking IPC changes bump <code>MINOR</code>; backwards
+compatible additions and bug fixes bump <code>PATCH</code>. Pre-release tags carry a
+<code>-alpha.N</code> / <code>-beta.N</code> suffix.</li>
+<li><strong>1.0 onward</strong>: strict SemVer. IPC wire breakage is a major bump.</li>
+</ul>
+<p>Bump instructions:</p>
+<pre><code class="language-sh"># Edit [workspace.package].version in Cargo.toml.
+cargo check --workspace --locked   # regenerates Cargo.lock; commit it.
+</code></pre>
+<p>CHANGELOG template (append a new dated block above <code>[Unreleased]</code>):</p>
+<pre><code class="language-md">## [0.1.0-alpha.1] — YYYY-MM-DD
+
+### Added
+- …
+
+### Changed
+- …
+
+### Fixed
+- …
+
+### Security
+- …
+
+### Known limitations
+- `bd-1du.4` FUSE mount parity still gated behind the `fuse-mount` feature.
+</code></pre>
+<ul>
+<li><input disabled="" type="checkbox"> Every bullet cites its PR / bead / CVE.</li>
+<li><input disabled="" type="checkbox"> No placeholder lines.</li>
+</ul>
+<h3 id="49-tag-cut-blocking"><a class="header" href="#49-tag-cut-blocking">4.9 Tag cut (blocking)</a></h3>
+<pre><code class="language-sh">git tag -s v&lt;version&gt; -m "Release v&lt;version&gt;"
+git push origin v&lt;version&gt;
+</code></pre>
+<ul>
+<li><input disabled="" type="checkbox"> Tag is GPG-signed with the release key.</li>
+<li><input disabled="" type="checkbox"> Tag commit is <code>main</code> HEAD after the release PR lands — not a detached
+commit.</li>
+</ul>
+<h3 id="410-build-phase--per-platform"><a class="header" href="#410-build-phase--per-platform">4.10 Build phase — per platform</a></h3>
+<p>Raw Linux release binaries in <code>.github/workflows/release.yml</code> use
+<code>--profile release-repro</code> with <code>SOURCE_DATE_EPOCH</code> pinned to the tag commit
+time (<code>git log -1 --pretty=%ct</code>). See <code>reproducible-builds.md</code>.</p>
+<p>The <code>.deb</code> / <code>.rpm</code> workflow currently builds with <code>cargo build --release</code>
+because the cargo-deb/cargo-generate-rpm metadata consumes
+<code>target/release/{pcloudd,pcloudc}</code>. Treat those packages as release-candidate
+artefacts until the packaging workflow is switched to the reproducible
+profile or records a separate reproducibility proof.</p>
+<h4 id="linux-x86_64--blocking"><a class="header" href="#linux-x86_64--blocking">Linux (x86_64) — blocking</a></h4>
+<ul>
+<li><input disabled="" type="checkbox"> On the labelled native FUSE runner, execute
+<code>scripts/linux-release-mount-gate.sh</code>. It runs all 16 practical
+real-kernel mount/probe tests serially, the separate 2 GiB
+transient-retry transfer test, and fails if a pcloud-rs mount remains.</li>
+<li><input disabled="" type="checkbox"> Build under the release container (Debian stable + pinned toolchain)
+for glibc compatibility.</li>
+<li><input disabled="" type="checkbox"> Current CI artefacts: raw <code>pcloudd</code> and <code>pcloudc</code> binaries, CycloneDX
+and SPDX SBOMs, <code>.deb</code>, <code>.rpm</code>, and checksum files.</li>
+<li><input disabled="" type="checkbox"> AppImage, Flatpak, Snap, Docker, and aarch64 release artefacts are not
+produced. macOS and Windows jobs exist but count only after their native
+live-mount, signing, and publication steps are green for this tag.</li>
+<li><input disabled="" type="checkbox"> <code>ldd</code> confirms no unexpected dynamic deps.</li>
+<li><input disabled="" type="checkbox"> <code>readelf -n</code> confirms deterministic build-id or absent per policy.</li>
+</ul>
+<h4 id="macos-universal--blocking-only-when-macos-is-promoted-into-scope"><a class="header" href="#macos-universal--blocking-only-when-macos-is-promoted-into-scope">macOS (universal) — blocking only when macOS is promoted into scope</a></h4>
+<ul>
+<li><input disabled="" type="checkbox"> <code>MACOSX_DEPLOYMENT_TARGET=12.0</code>.</li>
+<li><input disabled="" type="checkbox"> Lipo-joined <code>.pkg</code>, signed with Developer ID Application cert,
+notarised via <code>xcrun notarytool submit --wait</code>, stapled.</li>
+<li><input disabled="" type="checkbox"> <code>spctl -a -vv</code> reports accepted.</li>
+</ul>
+<h4 id="windows-x86_64--blocking-only-when-windows-is-promoted-into-scope"><a class="header" href="#windows-x86_64--blocking-only-when-windows-is-promoted-into-scope">Windows (x86_64) — blocking only when Windows is promoted into scope</a></h4>
+<ul>
+<li><input disabled="" type="checkbox"> MSI via WiX, signed with the EV HSM-backed cert.</li>
+<li><input disabled="" type="checkbox"> SmartScreen submission for new version families.</li>
+</ul>
+<h4 id="bsd-ports--informational"><a class="header" href="#bsd-ports--informational">BSD ports — informational</a></h4>
+<ul>
+<li><input disabled="" type="checkbox"> Source tarball published; ports committers notified.</li>
+</ul>
+<h3 id="411-integrity-and-signatures-blocking"><a class="header" href="#411-integrity-and-signatures-blocking">4.11 Integrity and signatures (blocking)</a></h3>
+<pre><code class="language-sh">sha256sum pcloud-rs-*.{tar.xz,deb,rpm,AppImage,pkg,msi} &gt; SHA256SUMS
+gpg --detach-sign --armor SHA256SUMS
+</code></pre>
+<ul>
+<li>
+<p><input disabled="" type="checkbox"> If a GPG release key is used, it is distinct from platform code-signing
+certs and its public half is in <code>SECURITY.md</code> and on <code>keys.openpgp.org</code>.
+Current CI uses cosign for raw binaries/SBOMs and does not emit GPG
+package signatures.</p>
+</li>
+<li>
+<p><input disabled="" type="checkbox"> Verify the signature from a fresh checkout on a clean VM before
+proceeding:</p>
+<pre><code>```sh
+gpg --verify SHA256SUMS.asc SHA256SUMS
+sha256sum -c SHA256SUMS
+```
+</code></pre>
+</li>
+<li>
+<p><input disabled="" type="checkbox"> <strong>CI release pipelines (blocking for what they publish).</strong>
+<code>.github/workflows/release.yml</code> runs <code>release-candidate</code> first
+(<code>fmt</code>, <code>check</code>, <code>clippy -D warnings</code>, <code>test</code>, <code>doc</code>, <code>mdbook</code>,
+<code>cargo audit --deny warnings</code>
+with the <code>audit.toml</code> exceptions mirrored as <code>--ignore</code> flags,
+and <code>cargo deny --locked check</code>), then builds raw Linux x86_64 <code>pcloudd</code> and
+<code>pcloudc</code> binaries plus SBOMs. The signing job emits cosign detached
+signatures for the raw binaries, their <code>.sha256</code> files, and the SBOMs.
+Keyless signing also emits <code>&lt;file&gt;.pem</code> certificates.</p>
+<pre><code>```sh
+cosign verify-blob \
+  --certificate-identity-regexp "https://github.com/${REPO}/.github/workflows/release.yml@.*" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --signature &lt;file&gt;.sig --certificate &lt;file&gt;.pem &lt;file&gt;
+```
+
+`.github/workflows/release-packaging.yml` runs the same source gate and a
+strict Linux FUSE gate before building Linux and Tier-2 NAS candidates.
+Its Windows job requires signing credentials and signs the executables,
+MSI, and Burn bundle. Its self-hosted macOS job requires fuse-t, runs live
+mounts, signs and notarizes the package, and assesses it before upload.
+Linux package GPG signing remains conditional on configured secrets, and
+the workflow does not produce SLSA provenance or Docker images. Existing
+job definitions are not evidence: require a green run for the tag.
+</code></pre>
+</li>
+<li>
+<p><input disabled="" type="checkbox"> <strong>Supply-chain PR gates (blocking, per commit).</strong> Confirm the
+current workflow jobs are green on the release commit:
+<code>.github/workflows/ci.yml</code> (<code>test-linux</code>, <code>mdbook</code>, <code>cargo-doc</code>)
+and <code>.github/workflows/security.yml</code> (<code>audit</code>, <code>deny</code>). The release
+workflow repeats <code>cargo audit --deny warnings</code> and
+<code>cargo deny --locked check</code>
+before any publish job can run.</p>
+</li>
+<li>
+<p><input disabled="" type="checkbox"> <strong>Native signing paths.</strong> Apple Developer ID/notarization and Windows
+Authenticode jobs are strict and require their release secrets. A missing
+credential or failed signature blocks the corresponding public artifact;
+do not substitute an unsigned candidate. Raw Linux binaries and SBOMs
+continue to use cosign keyless signatures.</p>
+</li>
+</ul>
+<h3 id="412-publication-blocking"><a class="header" href="#412-publication-blocking">4.12 Publication (blocking)</a></h3>
+<ul>
+<li><input disabled="" type="checkbox"> GitHub Release from the signed tag; title <code>v&lt;version&gt;</code>.</li>
+<li><input disabled="" type="checkbox"> Upload every artefact plus the signature/checksum files the workflows
+actually emit. Current state: raw binary <code>.sha256</code>, raw binary/SBOM
+<code>.sig</code> and keyless <code>.pem</code>, and package <code>SHA256SUMS</code> without a detached
+package signature.</li>
+<li><input disabled="" type="checkbox"> Paste the <code>CHANGELOG.md</code> block into the release notes.</li>
+<li><input disabled="" type="checkbox"> Mark pre-releases as such; only promote to “Latest” after §4.14 smoke
+tests pass.</li>
+</ul>
+<h3 id="413-package-manifests--warning-async"><a class="header" href="#413-package-manifests--warning-async">4.13 Package manifests — warning (async)</a></h3>
+<p>Each may land asynchronously. None block the tag.</p>
+<ul>
+<li><input disabled="" type="checkbox"> Homebrew tap (<code>pcloud-rs.rb</code>).</li>
+<li><input disabled="" type="checkbox"> Chocolatey (<code>pcloud-rs.nuspec</code>, <code>chocolateyinstall.ps1</code>).</li>
+<li><input disabled="" type="checkbox"> winget (<code>manifests/e/ezechiel203/pcloud-rs/&lt;version&gt;/</code>).</li>
+<li><input disabled="" type="checkbox"> Debian APT repo (<code>reprepro includedeb</code>).</li>
+<li><input disabled="" type="checkbox"> RPM YUM repo (<code>createrepo_c</code> + sign <code>repomd.xml</code>).</li>
+<li><input disabled="" type="checkbox"> BSD ports notifications.</li>
+</ul>
+<h3 id="414-post-release-smoke-tests-blocking"><a class="header" href="#414-post-release-smoke-tests-blocking">4.14 Post-release smoke tests (blocking)</a></h3>
+<ul>
+<li><input disabled="" type="checkbox"> Debian 12 VM: <code>apt install pcloud-rs</code>, <code>pcloud-rs --version</code>, login +
+sync smoke.</li>
+<li><input disabled="" type="checkbox"> Fedora 40 VM: <code>dnf install</code>, same smoke.</li>
+<li><input disabled="" type="checkbox"> macOS 14 VM: <code>.pkg</code> install, smoke.</li>
+<li><input disabled="" type="checkbox"> Windows 11 VM: MSI install, smoke.</li>
+<li><input disabled="" type="checkbox"> Auto-update channel (if applicable) sees the new version.</li>
+</ul>
+<h3 id="415-announcement--informational"><a class="header" href="#415-announcement--informational">4.15 Announcement — informational</a></h3>
+<ul>
+<li><input disabled="" type="checkbox"> Website download page.</li>
+<li><input disabled="" type="checkbox"> Blog post.</li>
+<li><input disabled="" type="checkbox"> Mastodon / X / LinkedIn with checksum + sig URLs.</li>
+<li><input disabled="" type="checkbox"> <code>pcloud-rs-announce</code> mailing list.</li>
+<li><input disabled="" type="checkbox"> Archive this page to <code>docs/releases/&lt;version&gt;.md</code>.</li>
+</ul>
+<h2 id="5-release-notes-template"><a class="header" href="#5-release-notes-template">5. Release notes template</a></h2>
+<pre><code class="language-md"># pcloud-rs-rust v&lt;version&gt;
+
+&lt;one-line tagline&gt;
+
+## Highlights
+- …
+
+## Breaking changes
+- …
+
+## Security
+- …
+
+## Parity matrix
+- Implemented: &lt;n&gt;
+- Partial:     &lt;n&gt;
+- Rejected:    &lt;n&gt;
+- Missing:     &lt;n&gt;
+
+Full dossier: C_FEATURE_PARITY_MATRIX.csv @ &lt;tag&gt;.
+
+## Verification
+Signed by the workflow-emitted signature files. If a future release also uses
+a GPG key, include its fingerprint here and in `SECURITY.md`.
+Reproduce:
+
+```sh
+export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct v&lt;version&gt;)
+CARGO_PROFILE_RELEASE_REPRO_ACTIVE=1 \
+  cargo auditable build --profile release-repro --locked -p pcloud-cli
+sha256sum target/release-repro/pcloudc
+</code></pre>
+<h2 id="known-limitations"><a class="header" href="#known-limitations">Known limitations</a></h2>
+<ul>
+<li>…</li>
+</ul>
+<pre><code>
+## 6. Rollback plan (incident hooks)
+
+If any step from §4.10 onward fails after artefacts are public:
+
+1. **Mark** the GitHub Release as "Pre-release" or delete it outright if
+   the artefact contains a security defect.
+2. **Advise** users via `pcloud-rs-announce` and a pinned GitHub issue.
+3. **Publish** a security advisory (GHSA) if user-facing impact exists.
+4. **Yank** any broken package-manager PRs before they merge.
+5. **Open** a retro bead linking the failing step; add the lesson to this
+   checklist before the next release.
+
+Package-manager clients that already pulled the broken artefact can be
+blocked by publishing a patched release with the broken version's SHA
+listed as a known-bad in `SECURITY.md`.
+
+## 7. Gate checklist — TL;DR
+
+A one-screen summary maintainers copy into the release ticket:
+
+- [ ] pre-flight bead/matrix/status reconciled
+- [ ] `fmt / check / clippy -D warnings / test / doc / audit / deny` all
+      green
+- [ ] coverage advisory reviewed; no automated release floor exists yet
+- [ ] benchmark manual check reviewed; no workflow baseline exists yet
+- [ ] mdBook + rustdoc 0 warnings
+- [ ] parity matrix unchanged or growing
+- [ ] live E2E green within 24 h
+- [ ] CHANGELOG entry + version bump committed
+- [ ] tag GPG-signed
+- [ ] artefacts built under `release-repro` with pinned
+      `SOURCE_DATE_EPOCH`
+- [ ] emitted signatures/checksums verified on clean VM
+- [ ] GitHub Release uploaded, marked pre-release
+- [ ] smoke tests on 4 clean VMs green
+- [ ] announcement sent
+
+## 8. Common mistakes
+
+- **Tagged without regenerating `Cargo.lock`.** *How reviewers catch it:*
+  the reproducible build on a clean checkout resolves a different graph;
+  the double-build hash diff fails.
+- **Forgot `SOURCE_DATE_EPOCH`.** *How reviewers catch it:* tarball mtimes
+  differ across rebuilds; `diffoscope` surfaces it in CI.
+- **Pushed `v&lt;version&gt;` before the release PR merged.** *How reviewers
+  catch it:* tag commit SHA ≠ `main` HEAD at the time of tagging.
+- **Dropped a parity row silently.** *How reviewers catch it:* the
+  parity-matrix CI diff in §4.6 blocks the PR.
+- **Shipped without `--locked`.** *How reviewers catch it:* `Cargo.lock`
+  regenerates during release build; the double-build verification in
+  `reproducible-builds.md` fails.
+- **Used a personal pCloud account for live E2E.** *How reviewers catch
+  it:* secret scanner in CI flags the credential, release is aborted.
+- **Skipped `cargo deny`.** *How reviewers catch it:* the license-bot PR
+  back-propagates the audit and a GPL-only dep is surfaced retroactively.
+
+## 9. FAQ
+
+**Q: We're pre-alpha with no tag. Why rehearse this?**
+A: Because cutting the first tag is the least forgiving release. Every step
+that fails for the first time at `v0.1.0-alpha.1` cascades into retroactive
+patches.
+
+**Q: What if a benchmark regresses exactly 10%?**
+A: Treat it as a regression. The threshold is `&lt;10%`, not `≤10%`.
+
+**Q: Can a release go out while a native or package gate is missing?**
+A: Only an explicitly labelled development snapshot may do so. A public
+platform-support claim requires every blocking gate for that platform and the
+release notes must list any excluded platform honestly.
+
+**Q: Do package-manager manifests block the tag?**
+A: No. §4.13 is async. The blocking path ends at §4.14 smoke tests.
+
+**Q: What key signs the release?**
+A: Current CI uses cosign keyless blob signatures for raw binaries/SBOMs.
+Linux package GPG signing is conditional on configured release secrets;
+Windows Authenticode and Apple Developer ID/notarization use separate native
+credentials. Every key identity must be documented in `SECURITY.md`.
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../development/reproducible-builds.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../development/adding-a-plugin.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../development/reproducible-builds.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../development/adding-a-plugin.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

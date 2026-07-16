@@ -147,12 +147,18 @@ pub fn backend_label(request: &Request) -> &'static str {
         | Request::CryptoGetFileKey { .. }
         | Request::CryptoMkdir { .. }
         | Request::CryptoChangePassword { .. }
-        | Request::CryptoChangePasswordUnlocked { .. } => "crypto",
+        | Request::CryptoChangePasswordUnlocked { .. }
+        | Request::CryptoFolderEnable { .. }
+        | Request::CryptoFolderDisable { .. }
+        | Request::CryptoFolderList => "crypto",
         Request::SyncRootAdd { .. }
         | Request::SyncRootRemove { .. }
         | Request::SyncRootPause { .. }
         | Request::SyncRootResume { .. }
         | Request::SyncRootChangeType { .. }
+        | Request::SyncExcludeAdd { .. }
+        | Request::SyncExcludeRemove { .. }
+        | Request::SyncExcludeList { .. }
         | Request::GetSyncSuggestions { .. }
         | Request::IsFolderSyncable { .. }
         | Request::RunLocalScan
@@ -193,7 +199,7 @@ pub fn backend_label(request: &Request) -> &'static str {
         | Request::GetFolderFlags { .. }
         | Request::GetFolderOwnerId { .. } => "folder",
         Request::SessionStatus => "session",
-        Request::FilesystemStatus { .. } | Request::FileHistory { .. } => "filesystem",
+        Request::FilesystemStatus { .. } => "filesystem",
         Request::UploadCreate { .. }
         | Request::UploadPause { .. }
         | Request::UploadResume { .. }
@@ -212,7 +218,8 @@ pub fn backend_label(request: &Request) -> &'static str {
         | Request::CreateBackup { .. }
         | Request::StopDevice { .. }
         | Request::DeleteBackupDevice => "backup",
-        Request::CreateTreePublicLinkFromPaths { .. } => "public_link",
+        Request::CreateTreePublicLinkFromPaths { .. }
+        | Request::CreateTreePublicLinkFromPathTargets { .. } => "public_link",
         other => {
             // A Request variant that is not yet listed in backend_label was
             // added without a corresponding label. This is an observability

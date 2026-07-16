@@ -98,7 +98,7 @@
 
 use std::fmt;
 use std::fs;
-use std::io::{BufReader, Read};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -109,6 +109,7 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use pcloud_observability::LockExt;
 use pcloud_secret::ExposeSecret;
 use pcloud_secret::secret_bytes::SecretBytes;
+use rustls::pki_types::{CertificateDer, pem::PemObject};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -681,17 +682,14 @@ impl FleetAgent for MtlsFleetAgent {
 // ---------------------------------------------------------------------------
 
 fn load_ca_bundle(path: &Path) -> Result<rustls::RootCertStore, FleetError> {
-    let file = fs::File::open(path)
-        .map_err(|e| FleetError::Io(format!("open CA bundle {}: {e}", path.display())))?;
-    let mut reader = BufReader::new(file);
     let mut buf = Vec::new();
-    reader
+    fs::File::open(path)
+        .map_err(|e| FleetError::Io(format!("open CA bundle {}: {e}", path.display())))?
         .read_to_end(&mut buf)
         .map_err(|e| FleetError::Io(format!("read CA bundle: {e}")))?;
-    let mut slice = buf.as_slice();
     let mut store = rustls::RootCertStore::empty();
     let mut any = false;
-    for cert in rustls_pemfile::certs(&mut slice) {
+    for cert in CertificateDer::pem_slice_iter(&buf) {
         let cert = cert.map_err(|e| FleetError::Config(format!("parse CA pem: {e}")))?;
         store
             .add(cert)
@@ -720,7 +718,7 @@ mod tests {
     fn mk_ca_bundle(dir: &Path) -> PathBuf {
         // A syntactically valid but not trust-verifiable self-signed cert
         // is sufficient for the offline tests here: we only exercise
-        // parsing through `rustls_pemfile` + `RootCertStore::add`.
+        // parsing through `rustls-pki-types` + `RootCertStore::add`.
         // Generate a minimal DER-encoded self-signed cert at runtime is
         // heavy; instead ship a pre-generated PEM fixture.
         // Pre-generated self-signed ed25519 CA cert. Used only to exercise

@@ -60,7 +60,7 @@
 //! ## Schema migrations
 //!
 //! Migrations are forward-only, idempotent, and data-preserving. The
-//! current schema is [`schema::SCHEMA_VERSION_V11`].
+//! current schema is [`schema::SCHEMA_VERSION_V12`].
 //! [`bootstrap_profile`] reads the database's `PRAGMA user_version`,
 //! calls [`migrations::build_plan`] to produce a
 //! [`migrations::MigrationPlan`], and applies every step needed to
@@ -134,6 +134,8 @@ pub mod integrity;
 pub mod migrations;
 /// Per-table repositories (account, audit, preferences, settings, sync graph, …).
 pub mod repositories;
+/// `SQLITE_BUSY` classification + exponential-backoff retry helper.
+pub mod retry;
 /// Versioned DDL steps and `PRAGMA user_version` helpers.
 pub mod schema;
 /// `BEGIN IMMEDIATE` / `COMMIT` / `ROLLBACK` transaction boundary helpers.
@@ -155,7 +157,7 @@ use migrations::{MigrationError, apply_plan, build_plan};
 use repositories::RepositorySet;
 pub use repositories::diff_state::{DiffStateRecord, DiffStateRepository};
 pub use repositories::file_metadata::{FileMetadataRecord, FileMetadataRepository, StatResult};
-use schema::{SCHEMA_VERSION_V11, read_schema_version, schema_exists};
+use schema::{SCHEMA_VERSION_V12, read_schema_version, schema_exists};
 use tx::TransactionBoundary;
 
 /// Human-readable crate name used by telemetry / logging.
@@ -193,7 +195,7 @@ pub enum StoreError {
 
 /// Open or create the SQLite store at `db_path`, enforce file-system
 /// permissions, apply any outstanding migrations up to
-/// [`schema::SCHEMA_VERSION_V11`], and load the in-memory repository
+/// [`schema::SCHEMA_VERSION_V12`], and load the in-memory repository
 /// snapshot.
 ///
 /// Returns the loaded [`StoreProfile`] together with the integrity
@@ -220,12 +222,12 @@ pub fn bootstrap_profile(db_path: &Path) -> Result<(StoreProfile, IntegrityStatu
     } else {
         0
     };
-    let plan = build_plan(current_version, SCHEMA_VERSION_V11)?;
+    let plan = build_plan(current_version, SCHEMA_VERSION_V12)?;
     apply_plan(&conn, &plan)?;
 
     let schema_version = read_schema_version(&conn)?;
     let integrity =
-        integrity::evaluate_connection_integrity(&conn, schema_version, SCHEMA_VERSION_V11)?;
+        integrity::evaluate_connection_integrity(&conn, schema_version, SCHEMA_VERSION_V12)?;
     let repositories = RepositorySet::load(&conn)?;
 
     Ok((
@@ -262,10 +264,21 @@ pub fn persist_profile(profile: &StoreProfile) -> Result<(), StoreError> {
 ///   `set_int`/`set_uint` hot path ~30× slower than `set_string`.
 /// * `temp_store = MEMORY` — avoids touching the disk for throw-away
 ///   statement temporaries.
+/// * `busy_timeout = 5000` (ms) — installs SQLite's native busy handler so
+///   transient `SQLITE_BUSY` from a competing writer is retried internally
+///   with exponential-backoff sleeps for up to 5 s before being surfaced
+///   to the caller. Applied to **every** connection (pooled and
+///   short-lived) so concurrent short-lived facade callers no longer race
+///   to the first `BEGIN` and lose. Closes the iter-1 SYNC-H-04-5 finding
+///   that the short-lived facade had no busy handler at all and would
+///   propagate `SQLITE_BUSY` immediately on the first contention. Callers
+///   that need an additional Rust-level retry on top of this engine
+///   handler can use [`retry::with_busy_retry`].
 fn tune_connection(conn: &Connection) -> Result<(), rusqlite::Error> {
     conn.pragma_update(None, "foreign_keys", "ON")?;
     conn.pragma_update(None, "synchronous", "NORMAL")?;
     conn.pragma_update(None, "temp_store", "MEMORY")?;
+    conn.busy_timeout(std::time::Duration::from_millis(5000))?;
     Ok(())
 }
 
@@ -784,7 +797,7 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let (profile, integrity) = bootstrap_profile(&path).expect("bootstrap should succeed");
 
-        assert_eq!(profile.schema_version, 11);
+        assert_eq!(profile.schema_version, 12);
         assert_eq!(integrity, crate::integrity::IntegrityStatus::Clean);
         assert_eq!(profile.db_path, path);
     }
@@ -819,6 +832,7 @@ mod tests {
                         remote_path: "/remote-11".to_owned(),
                         paused: false,
                         sync_type: pcloud_model::sync::SyncType::Full,
+                        exclude_globs: Vec::new(),
                     },
                     crate::repositories::sync_graph::SyncRootRecord {
                         sync_id: SyncId::new(12),
@@ -826,6 +840,7 @@ mod tests {
                         remote_path: "/remote-12".to_owned(),
                         paused: false,
                         sync_type: pcloud_model::sync::SyncType::Full,
+                        exclude_globs: Vec::new(),
                     },
                 ],
             },
@@ -880,6 +895,7 @@ mod tests {
                     remote_path: "/remote-11".to_owned(),
                     paused: false,
                     sync_type: pcloud_model::sync::SyncType::Full,
+                    exclude_globs: Vec::new(),
                 }],
             },
         };
@@ -892,6 +908,7 @@ mod tests {
                 remote_path: "/remote-21".to_owned(),
                 paused: false,
                 sync_type: pcloud_model::sync::SyncType::Full,
+                exclude_globs: Vec::new(),
             },
             crate::repositories::sync_graph::SyncRootRecord {
                 sync_id: SyncId::new(21),
@@ -899,6 +916,7 @@ mod tests {
                 remote_path: "/remote-21b".to_owned(),
                 paused: false,
                 sync_type: pcloud_model::sync::SyncType::Full,
+                exclude_globs: Vec::new(),
             },
         ];
         let err = persist_profile(&profile).expect_err("duplicate sync ids should fail");
@@ -1051,5 +1069,66 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(ver, 6);
+    }
+
+    /// T1.1.a: `exclude_globs` round-trips through save/load on v12 schema.
+    #[test]
+    fn sync_root_exclude_globs_roundtrips() {
+        use crate::repositories::sync_graph::{SyncGraphRepository, SyncRootRecord};
+        use pcloud_model::ids::SyncId;
+        use pcloud_model::sync::SyncType;
+
+        let path = temp_db_path("exclude-globs");
+        let _ = std::fs::remove_file(&path);
+        let (mut profile, _) = bootstrap_profile(&path).expect("bootstrap should succeed");
+
+        profile.repositories.sync_graph = SyncGraphRepository {
+            tracked_sync_roots: vec![SyncRootRecord {
+                sync_id: SyncId::new(1),
+                local_path: "/tmp/sel".to_owned(),
+                remote_path: "/Sel".to_owned(),
+                paused: false,
+                sync_type: SyncType::Full,
+                exclude_globs: vec!["*.tmp".to_owned(), "build/**".to_owned()],
+            }],
+        };
+        persist_profile(&profile).expect("persist should succeed");
+
+        let (reloaded, _) = bootstrap_profile(&path).expect("bootstrap reload should succeed");
+        let roots = &reloaded.repositories.sync_graph.tracked_sync_roots;
+        assert_eq!(roots.len(), 1);
+        assert_eq!(roots[0].exclude_globs, vec!["*.tmp", "build/**"]);
+    }
+
+    /// T1.1.a: `apply_schema_v12` is idempotent when `exclude_globs` already exists.
+    #[test]
+    fn migration_v12_is_idempotent_with_preexisting_column() {
+        use crate::schema::{
+            apply_schema_v1, apply_schema_v2, apply_schema_v3, apply_schema_v4, apply_schema_v5,
+            apply_schema_v6, apply_schema_v7, apply_schema_v8, apply_schema_v9, apply_schema_v10,
+            apply_schema_v11, apply_schema_v12,
+        };
+        let conn = rusqlite::Connection::open_in_memory().expect("in-memory db");
+        apply_schema_v1(&conn).unwrap();
+        apply_schema_v2(&conn).unwrap();
+        apply_schema_v3(&conn).unwrap();
+        apply_schema_v4(&conn).unwrap();
+        apply_schema_v5(&conn).unwrap();
+        apply_schema_v6(&conn).unwrap();
+        apply_schema_v7(&conn).unwrap();
+        apply_schema_v8(&conn).unwrap();
+        apply_schema_v9(&conn).unwrap();
+        apply_schema_v10(&conn).unwrap();
+        apply_schema_v11(&conn).unwrap();
+        // Simulate a partial v12: add column but do NOT bump user_version.
+        conn.execute_batch(
+            "ALTER TABLE sync_root_records ADD COLUMN exclude_globs TEXT NOT NULL DEFAULT '';",
+        )
+        .unwrap();
+        apply_schema_v12(&conn).expect("v12 must be idempotent when column already exists");
+        let ver: u32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(ver, 12);
     }
 }

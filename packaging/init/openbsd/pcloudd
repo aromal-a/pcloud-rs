@@ -1,21 +1,22 @@
 #!/bin/ksh
 
-daemon="/usr/local/libexec/pcloudd-wrapper.sh"
+daemon="/usr/bin/env PCLOUDRS_DAEMON_BIN=/usr/local/bin/pcloudd PCLOUDRS_ENV_FILE=/usr/local/etc/pcloud-rs/pcloudd.env /usr/local/libexec/pcloudd-wrapper.sh"
 daemon_flags=""
+daemon_user="_pcloud"
 
 . /etc/rc.d/rc.subr
 
-pexp="pcloudd serve"
+rc_bg=YES
+pexp="/usr/local/bin/pcloudd serve"
 
-rc_reload=NO
-
-rc_start() {
-    [ -r /etc/rc.conf.local ] && . /etc/rc.conf.local
-    export PCLOUD_ROOT PCLOUD_ENV PCLOUD_API_MODE PCLOUD_DURABLE_AUTH_TOKENS
-    export PCLOUDRS_TOKEN_FILE PCLOUDRS_USERNAME_FILE PCLOUDRS_PASSWORD_FILE
-    export PCLOUDRS_TFA_CODE_FILE PCLOUDRS_RECOVERY_CODE_FILE PCLOUDRS_TRUST_DEVICE
-    export PCLOUDRS_DAEMON_BIN
-    ${rcexec} "${daemon}" ${daemon_flags}
+rc_pre()
+{
+    id "${daemon_user}" >/dev/null 2>&1 || {
+        echo "pcloudd: service user does not exist: ${daemon_user}" >&2
+        return 1
+    }
+    install -d -o "${daemon_user}" -g "${daemon_user}" -m 0700 \
+        /var/lib/pcloud-rs
 }
 
-rc_cmd $1
+rc_cmd "$1"

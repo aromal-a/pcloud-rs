@@ -1,9 +1,9 @@
-//! **PLATFORM: Linux + FreeBSD.**
-//! **GATING: `#[cfg(any(target_os = "linux", target_os = "freebsd"))]`** —
-//! gated at the `mod fuser_shim;` line in `platform/mod.rs`.
+//! **PLATFORM: FreeBSD, NetBSD, OpenBSD, and DragonFlyBSD.**
+//! **GATING:** the BSD `cfg` at the `mod fuser_shim;` line in
+//! `platform/mod.rs`.
 //!
 //! Shared `fuser::Filesystem` shims and adapter-type conversions used by
-//! both the Linux (libfuse3) and FreeBSD (libfuse2) mount back-ends. The
+//! the BSD libfuse/refuse mount back-ends. The
 //! `fuser` crate exposes the same `Filesystem` trait on both platforms;
 //! only the underlying native library differs (selected via `fuser` cargo
 //! features at build time). The shim code itself is byte-identical, so
@@ -58,6 +58,25 @@ pub(crate) fn adapter_attr_to_fuser(a: &crate::fuse_adapter::EntryAttr) -> fuser
     }
 }
 
+fn reply_account_quota(adapter: &dyn FuseAdapter, reply: fuser::ReplyStatfs) {
+    match adapter.statfs() {
+        Ok((total_bytes, free_bytes)) => {
+            let (blocks, free_blocks) = crate::fuse_adapter::statfs_blocks(total_bytes, free_bytes);
+            reply.statfs(
+                blocks,
+                free_blocks,
+                free_blocks,
+                0,
+                0,
+                crate::fuse_adapter::STATFS_BLOCK_SIZE,
+                255,
+                crate::fuse_adapter::STATFS_BLOCK_SIZE,
+            );
+        }
+        Err(errno) => reply.error(errno),
+    }
+}
+
 // -----------------------------------------------------------------------------
 // BoxedFuserShim: wraps `Box<dyn FuseAdapter>` for the dyn dispatch path.
 // -----------------------------------------------------------------------------
@@ -105,59 +124,9 @@ impl BoxedFuserShim {
 }
 
 impl fuser::Filesystem for BoxedFuserShim {
-    /// Return filesystem statistics so that `df(1)` and `stat -f` report
-    /// meaningful values instead of ENOSYS. We first attempt a real
-    /// `statvfs(2)` on the mount point path; if that fails (e.g. the call
-    /// races with unmount) we fall back to conservative defaults that claim
-    /// 1 TiB total with ~500 GiB free, which is a plausible pCloud storage
-    /// size and avoids callers mistaking "no data" for a full filesystem.
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
+    /// Report pCloud account quota, never the local staging filesystem.
     fn statfs(&mut self, _req: &fuser::Request<'_>, _ino: u64, reply: fuser::ReplyStatfs) {
-        // 512-byte blocks: 1 TiB total, ~500 GiB free/available.
-        const DEFAULT_BSIZE: u32 = 4096;
-        const TIB_BLOCKS: u64 = (1u64 << 40) / DEFAULT_BSIZE as u64;
-        const FREE_BLOCKS: u64 = TIB_BLOCKS / 2;
-
-        // Try to obtain real values from the host VFS via statvfs(2).
-        let (blocks, bfree, bavail, files, ffree, bsize, namelen, frsize) = {
-            // We resolve the mount root via inode 1 (the FUSE root).
-            // If that fails, fall back to defaults.
-            let stat_result = self.path_for(1).and_then(|p| {
-                // SAFETY: statvfs is a pure syscall; no aliasing or
-                // lifetime concerns. `path` is NUL-terminated by
-                // std::ffi::CString inside `nix`.
-                #[allow(unsafe_code)]
-                {
-                    let path_cstr = std::ffi::CString::new(p.to_string_lossy().as_bytes()).ok()?;
-                    let mut sv: libc::statvfs64 = unsafe { std::mem::zeroed() };
-                    let rc = unsafe { libc::statvfs64(path_cstr.as_ptr(), &mut sv) };
-                    if rc == 0 { Some(sv) } else { None }
-                }
-            });
-            match stat_result {
-                Some(sv) => (
-                    sv.f_blocks,
-                    sv.f_bfree,
-                    sv.f_bavail,
-                    sv.f_files,
-                    sv.f_ffree,
-                    sv.f_bsize as u32,
-                    sv.f_namemax as u32,
-                    sv.f_frsize as u32,
-                ),
-                None => (
-                    TIB_BLOCKS,
-                    FREE_BLOCKS,
-                    FREE_BLOCKS,
-                    1_000_000u64,
-                    999_000u64,
-                    DEFAULT_BSIZE,
-                    255u32,
-                    DEFAULT_BSIZE,
-                ),
-            }
-        };
-        reply.statfs(blocks, bfree, bavail, files, ffree, bsize, namelen, frsize);
+        reply_account_quota(self.adapter.as_ref(), reply);
     }
 
     fn lookup(
@@ -485,7 +454,13 @@ impl fuser::Filesystem for BoxedFuserShim {
     /// access(2) is not meaningful on pCloud because there are no per-file
     /// Unix permission bits. Return ENOTSUP so callers fall back to
     /// getattr UID/GID checks via the kernel's default permission logic.
-    fn access(&mut self, _req: &fuser::Request<'_>, _ino: u64, _mask: i32, reply: fuser::ReplyEmpty) {
+    fn access(
+        &mut self,
+        _req: &fuser::Request<'_>,
+        _ino: u64,
+        _mask: i32,
+        reply: fuser::ReplyEmpty,
+    ) {
         // pCloud has no per-file Unix permission bits; access(2) is not meaningful.
         // Return ENOTSUP so callers fall back to getattr UID/GID checks.
         reply.error(ENOTSUP);
@@ -645,54 +620,16 @@ impl fuser::Filesystem for BoxedFuserShim {
 /// the [`FuseAdapter`] trait. Used by [`mount_with_fuser`]-style entry
 /// points where the adapter type is known at compile time (avoids the
 /// `Box<dyn>` indirection used by [`BoxedFuserShim`]).
+#[allow(dead_code)] // retained for typed third-party adapters; daemon uses PcloudFsShim
 pub(crate) struct FuserShim<A: FuseAdapter> {
     pub(crate) adapter: A,
     pub(crate) ttl: std::time::Duration,
 }
 
 impl<A: FuseAdapter> fuser::Filesystem for FuserShim<A> {
-    /// Return filesystem statistics so that `df(1)` and `stat -f` report
-    /// meaningful values instead of ENOSYS. Mirrors the implementation on
-    /// [`BoxedFuserShim`].
-    #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
+    /// Report pCloud account quota, never the local staging filesystem.
     fn statfs(&mut self, _req: &fuser::Request<'_>, _ino: u64, reply: fuser::ReplyStatfs) {
-        const DEFAULT_BSIZE: u32 = 4096;
-        const TIB_BLOCKS: u64 = (1u64 << 40) / DEFAULT_BSIZE as u64;
-        const FREE_BLOCKS: u64 = TIB_BLOCKS / 2;
-
-        let stat_result = self.adapter.resolve_ino_to_path(1).ok().and_then(|p| {
-            #[allow(unsafe_code)]
-            {
-                let path_cstr = std::ffi::CString::new(p.to_string_lossy().as_bytes()).ok()?;
-                let mut sv: libc::statvfs64 = unsafe { std::mem::zeroed() };
-                let rc = unsafe { libc::statvfs64(path_cstr.as_ptr(), &mut sv) };
-                if rc == 0 { Some(sv) } else { None }
-            }
-        });
-
-        let (blocks, bfree, bavail, files, ffree, bsize, namelen, frsize) = match stat_result {
-            Some(sv) => (
-                sv.f_blocks,
-                sv.f_bfree,
-                sv.f_bavail,
-                sv.f_files,
-                sv.f_ffree,
-                sv.f_bsize as u32,
-                sv.f_namemax as u32,
-                sv.f_frsize as u32,
-            ),
-            None => (
-                TIB_BLOCKS,
-                FREE_BLOCKS,
-                FREE_BLOCKS,
-                1_000_000u64,
-                999_000u64,
-                DEFAULT_BSIZE,
-                255u32,
-                DEFAULT_BSIZE,
-            ),
-        };
-        reply.statfs(blocks, bfree, bavail, files, ffree, bsize, namelen, frsize);
+        reply_account_quota(&self.adapter, reply);
     }
 
     fn lookup(
@@ -1083,7 +1020,13 @@ impl<A: FuseAdapter> fuser::Filesystem for FuserShim<A> {
     /// access(2) is not meaningful on pCloud because there are no per-file
     /// Unix permission bits. Return ENOTSUP so callers fall back to
     /// getattr UID/GID checks via the kernel's default permission logic.
-    fn access(&mut self, _req: &fuser::Request<'_>, _ino: u64, _mask: i32, reply: fuser::ReplyEmpty) {
+    fn access(
+        &mut self,
+        _req: &fuser::Request<'_>,
+        _ino: u64,
+        _mask: i32,
+        reply: fuser::ReplyEmpty,
+    ) {
         // pCloud has no per-file Unix permission bits; access(2) is not meaningful.
         // Return ENOTSUP so callers fall back to getattr UID/GID checks.
         reply.error(ENOTSUP);
@@ -1234,7 +1177,9 @@ pub(crate) fn build_fuse_options(
                 .clone()
                 .unwrap_or_else(|| "pcloud".to_string()),
         ),
-        fuser::MountOption::Subtype("pcloud".to_string()),
+        // Private subtype proves ownership to orphan recovery. `fuse.pcloud`
+        // is also used by the official client and must never be auto-unmounted.
+        fuser::MountOption::Subtype("pcloud-rs".to_string()),
         fuser::MountOption::DefaultPermissions,
         fuser::MountOption::NoDev,
         fuser::MountOption::NoSuid,

@@ -59,11 +59,12 @@ impl RedactedString {
     ///
     /// ```
     /// use pcloud_ipc::RedactedString;
-    /// use pcloud_secret::secret_string::SecretString;
+    /// use zeroize::Zeroizing;
     ///
     /// let r = RedactedString::new("hunter2");
-    /// // CORRECT: wrap immediately.
-    /// let secret = SecretString::new(r.into_string());
+    /// // CORRECT: transfer directly into a zeroize-on-drop container.
+    /// let secret = Zeroizing::new(r.into_string());
+    /// assert_eq!(secret.as_str(), "hunter2");
     /// // WRONG: let raw = r.into_string(); /* use raw */ — raw will not be zeroized.
     /// ```
     ///

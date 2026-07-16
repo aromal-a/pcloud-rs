@@ -12,10 +12,12 @@
 //! 2. `psync_setting_get_string(_PS(ignorepaths))` — a semicolon-delimited
 //!    list of user-configured ignore paths.
 //!
-//! This module adds real Linux-only auto-discovery for both:
+//! This module adds native auto-discovery for supported desktop and BSD
+//! targets:
 //!
-//! * [`MountDiscovery`] parses `/proc/self/mountinfo` (the stable,
-//!   per-namespace view of mounts) and returns the list of mount points
+//! * [`MountDiscovery`] reads `/proc/self/mountinfo` on Linux,
+//!   `getmntinfo(3)` on macOS/BSD, and the Win32 volume table on Windows.
+//!   It returns the list of mount points
 //!   whose filesystem type implies a pCloud drive, a virtual/pseudo
 //!   filesystem, or any other filesystem that must never be adopted as a
 //!   sync root. Results are cached with a TTL so that repeated syncability
@@ -28,8 +30,8 @@
 //! All public types are `Send + Sync` and avoid interior-mutability
 //! leaks: the TTL cache uses a plain `Mutex` around owned data.
 
-// **PLATFORM:** Linux
-// **GATING:** #[cfg(target_os = "linux")].
+// **PLATFORM:** Linux, macOS, Windows, FreeBSD, NetBSD, OpenBSD, DragonFlyBSD
+// **GATING:** native reader implementations are cfg-selected per platform.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -62,6 +64,14 @@ pub const VIRTUAL_FS_TYPES: &[&str] = &[
     "rpc_pipefs",
     "nsfs",
     "ramfs",
+    "devfs",
+    "fdescfs",
+    "kernfs",
+    "procfs",
+    "sysctlfs",
+    "linprocfs",
+    "linsysfs",
+    "tmpfs",
 ];
 
 /// Filesystem types that are likely a pCloud drive surface.
@@ -118,8 +128,33 @@ pub const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
     "/automount",
 ];
 
-/// Ignore-path prefixes installed by default on platforms other than Linux and macOS.
-#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+/// Ignore-path prefixes installed by default on BSD systems.
+#[cfg(any(
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+pub const DEFAULT_IGNORE_PATTERNS: &[&str] = &[
+    "/dev",
+    "/proc",
+    "/tmp",
+    "/var/run",
+    "/var/tmp",
+    "/kern",
+    "/compat/linux/proc",
+    "/compat/linux/sys",
+];
+
+/// Ignore-path prefixes installed by default on remaining platforms.
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+)))]
 pub const DEFAULT_IGNORE_PATTERNS: &[&str] = &[];
 
 /// One entry parsed from `/proc/self/mountinfo`.
@@ -145,7 +180,7 @@ impl MountEntry {
     }
 }
 
-/// Parse a `/proc/self/mountinfo` payload.
+/// Parse a `/proc/self/mountinfo`-shaped payload.
 ///
 /// The format is documented in `proc(5)`:
 ///
@@ -212,8 +247,8 @@ fn unescape_mountinfo(input: &str) -> String {
 
 /// TTL-cached reader for the live mount table.
 ///
-/// On non-Linux targets [`MountDiscovery::current_mounts`] returns an
-/// empty list so the syncability check degrades gracefully.
+/// Each supported tier-1 desktop/BSD target uses its native mount table;
+/// unknown Unix targets currently return an empty best-effort snapshot.
 #[derive(Debug)]
 pub struct MountDiscovery {
     ttl: Duration,
@@ -286,7 +321,7 @@ impl MountDiscovery {
             .collect()
     }
 
-    /// Force the next call to re-read `/proc/self/mountinfo`.
+    /// Force the next call to re-read the native mount table.
     pub fn invalidate(&self) {
         if let Ok(mut guard) = self.cache.lock() {
             *guard = None;
@@ -300,7 +335,114 @@ fn read_mountinfo() -> io::Result<Vec<MountEntry>> {
     Ok(parse_mountinfo(&payload))
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+fn read_mountinfo() -> io::Result<Vec<MountEntry>> {
+    // getmntinfo(3) exposes a libc-owned static buffer, so serialize readers
+    // and copy every field into owned Rust values before releasing the lock.
+    static LOCK: Mutex<()> = Mutex::new(());
+    let _guard = LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+
+    #[cfg(target_os = "netbsd")]
+    type NativeMount = libc::statvfs;
+    #[cfg(not(target_os = "netbsd"))]
+    type NativeMount = libc::statfs;
+
+    let mut buffer: *mut NativeMount = std::ptr::null_mut();
+    // SAFETY: getmntinfo writes a pointer to its static mount array. We keep
+    // the process-wide lock while reading and never free or retain the array.
+    let count = unsafe { libc::getmntinfo(&mut buffer, libc::MNT_NOWAIT) };
+    if count <= 0 || buffer.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+
+    // SAFETY: a positive count and non-null pointer were checked above; the
+    // returned array remains valid until the next serialized getmntinfo call.
+    let native = unsafe { std::slice::from_raw_parts(buffer, count as usize) };
+    let mut entries = Vec::with_capacity(native.len());
+    for entry in native {
+        let mount_point = native_c_string(entry.f_mntonname.as_ptr());
+        if mount_point.is_empty() {
+            continue;
+        }
+        let mut fs_type = native_c_string(entry.f_fstypename.as_ptr());
+        let source = native_c_string(entry.f_mntfromname.as_ptr());
+        if is_native_pcloud_mount(&fs_type, &source) {
+            // Native FUSE stacks use several generic filesystem names. Give
+            // genuine pCloud mounts the private canonical marker so the
+            // shared classifier does not have to treat all FUSE mounts alike.
+            fs_type = "fuse.pcloud-rs".to_owned();
+        }
+        entries.push(MountEntry {
+            mount_point: PathBuf::from(mount_point),
+            fs_type: fs_type.to_ascii_lowercase(),
+        });
+    }
+    Ok(entries)
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+fn native_c_string(ptr: *const libc::c_char) -> String {
+    if ptr.is_null() {
+        return String::new();
+    }
+    // SAFETY: statfs/statvfs string fields are NUL-terminated by the kernel
+    // and the getmntinfo snapshot remains protected by the caller's lock.
+    unsafe { std::ffi::CStr::from_ptr(ptr) }
+        .to_string_lossy()
+        .into_owned()
+}
+
+#[cfg(any(
+    target_os = "macos",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+fn is_native_pcloud_mount(fs_type: &str, source: &str) -> bool {
+    let identity = format!("{fs_type} {source}").to_ascii_lowercase();
+    let is_supported_backend = [
+        "fuse", "macfuse", "osxfuse", "fuse-t", "nfs", "smb", "fskit",
+    ]
+    .iter()
+    .any(|marker| identity.contains(marker));
+    is_supported_backend
+        && ["pcloud", "pclsync", "pcloud-rs"]
+            .iter()
+            .any(|marker| identity.contains(marker))
+}
+
+#[cfg(target_os = "windows")]
+fn read_mountinfo() -> io::Result<Vec<MountEntry>> {
+    use pcloud_fs::mount_orphan::MountinfoReader;
+
+    let payload = pcloud_fs::platform::windows::WindowsMountinfoReader.read()?;
+    Ok(parse_mountinfo(&payload))
+}
+
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "macos",
+    target_os = "windows",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+)))]
 fn read_mountinfo() -> io::Result<Vec<MountEntry>> {
     Ok(Vec::new())
 }
@@ -421,7 +563,21 @@ mod tests {
         let expected_entries = ["/proc", "/sys", "/dev", "/run", "/snap"];
         #[cfg(target_os = "macos")]
         let expected_entries = ["/System", "/Volumes", "/dev", "/cores", "/automount"];
-        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        ))]
+        let expected_entries = ["/dev", "/proc", "/tmp", "/var/run", "/var/tmp"];
+        #[cfg(not(any(
+            target_os = "linux",
+            target_os = "macos",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly"
+        )))]
         let expected_entries: [&str; 0] = [];
         for expected in expected_entries {
             assert!(
@@ -429,5 +585,20 @@ mod tests {
                 "missing default ignore {expected}"
             );
         }
+    }
+
+    #[cfg(any(
+        target_os = "macos",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly"
+    ))]
+    #[test]
+    fn native_identity_never_claims_foreign_fuse_mounts() {
+        assert!(is_native_pcloud_mount("fuse-t", "pcloud-rs"));
+        assert!(is_native_pcloud_mount("fuse", "pclsync"));
+        assert!(!is_native_pcloud_mount("fuse.sshfs", "user@example:/data"));
+        assert!(!is_native_pcloud_mount("osxfuse", "rclone"));
     }
 }

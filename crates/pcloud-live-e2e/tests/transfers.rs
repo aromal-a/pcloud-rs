@@ -10,13 +10,13 @@
 
 mod common;
 
-use std::{io::Write, time::SystemTime};
+use std::time::SystemTime;
 
-use pcloud_sdk::EmbeddedDaemon;
+use pcloud_embedded_sdk::EmbeddedDaemon;
 
 use crate::common::{
     ENV_PASSWORD, ENV_TOKEN, ENV_USER, TestDaemon, authenticate, gate_enabled, optional_env,
-    scratch_folder, skip_if_not_live,
+    release_gate_enabled, scratch_folder, skip_if_not_live,
 };
 
 fn unique_name(prefix: &str) -> String {
@@ -38,6 +38,10 @@ fn live_upload_download_roundtrip() {
     if optional_env(ENV_TOKEN).is_none()
         && (optional_env(ENV_USER).is_none() || optional_env(ENV_PASSWORD).is_none())
     {
+        assert!(
+            !release_gate_enabled(),
+            "release transfer gate requires {ENV_TOKEN} or {ENV_USER}+{ENV_PASSWORD}"
+        );
         eprintln!(
             "[live-e2e] skipping upload/download: need {ENV_TOKEN} or {ENV_USER}+{ENV_PASSWORD}"
         );
@@ -46,6 +50,10 @@ fn live_upload_download_roundtrip() {
 
     let mut daemon = TestDaemon::new("transfers");
     if let Err(err) = authenticate(&mut daemon) {
+        assert!(
+            !release_gate_enabled(),
+            "release transfer authentication failed: {err}"
+        );
         eprintln!("[live-e2e] skipping upload/download: {err}");
         return;
     }
@@ -84,6 +92,10 @@ fn live_upload_download_roundtrip() {
         resp.message
     );
     if !sdk.is_authenticated() {
+        assert!(
+            !release_gate_enabled(),
+            "release transfer account requires unresolved TFA"
+        );
         eprintln!("[live-e2e] skipping: account needs TFA; use a scoped PCLOUD_TEST_TOKEN instead");
         let _ = std::fs::remove_dir_all(&root);
         return;
@@ -91,6 +103,11 @@ fn live_upload_download_roundtrip() {
 
     let scratch_path = scratch_folder();
     let filename = unique_name("live-e2e");
+    let remote_path = if scratch_path.ends_with('/') {
+        format!("{scratch_path}{filename}")
+    } else {
+        format!("{scratch_path}/{filename}")
+    };
     let payload: Vec<u8> = (0u16..4096).flat_map(|n| n.to_le_bytes()).collect();
 
     let uploaded = sdk
@@ -109,26 +126,12 @@ fn live_upload_download_roundtrip() {
         .expect("download_file against live backend");
     assert_eq!(fetched, payload, "round-tripped bytes must match");
 
-    // Best-effort cleanup. The public deletefile API is not (yet) on the
-    // active Rust path; record the file_id to a local trace file so humans can
-    // clean up if this harness is ever run against a shared account.
-    let trace_dir = std::env::temp_dir().join("pcloud-live-e2e-traces");
-    let _ = std::fs::create_dir_all(&trace_dir);
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(trace_dir.join("uploaded_file_ids.log"))
-    {
-        let _ = writeln!(
-            f,
-            "{} {} {}",
-            SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or_default(),
-            file_id,
-            filename
+    if let Err(error) = sdk.remote().delete(&remote_path, false) {
+        assert!(
+            !release_gate_enabled(),
+            "release transfer cleanup failed for {remote_path}: {error}"
         );
+        eprintln!("[live-e2e] warning: cleanup failed for {remote_path}: {error}");
     }
 
     let _ = std::fs::remove_dir_all(&root);

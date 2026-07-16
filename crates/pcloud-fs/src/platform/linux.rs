@@ -154,54 +154,29 @@ fn adapter_attr_to_fuser(a: &crate::fuse_adapter::EntryAttr) -> fuser::FileAttr 
     }
 }
 
+fn reply_account_quota(adapter: &dyn FuseAdapter, reply: fuser::ReplyStatfs) {
+    match adapter.statfs() {
+        Ok((total_bytes, free_bytes)) => {
+            let (blocks, free_blocks) = crate::fuse_adapter::statfs_blocks(total_bytes, free_bytes);
+            reply.statfs(
+                blocks,
+                free_blocks,
+                free_blocks,
+                0,
+                0,
+                crate::fuse_adapter::STATFS_BLOCK_SIZE,
+                255,
+                crate::fuse_adapter::STATFS_BLOCK_SIZE,
+            );
+        }
+        Err(errno) => reply.error(errno),
+    }
+}
+
 impl fuser::Filesystem for BoxedFuserShim {
-    /// Return filesystem statistics so that `df(1)` and `stat -f` report
-    /// meaningful values instead of ENOSYS. We first attempt a real
-    /// `statvfs(2)` on the mount point path; if that fails we fall back to
-    /// conservative defaults that claim 1 TiB total with ~500 GiB free.
+    /// Report pCloud account quota, never the local staging filesystem.
     fn statfs(&mut self, _req: &fuser::Request<'_>, _ino: u64, reply: fuser::ReplyStatfs) {
-        const DEFAULT_BSIZE: u32 = 4096;
-        const TIB_BLOCKS: u64 = (1u64 << 40) / DEFAULT_BSIZE as u64;
-        const FREE_BLOCKS: u64 = TIB_BLOCKS / 2;
-
-        let stat_result = self.path_for(1).and_then(|p| {
-            #[allow(unsafe_code)]
-            {
-                let path_cstr = std::ffi::CString::new(p.to_string_lossy().as_bytes()).ok()?;
-                // SAFETY: `sv` is a POD C struct with no invalid bit patterns;
-                // `zeroed()` is the correct way to initialise it before
-                // passing it to `statvfs64(2)`, which writes all fields.
-                let mut sv: libc::statvfs64 = unsafe { std::mem::zeroed() };
-                // SAFETY: `path_cstr` is NUL-terminated and alive for this
-                // call. `statvfs64` writes into `sv` which we own exclusively.
-                let rc = unsafe { libc::statvfs64(path_cstr.as_ptr(), &mut sv) };
-                if rc == 0 { Some(sv) } else { None }
-            }
-        });
-
-        let (blocks, bfree, bavail, files, ffree, bsize, namelen, frsize) = match stat_result {
-            Some(sv) => (
-                sv.f_blocks,
-                sv.f_bfree,
-                sv.f_bavail,
-                sv.f_files,
-                sv.f_ffree,
-                sv.f_bsize as u32,
-                sv.f_namemax as u32,
-                sv.f_frsize as u32,
-            ),
-            None => (
-                TIB_BLOCKS,
-                FREE_BLOCKS,
-                FREE_BLOCKS,
-                1_000_000u64,
-                999_000u64,
-                DEFAULT_BSIZE,
-                255u32,
-                DEFAULT_BSIZE,
-            ),
-        };
-        reply.statfs(blocks, bfree, bavail, files, ffree, bsize, namelen, frsize);
+        reply_account_quota(self.adapter.as_ref(), reply);
     }
 
     fn lookup(
@@ -724,6 +699,7 @@ fn install_signal_handler_once() {
         // `SA_RESTART` so long-running syscalls resume transparently
         // across the signal delivery instead of returning `EINTR` to
         // callers that are not prepared for it.
+        // SAFETY: see paragraph above.
         unsafe {
             let mut sa: libc::sigaction = std::mem::zeroed();
             // Explicit fn-type coercion first to silence
@@ -968,52 +944,9 @@ struct FuserShim<A: FuseAdapter> {
 }
 
 impl<A: FuseAdapter> fuser::Filesystem for FuserShim<A> {
-    /// Return filesystem statistics so that `df(1)` and `stat -f` report
-    /// meaningful values instead of ENOSYS. Mirrors the implementation on
-    /// [`BoxedFuserShim`].
+    /// Report pCloud account quota, never the local staging filesystem.
     fn statfs(&mut self, _req: &fuser::Request<'_>, _ino: u64, reply: fuser::ReplyStatfs) {
-        const DEFAULT_BSIZE: u32 = 4096;
-        const TIB_BLOCKS: u64 = (1u64 << 40) / DEFAULT_BSIZE as u64;
-        const FREE_BLOCKS: u64 = TIB_BLOCKS / 2;
-
-        let stat_result = self.adapter.resolve_ino_to_path(1).ok().and_then(|p| {
-            #[allow(unsafe_code)]
-            {
-                let path_cstr = std::ffi::CString::new(p.to_string_lossy().as_bytes()).ok()?;
-                // SAFETY: `sv` is a POD C struct with no invalid bit patterns;
-                // `zeroed()` is the correct initialiser before `statvfs64(2)`
-                // overwrites all fields on success.
-                let mut sv: libc::statvfs64 = unsafe { std::mem::zeroed() };
-                // SAFETY: `path_cstr` is NUL-terminated and alive for the
-                // call duration; `sv` is exclusively owned by this scope.
-                let rc = unsafe { libc::statvfs64(path_cstr.as_ptr(), &mut sv) };
-                if rc == 0 { Some(sv) } else { None }
-            }
-        });
-
-        let (blocks, bfree, bavail, files, ffree, bsize, namelen, frsize) = match stat_result {
-            Some(sv) => (
-                sv.f_blocks,
-                sv.f_bfree,
-                sv.f_bavail,
-                sv.f_files,
-                sv.f_ffree,
-                sv.f_bsize as u32,
-                sv.f_namemax as u32,
-                sv.f_frsize as u32,
-            ),
-            None => (
-                TIB_BLOCKS,
-                FREE_BLOCKS,
-                FREE_BLOCKS,
-                1_000_000u64,
-                999_000u64,
-                DEFAULT_BSIZE,
-                255u32,
-                DEFAULT_BSIZE,
-            ),
-        };
-        reply.statfs(blocks, bfree, bavail, files, ffree, bsize, namelen, frsize);
+        reply_account_quota(&self.adapter, reply);
     }
 
     fn lookup(
@@ -1437,7 +1370,9 @@ fn build_fuse_options(options: &MountOptions) -> Vec<fuser::MountOption> {
                 .clone()
                 .unwrap_or_else(|| "pcloud".to_string()),
         ),
-        fuser::MountOption::Subtype("pcloud".to_string()),
+        // Private subtype proves ownership to orphan recovery. `fuse.pcloud`
+        // is also used by the official client and must never be auto-unmounted.
+        fuser::MountOption::Subtype("pcloud-rs".to_string()),
         fuser::MountOption::DefaultPermissions,
         fuser::MountOption::NoDev,
         fuser::MountOption::NoSuid,
@@ -1450,7 +1385,7 @@ fn build_fuse_options(options: &MountOptions) -> Vec<fuser::MountOption> {
     fuse_opts
 }
 
-/// Mount using a [`FuseAdapter`]-wrapping shim. Used by the 4.a scaffold.
+/// Mount using a [`FuseAdapter`]-wrapping shim.
 pub fn mount_with_fuser<A: FuseAdapter>(
     mountpoint: &Path,
     adapter: A,

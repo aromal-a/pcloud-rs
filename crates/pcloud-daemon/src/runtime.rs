@@ -3,25 +3,27 @@
 //! state, sync roots, pending transfers, and the auth vault. Mutations
 //! go through typed backend APIs; this module defines the aggregate.
 //!
-//! **Platform banner:** sync/mount runtime is Linux-gated; portable
-//! bookkeeping (auth, transfers, public links) works everywhere the
-//! workspace builds.
+//! **Platform banner:** the runtime, sync engine, and canonical remote
+//! filesystem are portable. Mount composition selects a native adapter on
+//! Linux, macOS, Windows, and supported BSDs; other Unix targets retain the
+//! API/CLI runtime with mounting explicitly unsupported.
 
-// **PLATFORM:** Linux
-// **GATING:** #[cfg(target_os = "linux")].
+// **PLATFORM:** all
+// **GATING:** native mount adapters are cfg-selected inside mount_runtime.
 
-use std::path::{Path, PathBuf};
+use std::{
+    fmt,
+    path::{Path, PathBuf},
+};
 
-// H14 PR4 — integrity sweeper service. Declared here (rather than in
-// `lib.rs`) so PR4 can ship the new file without touching the crate-
-// root module list. The `#[path]` attribute pins the file location at
-// `crates/pcloud-daemon/src/integrity_sweeper_service.rs`. Bootstrap
-// wiring is tracked under bd-1du.4.6.1 — see TODO in
-// `RuntimeShell::bootstrap_integrity_sweeper` below.
+// Integrity sweeper service. The `#[path]` attribute keeps its implementation
+// beside the daemon runtime while retaining the historical module layout.
+// `RuntimeShell::bootstrap_integrity_sweeper` performs the active wiring.
 #[path = "integrity_sweeper_service.rs"]
 pub mod integrity_sweeper_service;
 
 use pcloud_auth::{AuthCommand, AuthFlowError, SessionManager};
+use pcloud_backends::remote_fs::{RemoteFs, RemoteFsError, RemoteId};
 use pcloud_cache::CacheShell;
 use pcloud_crypto::CryptoShell;
 use pcloud_engine::EngineShell;
@@ -77,6 +79,28 @@ pub struct PendingPasswordAuth {
     /// Account password; held in a zeroising [`SecretString`] so Drop
     /// scrubs the buffer if the TFA challenge is abandoned.
     pub password: SecretString,
+}
+
+/// Error variants returned by `RuntimeShell::set_api_server`.
+///
+/// Public because `pcloud-sdk::EmbeddedDaemon::set_api_server` delegates
+/// here; the SDK consumes the error via `to_string()` so the variants
+/// only need to be inspectable, not nameable, by SDK callers.
+#[derive(Debug)]
+pub enum SetApiServerError {
+    /// API-server hint failed allow-list / hostname validation.
+    InvalidHint(&'static str),
+    /// Persisting the active API server selection to the store failed.
+    Store(pcloud_store::StoreError),
+}
+
+impl fmt::Display for SetApiServerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidHint(reason) => write!(f, "{reason}"),
+            Self::Store(err) => write!(f, "{err}"),
+        }
+    }
 }
 
 impl Clone for PendingPasswordAuth {
@@ -241,6 +265,62 @@ pub struct RuntimeShell {
     /// Fixes ncx.54 (P3-E1 dispatch_with_drain_gate was dropping
     /// peer_pid before dispatch, losing audit context downstream).
     pub current_peer_pid: Option<u32>,
+    /// T2.4.b — per-folder crypto opt-in registry.
+    ///
+    /// Persisted to the `value_kv` table under
+    /// `crypto.folder_policy.v1` as a JSON snapshot. Loaded at
+    /// bootstrap; mutated by `Request::CryptoFolderEnable` /
+    /// `CryptoFolderDisable`. Read by
+    /// `Request::CryptoFolderList`. Folder ids are bare `u64`
+    /// (the daemon's call sites convert to/from
+    /// [`pcloud_model::ids::RemoteFolderId`] via `.get()` /
+    /// `RemoteFolderId::new`).
+    ///
+    /// Pure mutate/query — does **not** require crypto-unlock.
+    /// Per-folder KEK derivation (T2.4.c) re-reads this registry at
+    /// unlock time and seeds [`Self::folder_unlock_state`]; the KEK
+    /// itself is re-derived on demand from the master key plus the
+    /// folder id (see [`pcloud_crypto::keys::derive_folder_kek`]).
+    pub folder_crypto_policy: pcloud_crypto::folder_policy::FolderCryptoPolicy,
+    /// T2.4.c — runtime-only per-folder unlock state.
+    ///
+    /// Populated when `Self::unlock_crypto` succeeds: the runtime
+    /// walks `folder_crypto_policy.folders` and calls
+    /// [`pcloud_crypto::folder_policy::FolderUnlockState::unlock`]
+    /// for each folder whose entry has `encrypted = true`. Plain
+    /// folders bypass the derivation entirely and never appear in
+    /// the unlock set, so a downstream `is_visible` check returns
+    /// `true` for them without consulting the master key at all.
+    ///
+    /// Cleared on lock / `stop()` / daemon shutdown. Never persisted —
+    /// `FolderUnlockState::Drop` clears the set so a process snapshot
+    /// cannot leak the unlocked-folder list.
+    ///
+    /// The KEK bytes themselves are **not** materialised here. They
+    /// are re-derived on demand via
+    /// [`pcloud_crypto::keys::derive_folder_kek`] from the in-memory
+    /// master key plus the folder id, so locking simply requires
+    /// clearing this set + dropping `keys.active_key_material`.
+    pub folder_unlock_state: pcloud_crypto::folder_policy::FolderUnlockState,
+}
+
+/// T2.4.b — `value_kv` storage key for the persisted
+/// `FolderCryptoPolicy` JSON snapshot.
+pub(crate) const FOLDER_CRYPTO_POLICY_KEY: &str = "crypto.folder_policy.v1";
+
+/// T2.4.b — serialize `policy` and upsert it into the `value_kv`
+/// table at [`FOLDER_CRYPTO_POLICY_KEY`]. On any error returns the
+/// stringified failure for the caller to surface in the IPC
+/// response (the in-memory mutation is rolled back at the call
+/// site so the on-disk row stays the source of truth).
+fn persist_folder_crypto_policy(
+    db_path: &std::path::Path,
+    policy: &pcloud_crypto::folder_policy::FolderCryptoPolicy,
+) -> Result<(), String> {
+    let raw =
+        serde_json::to_string(policy).map_err(|err| format!("serialize folder_policy: {err}"))?;
+    pcloud_store::value_kv::set_string(db_path, FOLDER_CRYPTO_POLICY_KEY, &raw)
+        .map_err(|err| format!("value_kv set_string: {err}"))
 }
 
 impl RuntimeShell {
@@ -640,6 +720,17 @@ impl RuntimeShell {
             Request::SyncRootChangeType { sync_id, sync_type } => {
                 self.change_sync_root_type(sync_id, sync_type)
             }
+            Request::SyncExcludeAdd { sync_id, pattern } => self.sync_exclude_add(sync_id, pattern),
+            Request::SyncExcludeRemove { sync_id, pattern } => {
+                self.sync_exclude_remove(sync_id, pattern)
+            }
+            Request::SyncExcludeList { sync_id } => self.sync_exclude_list(sync_id),
+            Request::CryptoFolderEnable {
+                folder_id,
+                parent_folder_id,
+            } => self.crypto_folder_enable(folder_id, parent_folder_id),
+            Request::CryptoFolderDisable { folder_id } => self.crypto_folder_disable(folder_id),
+            Request::CryptoFolderList => self.crypto_folder_list(),
             Request::GetSyncSuggestions { path, max } => {
                 self.suggest_sync_folders_at(path, max.unwrap_or(5))
             }
@@ -649,6 +740,29 @@ impl RuntimeShell {
             Request::DeletePublicLinkByCode { code } => self.delete_public_link_by_code(code),
             Request::CreateFilePublicLink { path } => self.create_file_public_link(path),
             Request::CreateFolderPublicLink { path } => self.create_folder_public_link(path),
+            Request::CreateFolderPublicLinkWithOptions {
+                path,
+                expire,
+                maxdownloads,
+                maxtraffic,
+                password,
+            } => self.create_folder_public_link_with_options(
+                path,
+                expire,
+                maxdownloads,
+                maxtraffic,
+                password.map(String::from),
+            ),
+            Request::CreateFolderUpDownLink {
+                folder_id,
+                mail,
+                can_upload,
+            } => self.create_folder_updownlink(folder_id, mail, can_upload),
+            Request::CreateScreenshotPublicLink {
+                path,
+                has_delay,
+                delay_seconds,
+            } => self.create_screenshot_public_link(path, has_delay, delay_seconds),
             Request::ChangePublicLinkExpire { link_id, expire } => {
                 self.change_public_link_expire(link_id, expire)
             }
@@ -716,6 +830,33 @@ impl RuntimeShell {
                 permissions_bits,
                 hint,
             } => self.share_folder(folder_id, name, mail, message, permissions_bits, hint),
+            Request::CryptoShareFolder {
+                folder_id,
+                name,
+                mail,
+                message,
+                permissions_bits,
+                temppass,
+                hint,
+            } => self.crypto_share_folder(
+                folder_id,
+                name,
+                mail,
+                message,
+                permissions_bits,
+                SecretString::new(String::from(temppass)),
+                hint,
+            ),
+            Request::CryptoShareFolderRsa {
+                folder_id,
+                name,
+                mail,
+                message,
+                permissions_bits,
+                hint,
+            } => {
+                self.crypto_share_folder_rsa(folder_id, name, mail, message, permissions_bits, hint)
+            }
             Request::CancelShareRequest { share_request_id } => {
                 self.cancel_share_request(share_request_id)
             }
@@ -748,6 +889,23 @@ impl RuntimeShell {
                 permissions_bits,
                 hint,
             } => self.account_team_share(folder_id, name, team_id, message, permissions_bits, hint),
+            Request::CryptoAccountTeamShare {
+                folder_id,
+                name,
+                team_id,
+                message,
+                permissions_bits,
+                temppass,
+                hint,
+            } => self.crypto_account_team_share(
+                folder_id,
+                name,
+                team_id,
+                message,
+                permissions_bits,
+                SecretString::new(String::from(temppass)),
+                hint,
+            ),
             Request::ValueGet { name, kind } => self.value_get(&name, kind),
             Request::ValueSet { name, value } => self.value_set(&name, value),
             Request::ValueHas { name, kind } => self.value_has(&name, kind),
@@ -796,11 +954,19 @@ impl RuntimeShell {
                 offset,
                 length,
             } => self.read_file_range(path, offset, length),
-            Request::WriteFileFresh { path, data_b64 } => {
-                self.write_file_fresh(path, data_b64)
-            }
+            Request::WriteFileFresh { path, data_b64 } => self.write_file_fresh(path, data_b64),
             Request::RenamePath { from, to } => self.rename_path(from, to),
-            Request::FileHistory { path, limit } => self.file_history(path, limit),
+            Request::CopyPath { from, to } => self.copy_path(from, to),
+            Request::DeletePath { path, recursive } => self.delete_path(path, recursive),
+            Request::UploadFileByPath {
+                local_path,
+                remote_path,
+            } => self.upload_file_by_path(local_path, remote_path),
+            Request::DownloadFileByPath {
+                remote_path,
+                local_path,
+                overwrite,
+            } => self.download_file_by_path(remote_path, local_path, overwrite),
             // Backup/snapshot lifecycle (zstd + SHA3 sidecar default,
             // optional GPG envelope). The full pipeline is now wired
             // through `pcloud_backends::snapshot`.
@@ -883,12 +1049,14 @@ impl RuntimeShell {
                 source_fileid,
                 source_hash,
                 offset,
+                source_offset,
                 count,
             } => self.upload_write_from_file_ipc(
                 upload_session_id,
                 source_fileid,
                 source_hash,
                 offset,
+                source_offset,
                 count,
             ),
             Request::CreateTreePublicLinkFromPaths {
@@ -896,6 +1064,14 @@ impl RuntimeShell {
                 paths,
                 expires,
             } => self.create_tree_public_link_from_paths_ipc(name, paths, expires),
+            Request::CreateTreePublicLinkFromPathTargets {
+                name,
+                root,
+                folders,
+                files,
+                expires,
+            } => self
+                .create_tree_public_link_from_path_targets_ipc(name, root, folders, files, expires),
             Request::CreateBackup {
                 name,
                 root_folder_id,
@@ -1183,43 +1359,11 @@ impl RuntimeShell {
         )
     }
 
-    /// Stat an absolute pCloud-drive path: resolve through local
-    /// metadata cache, fall back to API. Mirrors C `psync_stat_path`
-    /// (`pclsync/psynclib.h:743`, `pfolder.c:734`).
+    /// Stat an absolute pCloud-drive path through the canonical live
+    /// [`RemoteFs`] service. Mirrors C `psync_stat_path`
+    /// (`pclsync/psynclib.h:743`, `pfolder.c:734`) without requiring a
+    /// pre-warmed local metadata cache.
     pub fn stat_path(&mut self, path: String) -> Response {
-        if path.trim().is_empty() {
-            return Response {
-                status: ResponseStatus::InvalidRequest,
-                message: "stat requires a non-empty absolute pCloud-drive path".to_owned(),
-            };
-        }
-
-        // Try local metadata cache first.
-        let db_path = &self.store.db_path;
-        if let Ok(conn) = rusqlite::Connection::open(db_path) {
-            if let Ok(Some(record)) =
-                pcloud_store::FileMetadataRepository::resolve_path(&conn, &path)
-            {
-                let payload = pcloud_ipc::StatPathPayload {
-                    file_id: record.file_id,
-                    parent_folder_id: record.parent_folder_id,
-                    name: record.name,
-                    size: record.size,
-                    hash: record.hash,
-                    modified: record.modified,
-                    created: record.created,
-                    is_folder: record.is_folder,
-                    source: "cache".to_owned(),
-                };
-                return self.audited_response(
-                    "fs.stat_path",
-                    Some(format!("path={path} source=cache")),
-                    serde_json::to_string(&payload).unwrap_or_default(),
-                );
-            }
-        }
-
-        // Fall back to API: resolve folder id via the path resolver.
         let Some(auth_token) = self
             .auth
             .snapshot()
@@ -1229,23 +1373,28 @@ impl RuntimeShell {
         else {
             return Response {
                 status: ResponseStatus::Unauthorized,
-                message: "stat requires authentication (no cached metadata and no auth token)"
-                    .to_owned(),
+                message: "stat requires an authenticated session".to_owned(),
             };
         };
-        let resolver = self.public_link_runtime.path_resolver(auth_token);
-        match resolver.get_folder_id_by_path(&path) {
-            Ok(folder_id) => {
-                let leaf = path.rsplit('/').next().unwrap_or(&path).to_owned();
+        let result = {
+            let remote = RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, auth_token);
+            remote.stat(&path)
+        };
+        match result {
+            Ok(metadata) => {
                 let payload = pcloud_ipc::StatPathPayload {
-                    file_id: folder_id.get(),
-                    parent_folder_id: 0,
-                    name: leaf,
-                    size: 0,
+                    file_id: metadata.id.value(),
+                    parent_folder_id: metadata.parent_folder_id.unwrap_or(0),
+                    name: metadata.name,
+                    size: metadata.size.unwrap_or(0),
                     hash: String::new(),
-                    modified: 0,
+                    modified: metadata.modified.unwrap_or(0) as i64,
                     created: 0,
-                    is_folder: true,
+                    is_folder: metadata.id.is_folder(),
+                    is_mine: metadata.is_mine,
+                    is_shared: metadata.is_shared,
+                    encrypted: metadata.encrypted,
+                    permissions: metadata.permissions,
                     source: "api".to_owned(),
                 };
                 self.audited_response(
@@ -1254,10 +1403,7 @@ impl RuntimeShell {
                     serde_json::to_string(&payload).unwrap_or_default(),
                 )
             }
-            Err(err) => Response {
-                status: ResponseStatus::InternalError,
-                message: format!("stat_path: not in local cache, API fallback failed: {err}"),
-            },
+            Err(error) => remote_fs_error_response("stat-path", error),
         }
     }
 
@@ -1281,71 +1427,47 @@ impl RuntimeShell {
     // read, write, flush, fsync, create, unlink, rename, mkdir, rmdir)
     // are forwarded through the adapter to the pCloud API.
     pub fn mount_filesystem(&mut self, mountpoint: &Path) -> Response {
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        #[cfg(any(
+            target_os = "linux",
+            target_os = "freebsd",
+            target_os = "netbsd",
+            target_os = "openbsd",
+            target_os = "dragonfly",
+            target_os = "macos",
+            target_os = "windows"
+        ))]
         self.try_install_pcloud_shim_factory();
         self.mount_control.mount(mountpoint)
     }
 
-    /// Return the revision history of a file by absolute remote path.
-    ///
-    /// Mirrors the C `listrevisions` wire command
-    /// (`pclsync/pnetlibs.c:2481`, `download_file_revisions`).
-    ///
-    /// # Pluggable provider (bd-1du.10)
-    ///
-    /// pCloud's public API catalogue does not currently document a
-    /// third-party-accessible `listrevisions` endpoint. Instead of a
-    /// dead-end `Unavailable` the daemon wires a `RevisionProvider`
-    /// selected from config:
-    ///
-    /// - `[file_history].revision_url` **unset** →
-    ///   [`pcloud_proto::revision_provider::NullRevisionProvider`]
-    ///   returns a structured JSON response with
-    ///   `{"status":"not_configured","message":…,"next":…}` so the CLI
-    ///   can render an actionable remediation hint. The response status
-    ///   is [`ResponseStatus::Unavailable`] (exit 6).
-    /// - `[file_history].revision_url` **set** → the daemon constructs
-    ///   an HTTP provider (feature `file-history-http` on `pcloud-proto`)
-    ///   and forwards the call. On success the response carries
-    ///   `{"revisions":[…],"count":N}` as JSON in [`Response::message`].
-    ///
-    /// Empty / whitespace paths are refused with
-    /// [`ResponseStatus::InvalidRequest`] before the provider is
-    /// consulted.
-    /// bd-smbr-pcloud P4.3 — resolve an absolute pCloud-drive path
-    /// to its kind + numeric id, by reading the local metadata cache
-    /// only. Returns `Ok(None)` when the path is not present in the
-    /// cache so the caller can decide whether to fall back to the
-    /// API or surface "not found".
-    ///
-    /// Mirrors the cache-first half of [`Self::stat_path`]; the
-    /// API-fallback half is intentionally not duplicated here
-    /// because the only kind-aware API is the same `listfolder`
-    /// already used by [`Self::list_folder_by_path`], and the new
-    /// FS-by-path handlers prefer to *fail closed* on a cache miss
-    /// rather than implicitly issue listfolder per delete (which
-    /// would let a malicious caller fingerprint the parent folder
-    /// via timing).
-    fn resolve_kind_by_path(
-        &self,
-        path: &str,
-    ) -> Result<Option<(u64, bool)>, ResponseStatus> {
-        let db_path = &self.store.db_path;
-        let conn = match rusqlite::Connection::open(db_path) {
-            Ok(c) => c,
-            Err(_) => return Ok(None),
+    /// Resolve an absolute drive path through the canonical, live
+    /// [`RemoteFs`] service. A missing local metadata-cache row is never
+    /// interpreted as remote absence.
+    fn resolve_kind_by_path(&self, path: &str) -> Result<Option<(u64, bool)>, ResponseStatus> {
+        let Some(auth_token) = self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        else {
+            return Err(ResponseStatus::Unauthorized);
         };
-        match pcloud_store::FileMetadataRepository::resolve_path(&conn, path) {
-            Ok(Some(record)) => Ok(Some((record.file_id, record.is_folder))),
-            Ok(None) => Ok(None),
-            Err(_) => Ok(None),
+        let remote = RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, auth_token);
+        match remote.resolve(path) {
+            Ok(metadata) => Ok(Some((metadata.id.value(), metadata.id.is_folder()))),
+            Err(RemoteFsError::NotFound { .. }) => Ok(None),
+            Err(RemoteFsError::InvalidPath { .. }) => Err(ResponseStatus::InvalidRequest),
+            Err(RemoteFsError::ExpectedFile { .. } | RemoteFsError::ExpectedFolder { .. }) => {
+                Err(ResponseStatus::Conflict)
+            }
+            Err(_) => Err(ResponseStatus::InternalError),
         }
     }
 
     /// bd-smbr-pcloud P4 — list folder children by absolute pCloud
-    /// drive path. Resolves `path` via
-    /// [`crate::folder_backend::FolderRuntime::list_folder_contents`]
-    /// and emits a JSON-serialised `Vec<pcloud_ipc::ListFolderEntry>`
+    /// drive path through the canonical live [`RemoteFs`] service and
+    /// emit a JSON-serialised `Vec<pcloud_ipc::ListFolderEntry>`
     /// in [`Response::message`].
     ///
     /// The mapping from `RemoteFolderEntry` → `ListFolderEntry` is
@@ -1380,16 +1502,17 @@ impl RuntimeShell {
                 message: "list-folder-by-path requires an authenticated session".to_owned(),
             };
         };
-        match self.folder_runtime.list_folder_contents(auth_token, &path) {
+        let result = {
+            let remote = RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, auth_token);
+            remote.list(&path)
+        };
+        match result {
             Ok(listing) => {
                 let entries: Vec<pcloud_ipc::ListFolderEntry> = listing
                     .entries
                     .iter()
                     .map(|entry| pcloud_ipc::ListFolderEntry {
-                        file_id: entry
-                            .folder_id
-                            .or(entry.file_id)
-                            .unwrap_or(0),
+                        file_id: entry.id.value(),
                         name: entry.name.clone(),
                         size: entry.size.unwrap_or(0),
                         // P4 follow-up: enrich the proto-level
@@ -1399,7 +1522,11 @@ impl RuntimeShell {
                         hash: String::new(),
                         modified: entry.modified.unwrap_or(0) as i64,
                         created: 0,
-                        is_folder: entry.is_folder,
+                        is_folder: entry.id.is_folder(),
+                        is_mine: entry.is_mine,
+                        is_shared: entry.is_shared,
+                        encrypted: entry.encrypted,
+                        permissions: entry.permissions,
                     })
                     .collect();
                 let count = entries.len();
@@ -1408,9 +1535,7 @@ impl RuntimeShell {
                     Err(err) => {
                         return Response {
                             status: ResponseStatus::InternalError,
-                            message: format!(
-                                "list-folder-by-path: JSON serialise failed: {err}"
-                            ),
+                            message: format!("list-folder-by-path: JSON serialise failed: {err}"),
                         };
                     }
                 };
@@ -1420,18 +1545,12 @@ impl RuntimeShell {
                     body,
                 )
             }
-            Err(err) => Response {
-                status: ResponseStatus::InternalError,
-                message: format!(
-                    "list-folder-by-path: {path:?}: {err}"
-                ),
-            },
+            Err(error) => remote_fs_error_response("list-folder-by-path", error),
         }
     }
 
     /// bd-smbr-pcloud P4.3 — delete a remote file by absolute
-    /// pCloud-drive path. Resolves `path` against the local
-    /// metadata cache (cache-only, see [`Self::resolve_kind_by_path`])
+    /// pCloud-drive path. Resolves `path` through canonical live metadata,
     /// then dispatches
     /// [`crate::transfer_backend::TransferRuntime::delete_file_by_id`].
     /// Idempotent on missing path: SMB clients with a stale dirent
@@ -1447,10 +1566,12 @@ impl RuntimeShell {
         }
         let resolved = match self.resolve_kind_by_path(&path) {
             Ok(opt) => opt,
-            Err(status) => return Response {
-                status,
-                message: format!("file-delete-by-path: resolve failed for {path:?}"),
-            },
+            Err(status) => {
+                return Response {
+                    status,
+                    message: format!("file-delete-by-path: resolve failed for {path:?}"),
+                };
+            }
         };
         let Some((file_id, is_folder)) = resolved else {
             return self.audited_response(
@@ -1507,10 +1628,12 @@ impl RuntimeShell {
         }
         let resolved = match self.resolve_kind_by_path(&path) {
             Ok(opt) => opt,
-            Err(status) => return Response {
-                status,
-                message: format!("folder-delete-by-path: resolve failed for {path:?}"),
-            },
+            Err(status) => {
+                return Response {
+                    status,
+                    message: format!("folder-delete-by-path: resolve failed for {path:?}"),
+                };
+            }
         };
         let Some((folder_id, is_folder)) = resolved else {
             return self.audited_response(
@@ -1557,15 +1680,11 @@ impl RuntimeShell {
                 ),
             ),
             Err(err) => match &err {
-                pcloud_proto::FolderApiError::Result { result: 2005, .. } => {
-                    self.audited_response(
-                        "fs.folder_delete_by_path",
-                        Some(format!("path={path} result=already_absent_api")),
-                        format!(
-                            "folder-delete-by-path: {path:?} not present (API idempotent)"
-                        ),
-                    )
-                }
+                pcloud_proto::FolderApiError::Result { result: 2005, .. } => self.audited_response(
+                    "fs.folder_delete_by_path",
+                    Some(format!("path={path} result=already_absent_api")),
+                    format!("folder-delete-by-path: {path:?} not present (API idempotent)"),
+                ),
                 pcloud_proto::FolderApiError::Result { result: 2003, .. } => Response {
                     status: ResponseStatus::Conflict,
                     message: format!(
@@ -1633,18 +1752,13 @@ impl RuntimeShell {
     }
 
     /// bd-smbr-pcloud P6 — read a byte range from a remote file by
-    /// absolute pCloud-drive path. Resolves `path` against the
-    /// metadata cache for `(file_id, total_size)`, fetches a signed
+    /// absolute pCloud-drive path. Resolves `path` through live metadata
+    /// for `(file_id, total_size)`, fetches a signed
     /// `getfilelink`, and issues a single ranged HTTPS GET that
     /// covers `[offset, offset + min(length, 8 MiB))`. Returns a
-    /// JSON [`ReadRangePayload`] (base64-encoded body) in
+    /// JSON `ReadRangePayload` (base64-encoded body) in
     /// [`Response::message`].
-    pub fn read_file_range(
-        &mut self,
-        path: String,
-        offset: u64,
-        length: u64,
-    ) -> Response {
+    pub fn read_file_range(&mut self, path: String, offset: u64, length: u64) -> Response {
         // Per-IPC payload ceiling: keep one read bounded so a
         // misbehaving SMB client cannot blow up `Response::message`.
         // The smbr plugin's page-cache chunk is 4 MiB by default;
@@ -1653,8 +1767,7 @@ impl RuntimeShell {
         if !path.starts_with('/') {
             return Response {
                 status: ResponseStatus::InvalidRequest,
-                message: "read-file-range requires an absolute path starting with '/'"
-                    .to_owned(),
+                message: "read-file-range requires an absolute path starting with '/'".to_owned(),
             };
         }
         if length == 0 {
@@ -1664,56 +1777,6 @@ impl RuntimeShell {
             };
         }
         let capped = length.min(MAX_READ);
-        // Cache-only resolve — fail closed on miss to avoid the
-        // timing-side-channel discussed in the P4.3 commit.
-        let db_path = &self.store.db_path;
-        let conn = match rusqlite::Connection::open(db_path) {
-            Ok(c) => c,
-            Err(err) => {
-                return Response {
-                    status: ResponseStatus::InternalError,
-                    message: format!("read-file-range: open metadata cache failed: {err}"),
-                };
-            }
-        };
-        let record = match pcloud_store::FileMetadataRepository::resolve_path(&conn, &path) {
-            Ok(Some(r)) => r,
-            Ok(None) => {
-                return Response {
-                    status: ResponseStatus::InternalError,
-                    message: format!("read-file-range: {path:?} not in metadata cache"),
-                };
-            }
-            Err(err) => {
-                return Response {
-                    status: ResponseStatus::InternalError,
-                    message: format!("read-file-range: cache lookup failed for {path:?}: {err}"),
-                };
-            }
-        };
-        if record.is_folder {
-            return Response {
-                status: ResponseStatus::InvalidRequest,
-                message: format!("read-file-range: {path:?} is a folder, not a file"),
-            };
-        }
-        let total_size = record.size;
-        // Past-EOF reads return zero bytes + eof=true so SMB
-        // clients see the canonical "read past end of file"
-        // outcome without the daemon having to issue a doomed GET.
-        if offset >= total_size {
-            return self.emit_read_payload(
-                "fs.read_file_range",
-                &path,
-                offset,
-                Vec::new(),
-                total_size,
-                /* eof */ true,
-            );
-        }
-        // Clamp the range to the file's tail.
-        let end_exclusive = (offset + capped).min(total_size);
-        let request_len = end_exclusive - offset;
         let Some(auth_token) = self
             .auth
             .snapshot()
@@ -1726,38 +1789,30 @@ impl RuntimeShell {
                 message: "read-file-range requires an authenticated session".to_owned(),
             };
         };
-        let link = match self
-            .transfer_runtime
-            .get_file_link(auth_token, record.file_id, /* forced_host */ None)
-        {
-            Ok(l) => l,
-            Err(err) => {
-                return Response {
-                    status: ResponseStatus::InternalError,
-                    message: format!("read-file-range: getfilelink failed for {path:?}: {err}"),
+        let result = {
+            let remote = RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, auth_token);
+            remote.stat(&path).and_then(|metadata| {
+                let RemoteId::File(file_id) = metadata.id else {
+                    return Err(RemoteFsError::ExpectedFile {
+                        path: metadata.path,
+                    });
                 };
-            }
+                let total_size = metadata.size.unwrap_or(0);
+                if offset >= total_size {
+                    return Ok((Vec::new(), total_size));
+                }
+                let request_len = capped.min(total_size - offset);
+                remote
+                    .read_range_by_id(file_id, offset, request_len)
+                    .map(|bytes| (bytes, total_size))
+            })
         };
-        let download = self.transfer_runtime.download_for_range(&link, offset, end_exclusive);
-        match pcloud_proto::fetch_download(&download, self.transfer_runtime.http_download_config()) {
-            Ok(bytes) => {
-                let bytes_returned = bytes.len() as u64;
-                let eof = offset + bytes_returned >= total_size;
-                self.emit_read_payload(
-                    "fs.read_file_range",
-                    &path,
-                    offset,
-                    bytes,
-                    total_size,
-                    eof,
-                )
+        match result {
+            Ok((bytes, total_size)) => {
+                let eof = offset.saturating_add(bytes.len() as u64) >= total_size;
+                self.emit_read_payload("fs.read_file_range", &path, offset, bytes, total_size, eof)
             }
-            Err(err) => Response {
-                status: ResponseStatus::InternalError,
-                message: format!(
-                    "read-file-range: GET failed for {path:?} (range {offset}+{request_len}): {err}"
-                ),
-            },
+            Err(error) => remote_fs_error_response("read-file-range", error),
         }
     }
 
@@ -1778,54 +1833,20 @@ impl RuntimeShell {
         if !path.starts_with('/') {
             return Response {
                 status: ResponseStatus::InvalidRequest,
-                message: "write-file-fresh requires an absolute path starting with '/'"
-                    .to_owned(),
+                message: "write-file-fresh requires an absolute path starting with '/'".to_owned(),
             };
         }
-        let (parent_path, file_name) = match split_parent_and_leaf(&path) {
-            Some(parts) => parts,
-            None => return Response {
-                status: ResponseStatus::InvalidRequest,
-                message: format!(
-                    "write-file-fresh: cannot extract parent+leaf from {path:?}"
-                ),
-            },
-        };
-        // Resolve the parent folder. Cache-only; the SMB plugin is
-        // expected to have warmed the cache via stat/list_directory.
-        let resolved = match self.resolve_kind_by_path(&parent_path) {
-            Ok(opt) => opt,
-            Err(status) => return Response {
-                status,
-                message: format!(
-                    "write-file-fresh: resolve failed for parent of {path:?}"
-                ),
-            },
-        };
-        let parent_id = match resolved {
-            Some((id, true)) => id,
-            Some((_, false)) => return Response {
-                status: ResponseStatus::Conflict,
-                message: format!(
-                    "write-file-fresh: parent of {path:?} ({parent_path:?}) is a file"
-                ),
-            },
-            None => return Response {
-                status: ResponseStatus::InternalError,
-                message: format!(
-                    "write-file-fresh: parent of {path:?} ({parent_path:?}) not in metadata cache"
-                ),
-            },
-        };
         // Decode the body. Empty body is allowed (zero-length file).
         use base64::Engine as _;
         use base64::engine::general_purpose::STANDARD as B64;
         let bytes = match B64.decode(data_b64.as_bytes()) {
             Ok(b) => b,
-            Err(err) => return Response {
-                status: ResponseStatus::InvalidRequest,
-                message: format!("write-file-fresh: base64 decode failed: {err}"),
-            },
+            Err(err) => {
+                return Response {
+                    status: ResponseStatus::InvalidRequest,
+                    message: format!("write-file-fresh: base64 decode failed: {err}"),
+                };
+            }
         };
         if bytes.len() > MAX_WRITE {
             return Response {
@@ -1849,41 +1870,24 @@ impl RuntimeShell {
                 message: "write-file-fresh requires an authenticated session".to_owned(),
             };
         };
-        // upload_create gives a fresh session.
-        let session = match self.transfer_runtime.upload_create(
-            auth_token.clone_secret(),
-            parent_id,
-            file_name.clone(),
-            bytes.len() as u64,
-        ) {
-            Ok(s) => s,
-            Err(err) => return Response {
-                status: ResponseStatus::InternalError,
-                message: format!("write-file-fresh: upload_create failed: {err}"),
-            },
+        let result = {
+            let remote = RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, auth_token);
+            let mut source = std::io::Cursor::new(bytes.as_slice());
+            remote.write_stream(&path, &mut source, bytes.len() as u64, None)
         };
-        // upload_bytes does write+save in a single shot.
-        match self
-            .transfer_runtime
-            .upload_bytes(auth_token, &session, &bytes)
-        {
-            Ok(_frame) => self.audited_response(
+        match result {
+            Ok(write) => self.audited_response(
                 "fs.write_file_fresh",
                 Some(format!(
-                    "path={path} parent_id={parent_id} bytes={}",
-                    bytes.len()
+                    "path={path} upload_id={} bytes={}",
+                    write.upload_id, write.bytes_written
                 )),
                 format!(
-                    "write-file-fresh: wrote {} bytes to {path:?} (parent_id={parent_id})",
-                    bytes.len()
+                    "write-file-fresh: wrote {} bytes to {path:?}",
+                    write.bytes_written
                 ),
             ),
-            Err(err) => Response {
-                status: ResponseStatus::InternalError,
-                message: format!(
-                    "write-file-fresh: upload_bytes failed for {path:?}: {err}"
-                ),
-            },
+            Err(error) => remote_fs_error_response("write-file-fresh", error),
         }
     }
 
@@ -1926,11 +1930,8 @@ impl RuntimeShell {
         )
     }
 
-    /// bd-smbr-pcloud P5 — create a remote folder by absolute
-    /// pCloud-drive path. Delegates to
-    /// [`crate::folder_backend::FolderRuntime::create_remote_folder_by_path`]
-    /// (which mirrors C `psync_create_remote_folder_by_path`).
-    /// Idempotent on existing folder of the same name.
+    /// Create a remote folder after the canonical service resolves its
+    /// parent to a live folder id.
     pub fn create_folder_by_path(&mut self, path: String) -> Response {
         if !path.starts_with('/') {
             return Response {
@@ -1965,47 +1966,20 @@ impl RuntimeShell {
                 message: "create-folder-by-path requires an authenticated session".to_owned(),
             };
         };
-        match self
-            .folder_runtime
-            .create_remote_folder_by_path(auth_token, &path)
-        {
-            Ok(resp) => self.audited_response(
+        let result = {
+            let remote = RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, auth_token);
+            remote.mkdir(&path)
+        };
+        match result {
+            Ok(metadata) => self.audited_response(
                 "fs.create_folder_by_path",
-                Some(format!(
-                    "path={path} folder_id={} created={}",
-                    resp.folder_id, resp.created
-                )),
+                Some(format!("path={path} folder_id={}", metadata.id.value())),
                 format!(
-                    "create-folder-by-path: {path:?} \
-                     folder_id={} created={}",
-                    resp.folder_id, resp.created
+                    "create-folder-by-path: {path:?} folder_id={}",
+                    metadata.id.value()
                 ),
             ),
-            Err(err) => match &err {
-                // 2009 == File / Component already exists with a
-                // different kind. Distinguish folder-vs-file collisions.
-                pcloud_proto::FolderApiError::Result { result: 2009, .. } => Response {
-                    status: ResponseStatus::Conflict,
-                    message: format!(
-                        "create-folder-by-path: {path:?} blocked by an existing entry"
-                    ),
-                },
-                // 2005 (Folder Not Found): the parent component was
-                // removed mid-flight. Treat as InternalError so SMB
-                // clients can retry after a fresh stat.
-                pcloud_proto::FolderApiError::Result { result: 2005, .. } => Response {
-                    status: ResponseStatus::InternalError,
-                    message: format!(
-                        "create-folder-by-path: parent of {path:?} not found"
-                    ),
-                },
-                _ => Response {
-                    status: ResponseStatus::InternalError,
-                    message: format!(
-                        "create-folder-by-path: API create failed for {path:?}: {err}"
-                    ),
-                },
-            },
+            Err(error) => remote_fs_error_response("create-folder-by-path", error),
         }
     }
 
@@ -2026,52 +2000,6 @@ impl RuntimeShell {
                     .to_owned(),
             };
         }
-        let (to_parent_path, to_name) = match split_parent_and_leaf(&to) {
-            Some(parts) => parts,
-            None => return Response {
-                status: ResponseStatus::InvalidRequest,
-                message: format!("rename-path: cannot extract parent+leaf from {to:?}"),
-            },
-        };
-        let resolved = match self.resolve_kind_by_path(&from) {
-            Ok(opt) => opt,
-            Err(status) => return Response {
-                status,
-                message: format!("rename-path: resolve failed for from={from:?}"),
-            },
-        };
-        let Some((source_id, is_folder)) = resolved else {
-            return Response {
-                status: ResponseStatus::InternalError,
-                message: format!(
-                    "rename-path: {from:?} not in metadata cache (cannot determine kind)"
-                ),
-            };
-        };
-        let resolved_parent = match self.resolve_kind_by_path(&to_parent_path) {
-            Ok(opt) => opt,
-            Err(status) => return Response {
-                status,
-                message: format!(
-                    "rename-path: resolve failed for parent of {to:?} ({to_parent_path:?})"
-                ),
-            },
-        };
-        let to_folder_id = match resolved_parent {
-            Some((id, true)) => id,
-            Some((_, false)) => return Response {
-                status: ResponseStatus::Conflict,
-                message: format!(
-                    "rename-path: parent of {to:?} ({to_parent_path:?}) is a file, not a folder"
-                ),
-            },
-            None => return Response {
-                status: ResponseStatus::InternalError,
-                message: format!(
-                    "rename-path: parent of {to:?} ({to_parent_path:?}) not in metadata cache"
-                ),
-            },
-        };
         let Some(auth_token) = self
             .auth
             .snapshot()
@@ -2084,93 +2012,231 @@ impl RuntimeShell {
                 message: "rename-path requires an authenticated session".to_owned(),
             };
         };
-        let outcome = if is_folder {
-            self.folder_runtime
-                .rename_folder_by_id(auth_token, source_id, to_folder_id, &to_name)
-                .map_err(|e| format!("renamefolder failed: {e}"))
-        } else {
-            self.transfer_runtime
-                .rename_file_by_id(auth_token, source_id, to_folder_id, &to_name)
-                .map_err(|e| format!("renamefile failed: {e}"))
+        let outcome = {
+            let remote = RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, auth_token);
+            remote.move_path(&from, &to)
         };
         match outcome {
-            Ok(()) => self.audited_response(
+            Ok(source_id) => self.audited_response(
                 "fs.rename_path",
                 Some(format!(
-                    "from={from} to={to} kind={} id={source_id} to_parent={to_folder_id}",
-                    if is_folder { "folder" } else { "file" }
+                    "from={from} to={to} kind={} id={}",
+                    if source_id.is_folder() {
+                        "folder"
+                    } else {
+                        "file"
+                    },
+                    source_id.value()
                 )),
                 format!("rename-path: {from:?} → {to:?}"),
             ),
-            Err(msg) => Response {
-                status: ResponseStatus::InternalError,
-                message: format!("rename-path: {from:?} → {to:?}: {msg}"),
-            },
+            Err(error) => remote_fs_error_response("rename-path", error),
         }
     }
 
-    /// Return the revision history of a remote file by absolute path.
-    /// Mirrors C `psync_listrevisions`. The current implementation
-    /// dispatches through the optional HTTP provider on
-    /// `pcloud-proto`; when the provider is not enabled, returns
-    /// [`ResponseStatus::Unavailable`] with a tracker pointer so
-    /// callers see the honest scope.
-    pub fn file_history(&mut self, path: String, limit: Option<u32>) -> Response {
-        if path.trim().is_empty() {
+    /// Copy a remote file or folder tree through the canonical bounded
+    /// streaming path.
+    pub fn copy_path(&mut self, from: String, to: String) -> Response {
+        let Some(auth_token) = self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        else {
             return Response {
-                status: ResponseStatus::InvalidRequest,
-                message: "file-history requires a non-empty absolute remote path".to_owned(),
+                status: ResponseStatus::Unauthorized,
+                message: "copy-path requires an authenticated session".to_owned(),
             };
-        }
-
-        let provider = self.build_revision_provider();
-        match provider.list_revisions(&path) {
-            Ok(mut revisions) => {
-                if let Some(cap) = limit {
-                    revisions.truncate(cap as usize);
-                }
-                let count = revisions.len();
-                let payload = serde_json::json!({
-                    "revisions": revisions,
-                    "count": count,
-                });
-                Response {
-                    status: ResponseStatus::Ok,
-                    message: serde_json::to_string(&payload).unwrap_or_else(|_| "[]".to_owned()),
+        };
+        let result = {
+            let remote = RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, auth_token);
+            remote.copy_path(&from, &to)
+        };
+        match result {
+            Ok(report) => {
+                let payload = pcloud_ipc::RemoteCopyPayload {
+                    files: report.files,
+                    folders: report.folders,
+                    bytes: report.bytes,
+                };
+                match serde_json::to_string(&payload) {
+                    Ok(body) => self.audited_response(
+                        "fs.copy_path",
+                        Some(format!(
+                            "from={from} to={to} files={} folders={} bytes={}",
+                            report.files, report.folders, report.bytes
+                        )),
+                        body,
+                    ),
+                    Err(error) => Response {
+                        status: ResponseStatus::InternalError,
+                        message: format!("copy-path: encode result: {error}"),
+                    },
                 }
             }
-            Err(err) => Response {
-                status: revision_err_to_status(&err),
-                message: render_revision_error_payload(&err, &path),
-            },
+            Err(error) => remote_fs_error_response("copy-path", error),
         }
     }
 
-    /// Build the configured revision provider.
-    ///
-    /// When `[file_history].revision_url` is unset (the default), this
-    /// returns a boxed
-    /// [`pcloud_proto::revision_provider::NullRevisionProvider`]. When
-    /// the `file-history-http` feature is enabled on `pcloud-proto` and
-    /// the URL is set, an HTTP provider is constructed instead. In the
-    /// default build (feature off) the Null provider is always returned
-    /// even when the URL is configured, which keeps the daemon's
-    /// default response ("not configured") honest.
-    fn build_revision_provider(
-        &self,
-    ) -> Box<dyn pcloud_proto::revision_provider::RevisionProvider> {
-        // The URL is currently only consumed by the `file-history-http`
-        // branch. Underscore-prefix the binding so non-feature builds do
-        // not trip the `unused_variables` lint.
-        let _url = self
-            .config
-            .file_history
-            .revision_url
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty());
+    /// Delete a remote entry of either kind, resolving it live first.
+    pub fn delete_path(&mut self, path: String, recursive: bool) -> Response {
+        let Some(auth_token) = self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        else {
+            return Response {
+                status: ResponseStatus::Unauthorized,
+                message: "delete-path requires an authenticated session".to_owned(),
+            };
+        };
+        let result = {
+            let remote = RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, auth_token);
+            remote.delete(&path, recursive)
+        };
+        match result {
+            Ok(pcloud_backends::remote_fs::DeleteOutcome::Deleted(id)) => self.audited_response(
+                "fs.delete_path",
+                Some(format!(
+                    "path={path} recursive={recursive} kind={} id={}",
+                    if id.is_folder() { "folder" } else { "file" },
+                    id.value()
+                )),
+                format!("deleted {path}"),
+            ),
+            Ok(pcloud_backends::remote_fs::DeleteOutcome::AlreadyAbsent) => self.audited_response(
+                "fs.delete_path",
+                Some(format!(
+                    "path={path} recursive={recursive} result=already_absent"
+                )),
+                format!("already absent: {path}"),
+            ),
+            Err(error) => remote_fs_error_response("delete-path", error),
+        }
+    }
 
-        Box::new(pcloud_proto::revision_provider::NullRevisionProvider::new())
+    /// Stream a local file to an absolute remote path using exact source
+    /// length enforcement and chunk acknowledgements.
+    pub fn upload_file_by_path(&mut self, local_path: PathBuf, remote_path: String) -> Response {
+        let _metadata = match std::fs::metadata(&local_path) {
+            Ok(metadata) if metadata.is_file() => metadata,
+            Ok(_) => {
+                return Response {
+                    status: ResponseStatus::InvalidRequest,
+                    message: format!("upload-file-by-path: not a regular file: {local_path:?}"),
+                };
+            }
+            Err(error) => {
+                return Response {
+                    status: ResponseStatus::InvalidRequest,
+                    message: format!("upload-file-by-path: stat {local_path:?}: {error}"),
+                };
+            }
+        };
+        let Some(auth_token) = self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        else {
+            return Response {
+                status: ResponseStatus::Unauthorized,
+                message: "upload-file-by-path requires an authenticated session".to_owned(),
+            };
+        };
+        let result = RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, auth_token)
+            .with_durability(
+                self.store.db_path.clone(),
+                self.config.paths.runtime_dir.clone(),
+            )
+            .and_then(|remote| {
+                remote.upload_file_resumable(
+                    &remote_path,
+                    &local_path,
+                    pcloud_backends::remote_fs::UploadConflict::Overwrite,
+                )
+            });
+        match result {
+            Ok(write) => {
+                let payload = pcloud_ipc::RemoteUploadPayload {
+                    upload_id: write.upload_id,
+                    file_id: write.file_id,
+                    bytes: write.bytes_written,
+                    sha1_hex: write.sha1_hex,
+                    resumed_from: write.resumed_from,
+                };
+                match serde_json::to_string(&payload) {
+                    Ok(body) => self.audited_response(
+                        "fs.upload_file_by_path",
+                        Some(format!(
+                            "local={local_path:?} remote={remote_path} upload_id={} bytes={}",
+                            write.upload_id, write.bytes_written
+                        )),
+                        body,
+                    ),
+                    Err(error) => Response {
+                        status: ResponseStatus::InternalError,
+                        message: format!("upload-file-by-path: encode result: {error}"),
+                    },
+                }
+            }
+            Err(error) => remote_fs_error_response("upload-file-by-path", error),
+        }
+    }
+
+    /// Stream a remote file to a crash-safe local temporary and atomically
+    /// publish it at the requested destination.
+    pub fn download_file_by_path(
+        &mut self,
+        remote_path: String,
+        local_path: PathBuf,
+        overwrite: bool,
+    ) -> Response {
+        let Some(auth_token) = self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        else {
+            return Response {
+                status: ResponseStatus::Unauthorized,
+                message: "download-file-by-path requires an authenticated session".to_owned(),
+            };
+        };
+        let result = {
+            let remote = RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, auth_token);
+            remote.download_to_path(&remote_path, &local_path, overwrite)
+        };
+        match result {
+            Ok(download) => {
+                let payload = pcloud_ipc::RemoteDownloadPayload {
+                    path: download.path.clone(),
+                    bytes: download.bytes_written,
+                    sha256_hex: download.sha256_hex,
+                    resumed_from: download.resumed_from,
+                };
+                match serde_json::to_string(&payload) {
+                    Ok(body) => self.audited_response(
+                        "fs.download_file_by_path",
+                        Some(format!(
+                            "remote={remote_path} local={:?} bytes={}",
+                            download.path, download.bytes_written
+                        )),
+                        body,
+                    ),
+                    Err(error) => Response {
+                        status: ResponseStatus::InternalError,
+                        message: format!("download-file-by-path: encode result: {error}"),
+                    },
+                }
+            }
+            Err(error) => remote_fs_error_response("download-file-by-path", error),
+        }
     }
 
     /// Compose a real live-FUSE adapter factory and install it on
@@ -2180,10 +2246,19 @@ impl RuntimeShell {
     ///
     /// On Linux the factory returns a [`pcloud_fs::fuser_shim::PcloudFsShim`]
     /// wrapped around a [`pcloud_fs::fuse_adapter::ProtoFuseAdapter`].
-    /// On macOS the `fuser` crate is not available, so the factory returns
-    /// the bare `ProtoFuseAdapter` and [`pcloud_fs::mount_service::MountService`]
-    /// dispatches through the fuse-t FFI instead of `mount_fuser`.
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    /// On macOS and Windows the `fuser` crate is not used, so the factory
+    /// returns the bare `ProtoFuseAdapter` and
+    /// [`pcloud_fs::mount_service::MountService`] dispatches through fuse-t
+    /// or WinFSP instead of `mount_fuser`.
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "netbsd",
+        target_os = "openbsd",
+        target_os = "dragonfly",
+        target_os = "macos",
+        target_os = "windows"
+    ))]
     fn try_install_pcloud_shim_factory(&mut self) {
         let Some(auth_token) = self
             .auth
@@ -2194,7 +2269,7 @@ impl RuntimeShell {
         else {
             return;
         };
-        let Some(transport) = self.transfer_runtime.network_transport() else {
+        let Some(_transport) = self.transfer_runtime.network_transport() else {
             return;
         };
         let staging_root = self.config.paths.cache_dir.join("fuse-staging");
@@ -2234,7 +2309,7 @@ impl RuntimeShell {
         }
 
         let params = crate::mount_runtime::ShimFactoryParams {
-            transport,
+            config: self.config.clone(),
             auth_token,
             staging_root,
             write_options: pcloud_fs::write_path::WritePathOptions::default(),
@@ -2601,6 +2676,7 @@ impl RuntimeShell {
 
     /// Prepare queued downloads (reserve ids, build plan state).
     /// Returns the number of items prepared in this pass.
+    #[cfg(test)]
     pub fn prepare_active_downloads_once(&mut self) -> Result<usize, String> {
         let auth_token = self
             .auth
@@ -2627,6 +2703,7 @@ impl RuntimeShell {
 
     /// Prepare queued uploads (stage local data, reserve upload ids).
     /// Returns the number of items prepared in this pass.
+    #[cfg(test)]
     pub fn prepare_active_uploads_once(&mut self) -> Result<usize, String> {
         let auth_token = self
             .auth
@@ -2665,6 +2742,7 @@ impl RuntimeShell {
 
     /// Execute prepared downloads (signed HTTP fetch + disk write).
     /// Returns the number of items executed in this pass.
+    #[cfg(test)]
     pub fn execute_active_downloads_once(&mut self) -> Result<usize, String> {
         let auth_token = self
             .auth
@@ -2743,6 +2821,7 @@ impl RuntimeShell {
 
     /// Execute prepared uploads (upload-write + upload-save). Returns
     /// the number of items executed in this pass.
+    #[cfg(test)]
     pub fn execute_active_uploads_once(&mut self) -> Result<usize, String> {
         let auth_token = self
             .auth
@@ -2886,19 +2965,19 @@ impl RuntimeShell {
     /// Update the active API server endpoint in the config and the
     /// live transports. Rejects downgrades in production per the
     /// transport policy rules.
+    ///
+    /// Visibility: `pub` because `EmbeddedDaemon::set_api_server` in
+    /// `pcloud-sdk` delegates here. CLAUDEREV remediation P1 fix.
     pub fn set_api_server(
         &mut self,
         binapi: impl Into<String>,
         location_id: u32,
-    ) -> Result<(), pcloud_store::StoreError> {
+    ) -> Result<(), SetApiServerError> {
         let binapi = binapi.into();
-        if let Err(reason) = self.config.api.apply_api_server_hint(&binapi) {
-            log::error!(
-                "set_api_server: rejecting binapi hint '{}' — {}",
-                binapi,
-                reason
-            );
-        }
+        self.config
+            .api
+            .apply_api_server_hint(&binapi)
+            .map_err(SetApiServerError::InvalidHint)?;
         self.auth_runtime.apply_api_server_hint(&binapi);
         self.account_runtime.apply_api_server_hint(&binapi);
         self.backup_runtime.apply_api_server_hint(&binapi);
@@ -2907,7 +2986,7 @@ impl RuntimeShell {
         self.public_link_runtime.apply_api_server_hint(&binapi);
         self.store.repositories.preferences.api_server_binapi = Some(binapi);
         self.store.repositories.preferences.api_server_location_id = Some(location_id);
-        persist_profile(&self.store)
+        persist_profile(&self.store).map_err(SetApiServerError::Store)
     }
 
     /// `GetApiServers` IPC handler — return the list of pCloud API regions.
@@ -3054,7 +3133,11 @@ impl RuntimeShell {
 
     /// `VerifyEmailRestricted` IPC handler — verify email with a token.
     /// Mirrors C `psync_verify_email_restricted`.
-    fn verify_email_restricted(&self, verify_token: String) -> Response {
+    fn verify_email_restricted(
+        &self,
+        verify_token: pcloud_ipc::redacted::RedactedString,
+    ) -> Response {
+        let verify_token = String::from(verify_token);
         if verify_token.trim().is_empty() {
             return Response {
                 status: ResponseStatus::InvalidRequest,
@@ -3110,7 +3193,9 @@ impl RuntimeShell {
             Ok(result) => {
                 // Install the new auth token returned by the server.
                 let user_id = self.auth.snapshot().authenticated_user;
-                let new_token = SecretString::new(result.auth_token);
+                // CLAUDEREV iter-1 SEC-H fix: result.auth_token already is
+                // SecretString from pcloud-proto::account_api.
+                let new_token = result.auth_token;
                 if let Err(err) = self
                     .auth
                     .apply(pcloud_auth::AuthCommand::MarkAuthenticated {
@@ -3221,6 +3306,12 @@ impl RuntimeShell {
     /// `DownloadFile` IPC handler — download a remote file to a local path.
     /// Requires an authenticated session.
     fn download_file_ipc(&self, file_id: u64, local_path: std::path::PathBuf) -> Response {
+        if !local_path.is_absolute() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "download_file requires an absolute local destination".to_owned(),
+            };
+        }
         let auth_token = match self
             .auth
             .snapshot()
@@ -3236,40 +3327,18 @@ impl RuntimeShell {
                 };
             }
         };
-        let link = match self
-            .transfer_runtime
-            .get_file_link(auth_token, file_id, None)
+        match RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, auth_token)
+            .download_by_id_streaming_to_path(file_id, &local_path, true)
         {
-            Ok(link) => link,
-            Err(err) => {
-                return Response {
-                    status: ResponseStatus::InternalError,
-                    message: format!("get_file_link failed: {err}"),
-                };
-            }
-        };
-        let (_signed, bytes) = match self.transfer_runtime.download_bytes(&link) {
-            Ok(result) => result,
-            Err(err) => {
-                return Response {
-                    status: ResponseStatus::InternalError,
-                    message: format!("download_bytes failed: {err}"),
-                };
-            }
-        };
-        match std::fs::write(&local_path, &bytes) {
-            Ok(()) => Response {
+            Ok(download) => Response {
                 status: ResponseStatus::Ok,
                 message: format!(
                     "downloaded {} bytes to {}",
-                    bytes.len(),
+                    download.bytes_written,
                     local_path.display()
                 ),
             },
-            Err(err) => Response {
-                status: ResponseStatus::InternalError,
-                message: format!("write to {} failed: {err}", local_path.display()),
-            },
+            Err(error) => remote_fs_error_response("download-file", error),
         }
     }
 
@@ -3485,7 +3554,11 @@ impl RuntimeShell {
                 Some(format!("location_id={location_id} binapi={binapi}")),
                 format!("API server set to {binapi} (location_id={location_id})"),
             ),
-            Err(err) => Response {
+            Err(SetApiServerError::InvalidHint(reason)) => Response {
+                status: ResponseStatus::InvalidRequest,
+                message: format!("set_api_server failed: {reason}"),
+            },
+            Err(SetApiServerError::Store(err)) => Response {
                 status: ResponseStatus::InternalError,
                 message: format!("set_api_server failed: {err}"),
             },
@@ -3546,6 +3619,7 @@ impl RuntimeShell {
         source_fileid: u64,
         source_hash: u64,
         offset: u64,
+        source_offset: Option<u64>,
         count: u64,
     ) -> Response {
         let auth_token = match self
@@ -3567,6 +3641,7 @@ impl RuntimeShell {
         // the server only requires uniqueness within a single upload
         // session, and offsets are guaranteed monotone per chunk.
         let chunk_id = offset / (pcloud_proto::transfer_api::PSYNC_COPY_BUFFER_SIZE as u64);
+        let source_offset = source_offset.unwrap_or(offset);
         match self.transfer_runtime.upload_write_from_file(
             auth_token,
             upload_session_id,
@@ -3574,18 +3649,13 @@ impl RuntimeShell {
             chunk_id,
             source_fileid,
             source_hash,
-            // Source offset mirrors the upload offset for the simple
-            // 1:1 copy carried by this IPC variant. The full C calling
-            // convention allows independent values; the IPC variant
-            // carries only one `offset` field today (matching the
-            // common case in the upstream code).
-            offset,
+            source_offset,
             count,
         ) {
             Ok(()) => Response {
                 status: ResponseStatus::Ok,
                 message: format!(
-                    "upload_writefromfile ok: {count} bytes from fileid {source_fileid} into upload {upload_session_id} at offset {offset}"
+                    "upload_writefromfile ok: {count} bytes from fileid {source_fileid} source_offset {source_offset} into upload {upload_session_id} at upload_offset {offset}"
                 ),
             },
             Err(err) => Response {
@@ -3595,27 +3665,42 @@ impl RuntimeShell {
         }
     }
 
-    /// `CreateTreePublicLinkFromPaths` IPC handler — resolve a list of
-    /// absolute pCloud-drive paths to their remote folder ids on the
-    /// daemon side, then create a tree public link.  Mirrors the C
-    /// `ptree_public_link` path-based variant (row 149, bd-1du).
+    /// `CreateTreePublicLinkFromPaths` IPC handler — compatibility route
+    /// for older clients that pass one folder-only path list.
     fn create_tree_public_link_from_paths_ipc(
         &mut self,
         name: String,
         paths: Vec<String>,
         expires: Option<u64>,
     ) -> Response {
+        self.create_tree_public_link_from_path_targets_ipc(name, None, paths, Vec::new(), expires)
+    }
+
+    /// `CreateTreePublicLinkFromPathTargets` IPC handler — resolve the
+    /// exact C `ptree_public_link` target shape (root folder, folders,
+    /// files) under the daemon's authenticated session, then create a
+    /// tree public link.
+    fn create_tree_public_link_from_path_targets_ipc(
+        &mut self,
+        name: String,
+        root: Option<String>,
+        folders: Vec<String>,
+        files: Vec<String>,
+        expires: Option<u64>,
+    ) -> Response {
         if name.trim().is_empty() {
             return Response {
                 status: ResponseStatus::InvalidRequest,
-                message: "create_tree_public_link_from_paths: name must not be empty".to_owned(),
+                message: "create_tree_public_link_from_path_targets: name must not be empty"
+                    .to_owned(),
             };
         }
-        if paths.is_empty() {
+        if root.is_none() && folders.is_empty() && files.is_empty() {
             return Response {
                 status: ResponseStatus::InvalidRequest,
-                message: "create_tree_public_link_from_paths: at least one path is required"
-                    .to_owned(),
+                message:
+                    "create_tree_public_link_from_path_targets: at least one root, folder, or file path is required"
+                        .to_owned(),
             };
         }
         let auth_token = match self
@@ -3629,45 +3714,34 @@ impl RuntimeShell {
             None => {
                 return Response {
                     status: ResponseStatus::Unauthorized,
-                    message: "create_tree_public_link_from_paths requires an authenticated session"
-                        .to_owned(),
+                    message:
+                        "create_tree_public_link_from_path_targets requires an authenticated session"
+                            .to_owned(),
                 };
             }
         };
 
-        // Resolve each path to a remote folder id using the path resolver.
-        let resolver = self
-            .public_link_runtime
-            .path_resolver(auth_token.clone_secret());
-        let mut folder_ids: Vec<u64> = Vec::with_capacity(paths.len());
-        for path in &paths {
-            match resolver.get_folder_id_by_path(path) {
-                Ok(id) => folder_ids.push(id.get()),
-                Err(err) => {
-                    return map_path_resolve_error(err);
-                }
-            }
-        }
-        let folder_ids_csv = folder_ids
-            .iter()
-            .map(|id| id.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
+        let targets = pcloud_proto::public_links_api::TreePublicLinkPaths {
+            root,
+            folders,
+            files,
+        };
 
-        match self.public_link_runtime.create_tree_public_link(
-            auth_token,
-            name.clone(),
-            None,
-            Some(folder_ids_csv.clone()),
-            None,
-            expires,
-            None,
-            None,
-        ) {
+        match self
+            .public_link_runtime
+            .create_tree_public_link_from_paths_default(
+                auth_token,
+                name.clone(),
+                &targets,
+                expires,
+                None,
+                None,
+            ) {
             Ok(created) => self.audited_response(
                 "publinks.create_tree_from_paths",
                 Some(format!(
-                    "name={name} paths={paths:?} resolved_folder_ids={folder_ids_csv}",
+                    "name={name} root={:?} folders={:?} files={:?}",
+                    targets.root, targets.folders, targets.files,
                 )),
                 format!(
                     "tree public link created from paths: id={}, name=\"{}\", link=\"{}\"",
@@ -3704,6 +3778,11 @@ impl RuntimeShell {
 
     fn lock_crypto(&mut self) -> Response {
         self.crypto.lock();
+        // T2.4.c — clear the per-folder unlock set so a subsequent
+        // `is_visible` check returns `false` for every encrypted
+        // folder until the master is re-unlocked. Plain folders are
+        // unaffected (they are never in the unlock set to begin with).
+        self.folder_unlock_state.lock_all();
         self.metric_sync_crypto_state();
         self.audited_response(
             "crypto.lock",
@@ -3737,6 +3816,10 @@ impl RuntimeShell {
         };
         if self.crypto.is_started() {
             self.crypto.stop();
+            // T2.4.c — drop per-folder unlock state alongside the
+            // master key so a logout fully closes every previously
+            // visible encrypted folder.
+            self.folder_unlock_state.lock_all();
             self.metric_sync_crypto_state();
         }
         let auth_response = match self.auth.apply(AuthCommand::Logout) {
@@ -3774,16 +3857,41 @@ impl RuntimeShell {
         };
         self.metric_sync_crypto_state();
         match result {
-            Ok(()) => self.audited_response(
-                "crypto.start",
-                Some(format!("state={:?}", self.crypto.unlock_state)),
-                format!(
-                    "crypto started (backend={}, setup={}, folders={})",
-                    self.crypto.effective_backend(),
-                    self.crypto.is_setup(),
-                    self.crypto.folders.len()
-                ),
-            ),
+            Ok(()) => {
+                // T2.4.c — seed the per-folder unlock-state from the
+                // persisted policy. Walk the registry and unlock every
+                // folder whose entry has `encrypted = true`. Plain
+                // folders (entry missing or `encrypted = false`) are
+                // skipped entirely so they never enter the unlock set
+                // and the per-folder KEK is never derived for them.
+                //
+                // The KEK bytes themselves are NOT materialised here;
+                // they are re-derived on demand from
+                // `keys.active_key_material` plus the folder id via
+                // `pcloud_crypto::keys::derive_folder_kek`. The unlock
+                // set is just the visibility/admission predicate.
+                let mut unlocked_folders: u64 = 0;
+                for (&folder_id, entry) in &self.folder_crypto_policy.folders {
+                    if entry.encrypted {
+                        self.folder_unlock_state.unlock(folder_id);
+                        unlocked_folders = unlocked_folders.saturating_add(1);
+                    }
+                }
+                self.audited_response(
+                    "crypto.start",
+                    Some(format!(
+                        "state={:?} folders_unlocked={}",
+                        self.crypto.unlock_state, unlocked_folders
+                    )),
+                    format!(
+                        "crypto started (backend={}, setup={}, folders={}, per_folder_unlocked={})",
+                        self.crypto.effective_backend(),
+                        self.crypto.is_setup(),
+                        self.crypto.folders.len(),
+                        unlocked_folders,
+                    ),
+                )
+            }
             Err(pcloud_crypto::CryptoError::WrongPassword) => Response {
                 status: ResponseStatus::Unauthorized,
                 message: "wrong crypto password".to_owned(),
@@ -4300,6 +4408,12 @@ impl RuntimeShell {
 
     fn crypto_reset(&mut self) -> Response {
         self.crypto.reset();
+        // T2.4.c — drop per-folder unlock state on reset; the policy
+        // registry itself is preserved (operator opt-ins persist
+        // across reset), but the runtime unlock-set must be cleared
+        // so a subsequent `is_visible` check returns `false` until a
+        // new `unlock_crypto` call.
+        self.folder_unlock_state.lock_all();
         self.metric_sync_crypto_state();
         self.audited_response(
             "crypto.reset",
@@ -4941,6 +5055,203 @@ impl RuntimeShell {
 
     fn create_folder_public_link(&mut self, path: String) -> Response {
         self.create_public_link(path, true)
+    }
+
+    /// `Request::CreateFolderPublicLinkWithOptions` IPC handler.
+    /// Closes parity row 147 reachability gap (CLAUDEREV iter-2 H-4):
+    /// `psync_folder_public_link_full` C primitive ↔ Rust
+    /// `PublicLinkRuntime::create_folder_public_link_with_options`.
+    fn create_folder_public_link_with_options(
+        &mut self,
+        path: String,
+        expire: Option<u64>,
+        maxdownloads: Option<u64>,
+        maxtraffic: Option<u64>,
+        password: Option<String>,
+    ) -> Response {
+        if path.trim().is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "public link path must not be empty".to_owned(),
+            };
+        }
+
+        let auth_token = match self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        {
+            Some(token) => token,
+            None => {
+                return Response {
+                    status: ResponseStatus::Conflict,
+                    message: "public link creation requires an authenticated session".to_owned(),
+                };
+            }
+        };
+
+        // Same data-residency gate as the basic create_public_link path.
+        let region = self.active_host_region();
+        if let Some(refusal) =
+            self.check_residency(pcloud_backends::residency::ACTION_UPLOAD_CREATE, region)
+        {
+            return refusal;
+        }
+
+        match self
+            .public_link_runtime
+            .create_folder_public_link_with_options(
+                auth_token,
+                path.clone(),
+                expire,
+                maxdownloads,
+                maxtraffic,
+                password,
+            ) {
+            Ok(created) => {
+                let code = short_code_from_link(&created.link);
+                let payload = serde_json::json!({
+                    "id": created.link_id,
+                    "code": code,
+                    "is_folder": created.is_folder,
+                    "link": created.link,
+                });
+                self.audited_response(
+                    "publinks.create_folder_with_options",
+                    Some(format!("path={} link_id={}", path, created.link_id)),
+                    payload.to_string(),
+                )
+            }
+            Err(err) => map_public_link_error(err),
+        }
+    }
+
+    /// `Request::CreateFolderUpDownLink` IPC handler. Closes parity
+    /// row 148 reachability gap (CLAUDEREV iter-2 H-4):
+    /// `psync_folder_updownlink_link` C primitive ↔ Rust
+    /// `PublicLinkRuntime::create_folder_updownlink`. Sends a folder
+    /// invitation by email to the recipient.
+    fn create_folder_updownlink(
+        &mut self,
+        folder_id: u64,
+        mail: String,
+        can_upload: bool,
+    ) -> Response {
+        if mail.trim().is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "folder updownlink: recipient mail must not be empty".to_owned(),
+            };
+        }
+
+        let auth_token = match self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        {
+            Some(token) => token,
+            None => {
+                return Response {
+                    status: ResponseStatus::Conflict,
+                    message: "folder updownlink requires an authenticated session".to_owned(),
+                };
+            }
+        };
+
+        // Same data-residency gate as the basic create_public_link path.
+        let region = self.active_host_region();
+        if let Some(refusal) =
+            self.check_residency(pcloud_backends::residency::ACTION_UPLOAD_CREATE, region)
+        {
+            return refusal;
+        }
+
+        match self.public_link_runtime.create_folder_updownlink(
+            auth_token,
+            folder_id,
+            mail.clone(),
+            can_upload,
+        ) {
+            Ok(()) => self.audited_response(
+                "publinks.create_folder_updownlink",
+                Some(format!(
+                    "folder_id={folder_id} can_upload={can_upload}"
+                )),
+                format!(
+                    "folder updownlink invitation sent: folder_id={folder_id} can_upload={can_upload}"
+                ),
+            ),
+            Err(err) => map_public_link_error(err),
+        }
+    }
+
+    /// `Request::CreateScreenshotPublicLink` IPC handler. Closes parity
+    /// row 168 reachability gap (CLAUDEREV iter-2 H-4):
+    /// `psync_screenshot_public_link` C primitive ↔ Rust
+    /// `PublicLinkRuntime::create_screenshot_public_link`. Backend
+    /// fills the current UNIX-seconds timestamp internally.
+    fn create_screenshot_public_link(
+        &mut self,
+        path: String,
+        has_delay: bool,
+        delay_seconds: u64,
+    ) -> Response {
+        if path.trim().is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "screenshot public link: path must not be empty".to_owned(),
+            };
+        }
+
+        let auth_token = match self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        {
+            Some(token) => token,
+            None => {
+                return Response {
+                    status: ResponseStatus::Conflict,
+                    message: "screenshot public link requires an authenticated session".to_owned(),
+                };
+            }
+        };
+
+        let region = self.active_host_region();
+        if let Some(refusal) =
+            self.check_residency(pcloud_backends::residency::ACTION_UPLOAD_CREATE, region)
+        {
+            return refusal;
+        }
+
+        match self.public_link_runtime.create_screenshot_public_link(
+            auth_token,
+            path.clone(),
+            has_delay,
+            delay_seconds,
+        ) {
+            Ok(created) => {
+                let code = short_code_from_link(&created.link);
+                let payload = serde_json::json!({
+                    "id": created.link_id,
+                    "code": code,
+                    "is_folder": created.is_folder,
+                    "link": created.link,
+                });
+                self.audited_response(
+                    "publinks.create_screenshot",
+                    Some(format!("path={} link_id={}", path, created.link_id)),
+                    payload.to_string(),
+                )
+            }
+            Err(err) => map_public_link_error(err),
+        }
     }
 
     fn create_public_link(&mut self, path: String, is_folder: bool) -> Response {
@@ -5641,6 +5952,22 @@ impl RuntimeShell {
             }
         };
         let canonical_local_path_string = canonical_local_path.display().to_string();
+        // CLAUDEREV iter-1 SYNC-H-04-4 fix (fire 22, 2026-04-30):
+        // activate the previously-unused `warn_if_case_insensitive`
+        // helper. The probe runs once per add (not per sync cycle), so
+        // the cost is negligible. The helper:
+        //
+        //   - logs a `log::warn!` line citing the sync root's path and
+        //     the case-conflict risk when the local volume is detected
+        //     as case-insensitive (HFS+ / APFS-default / NTFS);
+        //   - returns a boolean that callers MAY persist alongside
+        //     the sync-root record. We do not persist it yet — that's
+        //     the second half of P4.5 ("reject conflicting filenames
+        //     at sync time on macOS/Windows"), which requires a
+        //     planner-level case-folding map and is tracked
+        //     separately. The warn-on-add half closes the silent
+        //     blindness.
+        let _case_insensitive_root = pcloud_engine::warn_if_case_insensitive(&canonical_local_path);
         if let Some(existing) = self
             .store
             .repositories
@@ -5715,6 +6042,7 @@ impl RuntimeShell {
                 remote_path: validated_remote.path.clone(),
                 paused: false,
                 sync_type: resolved_sync_type,
+                exclude_globs: Vec::new(),
             });
         match persist_profile(&self.store) {
             Ok(()) => {
@@ -5997,6 +6325,229 @@ impl RuntimeShell {
         )
     }
 
+    /// T1.1 selective sync: append `pattern` to `sync_id`'s
+    /// `exclude_globs`. Validates the pattern compiles as a glob before
+    /// persisting; rejects duplicates and empty patterns.
+    fn sync_exclude_add(&mut self, sync_id: u64, pattern: String) -> Response {
+        let trimmed = pattern.trim().to_owned();
+        if trimmed.is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "exclude pattern must not be empty".to_owned(),
+            };
+        }
+        // Compile-check: surface bad globs before persisting.
+        if let Err(err) = pcloud_engine::selective::SelectivePolicy::from_exclude_patterns(
+            std::slice::from_ref(&trimmed),
+        ) {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: format!("invalid glob pattern {trimmed:?}: {err}"),
+            };
+        }
+        let Some(root) = self
+            .store
+            .repositories
+            .sync_graph
+            .tracked_sync_roots
+            .iter_mut()
+            .find(|root| root.sync_id.get() == sync_id)
+        else {
+            return Response {
+                status: ResponseStatus::Conflict,
+                message: format!("sync root {sync_id} does not exist"),
+            };
+        };
+        if root.exclude_globs.iter().any(|p| p == &trimmed) {
+            return Response {
+                status: ResponseStatus::Ok,
+                message: format!("sync root {sync_id} already excludes pattern {trimmed:?}"),
+            };
+        }
+        let previous = root.exclude_globs.clone();
+        root.exclude_globs.push(trimmed.clone());
+        if let Err(err) = persist_profile(&self.store) {
+            if let Some(root) = self
+                .store
+                .repositories
+                .sync_graph
+                .tracked_sync_roots
+                .iter_mut()
+                .find(|root| root.sync_id.get() == sync_id)
+            {
+                root.exclude_globs = previous;
+            }
+            return Response {
+                status: ResponseStatus::InternalError,
+                message: format!("failed to persist exclude_globs add: {err}"),
+            };
+        }
+        // Force the engine to rebuild its planner queue for this root
+        // so the new exclusion takes effect on the next pass.
+        self.engine
+            .scheduler
+            .evict_sync_id(pcloud_model::ids::SyncId::new(sync_id));
+        self.audited_response(
+            "sync.root.exclude_add",
+            Some(format!("id={sync_id} pattern={trimmed:?}")),
+            format!("sync root {sync_id} now excludes {trimmed:?}"),
+        )
+    }
+
+    /// T1.1 selective sync: remove `pattern` from `sync_id`'s
+    /// `exclude_globs`. Returns Conflict if the pattern was not present.
+    fn sync_exclude_remove(&mut self, sync_id: u64, pattern: String) -> Response {
+        let trimmed = pattern.trim().to_owned();
+        if trimmed.is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "exclude pattern must not be empty".to_owned(),
+            };
+        }
+        let Some(root) = self
+            .store
+            .repositories
+            .sync_graph
+            .tracked_sync_roots
+            .iter_mut()
+            .find(|root| root.sync_id.get() == sync_id)
+        else {
+            return Response {
+                status: ResponseStatus::Conflict,
+                message: format!("sync root {sync_id} does not exist"),
+            };
+        };
+        let Some(idx) = root.exclude_globs.iter().position(|p| p == &trimmed) else {
+            return Response {
+                status: ResponseStatus::Conflict,
+                message: format!("sync root {sync_id} does not exclude pattern {trimmed:?}"),
+            };
+        };
+        let previous = root.exclude_globs.clone();
+        root.exclude_globs.remove(idx);
+        if let Err(err) = persist_profile(&self.store) {
+            if let Some(root) = self
+                .store
+                .repositories
+                .sync_graph
+                .tracked_sync_roots
+                .iter_mut()
+                .find(|root| root.sync_id.get() == sync_id)
+            {
+                root.exclude_globs = previous;
+            }
+            return Response {
+                status: ResponseStatus::InternalError,
+                message: format!("failed to persist exclude_globs remove: {err}"),
+            };
+        }
+        self.engine
+            .scheduler
+            .evict_sync_id(pcloud_model::ids::SyncId::new(sync_id));
+        self.audited_response(
+            "sync.root.exclude_remove",
+            Some(format!("id={sync_id} pattern={trimmed:?}")),
+            format!("sync root {sync_id} no longer excludes {trimmed:?}"),
+        )
+    }
+
+    /// T1.1 selective sync: list a sync root's exclusion globs.
+    /// Response `message` is patterns joined by `'\n'`; empty when none
+    /// configured.
+    fn sync_exclude_list(&mut self, sync_id: u64) -> Response {
+        let Some(root) = self
+            .store
+            .repositories
+            .sync_graph
+            .tracked_sync_roots
+            .iter()
+            .find(|root| root.sync_id.get() == sync_id)
+        else {
+            return Response {
+                status: ResponseStatus::Conflict,
+                message: format!("sync root {sync_id} does not exist"),
+            };
+        };
+        Response {
+            status: ResponseStatus::Ok,
+            message: root.exclude_globs.join("\n"),
+        }
+    }
+
+    /// T2.4.b — opt `folder_id` into the per-folder crypto policy
+    /// registry. Mutates the in-memory `FolderCryptoPolicy` and
+    /// persists the JSON snapshot to `value_kv` under
+    /// [`FOLDER_CRYPTO_POLICY_KEY`]. On persistence failure the
+    /// in-memory mutation is rolled back so the on-disk row stays
+    /// the source of truth.
+    ///
+    /// Pure mutate — does not block on auth or crypto unlock.
+    fn crypto_folder_enable(&mut self, folder_id: u64, parent_folder_id: Option<u64>) -> Response {
+        let previous = self.folder_crypto_policy.clone();
+        self.folder_crypto_policy
+            .set(folder_id, true, parent_folder_id);
+        if let Err(err) =
+            persist_folder_crypto_policy(&self.store.db_path, &self.folder_crypto_policy)
+        {
+            self.folder_crypto_policy = previous;
+            return Response {
+                status: ResponseStatus::InternalError,
+                message: format!("failed to persist folder_crypto_policy enable: {err}"),
+            };
+        }
+        let parent_str = parent_folder_id
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "none".to_owned());
+        self.audited_response(
+            "crypto.folder.enable",
+            Some(format!("folder_id={folder_id} parent={parent_str}")),
+            format!("folder {folder_id} opted into crypto (parent={parent_str})"),
+        )
+    }
+
+    /// T2.4.b — drop `folder_id`'s explicit entry from the
+    /// per-folder crypto policy registry. After removal,
+    /// `is_encrypted(folder_id)` falls back to inherited state from
+    /// the parent chain. Persists the JSON snapshot atomically with
+    /// rollback on persistence failure.
+    ///
+    /// Pure mutate — does not block on auth or crypto unlock.
+    fn crypto_folder_disable(&mut self, folder_id: u64) -> Response {
+        let previous = self.folder_crypto_policy.clone();
+        self.folder_crypto_policy.remove(folder_id);
+        if let Err(err) =
+            persist_folder_crypto_policy(&self.store.db_path, &self.folder_crypto_policy)
+        {
+            self.folder_crypto_policy = previous;
+            return Response {
+                status: ResponseStatus::InternalError,
+                message: format!("failed to persist folder_crypto_policy disable: {err}"),
+            };
+        }
+        self.audited_response(
+            "crypto.folder.disable",
+            Some(format!("folder_id={folder_id}")),
+            format!("folder {folder_id} opted out of crypto"),
+        )
+    }
+
+    /// T2.4.b — list the current per-folder crypto policy registry.
+    /// Returns the JSON-encoded `FolderCryptoPolicy` snapshot in the
+    /// response message. Pure query — does not block on auth or
+    /// crypto unlock.
+    fn crypto_folder_list(&self) -> Response {
+        match serde_json::to_string(&self.folder_crypto_policy) {
+            Ok(message) => Response {
+                status: ResponseStatus::Ok,
+                message,
+            },
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!("failed to serialize folder_crypto_policy: {err}"),
+            },
+        }
+    }
+
     fn suggest_sync_folders_at(&mut self, path: String, max: usize) -> Response {
         if path.trim().is_empty() {
             return Response {
@@ -6196,6 +6747,7 @@ impl RuntimeShell {
     pub(crate) fn metric_sync_crypto_state(&mut self) {}
 
     #[cfg(feature = "metrics")]
+    #[allow(dead_code)]
     pub(crate) fn metric_add_transfer_bytes(&mut self, direction: TransferDirection, bytes: u64) {
         self.observability
             .families
@@ -6434,7 +6986,13 @@ impl RuntimeShell {
         if !self.integrity_sweeper.is_enabled() {
             return Response {
                 status: ResponseStatus::Unavailable,
-                message: "integrity sweeper is not enabled — see [features.integrity_sweeper] enabled = true (bd-1du.4.6.1)".to_owned(),
+                message: "integrity sweeper is not enabled — see [features.integrity_sweeper] enabled = true".to_owned(),
+            };
+        }
+        if let Some(reason) = self.integrity_sweeper.readiness_error() {
+            return Response {
+                status: ResponseStatus::Unavailable,
+                message: reason,
             };
         }
         let snapshot = self.integrity_sweeper.run_once();
@@ -6781,17 +7339,54 @@ impl RuntimeShell {
         }
     }
 
-    /// H14 PR4 — TODO(bd-1du.4.6.1): bootstrap caller for the integrity
-    /// sweeper worker thread. Currently a no-op stub. The caller in
-    /// `bootstrap.rs` should invoke this once the runtime is fully
-    /// assembled so the worker can take a clone of the audit-emission
-    /// callback. Left as a follow-up because spawning a thread that
-    /// borrows `&mut self` requires a small refactor of the audit sink
-    /// to flow through an `Arc<Mutex<StoreProfile>>` shim. Until that
-    /// lands, IPC `IntegrityRunOnce` calls execute synchronously on the
-    /// dispatch thread, which is sufficient for PR4's plumbing scope.
+    /// Bootstrap the integrity sweeper with persisted sync roots and a
+    /// background audit worker.
+    ///
+    /// A real checksum fetcher is still required before the sweeper is
+    /// ready to run; until then `IntegritySweeperShell::readiness_error`
+    /// makes IPC `IntegrityRunOnce` fail closed instead of reporting a
+    /// successful no-op.
     pub fn bootstrap_integrity_sweeper(&mut self) {
-        // Intentionally empty. See above.
+        if !self.integrity_sweeper.is_enabled() {
+            return;
+        }
+
+        let roots = self
+            .store
+            .repositories
+            .sync_graph
+            .tracked_sync_roots
+            .iter()
+            .filter(|root| !root.paused)
+            .map(|root| integrity_sweeper_service::SweepRoot {
+                local_path: PathBuf::from(&root.local_path),
+                remote_prefix: root.remote_path.clone(),
+            })
+            .collect::<Vec<_>>();
+        self.integrity_sweeper.set_sweep_roots(roots);
+
+        let mut store = self.store.clone();
+        self.integrity_sweeper.spawn_worker(move |event| {
+            let integrity_sweeper_service::IntegrityEvent::Mismatch {
+                path,
+                local_sha_hex,
+                remote_sha_hex,
+            } = event
+            else {
+                return Ok(());
+            };
+            let details = integrity_sweeper_service::audit_details_for_mismatch(
+                path,
+                local_sha_hex,
+                remote_sha_hex,
+            );
+            append_audit_event(
+                &mut store,
+                integrity_sweeper_service::AUDIT_CATEGORY_INTEGRITY_MISMATCH,
+                Some(&details),
+            )
+            .map_err(|err| err.to_string())
+        });
     }
 
     fn audited_response(
@@ -6979,6 +7574,7 @@ impl RuntimeShell {
         }
     }
 
+    #[cfg(test)]
     fn read_local_upload_payload(
         &mut self,
         path: &str,
@@ -7102,15 +7698,10 @@ impl RuntimeShell {
             Err(r) => return r,
         };
         let perms = SharePermissions::from_bits(permissions_bits);
-        match self.shares_runtime.share_folder(
-            token,
-            folder_id,
-            name,
-            mail.clone(),
-            message,
-            perms,
-            hint,
-        ) {
+        let result = RemoteFs::new(&self.folder_runtime, &self.transfer_runtime, token)
+            .with_shares(&self.shares_runtime)
+            .share_folder_by_id(folder_id, name, mail.clone(), message, perms, hint);
+        match result {
             Ok(out) => self.audited_response(
                 "shares.create",
                 Some(format!(
@@ -7122,7 +7713,175 @@ impl RuntimeShell {
                     out.share_request_id
                 ),
             ),
-            Err(err) => map_shares_error(err),
+            Err(err) => remote_fs_error_response("share-folder", err),
+        }
+    }
+
+    /// `Request::CryptoShareFolder` IPC handler. Closes parity row 138
+    /// reachability gap (CLAUDEREV iter-2 H-5):
+    /// `psync_crypto_share_folder` C primitive ↔ Rust
+    /// `SharesRuntime::crypto_share_folder`. Routes the cleartext
+    /// temppass (already destructured into `SecretString` at the IPC
+    /// dispatch boundary) plus permission bits + recipient mail
+    /// through the shares-backend path that performs the temppass
+    /// KEK-rewrap before the wire call. RSA-4096-OAEP path
+    /// (`crypto_share_folder_rsa`, row 124) is intentionally NOT
+    /// reachable through this variant.
+    #[allow(clippy::too_many_arguments)]
+    fn crypto_share_folder(
+        &mut self,
+        folder_id: u64,
+        name: String,
+        mail: String,
+        message: String,
+        permissions_bits: u32,
+        temppass: SecretString,
+        hint: Option<String>,
+    ) -> Response {
+        if name.trim().is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "crypto share name must not be empty".to_owned(),
+            };
+        }
+        if !mail.contains('@') {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "crypto share recipient mail must be a valid address".to_owned(),
+            };
+        }
+        let token = match self.shares_require_auth_token("crypto share folder") {
+            Ok(t) => t,
+            Err(r) => return r,
+        };
+        let perms = SharePermissions::from_bits(permissions_bits);
+        if !self.crypto.is_started() {
+            return Response {
+                status: ResponseStatus::Conflict,
+                message: "crypto share folder requires the crypto subsystem to be unlocked"
+                    .to_owned(),
+            };
+        }
+        match self.shares_runtime.crypto_share_folder(
+            token,
+            &self.crypto,
+            temppass,
+            folder_id,
+            name,
+            mail.clone(),
+            message,
+            perms,
+            hint,
+        ) {
+            Ok(out) => self.audited_response(
+                "shares.crypto_share_folder",
+                Some(format!(
+                    "folder_id={folder_id} mail={mail} request_id={:?}",
+                    out.share_request_id
+                )),
+                format!(
+                    "crypto share request sent: folder_id={folder_id}, sharerequestid={:?}",
+                    out.share_request_id
+                ),
+            ),
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!("crypto share folder failed: {err}"),
+            },
+        }
+    }
+
+    /// `Request::CryptoShareFolderRsa` IPC handler. Closes parity row
+    /// 124 reachability gap (CLAUDEREV deferred-set D6, fire 56):
+    /// `psync_crypto_share_folder` (RSA-4096 wire shape) ↔
+    /// `SharesRuntime::crypto_share_folder_rsa`. Daemon-side
+    /// orchestration:
+    ///
+    /// 1. Authenticate.
+    /// 2. Verify crypto is unlocked (precondition for the wrap).
+    /// 3. Fetch the recipient's `pub_key_ver1` blob via
+    ///    `CryptoRuntime::get_pub_key(CryptoPubKeyRecipient::Mail(mail))`.
+    /// 4. Hand both the auth token and the pubkey blob to the shares
+    ///    backend's `crypto_share_folder_rsa`, which wraps the
+    ///    sharer's folder sym-key against the recipient's pubkey via
+    ///    `pcloud_crypto::share_rsa::wrap_share_invitation_b64` and
+    ///    issues the wire-compat share request.
+    #[allow(clippy::too_many_arguments)]
+    fn crypto_share_folder_rsa(
+        &mut self,
+        folder_id: u64,
+        name: String,
+        mail: String,
+        message: String,
+        permissions_bits: u32,
+        hint: Option<String>,
+    ) -> Response {
+        if name.trim().is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "crypto share name must not be empty".to_owned(),
+            };
+        }
+        if !mail.contains('@') {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "crypto share recipient mail must be a valid address".to_owned(),
+            };
+        }
+        let token = match self.shares_require_auth_token("crypto share folder rsa") {
+            Ok(t) => t,
+            Err(r) => return r,
+        };
+        let perms = SharePermissions::from_bits(permissions_bits);
+        if !self.crypto.is_started() {
+            return Response {
+                status: ResponseStatus::Conflict,
+                message: "crypto share folder rsa requires the crypto subsystem to be unlocked"
+                    .to_owned(),
+            };
+        }
+        // Step 3: fetch the recipient's RSA-4096 pub_key_ver1 blob.
+        let recipient_pub_blob = match self.crypto_runtime.get_pub_key(
+            token.expose_secret(),
+            pcloud_proto::methods::crypto::CryptoPubKeyRecipient::Mail(mail.clone()),
+        ) {
+            Ok(blob) => blob,
+            Err(err) => {
+                return Response {
+                    status: ResponseStatus::InternalError,
+                    message: format!(
+                        "crypto share folder rsa: get_pub_key for {mail} failed: {err}"
+                    ),
+                };
+            }
+        };
+        // Step 4: hand off to the shares backend's RSA-wrap path.
+        match self.shares_runtime.crypto_share_folder_rsa(
+            token,
+            &self.crypto,
+            folder_id,
+            &recipient_pub_blob,
+            name,
+            mail.clone(),
+            message,
+            perms,
+            hint,
+        ) {
+            Ok(out) => self.audited_response(
+                "shares.crypto_share_folder_rsa",
+                Some(format!(
+                    "folder_id={folder_id} mail={mail} request_id={:?}",
+                    out.share_request_id
+                )),
+                format!(
+                    "crypto share rsa request sent: folder_id={folder_id}, sharerequestid={:?}",
+                    out.share_request_id
+                ),
+            ),
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!("crypto share folder rsa failed: {err}"),
+            },
         }
     }
 
@@ -7337,72 +8096,72 @@ impl RuntimeShell {
             Err(err) => map_shares_error(err),
         }
     }
-}
 
-/// Map a [`pcloud_proto::revision_provider::RevisionError`] to a
-/// [`ResponseStatus`]. Null/not-configured, transport, HTTP-status, and
-/// malformed-response errors map to `Unavailable` so the CLI exits 6
-/// with an actionable hint; malformed requests map to `InvalidRequest`
-/// so the caller corrects the CLI invocation.
-fn revision_err_to_status(err: &pcloud_proto::revision_provider::RevisionError) -> ResponseStatus {
-    use pcloud_proto::revision_provider::RevisionError;
-    match err {
-        RevisionError::InvalidRequest(_) => ResponseStatus::InvalidRequest,
-        _ => ResponseStatus::Unavailable,
+    /// `Request::CryptoAccountTeamShare` IPC handler. Closes parity row
+    /// 142 reachability gap (CLAUDEREV deferred-set D3, fire 47):
+    /// `psync_crypto_account_teamshare` C primitive ↔ Rust
+    /// `SharesRuntime::crypto_account_team_share`. Mirrors
+    /// [`Self::crypto_share_folder`] but routes to the team-share
+    /// backend path with `team_id` instead of `mail`. RSA-4096-OAEP
+    /// team-share path (`crypto_account_team_share_rsa`) is intentionally
+    /// NOT yet reachable through this variant — that lands in D6.
+    #[allow(clippy::too_many_arguments)]
+    fn crypto_account_team_share(
+        &mut self,
+        folder_id: u64,
+        name: String,
+        team_id: u64,
+        message: String,
+        permissions_bits: u32,
+        temppass: SecretString,
+        hint: Option<String>,
+    ) -> Response {
+        if name.trim().is_empty() {
+            return Response {
+                status: ResponseStatus::InvalidRequest,
+                message: "crypto team share name must not be empty".to_owned(),
+            };
+        }
+        let token = match self.shares_require_auth_token("crypto account team share") {
+            Ok(t) => t,
+            Err(r) => return r,
+        };
+        let perms = SharePermissions::from_bits(permissions_bits);
+        if !self.crypto.is_started() {
+            return Response {
+                status: ResponseStatus::Conflict,
+                message: "crypto team share requires the crypto subsystem to be unlocked"
+                    .to_owned(),
+            };
+        }
+        match self.shares_runtime.crypto_account_team_share(
+            token,
+            &self.crypto,
+            temppass,
+            folder_id,
+            name,
+            team_id,
+            message,
+            perms,
+            hint,
+        ) {
+            Ok(out) => self.audited_response(
+                "shares.crypto_account_team_share",
+                Some(format!(
+                    "folder_id={folder_id} team_id={team_id} request_id={:?}",
+                    out.share_request_id
+                )),
+                format!(
+                    "crypto team share sent: folder_id={folder_id}, team_id={team_id}, sharerequestid={:?}",
+                    out.share_request_id
+                ),
+            ),
+            Err(err) => Response {
+                status: ResponseStatus::InternalError,
+                message: format!("crypto account team share failed: {err}"),
+            },
+        }
     }
-}
-
-/// Render a [`pcloud_proto::revision_provider::RevisionError`] as a
-/// structured JSON payload embedded in [`Response::message`].
-///
-/// Shape:
-///
-/// - `status` → short error kind (`"not_configured"`, `"invalid_url"`,
-///   `"transport"`, `"http_status"`, `"malformed_response"`, `"invalid_request"`).
-/// - `message` → the human-readable error message.
-/// - `next` → actionable remediation hint where one applies.
-/// - `path` → the path that triggered the error, for audit correlation.
-///
-/// Tooling keyed on the `status` field gets a stable taxonomy.
-fn render_revision_error_payload(
-    err: &pcloud_proto::revision_provider::RevisionError,
-    path: &str,
-) -> String {
-    use pcloud_proto::revision_provider::RevisionError;
-    let (kind, next): (&str, &str) = match err {
-        RevisionError::NotConfigured(_) => (
-            "not_configured",
-            "configure [file_history].revision_url or wait for pCloud public API",
-        ),
-        RevisionError::InvalidUrl(_) => (
-            "invalid_url",
-            "fix [file_history].revision_url: must be https:// (http:// only in dev)",
-        ),
-        RevisionError::Transport(_) => (
-            "transport",
-            "verify network reachability to [file_history].revision_url",
-        ),
-        RevisionError::HttpStatus { .. } => (
-            "http_status",
-            "inspect the revision endpoint logs for non-2xx responses",
-        ),
-        RevisionError::MalformedResponse(_) => (
-            "malformed_response",
-            "ensure the endpoint returns a JSON array of revisions or {\"revisions\":[...]}",
-        ),
-        RevisionError::InvalidRequest(_) => (
-            "invalid_request",
-            "pass a non-empty absolute remote path (e.g. /Docs/report.txt)",
-        ),
-    };
-    let payload = serde_json::json!({
-        "status": kind,
-        "message": err.to_string(),
-        "next": next,
-        "path": path,
-    });
-    serde_json::to_string(&payload)
-        .unwrap_or_else(|_| format!("{{\"status\":\"{kind}\",\"message\":\"{err}\"}}"))
 }
 
 fn map_shares_error(err: pcloud_proto::SharesApiError<SharesBackendError>) -> Response {
@@ -7538,6 +8297,39 @@ fn map_path_resolve_error(err: crate::path_resolver::PathResolveError) -> Respon
     }
 }
 
+/// Translate the canonical remote filesystem taxonomy to the existing IPC
+/// status vocabulary without exposing credentials or transport internals.
+fn remote_fs_error_response(operation: &str, error: RemoteFsError) -> Response {
+    let status = match &error {
+        RemoteFsError::InvalidPath { .. }
+        | RemoteFsError::RangeTooLarge { .. }
+        | RemoteFsError::UnexpectedEof { .. }
+        | RemoteFsError::SourceTooLong { .. }
+        | RemoteFsError::RecursiveCopy { .. } => ResponseStatus::InvalidRequest,
+        RemoteFsError::NotFound { .. }
+        | RemoteFsError::Ambiguous { .. }
+        | RemoteFsError::ExpectedFolder { .. }
+        | RemoteFsError::ExpectedFile { .. }
+        | RemoteFsError::MissingId { .. }
+        | RemoteFsError::MissingSize { .. }
+        | RemoteFsError::DestinationExists { .. } => ResponseStatus::Conflict,
+        RemoteFsError::SharingUnavailable | RemoteFsError::DurabilityUnavailable => {
+            ResponseStatus::Unavailable
+        }
+        RemoteFsError::Folder(_)
+        | RemoteFsError::TransferApi(_)
+        | RemoteFsError::Transfer(_)
+        | RemoteFsError::Share(_) => ResponseStatus::Unavailable,
+        RemoteFsError::Io(_) | RemoteFsError::Store(_) | RemoteFsError::Journal(_) => {
+            ResponseStatus::InternalError
+        }
+    };
+    Response {
+        status,
+        message: format!("{operation}: {error}"),
+    }
+}
+
 /// Derive a pCloud share short-code from a full public-link URL.
 ///
 /// The pCloud public link shape is
@@ -7557,7 +8349,7 @@ fn map_path_resolve_error(err: crate::path_resolver::PathResolveError) -> Respon
 /// no leaf to extract (the empty string, the root `/`, or a path
 /// that's all slashes).
 ///
-/// Used by [`Runtime::rename_path`] (bd-smbr-pcloud P4.3) to derive
+/// Used by `DaemonRuntime::rename_path` (bd-smbr-pcloud P4.3) to derive
 /// the destination's parent + new name from a single `to` path
 /// argument.
 fn split_parent_and_leaf(path: &str) -> Option<(String, String)> {
@@ -7597,6 +8389,14 @@ fn map_public_link_error(
     err: pcloud_proto::PublicLinksApiError<PublicLinkBackendError>,
 ) -> Response {
     match err {
+        pcloud_proto::PublicLinksApiError::EmptyTreeTarget => Response {
+            status: ResponseStatus::InvalidRequest,
+            message: "tree link requires at least one of root, folders, or files".to_owned(),
+        },
+        other @ pcloud_proto::PublicLinksApiError::PathUnresolved { .. } => Response {
+            status: ResponseStatus::Conflict,
+            message: other.to_string(),
+        },
         pcloud_proto::PublicLinksApiError::Result { message, .. } => Response {
             status: ResponseStatus::Conflict,
             message: message.unwrap_or_else(|| "public link request failed".to_owned()),
@@ -7608,6 +8408,7 @@ fn map_public_link_error(
     }
 }
 
+#[cfg(test)]
 fn resolve_upload_parent_folder_id(
     path: &str,
     remote_parent_folder_id: Option<pcloud_model::ids::RemoteFolderId>,
@@ -7697,6 +8498,12 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::SyncRootPause { .. } => "SyncRootPause",
         Request::SyncRootResume { .. } => "SyncRootResume",
         Request::SyncRootChangeType { .. } => "SyncRootChangeType",
+        Request::SyncExcludeAdd { .. } => "SyncExcludeAdd",
+        Request::SyncExcludeRemove { .. } => "SyncExcludeRemove",
+        Request::SyncExcludeList { .. } => "SyncExcludeList",
+        Request::CryptoFolderEnable { .. } => "CryptoFolderEnable",
+        Request::CryptoFolderDisable { .. } => "CryptoFolderDisable",
+        Request::CryptoFolderList => "CryptoFolderList",
         Request::GetSyncSuggestions { .. } => "GetSyncSuggestions",
         Request::IsFolderSyncable { .. } => "IsFolderSyncable",
         Request::ShowPublicLink { .. } => "ShowPublicLink",
@@ -7704,6 +8511,9 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::DeletePublicLinkByCode { .. } => "DeletePublicLinkByCode",
         Request::CreateFilePublicLink { .. } => "CreateFilePublicLink",
         Request::CreateFolderPublicLink { .. } => "CreateFolderPublicLink",
+        Request::CreateFolderPublicLinkWithOptions { .. } => "CreateFolderPublicLinkWithOptions",
+        Request::CreateFolderUpDownLink { .. } => "CreateFolderUpDownLink",
+        Request::CreateScreenshotPublicLink { .. } => "CreateScreenshotPublicLink",
         Request::ChangePublicLinkExpire { .. } => "ChangePublicLinkExpire",
         Request::ChangePublicLinkPassword { .. } => "ChangePublicLinkPassword",
         Request::ChangePublicLinkUpload { .. } => "ChangePublicLinkUpload",
@@ -7717,6 +8527,8 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::RemoveBookmark { .. } => "RemoveBookmark",
         Request::ChangeBookmark { .. } => "ChangeBookmark",
         Request::ShareFolder { .. } => "ShareFolder",
+        Request::CryptoShareFolder { .. } => "CryptoShareFolder",
+        Request::CryptoShareFolderRsa { .. } => "CryptoShareFolderRsa",
         Request::CancelShareRequest { .. } => "CancelShareRequest",
         Request::DeclineShareRequest { .. } => "DeclineShareRequest",
         Request::AcceptShareRequest { .. } => "AcceptShareRequest",
@@ -7725,6 +8537,7 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::AccountStopShare { .. } => "AccountStopShare",
         Request::AccountModifyShare { .. } => "AccountModifyShare",
         Request::AccountTeamShare { .. } => "AccountTeamShare",
+        Request::CryptoAccountTeamShare { .. } => "CryptoAccountTeamShare",
         Request::ValueGet { .. } => "ValueGet",
         Request::ValueSet { .. } => "ValueSet",
         Request::ValueHas { .. } => "ValueHas",
@@ -7750,7 +8563,10 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::ReadFileRange { .. } => "ReadFileRange",
         Request::WriteFileFresh { .. } => "WriteFileFresh",
         Request::RenamePath { .. } => "RenamePath",
-        Request::FileHistory { .. } => "FileHistory",
+        Request::CopyPath { .. } => "CopyPath",
+        Request::DeletePath { .. } => "DeletePath",
+        Request::UploadFileByPath { .. } => "UploadFileByPath",
+        Request::DownloadFileByPath { .. } => "DownloadFileByPath",
         Request::ConflictList => "ConflictList",
         Request::ConflictResolve { .. } => "ConflictResolve",
         Request::LostPassword { .. } => "LostPassword",
@@ -7764,6 +8580,9 @@ pub(crate) fn method_label(request: &Request) -> &'static str {
         Request::SetLanguage { .. } => "SetLanguage",
         Request::UploadWriteFromFile { .. } => "UploadWriteFromFile",
         Request::CreateTreePublicLinkFromPaths { .. } => "CreateTreePublicLinkFromPaths",
+        Request::CreateTreePublicLinkFromPathTargets { .. } => {
+            "CreateTreePublicLinkFromPathTargets"
+        }
         Request::CreateBackup { .. } => "CreateBackup",
         Request::StopDevice { .. } => "StopDevice",
         Request::DeleteBackupDevice => "DeleteBackupDevice",
@@ -7911,5 +8730,1315 @@ where
             status: ResponseStatus::Conflict,
             message: err.to_string(),
         },
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use pcloud_config::{ConfigProfile, Environment};
+    use pcloud_ipc::{Request, ResponseStatus};
+
+    fn bootstrap_test_shell() -> RuntimeShell {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
+        let nonce = SEQ.fetch_add(1, Ordering::Relaxed);
+        let root = std::path::PathBuf::from("/tmp")
+            .join(format!("pd-runtime-{}-{nonce}", std::process::id(),));
+        let mut config = ConfigProfile::secure_defaults(root, Environment::Development);
+        config.rate_limit.enabled = false;
+        crate::bootstrap_with_config(config).expect("runtime bootstrap should succeed")
+    }
+
+    fn authenticate_test_shell(runtime: &mut RuntimeShell) {
+        runtime
+            .auth
+            .apply(AuthCommand::LoginWithToken {
+                token: SecretString::new("test-token"),
+            })
+            .expect("token login transition succeeds");
+        runtime
+            .auth
+            .apply(AuthCommand::MarkAuthenticated {
+                user_id: Some(UserId::new(1)),
+                auth_token: SecretString::new("test-token"),
+            })
+            .expect("authenticated transition succeeds");
+    }
+
+    /// Exercise every currently supported IPC dispatch arm with a
+    /// deterministic, development-safe request. Most fixtures intentionally
+    /// use empty or zero-valued inputs so handlers stop at validation or auth
+    /// boundaries instead of requiring a real pCloud account. This is a
+    /// routing completeness test: adding an IPC variant without adding it here
+    /// leaves that route unexercised in the workspace coverage gate.
+    #[test]
+    fn complete_ipc_request_surface_dispatches_without_panicking() {
+        use pcloud_ipc::methods::{
+            AuditVerifyRange, CryptoBackendIpc, SnapshotAction, UploadConflictMode, ValueKvKind,
+            ValueKvPayload,
+        };
+        use pcloud_model::public_links::PublicLinkUploadPolicy;
+        use pcloud_model::sync::SyncType;
+
+        let root = tempfile::tempdir().expect("temporary runtime root");
+        let mut config =
+            ConfigProfile::secure_defaults(root.path().to_path_buf(), Environment::Development);
+        config.rate_limit.enabled = false;
+        let mut runtime =
+            crate::bootstrap_with_config(config).expect("runtime bootstrap should succeed");
+
+        let plain_methods = [
+            pcloud_ipc::Method::GetStatus,
+            pcloud_ipc::Method::GetHealth,
+            pcloud_ipc::Method::Health,
+            pcloud_ipc::Method::GetPending,
+            pcloud_ipc::Method::GetSyncRoots,
+            pcloud_ipc::Method::ListPublicLinks,
+            pcloud_ipc::Method::ListUploadLinks,
+            pcloud_ipc::Method::GetUserInfo,
+            pcloud_ipc::Method::PauseSync,
+            pcloud_ipc::Method::ResumeSync,
+            pcloud_ipc::Method::LoginBegin,
+            pcloud_ipc::Method::Logout,
+            pcloud_ipc::Method::SendTwoFactorSms,
+            pcloud_ipc::Method::SendTwoFactorNotification,
+            pcloud_ipc::Method::SubmitPassword,
+            pcloud_ipc::Method::SubmitTwoFactorCode,
+            pcloud_ipc::Method::UnlockCrypto,
+            pcloud_ipc::Method::LockCrypto,
+            pcloud_ipc::Method::GetCryptoStatus,
+            pcloud_ipc::Method::CryptoReset,
+            pcloud_ipc::Method::GetCryptoPrivKeyFlags,
+            pcloud_ipc::Method::SendCryptoChangeUserPrivate,
+            pcloud_ipc::Method::SetAuthPersistence,
+            pcloud_ipc::Method::ListIncomingShares,
+            pcloud_ipc::Method::ListOutgoingShares,
+            pcloud_ipc::Method::ListIncomingShareRequests,
+            pcloud_ipc::Method::ListOutgoingShareRequests,
+            pcloud_ipc::Method::ListContacts,
+            pcloud_ipc::Method::ListMyTeams,
+            pcloud_ipc::Method::ListNotifications,
+            pcloud_ipc::Method::SessionStatus,
+            pcloud_ipc::Method::IntegrityStatus,
+            pcloud_ipc::Method::HaStatus,
+            pcloud_ipc::Method::DrainStatus,
+            pcloud_ipc::Method::GetSlo,
+            pcloud_ipc::Method::GetAuditVerifierStatus,
+            pcloud_ipc::Method::GetSyncStatus,
+            pcloud_ipc::Method::ListConflicts,
+            pcloud_ipc::Method::StatPath,
+            pcloud_ipc::Method::GetApiServers,
+            pcloud_ipc::Method::GetPromo,
+            pcloud_ipc::Method::GetCryptoHint,
+            pcloud_ipc::Method::VerifyEmail,
+            pcloud_ipc::Method::Shutdown,
+        ];
+        for method in plain_methods {
+            let response = runtime.handle_request(Request::Plain { method });
+            assert!(
+                !response.message.contains("unsupported ipc method"),
+                "{method:?} fell through the method dispatcher"
+            );
+            assert!(
+                !response.message.contains("panicked while handling"),
+                "{method:?} panicked: {}",
+                response.message
+            );
+        }
+
+        let requests = vec![
+            Request::PasswordSubmission {
+                username: String::new(),
+                value: String::new().into(),
+            },
+            Request::AuthTokenSubmission {
+                value: String::new().into(),
+            },
+            Request::TwoFactorCodeSubmission {
+                value: String::new(),
+                trust_device: false,
+                recovery_code: false,
+            },
+            Request::CryptoUnlock {
+                password: String::new().into(),
+            },
+            Request::CryptoSetup {
+                password: String::new().into(),
+                hint: None,
+            },
+            Request::CryptoSetupV2 {
+                backend: CryptoBackendIpc::Enhanced,
+                acknowledge_not_interop: false,
+                password: String::new().into(),
+                hint: None,
+            },
+            Request::CryptoGetFolderKey { folder_id: 0 },
+            Request::CryptoGetFileKey { file_id: 0 },
+            Request::CryptoChangePassword {
+                old_password: String::new().into(),
+                new_password: String::new().into(),
+                hint: String::new(),
+                code: String::new(),
+                flags: 0,
+            },
+            Request::CryptoChangePasswordUnlocked {
+                new_password: String::new().into(),
+                hint: String::new(),
+                code: String::new(),
+                flags: 0,
+            },
+            Request::CryptoMkdir {
+                name: String::new(),
+                parent_folder_id: None,
+                local_folder_id: None,
+            },
+            Request::AuthPersistence { enabled: false },
+            Request::SyncRootAdd {
+                local_path: String::new(),
+                remote_path: String::new(),
+                sync_type: None,
+            },
+            Request::SyncRootRemove { sync_id: 0 },
+            Request::SyncRootPause { sync_id: 0 },
+            Request::SyncRootResume { sync_id: 0 },
+            Request::SyncRootChangeType {
+                sync_id: 0,
+                sync_type: SyncType::Full,
+            },
+            Request::SyncExcludeAdd {
+                sync_id: 0,
+                pattern: String::new(),
+            },
+            Request::SyncExcludeRemove {
+                sync_id: 0,
+                pattern: String::new(),
+            },
+            Request::SyncExcludeList { sync_id: 0 },
+            Request::CryptoFolderEnable {
+                folder_id: 0,
+                parent_folder_id: None,
+            },
+            Request::CryptoFolderDisable { folder_id: 0 },
+            Request::CryptoFolderList,
+            Request::GetSyncSuggestions {
+                path: String::new(),
+                max: Some(0),
+            },
+            Request::IsFolderSyncable {
+                path: String::new(),
+            },
+            Request::ShowPublicLink {
+                code: String::new(),
+            },
+            Request::DeletePublicLink { link_id: 0 },
+            Request::DeletePublicLinkByCode {
+                code: String::new(),
+            },
+            Request::CreateFilePublicLink {
+                path: String::new(),
+            },
+            Request::CreateFolderPublicLink {
+                path: String::new(),
+            },
+            Request::CreateFolderPublicLinkWithOptions {
+                path: String::new(),
+                expire: None,
+                maxdownloads: None,
+                maxtraffic: None,
+                password: None,
+            },
+            Request::CreateFolderUpDownLink {
+                folder_id: 0,
+                mail: String::new(),
+                can_upload: false,
+            },
+            Request::CreateScreenshotPublicLink {
+                path: String::new(),
+                has_delay: false,
+                delay_seconds: 0,
+            },
+            Request::ChangePublicLinkExpire {
+                link_id: 0,
+                expire: None,
+            },
+            Request::ChangePublicLinkPassword {
+                link_id: 0,
+                password: None,
+            },
+            Request::ChangePublicLinkUpload {
+                link_id: 0,
+                policy: PublicLinkUploadPolicy::Disabled,
+            },
+            Request::CreateUploadLink {
+                path: String::new(),
+                comment: String::new(),
+                expire: None,
+                maxspace: None,
+                maxfiles: None,
+            },
+            Request::DeleteUploadLink { upload_link_id: 0 },
+            Request::CreateTreePublicLink {
+                name: String::new(),
+                root_folder_id: None,
+                folder_ids_csv: None,
+                file_ids_csv: None,
+                expire: None,
+                maxdownloads: None,
+                maxtraffic: None,
+            },
+            Request::ListPublicLinkAccess { link_id: 0 },
+            Request::AddPublicLinkAccess {
+                link_id: 0,
+                email: String::new(),
+            },
+            Request::RemovePublicLinkAccess {
+                link_id: 0,
+                receiver_id: 0,
+            },
+            Request::ListBookmarks,
+            Request::RemoveBookmark {
+                code: String::new(),
+                location_id: 0,
+            },
+            Request::ChangeBookmark {
+                code: String::new(),
+                location_id: 0,
+                name: String::new(),
+                description: String::new(),
+            },
+            Request::ShareFolder {
+                folder_id: 0,
+                name: String::new(),
+                mail: String::new(),
+                message: String::new(),
+                permissions_bits: 0,
+                hint: None,
+            },
+            Request::CryptoShareFolder {
+                folder_id: 0,
+                name: String::new(),
+                mail: String::new(),
+                message: String::new(),
+                permissions_bits: 0,
+                temppass: String::new().into(),
+                hint: None,
+            },
+            Request::CryptoShareFolderRsa {
+                folder_id: 0,
+                name: String::new(),
+                mail: String::new(),
+                message: String::new(),
+                permissions_bits: 0,
+                hint: None,
+            },
+            Request::CancelShareRequest {
+                share_request_id: 0,
+            },
+            Request::DeclineShareRequest {
+                share_request_id: 0,
+            },
+            Request::AcceptShareRequest {
+                share_request_id: 0,
+                to_folder_id: 0,
+                name: None,
+            },
+            Request::RemoveShare { share_id: 0 },
+            Request::ModifyShare {
+                share_id: 0,
+                permissions_bits: 0,
+            },
+            Request::AccountStopShare {
+                user_share_ids: Vec::new(),
+                team_share_ids: Vec::new(),
+            },
+            Request::AccountModifyShare {
+                user_shares: Vec::new(),
+                team_shares: Vec::new(),
+            },
+            Request::AccountTeamShare {
+                folder_id: 0,
+                name: String::new(),
+                team_id: 0,
+                message: String::new(),
+                permissions_bits: 0,
+                hint: None,
+            },
+            Request::CryptoAccountTeamShare {
+                folder_id: 0,
+                name: String::new(),
+                team_id: 0,
+                message: String::new(),
+                permissions_bits: 0,
+                temppass: String::new().into(),
+                hint: None,
+            },
+            Request::ValueGet {
+                name: String::new(),
+                kind: ValueKvKind::String,
+            },
+            Request::ValueSet {
+                name: String::new(),
+                value: ValueKvPayload::String(String::new()),
+            },
+            Request::ValueHas {
+                name: String::new(),
+                kind: ValueKvKind::String,
+            },
+            Request::SessionStatus,
+            Request::MarkNotificationsRead { upto_id: 0 },
+            Request::AuditVerifyChain {
+                range: AuditVerifyRange::default(),
+            },
+            Request::Mount {
+                path: std::path::PathBuf::new(),
+            },
+            Request::CreateRemoteFolder {
+                parent_folder_id: None,
+                name: String::new(),
+                path: String::new(),
+                check_and_create: false,
+            },
+            Request::Unmount,
+            Request::MountForceUnmount {
+                path: std::path::PathBuf::new(),
+            },
+            Request::RunLocalScan,
+            Request::SendPublink {
+                code: String::new(),
+                mails: String::new(),
+                message: String::new(),
+            },
+            Request::GetFolderIdByPath {
+                path: String::new(),
+            },
+            Request::GetFolderFlags {
+                path: String::new(),
+            },
+            Request::GetFolderOwnerId {
+                path: String::new(),
+            },
+            Request::FilesystemStatus {
+                path: String::new(),
+            },
+            Request::StatPath {
+                path: String::new(),
+            },
+            Request::ListFolderByPath {
+                path: String::new(),
+            },
+            Request::FileDeleteByPath {
+                path: String::new(),
+            },
+            Request::FolderDeleteByPath {
+                path: String::new(),
+                recursive: false,
+            },
+            Request::FolderDeleteById {
+                folder_id: 0,
+                recursive: false,
+            },
+            Request::WriteFileFresh {
+                path: String::new(),
+                data_b64: String::new(),
+            },
+            Request::ReadFileRange {
+                path: String::new(),
+                offset: 0,
+                length: 0,
+            },
+            Request::CreateFolderByPath {
+                path: String::new(),
+            },
+            Request::RenamePath {
+                from: String::new(),
+                to: String::new(),
+            },
+            Request::CopyPath {
+                from: String::new(),
+                to: String::new(),
+            },
+            Request::DeletePath {
+                path: String::new(),
+                recursive: false,
+            },
+            Request::UploadFileByPath {
+                local_path: std::path::PathBuf::new(),
+                remote_path: String::new(),
+            },
+            Request::DownloadFileByPath {
+                remote_path: String::new(),
+                local_path: std::path::PathBuf::new(),
+                overwrite: false,
+            },
+            Request::IntegrityRunOnce,
+            Request::IntegritySkip {
+                path: String::new(),
+            },
+            Request::UploadCreate {
+                local_path: std::path::PathBuf::new(),
+                remote_name: String::new(),
+                parent_folder_id: None,
+                total_bytes: 0,
+                conflict_mode: Some(UploadConflictMode::Error),
+            },
+            Request::UploadPause { session_id: 0 },
+            Request::UploadResume { session_id: 0 },
+            Request::UploadCancel { session_id: 0 },
+            Request::UploadList,
+            Request::ConflictList,
+            Request::ConflictResolve {
+                path: String::new(),
+                policy: String::new(),
+            },
+            Request::LostPassword {
+                email: String::new(),
+            },
+            Request::VerifyEmailRestricted {
+                verify_token: String::new().into(),
+            },
+            Request::AccountChangePassword {
+                current_password: String::new().into(),
+                new_password: String::new().into(),
+            },
+            Request::AccountRegister {
+                email: String::new(),
+                password: String::new().into(),
+                terms_accepted: false,
+            },
+            Request::GetFileLink { file_id: 0 },
+            Request::DownloadFile {
+                file_id: 0,
+                local_path: std::path::PathBuf::new(),
+            },
+            Request::DeleteBackup { backup_id: 0 },
+            Request::SetApiServer {
+                location_id: 0,
+                binapi: String::new(),
+            },
+            Request::SetLanguage {
+                language: String::new(),
+            },
+            Request::UploadWriteFromFile {
+                upload_session_id: 0,
+                source_fileid: 0,
+                source_hash: 0,
+                offset: 0,
+                source_offset: None,
+                count: 0,
+            },
+            Request::CreateTreePublicLinkFromPaths {
+                name: String::new(),
+                paths: Vec::new(),
+                expires: None,
+            },
+            Request::CreateTreePublicLinkFromPathTargets {
+                name: String::new(),
+                root: None,
+                folders: Vec::new(),
+                files: Vec::new(),
+                expires: None,
+            },
+            Request::CreateBackup {
+                name: String::new(),
+                root_folder_id: 0,
+                local_path: String::new(),
+                parent_folder_name: None,
+            },
+            Request::StopDevice {
+                device_folder_id: 0,
+            },
+            Request::DeleteBackupDevice,
+            Request::BackupSnapshot {
+                action: SnapshotAction::Verify,
+                path: std::path::PathBuf::new(),
+                gpg_recipient: None,
+                yes: false,
+                retention_days: None,
+                zstd_level: None,
+            },
+        ];
+
+        for request in requests {
+            let label = format!("{request:?}");
+            let response = runtime.handle_request(request);
+            assert!(
+                !response.message.contains("unsupported ipc request"),
+                "{label} fell through the request dispatcher"
+            );
+            assert!(
+                !response.message.contains("panicked while handling"),
+                "{label} panicked: {}",
+                response.message
+            );
+        }
+    }
+
+    /// Drive the authenticated development backend through the structured
+    /// request surface with realistic values. The routing-completeness test
+    /// above owns malformed and unauthenticated edges; this companion test
+    /// reaches the backend, persistence, audit, and response-serialization
+    /// branches that a real CLI/SDK session uses.
+    #[test]
+    fn authenticated_ipc_surface_reaches_backend_and_persistence_paths() {
+        use pcloud_ipc::methods::{
+            AuditVerifyRange, CryptoBackendIpc, SnapshotAction, UploadConflictMode, ValueKvKind,
+            ValueKvPayload,
+        };
+        use pcloud_model::public_links::PublicLinkUploadPolicy;
+        use pcloud_model::sync::SyncType;
+
+        let mut runtime = bootstrap_test_shell();
+        authenticate_test_shell(&mut runtime);
+        let fixture_root = tempfile::tempdir().expect("fixture root");
+        let sync_root = fixture_root.path().join("sync");
+        std::fs::create_dir_all(&sync_root).expect("sync root");
+        let source = fixture_root.path().join("source.bin");
+        std::fs::write(&source, b"authenticated runtime fixture").expect("source fixture");
+        let download = fixture_root.path().join("download.bin");
+        let snapshot = fixture_root.path().join("snapshot.tar.zst");
+
+        let requests = vec![
+            Request::Plain {
+                method: pcloud_ipc::Method::GetUserInfo,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::ListPublicLinks,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::ListUploadLinks,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::ListIncomingShares,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::ListOutgoingShares,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::ListIncomingShareRequests,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::ListOutgoingShareRequests,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::ListContacts,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::ListMyTeams,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::ListNotifications,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::GetApiServers,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::GetPromo,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::VerifyEmail,
+            },
+            Request::CryptoSetupV2 {
+                backend: CryptoBackendIpc::Enhanced,
+                acknowledge_not_interop: true,
+                password: "correct horse battery staple".to_owned().into(),
+                hint: Some("fixture".to_owned()),
+            },
+            Request::CryptoGetFolderKey { folder_id: 10 },
+            Request::CryptoGetFileKey { file_id: 20 },
+            Request::CryptoMkdir {
+                name: "Encrypted".to_owned(),
+                parent_folder_id: Some(10),
+                local_folder_id: Some(11),
+            },
+            Request::CryptoFolderEnable {
+                folder_id: 10,
+                parent_folder_id: None,
+            },
+            Request::CryptoFolderList,
+            Request::CryptoFolderDisable { folder_id: 10 },
+            Request::SyncRootAdd {
+                local_path: sync_root.display().to_string(),
+                remote_path: "/remote-sync".to_owned(),
+                sync_type: Some(SyncType::Full),
+            },
+            Request::SyncRootPause { sync_id: 1 },
+            Request::SyncRootResume { sync_id: 1 },
+            Request::SyncRootChangeType {
+                sync_id: 1,
+                sync_type: SyncType::DownloadOnly,
+            },
+            Request::SyncExcludeAdd {
+                sync_id: 1,
+                pattern: "*.tmp".to_owned(),
+            },
+            Request::SyncExcludeList { sync_id: 1 },
+            Request::SyncExcludeRemove {
+                sync_id: 1,
+                pattern: "*.tmp".to_owned(),
+            },
+            Request::GetSyncSuggestions {
+                path: sync_root.display().to_string(),
+                max: Some(5),
+            },
+            Request::IsFolderSyncable {
+                path: sync_root.display().to_string(),
+            },
+            Request::ShowPublicLink {
+                code: "abc123".to_owned(),
+            },
+            Request::DeletePublicLink { link_id: 7 },
+            Request::DeletePublicLinkByCode {
+                code: "abc123".to_owned(),
+            },
+            Request::CreateFilePublicLink {
+                path: "/notes.txt".to_owned(),
+            },
+            Request::CreateFolderPublicLink {
+                path: "/remote-sync".to_owned(),
+            },
+            Request::CreateFolderPublicLinkWithOptions {
+                path: "/remote-sync".to_owned(),
+                expire: Some(1_900_000_000),
+                maxdownloads: Some(5),
+                maxtraffic: Some(1_048_576),
+                password: Some("link-secret".to_owned().into()),
+            },
+            Request::CreateFolderUpDownLink {
+                folder_id: 10,
+                mail: "reader@example.com".to_owned(),
+                can_upload: true,
+            },
+            Request::CreateScreenshotPublicLink {
+                path: "/notes.txt".to_owned(),
+                has_delay: true,
+                delay_seconds: 1,
+            },
+            Request::ChangePublicLinkExpire {
+                link_id: 7,
+                expire: Some(1_900_000_000),
+            },
+            Request::ChangePublicLinkPassword {
+                link_id: 7,
+                password: Some("link-secret".to_owned().into()),
+            },
+            Request::ChangePublicLinkUpload {
+                link_id: 7,
+                policy: PublicLinkUploadPolicy::Everyone,
+            },
+            Request::CreateUploadLink {
+                path: "/remote-sync".to_owned(),
+                comment: "fixture".to_owned(),
+                expire: Some(1_900_000_000),
+                maxspace: Some(4096),
+                maxfiles: Some(8),
+            },
+            Request::DeleteUploadLink { upload_link_id: 8 },
+            Request::CreateTreePublicLink {
+                name: "bundle".to_owned(),
+                root_folder_id: Some(0),
+                folder_ids_csv: Some("10,11".to_owned()),
+                file_ids_csv: Some("20,21".to_owned()),
+                expire: Some(1_900_000_000),
+                maxdownloads: Some(5),
+                maxtraffic: Some(1_048_576),
+            },
+            Request::ListPublicLinkAccess { link_id: 7 },
+            Request::AddPublicLinkAccess {
+                link_id: 7,
+                email: "reader@example.com".to_owned(),
+            },
+            Request::RemovePublicLinkAccess {
+                link_id: 7,
+                receiver_id: 9,
+            },
+            Request::ListBookmarks,
+            Request::RemoveBookmark {
+                code: "abc123".to_owned(),
+                location_id: 1,
+            },
+            Request::ChangeBookmark {
+                code: "abc123".to_owned(),
+                location_id: 1,
+                name: "docs".to_owned(),
+                description: "fixture".to_owned(),
+            },
+            Request::ShareFolder {
+                folder_id: 10,
+                name: "Documents".to_owned(),
+                mail: "reader@example.com".to_owned(),
+                message: "hello".to_owned(),
+                permissions_bits: 7,
+                hint: Some("fixture".to_owned()),
+            },
+            Request::CancelShareRequest {
+                share_request_id: 11,
+            },
+            Request::DeclineShareRequest {
+                share_request_id: 11,
+            },
+            Request::AcceptShareRequest {
+                share_request_id: 11,
+                to_folder_id: 0,
+                name: Some("Accepted".to_owned()),
+            },
+            Request::RemoveShare { share_id: 12 },
+            Request::ModifyShare {
+                share_id: 12,
+                permissions_bits: 7,
+            },
+            Request::AccountStopShare {
+                user_share_ids: vec![11],
+                team_share_ids: vec![12],
+            },
+            Request::AccountModifyShare {
+                user_shares: vec![(11, 7)],
+                team_shares: vec![(12, 3)],
+            },
+            Request::AccountTeamShare {
+                folder_id: 10,
+                name: "Documents".to_owned(),
+                team_id: 11,
+                message: "hello".to_owned(),
+                permissions_bits: 7,
+                hint: Some("fixture".to_owned()),
+            },
+            Request::ValueSet {
+                name: "fixture".to_owned(),
+                value: ValueKvPayload::String("value".to_owned()),
+            },
+            Request::ValueGet {
+                name: "fixture".to_owned(),
+                kind: ValueKvKind::String,
+            },
+            Request::ValueHas {
+                name: "fixture".to_owned(),
+                kind: ValueKvKind::String,
+            },
+            Request::MarkNotificationsRead { upto_id: 42 },
+            Request::AuditVerifyChain {
+                range: AuditVerifyRange::default(),
+            },
+            Request::CreateRemoteFolder {
+                parent_folder_id: Some(0),
+                name: "NewFolder".to_owned(),
+                path: String::new(),
+                check_and_create: true,
+            },
+            Request::RunLocalScan,
+            Request::SendPublink {
+                code: "abc123".to_owned(),
+                mails: "reader@example.com".to_owned(),
+                message: "hello".to_owned(),
+            },
+            Request::GetFolderIdByPath {
+                path: "/remote-sync".to_owned(),
+            },
+            Request::GetFolderFlags {
+                path: "/remote-sync".to_owned(),
+            },
+            Request::GetFolderOwnerId {
+                path: "/remote-sync".to_owned(),
+            },
+            Request::FilesystemStatus {
+                path: sync_root.display().to_string(),
+            },
+            Request::StatPath {
+                path: "/notes.txt".to_owned(),
+            },
+            Request::ListFolderByPath {
+                path: "/".to_owned(),
+            },
+            Request::ReadFileRange {
+                path: "/notes.txt".to_owned(),
+                offset: 0,
+                length: 16,
+            },
+            Request::CreateFolderByPath {
+                path: "/NewFolder".to_owned(),
+            },
+            Request::RenamePath {
+                from: "/notes.txt".to_owned(),
+                to: "/renamed.txt".to_owned(),
+            },
+            Request::CopyPath {
+                from: "/notes.txt".to_owned(),
+                to: "/copy.txt".to_owned(),
+            },
+            Request::UploadFileByPath {
+                local_path: source.clone(),
+                remote_path: "/uploaded.bin".to_owned(),
+            },
+            Request::DownloadFileByPath {
+                remote_path: "/notes.txt".to_owned(),
+                local_path: download,
+                overwrite: true,
+            },
+            Request::IntegrityRunOnce,
+            Request::IntegritySkip {
+                path: "*.cache".to_owned(),
+            },
+            Request::UploadCreate {
+                local_path: source,
+                remote_name: "source.bin".to_owned(),
+                parent_folder_id: Some(10),
+                total_bytes: 29,
+                conflict_mode: Some(UploadConflictMode::Overwrite),
+            },
+            Request::UploadPause { session_id: 1 },
+            Request::UploadResume { session_id: 1 },
+            Request::UploadCancel { session_id: 1 },
+            Request::UploadList,
+            Request::ConflictList,
+            Request::ConflictResolve {
+                path: "/Documents/a".to_owned(),
+                policy: "prefer-local".to_owned(),
+            },
+            Request::LostPassword {
+                email: "alice@example.com".to_owned(),
+            },
+            Request::VerifyEmailRestricted {
+                verify_token: "verify-token".to_owned().into(),
+            },
+            Request::AccountChangePassword {
+                current_password: "old-secret".to_owned().into(),
+                new_password: "new-secret".to_owned().into(),
+            },
+            Request::AccountRegister {
+                email: "new-user@example.com".to_owned(),
+                password: "new-secret".to_owned().into(),
+                terms_accepted: true,
+            },
+            Request::GetFileLink { file_id: 20 },
+            Request::DownloadFile {
+                file_id: 20,
+                local_path: fixture_root.path().join("legacy-download.bin"),
+            },
+            Request::DeleteBackup { backup_id: 1 },
+            Request::SetLanguage {
+                language: "en".to_owned(),
+            },
+            Request::UploadWriteFromFile {
+                upload_session_id: 77,
+                source_fileid: 20,
+                source_hash: 1234,
+                offset: 0,
+                source_offset: Some(0),
+                count: 16,
+            },
+            Request::CreateTreePublicLinkFromPaths {
+                name: "bundle".to_owned(),
+                paths: vec!["/remote-sync".to_owned(), "/notes.txt".to_owned()],
+                expires: Some(1_900_000_000),
+            },
+            Request::CreateTreePublicLinkFromPathTargets {
+                name: "bundle".to_owned(),
+                root: Some("/".to_owned()),
+                folders: vec!["/remote-sync".to_owned()],
+                files: vec!["/notes.txt".to_owned()],
+                expires: Some(1_900_000_000),
+            },
+            Request::CreateBackup {
+                name: "fixture".to_owned(),
+                root_folder_id: 0,
+                local_path: sync_root.display().to_string(),
+                parent_folder_name: Some("Backups".to_owned()),
+            },
+            Request::StopDevice {
+                device_folder_id: 10,
+            },
+            Request::DeleteBackupDevice,
+            Request::BackupSnapshot {
+                action: SnapshotAction::Create,
+                path: snapshot,
+                gpg_recipient: None,
+                yes: true,
+                retention_days: None,
+                zstd_level: Some(3),
+            },
+        ];
+
+        for request in requests {
+            let label = format!("{request:?}");
+            let response = runtime.handle_request(request);
+            assert!(
+                !response.message.contains("panicked while handling"),
+                "{label} panicked: {}",
+                response.message
+            );
+        }
+    }
+
+    #[test]
+    fn remote_stat_and_list_work_with_an_empty_metadata_cache() {
+        let mut runtime = bootstrap_test_shell();
+        authenticate_test_shell(&mut runtime);
+        let conn = rusqlite::Connection::open(&runtime.store.db_path).unwrap();
+        assert_eq!(
+            pcloud_store::FileMetadataRepository::count(&conn).unwrap(),
+            0,
+            "test precondition: metadata cache is empty"
+        );
+
+        let stat = runtime.stat_path("/notes.txt".to_owned());
+        assert_eq!(stat.status, ResponseStatus::Ok, "{}", stat.message);
+        let payload: pcloud_ipc::StatPathPayload = serde_json::from_str(&stat.message).unwrap();
+        assert_eq!(payload.file_id, 20);
+        assert!(!payload.is_folder);
+        assert_eq!(payload.size, 1024);
+        assert_eq!(payload.source, "api");
+
+        let list = runtime.list_folder_by_path("/".to_owned());
+        assert_eq!(list.status, ResponseStatus::Ok, "{}", list.message);
+        let entries: Vec<pcloud_ipc::ListFolderEntry> =
+            serde_json::from_str(&list.message).unwrap();
+        assert!(entries.iter().any(|entry| entry.name == "notes.txt"));
+    }
+
+    #[test]
+    fn remote_put_get_and_mkdir_use_streaming_service() {
+        let mut runtime = bootstrap_test_shell();
+        authenticate_test_shell(&mut runtime);
+        let local_source = runtime.config.paths.cache_dir.join("cli-put-source.bin");
+        std::fs::create_dir_all(local_source.parent().unwrap()).unwrap();
+        std::fs::write(&local_source, b"streamed upload fixture").unwrap();
+
+        let upload = runtime.upload_file_by_path(local_source, "/uploaded.bin".to_owned());
+        assert_eq!(upload.status, ResponseStatus::Ok, "{}", upload.message);
+        let upload: pcloud_ipc::RemoteUploadPayload =
+            serde_json::from_str(&upload.message).unwrap();
+        assert_eq!(upload.bytes, 23);
+
+        let mkdir = runtime.create_folder_by_path("/NewFolder".to_owned());
+        assert_eq!(mkdir.status, ResponseStatus::Ok, "{}", mkdir.message);
+
+        let destination = runtime.config.paths.cache_dir.join("downloaded-notes.bin");
+        let download =
+            runtime.download_file_by_path("/notes.txt".to_owned(), destination.clone(), false);
+        assert_eq!(download.status, ResponseStatus::Ok, "{}", download.message);
+        let download: pcloud_ipc::RemoteDownloadPayload =
+            serde_json::from_str(&download.message).unwrap();
+        assert_eq!(download.bytes, 30);
+        assert_eq!(
+            std::fs::read(destination).unwrap(),
+            b"downloaded:/get/abc/report.txt"
+        );
+    }
+
+    #[test]
+    fn legacy_id_download_uses_bounded_remote_fs_streaming() {
+        let mut runtime = bootstrap_test_shell();
+        authenticate_test_shell(&mut runtime);
+        let destination = runtime
+            .config
+            .paths
+            .cache_dir
+            .join("legacy-id-download.bin");
+
+        let response = runtime.download_file_ipc(20, destination.clone());
+        assert_eq!(response.status, ResponseStatus::Ok, "{}", response.message);
+        assert_eq!(
+            std::fs::read(destination).unwrap(),
+            b"downloaded:/get/abc/report.txt"
+        );
+
+        let relative = runtime.download_file_ipc(20, "relative.bin".into());
+        assert_eq!(relative.status, ResponseStatus::InvalidRequest);
+    }
+
+    /// T1.1: helper that seeds a sync root for the exclude tests.
+    fn seed_sync_root(runtime: &mut RuntimeShell, sync_id: u64) {
+        use pcloud_model::ids::SyncId;
+        use pcloud_model::sync::SyncType;
+        use pcloud_store::repositories::sync_graph::SyncRootRecord;
+        runtime
+            .store
+            .repositories
+            .sync_graph
+            .tracked_sync_roots
+            .push(SyncRootRecord {
+                sync_id: SyncId::new(sync_id),
+                local_path: format!("/tmp/sync-excl-{sync_id}"),
+                remote_path: format!("/Remote/{sync_id}"),
+                paused: false,
+                sync_type: SyncType::Full,
+                exclude_globs: Vec::new(),
+            });
+    }
+
+    #[test]
+    fn sync_exclude_add_persists_pattern() {
+        let mut runtime = bootstrap_test_shell();
+        seed_sync_root(&mut runtime, 100);
+        let resp = crate::dispatch::dispatch(
+            &mut runtime,
+            Request::SyncExcludeAdd {
+                sync_id: 100,
+                pattern: "*.tmp".to_owned(),
+            },
+        );
+        assert_eq!(resp.status, ResponseStatus::Ok);
+        let root = runtime
+            .store
+            .repositories
+            .sync_graph
+            .tracked_sync_roots
+            .iter()
+            .find(|r| r.sync_id.get() == 100)
+            .unwrap();
+        assert_eq!(root.exclude_globs, vec!["*.tmp"]);
+    }
+
+    #[test]
+    fn sync_exclude_add_rejects_empty_pattern() {
+        let mut runtime = bootstrap_test_shell();
+        seed_sync_root(&mut runtime, 101);
+        let resp = crate::dispatch::dispatch(
+            &mut runtime,
+            Request::SyncExcludeAdd {
+                sync_id: 101,
+                pattern: "   ".to_owned(),
+            },
+        );
+        assert_eq!(resp.status, ResponseStatus::InvalidRequest);
+    }
+
+    #[test]
+    fn sync_exclude_add_rejects_invalid_glob() {
+        let mut runtime = bootstrap_test_shell();
+        seed_sync_root(&mut runtime, 102);
+        let resp = crate::dispatch::dispatch(
+            &mut runtime,
+            Request::SyncExcludeAdd {
+                sync_id: 102,
+                pattern: "[unclosed".to_owned(),
+            },
+        );
+        assert_eq!(resp.status, ResponseStatus::InvalidRequest);
+    }
+
+    #[test]
+    fn sync_exclude_add_unknown_root_returns_conflict() {
+        let mut runtime = bootstrap_test_shell();
+        let resp = crate::dispatch::dispatch(
+            &mut runtime,
+            Request::SyncExcludeAdd {
+                sync_id: 999,
+                pattern: "*.log".to_owned(),
+            },
+        );
+        assert_eq!(resp.status, ResponseStatus::Conflict);
+    }
+
+    #[test]
+    fn sync_exclude_add_dedupe_is_ok() {
+        let mut runtime = bootstrap_test_shell();
+        seed_sync_root(&mut runtime, 103);
+        for _ in 0..2 {
+            let resp = crate::dispatch::dispatch(
+                &mut runtime,
+                Request::SyncExcludeAdd {
+                    sync_id: 103,
+                    pattern: "*.tmp".to_owned(),
+                },
+            );
+            assert_eq!(resp.status, ResponseStatus::Ok);
+        }
+        let root = runtime
+            .store
+            .repositories
+            .sync_graph
+            .tracked_sync_roots
+            .iter()
+            .find(|r| r.sync_id.get() == 103)
+            .unwrap();
+        assert_eq!(root.exclude_globs, vec!["*.tmp"]);
+    }
+
+    #[test]
+    fn sync_exclude_remove_drops_pattern() {
+        let mut runtime = bootstrap_test_shell();
+        seed_sync_root(&mut runtime, 104);
+        let _ = crate::dispatch::dispatch(
+            &mut runtime,
+            Request::SyncExcludeAdd {
+                sync_id: 104,
+                pattern: "*.tmp".to_owned(),
+            },
+        );
+        let resp = crate::dispatch::dispatch(
+            &mut runtime,
+            Request::SyncExcludeRemove {
+                sync_id: 104,
+                pattern: "*.tmp".to_owned(),
+            },
+        );
+        assert_eq!(resp.status, ResponseStatus::Ok);
+        let root = runtime
+            .store
+            .repositories
+            .sync_graph
+            .tracked_sync_roots
+            .iter()
+            .find(|r| r.sync_id.get() == 104)
+            .unwrap();
+        assert!(root.exclude_globs.is_empty());
+    }
+
+    #[test]
+    fn sync_exclude_remove_missing_returns_conflict() {
+        let mut runtime = bootstrap_test_shell();
+        seed_sync_root(&mut runtime, 105);
+        let resp = crate::dispatch::dispatch(
+            &mut runtime,
+            Request::SyncExcludeRemove {
+                sync_id: 105,
+                pattern: "*.tmp".to_owned(),
+            },
+        );
+        assert_eq!(resp.status, ResponseStatus::Conflict);
+    }
+
+    #[test]
+    fn sync_exclude_list_joins_with_newline() {
+        let mut runtime = bootstrap_test_shell();
+        seed_sync_root(&mut runtime, 106);
+        for pat in &["*.tmp", "build/**"] {
+            let _ = crate::dispatch::dispatch(
+                &mut runtime,
+                Request::SyncExcludeAdd {
+                    sync_id: 106,
+                    pattern: (*pat).to_owned(),
+                },
+            );
+        }
+        let resp =
+            crate::dispatch::dispatch(&mut runtime, Request::SyncExcludeList { sync_id: 106 });
+        assert_eq!(resp.status, ResponseStatus::Ok);
+        assert_eq!(resp.message, "*.tmp\nbuild/**");
+    }
+
+    #[test]
+    fn sync_exclude_list_empty_when_none() {
+        let mut runtime = bootstrap_test_shell();
+        seed_sync_root(&mut runtime, 107);
+        let resp =
+            crate::dispatch::dispatch(&mut runtime, Request::SyncExcludeList { sync_id: 107 });
+        assert_eq!(resp.status, ResponseStatus::Ok);
+        assert!(resp.message.is_empty());
+    }
+
+    /// T2.4.b — `CryptoFolderEnable` round-trips: the in-memory
+    /// registry is mutated, the snapshot is persisted to `value_kv`,
+    /// and a re-bootstrap from the same `db_path` recovers the
+    /// opted-in folder.
+    #[test]
+    fn crypto_folder_enable_round_trips_via_value_kv() {
+        let mut runtime = bootstrap_test_shell();
+        let db_path = runtime.store.db_path.clone();
+        let resp = crate::dispatch::dispatch(
+            &mut runtime,
+            Request::CryptoFolderEnable {
+                folder_id: 10, // /Documents
+                parent_folder_id: None,
+            },
+        );
+        assert_eq!(resp.status, ResponseStatus::Ok);
+        assert!(runtime.folder_crypto_policy.is_encrypted(10));
+        // Persisted form is recoverable as a fresh `FolderCryptoPolicy`.
+        let raw = pcloud_store::value_kv::get_string(&db_path, FOLDER_CRYPTO_POLICY_KEY)
+            .expect("value_kv read")
+            .expect("snapshot present");
+        let recovered: pcloud_crypto::folder_policy::FolderCryptoPolicy =
+            serde_json::from_str(&raw).expect("snapshot is valid JSON");
+        assert!(recovered.is_encrypted(10));
+    }
+
+    /// T2.4.b — `CryptoFolderDisable` round-trips: an enabled folder
+    /// is removed from the registry and the persisted snapshot
+    /// reflects the removal.
+    #[test]
+    fn crypto_folder_disable_round_trips_via_value_kv() {
+        let mut runtime = bootstrap_test_shell();
+        let db_path = runtime.store.db_path.clone();
+        // Enable first.
+        let enable = crate::dispatch::dispatch(
+            &mut runtime,
+            Request::CryptoFolderEnable {
+                folder_id: 10,
+                parent_folder_id: None,
+            },
+        );
+        assert_eq!(enable.status, ResponseStatus::Ok);
+        // Then disable.
+        let disable =
+            crate::dispatch::dispatch(&mut runtime, Request::CryptoFolderDisable { folder_id: 10 });
+        assert_eq!(disable.status, ResponseStatus::Ok);
+        assert!(!runtime.folder_crypto_policy.is_encrypted(10));
+        let raw = pcloud_store::value_kv::get_string(&db_path, FOLDER_CRYPTO_POLICY_KEY)
+            .expect("value_kv read")
+            .expect("snapshot present");
+        let recovered: pcloud_crypto::folder_policy::FolderCryptoPolicy =
+            serde_json::from_str(&raw).expect("snapshot is valid JSON");
+        assert!(!recovered.is_encrypted(10));
+    }
+
+    /// T2.4.b — `CryptoFolderList` returns the populated registry as
+    /// a JSON-encoded snapshot. Plan acceptance: an operator can
+    /// enable crypto on `/Documents` (id=10) while keeping `/Photos`
+    /// (id=20) plaintext, and the `List` response carries both
+    /// decisions.
+    #[test]
+    fn crypto_folder_list_returns_populated_registry() {
+        let mut runtime = bootstrap_test_shell();
+        // /Documents = encrypted
+        let enable = crate::dispatch::dispatch(
+            &mut runtime,
+            Request::CryptoFolderEnable {
+                folder_id: 10,
+                parent_folder_id: None,
+            },
+        );
+        assert_eq!(enable.status, ResponseStatus::Ok);
+        // /Photos = explicit plaintext (Disable on a non-existent
+        // entry is a no-op; we instead verify List excludes it).
+        let resp = crate::dispatch::dispatch(&mut runtime, Request::CryptoFolderList);
+        assert_eq!(resp.status, ResponseStatus::Ok);
+        let policy: pcloud_crypto::folder_policy::FolderCryptoPolicy =
+            serde_json::from_str(&resp.message).expect("List message is valid JSON");
+        assert!(policy.is_encrypted(10));
+        // /Photos was never registered, so it is plaintext (the
+        // empty-policy default) — exactly the plan acceptance.
+        assert!(!policy.is_encrypted(20));
+    }
+
+    #[test]
+    fn set_api_server_rejects_unknown_host_without_persisting() {
+        let mut runtime = bootstrap_test_shell();
+        let original_host = runtime.config.api.host.clone();
+        let original_server_name = runtime.config.api.server_name.clone();
+        let response = crate::dispatch::dispatch(
+            &mut runtime,
+            Request::SetApiServer {
+                location_id: 7,
+                binapi: "evil.example.com:443".to_owned(),
+            },
+        );
+
+        assert_eq!(response.status, ResponseStatus::InvalidRequest);
+        assert_eq!(runtime.config.api.host, original_host);
+        assert_eq!(runtime.config.api.server_name, original_server_name);
+        assert_eq!(
+            runtime.store.repositories.preferences.api_server_binapi,
+            None
+        );
+        assert_eq!(
+            runtime
+                .store
+                .repositories
+                .preferences
+                .api_server_location_id,
+            None
+        );
     }
 }

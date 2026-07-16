@@ -19,8 +19,8 @@ links, backups — all over TLS (`rustls` with the `ring` provider).
 
 ## Usage
 
-The crate is usually consumed through `pcloud-daemon` backends and
-`pcloud-sdk` helpers.
+The crate is usually consumed through daemon backends and the internal
+`pcloud-embedded-sdk`. The public `pcloud-sdk` talks only to daemon IPC.
 
 ## Features
 

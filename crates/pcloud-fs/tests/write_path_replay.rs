@@ -4,11 +4,11 @@
 //! Simulates a mount-write-crash-remount sequence and verifies the journal
 //! replay surfaces the pending mutations so the daemon can re-drive them.
 //!
-//! A real kernel FUSE mount is owned by the 4.e sub-bead. To keep 4.d
-//! decoupled from mount lifecycle, this test exercises the durability
-//! contract directly: a "mount" is represented by a `WritePathService`
+//! This test keeps the portable durability contract independent of the
+//! mount lifecycle: a "mount" is represented by a `WritePathService`
 //! instance; an "unmount" is a drop; a "remount" is re-opening the same
-//! staging dir + journal from disk.
+//! staging dir + journal from disk. Real kernel coverage lives in
+//! `fuse_write_path_live.rs` and `fuse_mount_integration.rs`.
 
 // **PLATFORM:** Linux
 // **GATING:** #[cfg(target_os = "linux")].
@@ -98,18 +98,4 @@ fn mount_write_fsync_unmount_remount_preserves_pending_records() {
     let stage = StagingDir::open(&stage_root).unwrap();
     let blob = stage.read_blob("ino-42.blob").unwrap();
     assert_eq!(blob, b"remount-survives-this");
-}
-
-#[cfg(target_os = "linux")]
-#[test]
-#[ignore = "requires PCLOUD_FUSE_TEST=1; real FUSE mount integration is owned by 4.e"]
-fn write_path_via_real_mount() {
-    if std::env::var("PCLOUD_FUSE_TEST").ok().as_deref() != Some("1") {
-        return;
-    }
-    // Real FUSE-mount write integration belongs to 4.e
-    // (mount_service::MountService needs the write-path wired through the
-    // adapter trait). 4.d ships the durability primitives; 4.e ships the
-    // kernel-facing glue. When 4.e lands this test becomes active.
-    panic!("bd-1du.4.d: real FUSE mount write integration is owned by 4.e");
 }

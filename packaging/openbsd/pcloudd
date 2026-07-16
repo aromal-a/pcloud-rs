@@ -1,41 +1,25 @@
 #!/bin/ksh
 # PLATFORM: OpenBSD 7.x
-#
-# rc.d service script for the pcloudd daemon.
-#
-# Install:
-#   install -m 0555 packaging/openbsd/pcloudd /etc/rc.d/pcloudd
-#   rcctl enable pcloudd
-#   rcctl set pcloudd user _pcloud        # optional; default below
-#   rcctl set pcloudd flags "--log info"  # optional; any pcloudd CLI flags
-#   rcctl start pcloudd
-#
-# Inputs (set via rcctl or /etc/rc.conf.local):
-#   pcloudd_user   - run-as user; default "_pcloud"
-#   pcloudd_flags  - extra CLI flags passed to pcloudd
-#
-# Outputs: no PID file (OpenBSD rc.subr uses pgrep pexp). Logs go to syslog.
-#
-# Security:
-#   - Create the dedicated service user before starting:
-#       useradd -r 400..999 -c 'pcloudd service' -d /var/pcloudd \
-#               -s /sbin/nologin _pcloud
-#   - Restrict the state directory: install -d -o _pcloud -g _pcloud -m 700 /var/pcloudd
-#
-# Test:
-#   rcctl start pcloudd
-#   rcctl check pcloudd
-#   rcctl stop  pcloudd
-#
-# Side effects: spawns a supervised pcloudd process. No files are created.
 
-daemon="/usr/local/bin/pcloudd"
-# `serve` is required: without it pcloudd prints a one-shot summary and exits.
-daemon_flags="serve"
+daemon="/usr/bin/env PCLOUDRS_DAEMON_BIN=/usr/local/bin/pcloudd PCLOUDRS_ENV_FILE=/usr/local/etc/pcloud-rs/pcloudd.env /usr/local/libexec/pcloudd-wrapper.sh"
+daemon_flags=""
 daemon_user="_pcloud"
 
 . /etc/rc.d/rc.subr
 
-pexp="pcloudd${daemon_flags:+ ${daemon_flags}}"
+# pcloudd is intentionally foreground-only. rc_bg is the documented OpenBSD
+# rc.d mechanism for starting such a service without blocking the boot.
+rc_bg=YES
+pexp="/usr/local/bin/pcloudd serve"
 
-rc_cmd $1
+rc_pre()
+{
+    if ! id "${daemon_user}" >/dev/null 2>&1; then
+        echo "pcloudd: service user does not exist: ${daemon_user}" >&2
+        return 1
+    fi
+    install -d -o "${daemon_user}" -g "${daemon_user}" -m 0700 \
+        /var/lib/pcloud-rs
+}
+
+rc_cmd "$1"

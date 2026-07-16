@@ -48,7 +48,7 @@
 //!    path (`pcrypto.c:505-513`) does NOT use CTS — it folds into a
 //!    different construction that mixes a random pad with the HMAC output.
 //!    For the standalone CBC-CTS primitive exported here we therefore
-//!    require `plaintext.len() >= 16` and return [`ModesError::InputTooShort`]
+//!    require `plaintext.len() >= 16` and return `ModesError::InputTooShort`
 //!    otherwise, matching the behaviour of the CS3 mode as defined in
 //!    NIST SP 800-38A Addendum (CS3 is undefined for inputs shorter than
 //!    one block).

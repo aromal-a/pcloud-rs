@@ -1,0 +1,457 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Roadmap (Complete Wave Summary) - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="favicon-8114d1fc.png">
+        <link rel="stylesheet" href="css/variables-8adf115d.css">
+        <link rel="stylesheet" href="css/general-0392ca55.css">
+        <link rel="stylesheet" href="css/chrome-fc474251.css">
+        <link rel="stylesheet" href="css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/../../roadmap-complete.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="roadmap--complete-wave-summary"><a class="header" href="#roadmap--complete-wave-summary">Roadmap — Complete Wave Summary</a></h1>
+<p><em>Last updated: 2026-04-15.</em></p>
+<p>This document is the <strong>chronological, landed-work</strong> summary of every wave
+that shipped into the Rust rewrite, from the P0 hardening wave through the
+H-phase-2 enterprise expansion. It is deliberately written after-the-fact:
+everything listed here is already in-tree, in-test, and in-CI.</p>
+<p>Parity-matrix counts are <strong>not</strong> affected by anything described in this
+document. See <a href="../STATUS.html"><code>../STATUS.md</code></a> for current counts. The
+honesty rules in <a href="../../CLAUDE.html"><code>CLAUDE.md</code></a> still apply: no “full
+parity”, no “production ready”, no “enterprise ready”, no “drop-in
+replacement” until <code>bd-1du.10</code> is gated shut.</p>
+<hr>
+<h2 id="wave-p0--safety-hardening"><a class="header" href="#wave-p0--safety-hardening">Wave P0 — Safety Hardening</a></h2>
+<p>Focus: eliminate silent failures, stop heap corruption classes, raise the
+floor on cryptographic verification of downloads, wire the first kernel
+FUSE end-to-end, and scaffold the mdBook.</p>
+<p>Why this wave first: the prior C heap-corruption findings (commits
+<code>7595c48</code>, <code>9773ed2</code>) set the bar for “don’t regress on memory safety”
+and we wanted a mechanical proof that the Rust side cannot silently
+free-and-use-after. The circuit breaker also formalises the rule that
+a transient backend failure degrades the daemon rather than panicking
+through it.</p>
+<p>Landed (with file-level references):</p>
+<ul>
+<li>RAII circuit-breaker with <code>parking_lot</code> primitives
+(<code>crates/pcloud-resilience/src/</code>), removing poison-panic mutex
+semantics workspace-wide (ADR 0003).</li>
+<li>Page-cache lock discipline in <code>crates/pcloud-fs/src/page_cache.rs</code>
+— eliminates the “hold lock across I/O” patterns the C code had.</li>
+<li><code>fetch_download_verified</code> in <code>crates/pcloud-proto/src/transfer_api.rs</code>
+with SHA-256 tail verification before the file is made visible to
+the caller; raises the floor for every download consumer.</li>
+<li>FUSE kernel e2e proof on Linux via
+<code>crates/pcloud-fs/tests/fuse_mount_integration.rs</code> (gated behind
+<code>PCLOUD_FUSE_LIVE=1</code> so non-libfuse CI stays green).</li>
+<li>IPC 1 MiB request cap in <code>crates/pcloud-ipc/src/frame.rs</code>
+(DoS surface reduction; ADR 0002 framing stays, the cap is new).</li>
+<li>mdBook scaffold (<code>docs/book/src/SUMMARY.md</code> +
+<code>getting-started/*.md</code>) — first shippable developer docs surface.</li>
+</ul>
+<p><strong>Test-count delta:</strong> +84 (unit + integration + first doctests).</p>
+<hr>
+<h2 id="wave-p1--throughput--observability"><a class="header" href="#wave-p1--throughput--observability">Wave P1 — Throughput &amp; Observability</a></h2>
+<p>Focus: make the daemon fast under load, expose enough telemetry to run it
+in anger, and bolt on the first chaos harness.</p>
+<p>Landed:</p>
+<ul>
+<li>O(1) LRU eviction in the page cache</li>
+<li>Upload journal: NDJSON + fsync crash-safe append</li>
+<li><code>/proc/self/mountinfo</code> orphan detection + <code>pcloudc mount --force-umount</code></li>
+<li>Streaming download path (<code>fetch_download_verified_streaming</code>)</li>
+<li><code>pcloud-chaos</code> crate (fault injection primitives)</li>
+<li>SLO registry + <code>/slo</code> HTTP endpoint</li>
+</ul>
+<p><strong>Test-count delta:</strong> +142 (chaos harness, SLO endpoint, journal
+property tests).</p>
+<hr>
+<h2 id="wave-p2--test-substrate"><a class="header" href="#wave-p2--test-substrate">Wave P2 — Test Substrate</a></h2>
+<p>Focus: make regressions visible. No new runtime features; pure coverage,
+property testing, fuzzing, and doctests.</p>
+<p>Landed:</p>
+<ul>
+<li>Coverage CI (<code>cargo llvm-cov</code> with per-crate gates)</li>
+<li>Property tests across protocol, crypto, store, engine crates</li>
+<li>Nightly fuzz sweep (libFuzzer + cargo-fuzz)</li>
+<li>+136 doctests across public APIs</li>
+<li>Weekly <code>cargo-mutants</code> mutation run</li>
+</ul>
+<p><strong>Test-count delta:</strong> +136 doctests, ~+300 property-test cases.</p>
+<hr>
+<h2 id="wave-p3--operator-trust"><a class="header" href="#wave-p3--operator-trust">Wave P3 — Operator Trust</a></h2>
+<p>Focus: make the daemon explainable. Lifecycle walkthroughs, manpages,
+rustdoc enforcement, and the first ADRs.</p>
+<p>Landed:</p>
+<ul>
+<li>Request-lifecycle walkthrough (<code>architecture/request-lifecycle.md</code>)</li>
+<li>Full manpages (<code>pcloudc.1</code>, <code>pcloudd.1</code>, <code>pcloud-cli.1</code>) + <code>manpage-lint</code></li>
+<li><code>#![deny(missing_docs)]</code> on 9 public crates</li>
+<li>First 10 ADRs (0001 record format through 0010 FUSE write-path pending)</li>
+<li>Runbook playbooks (deployment, upgrade, emergency, RC soak)</li>
+</ul>
+<p><strong>Test-count delta:</strong> +58 (doctest gates, manpage-lint harness).</p>
+<hr>
+<h2 id="wave-p4--self-diagnostics--web-ui-mvp"><a class="header" href="#wave-p4--self-diagnostics--web-ui-mvp">Wave P4 — Self-Diagnostics &amp; Web UI MVP</a></h2>
+<p>Focus: let the binary tell its own operator what’s wrong, and ship a
+minimal browser surface.</p>
+<p>Landed:</p>
+<ul>
+<li><code>pcloudc doctor</code> (config sanity, vault perms, socket perms, version
+drift, endpoint reachability, clock skew)</li>
+<li><code>pcloud-web</code> MVP (static assets, auth bridge, partial-transfer
+dashboard scaffolding)</li>
+<li>Selective-sync path filters</li>
+<li><code>Arc&lt;Vec&lt;u8&gt;&gt;</code> page-cache zero-copy handoff</li>
+<li>LTO profile split (<code>release</code> vs <code>release-lto</code>)</li>
+<li><code>BandwidthPacer</code> per-direction token bucket</li>
+<li>Hot-path clone sweep (reduced allocations in transfer path)</li>
+</ul>
+<p><strong>Test-count delta:</strong> +92.</p>
+<hr>
+<h2 id="wave-p5--packaging-matrix"><a class="header" href="#wave-p5--packaging-matrix">Wave P5 — Packaging Matrix</a></h2>
+<p>Focus: make installation boring on every platform the tier policy cares
+about.</p>
+<p>Landed:</p>
+<ul>
+<li><code>flake.nix</code> for Nix/NixOS</li>
+<li>Debian <code>nfpm.yaml</code></li>
+<li>Homebrew formula stub</li>
+<li>RPM spec</li>
+<li>Docker image</li>
+<li>AppImage</li>
+<li>Flatpak manifest</li>
+<li>Snap / Chocolatey / winget / Scoop manifest stubs</li>
+<li>WiX installer for Windows</li>
+<li>BSD <code>rc.d</code> scripts (FreeBSD, NetBSD, OpenBSD)</li>
+</ul>
+<p><strong>Test-count delta:</strong> +18 (packaging smoke tests).</p>
+<hr>
+<h2 id="wave-p6-partial--cross-platform-lifecycle"><a class="header" href="#wave-p6-partial--cross-platform-lifecycle">Wave P6 (partial) — Cross-Platform Lifecycle</a></h2>
+<p>Focus: extend the trait abstractions so macOS, Windows, and the BSDs
+compile and unit-test.</p>
+<p>Landed:</p>
+<ul>
+<li>Trait abstractions X1–X6</li>
+<li>macOS <code>fuse-t</code> adapter (16 callbacks)</li>
+<li>Windows WinFSP adapter (17 callbacks)</li>
+<li>Windows Service wrapper</li>
+<li><code>pcloudc migrate-from-c</code> helper</li>
+<li>Six mdBook platform chapters</li>
+</ul>
+<p><strong>Test-count delta:</strong> +64 unit tests (per-platform adapters).</p>
+<hr>
+<h2 id="wave-h-phase-1--enterprise-foundation"><a class="header" href="#wave-h-phase-1--enterprise-foundation">Wave H-phase-1 — Enterprise Foundation</a></h2>
+<p>Focus: stand up the crates enterprise deployments need before they will
+even evaluate a sync client.</p>
+<p>Why this shape: enterprise buyers don’t look at a sync client as a
+single unit. They evaluate the identity story (OIDC), the policy
+story (OPA), the fleet story (mTLS + device identity), the key
+material story (KMS), and the observability story (OTel) as separate
+gates. Each landed crate targets exactly one of those gates and can
+be reasoned about independently.</p>
+<p>Landed crates (with design ADRs):</p>
+<ul>
+<li><code>pcloud-idp</code> — OIDC identity broker. Hand-rolled PKCE S256 (ADR
+0014), RS256-only JWKS with 1-hour TTL cache, pCloud trusted-issuer
+exchange stubbed until the upstream endpoint ships. See
+<code>docs/enterprise/oidc-broker.md</code>.</li>
+<li><code>pcloud-policy</code> — OPA/Rego evaluation via <code>regorus</code> (ADR 0013).
+Default-deny, file-perm guard, transactional hot-reload. Example
+bundles in <code>crates/pcloud-policy/examples/policies/</code>. See
+<code>docs/enterprise/policy.md</code>.</li>
+<li><code>pcloud-fleet</code> — fleet agent + enrolment. ed25519 device identity
+under <code>SecretBytes</code> with the <code>0600</code>/<code>0700</code> rule (ADR 0015), explicit
+rustls <code>RootCertStore</code> (no system CAs), canonical-JSON body
+signatures. See <code>docs/enterprise/fleet.md</code>.</li>
+<li><code>pcloud-kms</code> — AWS KMS + HashiCorp Vault Transit providers with an
+in-memory unwrap cache; Pkcs11Hsm remains a stub. See
+<code>docs/enterprise/kms.md</code>.</li>
+<li><code>pcloud-session</code> — session reauth coordinator bridging TFA
+re-challenge across SDK consumers.</li>
+</ul>
+<p>Landed features:</p>
+<ul>
+<li>OpenTelemetry distributed tracing via the <code>RequestEnvelope</code> wrapper
+(ADR 0012), with the daemon opening <code>pcloudd.dispatch</code> and
+<code>pcloudd.backend.&lt;name&gt;</code> spans.</li>
+<li>Data-residency enforcement in <code>pcloud-config</code> + <code>pcloud-daemon</code>:
+<code>[data_residency]</code> block, <code>PolicyViolation { kind: "data_residency" }</code>
+IPC error, 1h region-resolver TTL cache.</li>
+<li>Disaster-recovery + high-availability playbooks under
+<code>docs/enterprise/disaster-recovery.md</code> and <code>docs/enterprise/ha.md</code>.</li>
+<li>External audit dossier at <code>docs/book/src/security/audit-dossier.md</code>.</li>
+<li>30-day RC soak playbook at <code>docs/book/src/operations/rc-soak.md</code>.</li>
+</ul>
+<p><strong>Test-count delta:</strong> +210 (new crates carry their own unit + property
+tests; tracing spans cross-checked by integration tests).</p>
+<hr>
+<h2 id="wave-h-phase-2--enterprise-expansion"><a class="header" href="#wave-h-phase-2--enterprise-expansion">Wave H-phase-2 — Enterprise Expansion</a></h2>
+<p>Focus: bolt on the plugin surface, partial-transfer resume, backup
+snapshots, and the integrity sweeper scaffolding.</p>
+<p>Landed:</p>
+<ul>
+<li>Four first-party plugins: <code>autoheal</code>, <code>backup-schedule</code>,
+<code>dlp-builtin</code>, <code>publink-expiry</code></li>
+<li><code>RequestEnvelope</code> unified across daemon + SDK</li>
+<li>Backup snapshot CLI + scheduler integration</li>
+<li>Integrity sweeper (config block, skip-list parser, rate limiter;
+background scrub wiring deliberately left for <code>bd-1du.4.6.1</code>)</li>
+<li>Partial-transfer resume (download + upload; CLI <code>pcloudc resume</code>)</li>
+<li><code>pcloud-web</code> expansion (admin panel, partial-transfer dashboard)</li>
+<li>DLP enforcement module (<code>docs/enterprise/dlp.md</code>)</li>
+</ul>
+<p><strong>Test-count delta:</strong> +176 (plugin registry tests, envelope round-trips,
+resume state-machine properties, snapshot lifecycle tests).</p>
+<hr>
+<h2 id="what-this-roadmap-explicitly-does-not-change"><a class="header" href="#what-this-roadmap-explicitly-does-not-change">What this roadmap explicitly does <strong>not</strong> change</a></h2>
+<ul>
+<li>The parity-matrix totals. See <a href="../STATUS.html"><code>../STATUS.md</code></a>.</li>
+<li>The open beads <code>bd-1du</code>, <code>bd-1du.4</code>, <code>bd-1du.4.6.1</code>, <code>bd-1du.10</code>.</li>
+<li>The honesty claims in <code>CLAUDE.md</code>.</li>
+</ul>
+<p>When the mounted-drive runtime (<code>bd-1du.4</code>) lands with a live host-run
+proof, <strong>then</strong> <code>fs,mounted pcloud filesystem</code> may flip. When the
+chunked-upload state machine lands in the daemon, <strong>then</strong> the upload
+wire-method + <code>SDK UploadSession</code> rows may flip. Until those code paths
+exist and are live-verified, the matrix stays as it is and the claims in
+<code>CLAUDE.md</code> stand.</p>
+<h2 id="related-documents"><a class="header" href="#related-documents">Related documents</a></h2>
+<ul>
+<li><a href="../STATUS.html"><code>../STATUS.md</code></a> — authoritative parity counts</li>
+<li><a href="../C_FEATURE_PARITY_REVIEW.html"><code>../C_FEATURE_PARITY_REVIEW.md</code></a> — narrative</li>
+<li><a href="../C_FEATURE_PARITY_MATRIX.csv"><code>../C_FEATURE_PARITY_MATRIX.csv</code></a> — matrix</li>
+<li><a href="./parity/bd-1du-10-closure-checklist.html"><code>./parity/bd-1du-10-closure-checklist.md</code></a></li>
+<li><a href="./parity/integrity-sweeper.html"><code>./parity/integrity-sweeper.md</code></a></li>
+<li><a href="./enterprise/README.html"><code>./enterprise/README.md</code></a></li>
+<li><a href="./plugins/README.html"><code>./plugins/README.md</code></a></li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../parity/bd-1du-10-closure-checklist.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="archive/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../parity/bd-1du-10-closure-checklist.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="archive/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr-ef4e11c1.min.js"></script>
+        <script src="mark-09e88c2c.min.js"></script>
+        <script src="searcher-09f2665d.js"></script>
+
+        <script src="clipboard-1626706a.min.js"></script>
+        <script src="highlight-abc7f01d.js"></script>
+        <script src="book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

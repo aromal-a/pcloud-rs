@@ -1,0 +1,668 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>IPC Protocol - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/reference/ipc-protocol.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="ipc-protocol"><a class="header" href="#ipc-protocol">IPC Protocol</a></h1>
+<blockquote>
+<p>Authoritative sources:
+<code>crates/pcloud-ipc/src/{lib,protocol,methods,server,transport,auth}.rs</code>,
+the platform backends under <code>crates/pcloud-ipc/src/platform/</code>,
+and <code>crates/pcloud-daemon/src/dispatch.rs</code>. Anything on this page that
+contradicts those files is wrong; the code wins.</p>
+</blockquote>
+<h2 id="who-this-page-is-for"><a class="header" href="#who-this-page-is-for">Who this page is for</a></h2>
+<ul>
+<li><strong>Beginner</strong>: start with
+<a href="#one-minute-overview">One-minute overview</a> and
+<a href="#speaking-ipc-by-hand-with-socat">Speaking IPC by hand with socat</a>.</li>
+<li><strong>Integrator (SDK / CLI author)</strong>: focus on
+<a href="#request-catalogue">Request catalogue</a>,
+<a href="#response-envelope-response">Response envelope</a>, and
+<a href="#requestenvelope-and-distributed-tracing">RequestEnvelope and distributed tracing</a>.</li>
+<li><strong>FAANG-grade (platform / security)</strong>: read the
+<a href="#wire-format">Wire format</a> spec, the full
+<a href="#security-invariants">Security invariants</a> section, and
+<a href="#versioning--evolution">Versioning &amp; evolution</a>.</li>
+</ul>
+<h2 id="one-minute-overview"><a class="header" href="#one-minute-overview">One-minute overview</a></h2>
+<p>The pCloud daemon exposes a <strong>local-only</strong> request/response protocol
+over:</p>
+<ul>
+<li>*<em>Linux / <em>BSD / macOS</em></em>: an <code>AF_UNIX</code> SOCK_STREAM socket at
+<code>$runtime_dir/pcloud.sock</code>, file mode <code>0600</code>, parent directory
+<code>0700</code>.</li>
+<li><strong>Windows</strong>: a named pipe with a SID-restricted DACL.</li>
+</ul>
+<p>Every message is an <strong>8-byte little-endian header followed by JSON</strong>.
+Per-request payloads are capped at <strong>1 MiB</strong> (checked <em>before</em> any
+allocation). The caller’s UID/SID is checked against the daemon’s
+owner on <code>accept()</code>; mismatches are refused with <code>Unauthorized</code>. There
+is no TCP, HTTP, or remotely routable surface.</p>
+<h2 id="wire-format"><a class="header" href="#wire-format">Wire format</a></h2>
+<p>Every frame:</p>
+<pre><code> 0                   1                   2                   3
+ 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|                    payload_len (u32, LE)                      |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|     version (u16, LE)         |   message_type (u16, LE)      |
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|               payload (payload_len bytes, JSON)               |
++---------------------------------------------------------------+
+</code></pre>
+<p>Constants (from <code>pcloud_ipc::protocol</code>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Constant</th><th>Value</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>IPC_PROTOCOL_VERSION</code></td><td><code>1</code></td><td>Wire schema version. Bumped only on incompatible changes.</td></tr>
+<tr><td><code>MAX_IPC_PAYLOAD_LEN</code></td><td><code>1 * 1024 * 1024</code> (1 MiB)</td><td>Hard cap on <code>payload_len</code>.</td></tr>
+<tr><td><code>MessageKind::Request</code></td><td><code>1</code></td><td>Client → daemon.</td></tr>
+<tr><td><code>MessageKind::Response</code></td><td><code>2</code></td><td>Daemon → client.</td></tr>
+<tr><td><code>MessageKind::Event</code></td><td><code>3</code></td><td>Reserved for future daemon-push notifications; decoders coerce unknown tags into <code>Event</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<blockquote>
+<p><strong>Not newline-delimited.</strong> Previous drafts described the transport as
+NDJSON or CBOR — neither is accurate. The payload has always been
+<code>serde_json::{to_vec, from_slice}</code> wrapped in the fixed 8-byte
+length-prefixed header above.</p>
+</blockquote>
+<h2 id="size-caps"><a class="header" href="#size-caps">Size caps</a></h2>
+<p><code>pcloud_ipc::server::MAX_REQUEST_BYTES = 1 * 1024 * 1024</code> mirrors
+<code>MAX_IPC_PAYLOAD_LEN</code>.</p>
+<p><strong>Why it matters</strong> (audit P0.8 OOM cap). The 8-byte header carries an
+attacker-controlled <code>u32 payload_len</code>. Without the cap, a malicious
+peer could declare 4 GiB and force pre-allocation of a 4 GiB buffer
+before a single body byte was read. The server:</p>
+<ol>
+<li>Reads the header.</li>
+<li>Validates <code>payload_len &lt;= MAX_REQUEST_BYTES</code>, <code>version == IPC_PROTOCOL_VERSION</code>.</li>
+<li><strong>Only then</strong> calls <code>Vec::with_capacity(payload_len)</code> and reads.</li>
+<li>On cap violation, returns <code>IpcError::RequestTooLarge { declared, max }</code> and closes the connection <strong>without writing a reply</strong> — a
+reply would itself be a DoS amplification vector.</li>
+</ol>
+<h2 id="decoder-errors-protocolerror"><a class="header" href="#decoder-errors-protocolerror">Decoder errors (<code>ProtocolError</code>)</a></h2>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub enum ProtocolError {
+    TruncatedHeader,                                   // &lt; 8 bytes for the header
+    PayloadTooLarge,                                   // len &gt; cap OR len != slice.len()
+    VersionMismatch { expected: u16, actual: u16 },    // client speaks wrong wire schema
+    Codec(serde_json::Error),                          // JSON malformed / wrong shape
+}
+<span class="boring">}</span></code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variant</th><th>Fatal for connection?</th><th>Surface to peer?</th><th>Retryable?</th></tr>
+</thead>
+<tbody>
+<tr><td><code>TruncatedHeader</code></td><td>yes</td><td>no (stream is unrecoverable)</td><td>no</td></tr>
+<tr><td><code>PayloadTooLarge</code></td><td>yes</td><td>no (amplification)</td><td>no</td></tr>
+<tr><td><code>VersionMismatch</code></td><td>request-fatal, listener keeps serving</td><td>yes — <code>ResponseStatus::InvalidRequest</code></td><td>only after client upgrade</td></tr>
+<tr><td><code>Codec</code></td><td>request-fatal, listener keeps serving</td><td>yes — <code>ResponseStatus::InvalidRequest</code></td><td>only after fixing the request body</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="requestenvelope-and-distributed-tracing"><a class="header" href="#requestenvelope-and-distributed-tracing"><code>RequestEnvelope</code> and distributed tracing</a></h2>
+<p>Every client-to-daemon request is (by preference) wrapped in a typed
+envelope that carries an <strong>optional W3C <code>traceparent</code></strong> alongside the
+inner <code>Request</code>:</p>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[non_exhaustive]
+pub struct RequestEnvelope {
+    pub request: Request,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub traceparent: Option&lt;String&gt;,
+}
+<span class="boring">}</span></code></pre>
+<p>Wire shape (JSON, omitting <code>traceparent</code> when <code>None</code>):</p>
+<pre><code class="language-json">{ "request": { "Plain": { "method": "GetUserInfo" } },
+  "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01" }
+</code></pre>
+<p><strong>Why a wrapper and not a per-variant field.</strong> The daemon already has
+roughly 485 <code>Request::*</code> construction sites. Adding a <code>traceparent</code>
+field to every variant would either require a 485-site patch or a
+serde-skipped field everywhere; the wrapper buys us the same wire
+semantics with one call-site change at the transport boundary. It also
+keeps <code>Request</code> <code>#[non_exhaustive]</code> and lets us add new context fields
+(baggage, sampling hints) later without a schema break.</p>
+<p><strong>Backward compatibility.</strong> <code>RequestEnvelope::try_from_wire(bytes)</code>
+tries the envelope shape first; on a serde mismatch it falls back to
+decoding a bare <code>Request</code> and wraps the result with <code>traceparent: None</code>. Old clients that still emit bare requests keep working.</p>
+<p><code>traceparent</code> format follows RFC-9. The envelope layer treats it as an
+opaque string and does <strong>not</strong> validate — downstream observability in
+<code>pcloud_observability::tracing</code> parses and filters malformed values.</p>
+<p>The daemon dispatch loop
+(<code>crates/pcloud-daemon/src/dispatch.rs</code>) reads the envelope’s
+traceparent, opens a <code>pcloudd.dispatch</code> server span parented to it (or
+a fresh root when <code>None</code>), and nests a <code>pcloudd.backend.&lt;name&gt;</code> span
+around each handler. Every recorded attribute goes through the
+<code>attr_redact</code> allow-list so secret-shaped keys never reach the
+exporter.</p>
+<h2 id="request-catalogue"><a class="header" href="#request-catalogue">Request catalogue</a></h2>
+<p><code>Request</code> is <code>#[non_exhaustive]</code>. The enumeration below groups
+variants by responsibility; field shapes mirror <code>methods.rs</code>.</p>
+<p><strong><code>Plain { method: Method }</code></strong> — wrapper for every argumentless
+method. <code>Method</code> is <code>#[non_exhaustive]</code> and includes (selected):</p>
+<ul>
+<li>Status / health: <code>GetStatus</code>, <code>GetHealth</code>, <code>Health</code>, <code>GetPending</code>,
+<code>GetSyncRoots</code>, <code>ListPublicLinks</code>, <code>ListUploadLinks</code>.</li>
+<li>Auth / session: <code>GetUserInfo</code>, <code>LoginBegin</code>, <code>Logout</code>,
+<code>SendTwoFactorSms</code>, <code>SendTwoFactorNotification</code>, <code>SubmitPassword</code>,
+<code>SubmitTwoFactorCode</code>, <code>SessionStatus</code>, <code>SetAuthPersistence</code>.</li>
+<li>Sync: <code>PauseSync</code>, <code>ResumeSync</code>.</li>
+<li>Crypto: <code>UnlockCrypto</code>, <code>LockCrypto</code>, <code>GetCryptoStatus</code>,
+<code>CryptoReset</code>, <code>GetCryptoPrivKeyFlags</code>,
+<code>SendCryptoChangeUserPrivate</code>.</li>
+<li>Shares / contacts: <code>ListIncomingShares</code>, <code>ListOutgoingShares</code>,
+<code>ListIncomingShareRequests</code>, <code>ListOutgoingShareRequests</code>,
+<code>ListContacts</code>, <code>ListMyTeams</code>.</li>
+<li>Notifications: <code>ListNotifications</code>.</li>
+<li>Introspection / diagnostics: <code>IntegrityStatus</code>.</li>
+<li>Lifecycle: <code>Shutdown</code>.</li>
+</ul>
+<p><strong>Auth data-bearing</strong> — transit-only secrets; see the audit H1 note at
+the top of <code>methods.rs</code> for the rationale for using <code>String</code> over
+<code>SecretString</code> on the wire:</p>
+<ul>
+<li><code>PasswordSubmission { username, value }</code></li>
+<li><code>AuthTokenSubmission { value }</code></li>
+<li><code>TwoFactorCodeSubmission { value, trust_device, recovery_code }</code></li>
+<li><code>AuthPersistence { enabled }</code></li>
+</ul>
+<p><strong>Crypto</strong>:</p>
+<ul>
+<li><code>CryptoUnlock { password }</code></li>
+<li><code>CryptoSetup { password, hint }</code></li>
+<li><code>CryptoMkdir { name, parent_folder_id, local_folder_id }</code></li>
+<li><code>CryptoChangePassword { old_password, new_password, hint, code, flags }</code></li>
+<li><code>CryptoChangePasswordUnlocked { new_password, hint, code, flags }</code></li>
+</ul>
+<p><strong>Sync root lifecycle</strong>:</p>
+<ul>
+<li><code>SyncRootAdd { local_path, remote_path }</code></li>
+<li><code>SyncRootRemove { sync_id }</code></li>
+<li><code>SyncRootPause { sync_id }</code> / <code>SyncRootResume { sync_id }</code></li>
+<li><code>SyncRootChangeType { sync_id, ... }</code></li>
+<li><code>GetSyncSuggestions { ... }</code></li>
+<li><code>IsFolderSyncable { ... }</code></li>
+<li><code>RunLocalScan</code></li>
+</ul>
+<p><strong>Public links</strong>:</p>
+<ul>
+<li><code>ShowPublicLink { ... }</code>, <code>DeletePublicLink { ... }</code>,
+<code>DeletePublicLinkByCode { ... }</code></li>
+<li><code>CreateFilePublicLink { ... }</code>, <code>CreateFolderPublicLink { ... }</code></li>
+<li><code>ChangePublicLinkExpire</code>, <code>ChangePublicLinkPassword</code>,
+<code>ChangePublicLinkUpload</code></li>
+<li><code>CreateUploadLink</code>, <code>DeleteUploadLink</code>, <code>CreateTreePublicLink</code></li>
+<li><code>ListPublicLinkAccess</code>, <code>AddPublicLinkAccess</code>,
+<code>RemovePublicLinkAccess</code></li>
+<li><code>ListBookmarks</code>, <code>RemoveBookmark</code>, <code>ChangeBookmark</code></li>
+<li><code>SendPublink { code, mails, message }</code></li>
+</ul>
+<p><strong>Shares / teams / account</strong>:</p>
+<ul>
+<li><code>ShareFolder { ... }</code>, <code>CancelShareRequest</code>, <code>DeclineShareRequest</code>,
+<code>AcceptShareRequest</code>, <code>RemoveShare</code>, <code>ModifyShare</code></li>
+<li><code>AccountStopShare</code>, <code>AccountModifyShare</code>, <code>AccountTeamShare</code></li>
+</ul>
+<p><strong>Typed key/value store</strong> (mirrors the legacy <code>setting</code> SQLite table):</p>
+<ul>
+<li>
+<p><code>ValueGet { key, kind: ValueKvKind }</code></p>
+</li>
+<li>
+<p><code>ValueSet { key, payload: ValueKvPayload }</code></p>
+</li>
+<li>
+<p><code>ValueHas { key, kind: ValueKvKind }</code></p>
+<p><code>ValueKvKind</code> = <code>Bool | Int | Uint | String</code>;
+<code>ValueKvPayload</code> mirrors with a concrete value.</p>
+</li>
+</ul>
+<p><strong>Mount / filesystem</strong>:</p>
+<ul>
+<li><code>Mount { path }</code>, <code>Unmount</code>, <code>MountForceUnmount { ... }</code></li>
+<li><code>CreateRemoteFolder { ... }</code></li>
+<li><code>GetFolderIdByPath { ... }</code>, <code>GetFolderFlags { ... }</code>,
+<code>GetFolderOwnerId { ... }</code></li>
+<li><code>FilesystemStatus { ... }</code>, <code>VerifyPath { ... }</code></li>
+</ul>
+<p><strong>Audit / integrity</strong>:</p>
+<ul>
+<li><code>SessionStatus</code>, <code>MarkNotificationsRead { ... }</code></li>
+<li><code>AuditVerifyChain { ... }</code> with <code>AuditVerifyRange</code></li>
+<li><code>IntegrityRunOnce</code>, <code>IntegritySkip { ... }</code></li>
+<li><code>BackupSnapshot { ... }</code> using <code>SnapshotAction::{Create, Restore, Verify, Prune}</code>.</li>
+</ul>
+<p>The complete, authoritative list lives in <code>methods.rs</code> — treat the
+above as a hand-curated table of contents, not a closed set.</p>
+<h2 id="response-envelope-response"><a class="header" href="#response-envelope-response">Response envelope (<code>Response</code>)</a></h2>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>#[derive(Serialize, Deserialize)]
+pub struct Response {
+    pub status:  ResponseStatus,
+    pub message: String,
+}
+<span class="boring">}</span></code></pre>
+<p><code>message</code> is free-form text <strong>and sometimes a JSON-serialized payload</strong>
+(for example, <code>Method::Health</code> returns Prometheus text;
+<code>Method::SessionStatus</code> returns a JSON <code>SessionStatusPayload</code>;
+<code>Request::GetFolderFlags</code> returns a <code>key=value</code> string). Callers MUST
+branch on <code>status</code> before attempting to parse <code>message</code>.</p>
+<p><strong>Security invariant</strong>: <code>message</code> never carries secret material. Error
+messages are pre-screened on the daemon side so they are safe to
+surface verbatim to operators (see the H1 audit note in <code>methods.rs</code>).</p>
+<h3 id="responsestatus"><a class="header" href="#responsestatus"><code>ResponseStatus</code></a></h3>
+<p><code>#[non_exhaustive]</code>. HTTP-style semantics in the rightmost column are
+an analogy, not a guarantee — there is no HTTP transport.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variant</th><th>Wire shape</th><th>Meaning</th><th>Recovery</th><th>Closest HTTP analogue</th></tr>
+</thead>
+<tbody>
+<tr><td><code>Ok</code></td><td><code>"Ok"</code></td><td>Success. Payload (if any) is in <code>message</code>.</td><td>None — callers proceed.</td><td>200</td></tr>
+<tr><td><code>InvalidRequest</code></td><td><code>"InvalidRequest"</code></td><td>Malformed request, unknown variant, missing argument, version mismatch, JSON decode failure.</td><td>Not retryable without changing the body. Surface <code>message</code> to operator.</td><td>400</td></tr>
+<tr><td><code>Unauthorized</code></td><td><code>"Unauthorized"</code></td><td>Peer UID/SID mismatch, no authenticated session, or missing capability.</td><td>Not retryable without re-authenticating or running as the daemon owner.</td><td>401 / 403</td></tr>
+<tr><td><code>Conflict</code></td><td><code>"Conflict"</code></td><td>State conflict (already mounted, duplicate sync root, already logged in, crypto already unlocked).</td><td>Not retryable without reconciling the conflicting state.</td><td>409</td></tr>
+<tr><td><code>Unavailable</code></td><td><code>"Unavailable"</code></td><td>Subsystem not available (crypto not set up, network unreachable, feature compiled out, FUSE runtime not started).</td><td>Transient (retry with backoff) or permanent (fatal).</td><td>503</td></tr>
+<tr><td><code>InternalError</code></td><td><code>"InternalError"</code></td><td>Daemon-side failure that does not fit a stricter class — DB error, panic-guard path, unexpected I/O.</td><td>Opaque; may be transient or persistent.</td><td>500</td></tr>
+<tr><td><code>PolicyViolation { kind }</code></td><td><code>{"PolicyViolation":{"kind":"&lt;name&gt;"}}</code></td><td>Operation refused by a declarative policy. Stable <code>kind</code> discriminators today: <code>"data_residency"</code>.</td><td>Not retryable as-is; adjust policy or target a permitted resource.</td><td>451 / 403</td></tr>
+</tbody>
+</table>
+</div>
+<p>Unit variants serialize as bare JSON strings; the data-bearing
+<code>PolicyViolation</code> as an object. Clients MUST treat unknown <code>kind</code>
+values as “generic policy refusal” rather than erroring — new kinds
+may be introduced in minor releases.</p>
+<h2 id="security-invariants"><a class="header" href="#security-invariants">Security invariants</a></h2>
+<p>These are load-bearing and enforced by the IPC layer rather than each
+call site. Regressing any of them is a security bug.</p>
+<h3 id="owner-only-local-socket-unix"><a class="header" href="#owner-only-local-socket-unix">Owner-only local socket (Unix)</a></h3>
+<ul>
+<li>Socket file created with mode <code>0600</code> by
+<code>pcloud_ipc::transport::BoundIpcServer</code>.</li>
+<li>Parent runtime directory is <code>0700</code> (enforced by
+<code>runtime.socket_dir_mode</code> and the daemon’s on-boot
+<code>chmod</code>).</li>
+<li>Stale socket files are unlinked on bind so a crashed daemon cannot
+leave an unbound handle.</li>
+</ul>
+<h3 id="peer-identity-check-on-every-accept"><a class="header" href="#peer-identity-check-on-every-accept">Peer identity check on every accept</a></h3>
+<ul>
+<li><strong>Linux</strong>: <code>getsockopt(SO_PEERCRED)</code> returning
+<code>libc::ucred { pid, uid, gid }</code>.</li>
+<li><strong>FreeBSD / OpenBSD / NetBSD / macOS</strong>: <code>getpeereid(3)</code>.</li>
+<li><strong>DragonFly BSD</strong>: <code>getpeereid(3)</code>.</li>
+<li><strong>illumos / Solaris</strong>: <code>getpeerucred(3)</code> with effective UID and PID.</li>
+<li><strong>Windows</strong>: named pipe SID DACL + <code>GetNamedPipeClientProcessId</code>
+followed by TokenUser SID comparison against the daemon’s SID.</li>
+</ul>
+<p>The daemon’s owner UID/SID is fixed at boot. <code>IpcServer::authorize_peer</code>
+rejects every other caller before any dispatch happens. Rejection does
+not write a reply — the FD is closed immediately.</p>
+<h3 id="1-mib-cap-before-allocation"><a class="header" href="#1-mib-cap-before-allocation">1 MiB cap before allocation</a></h3>
+<p>Already covered under <a href="#size-caps">Size caps</a>. The check precedes any
+<code>Vec::with_capacity</code> or <code>vec![0u8; ...]</code> sized by client-controlled
+bytes.</p>
+<h3 id="no-secret-leakage-in-responsemessage"><a class="header" href="#no-secret-leakage-in-responsemessage">No secret leakage in <code>Response.message</code></a></h3>
+<p>Audit H1. Secret-bearing <code>Request</code> fields (passwords, tokens, TFA
+codes) are serialized as <code>String</code> for transit and destructured into
+<code>SecretString</code> on the daemon side before any long-lived storage. The
+corresponding <code>Response.message</code> contents are pre-screened so an
+operator can log them verbatim without leaking credentials.</p>
+<h3 id="no-remote-surface"><a class="header" href="#no-remote-surface">No remote surface</a></h3>
+<p>There is no TCP listener, no HTTP endpoint, no mDNS. The IPC path is
+the only wire the daemon speaks outside of the outbound API transport,
+and it is always a local filesystem handle gated by OS-level
+permissions.</p>
+<h2 id="connection-lifecycle"><a class="header" href="#connection-lifecycle">Connection lifecycle</a></h2>
+<ol>
+<li>Client opens the local socket/pipe.</li>
+<li>Server <code>accept</code>s and immediately recovers <code>PeerIdentity { uid, pid }</code>
+(or the Windows SID equivalent).</li>
+<li>Owner check. Reject → close the FD, no reply.</li>
+<li>Server reads exactly 8 bytes (the header).</li>
+<li>Server validates <code>version == 1</code>, computes <code>message_type</code>, and
+checks <code>payload_len &lt;= MAX_REQUEST_BYTES</code>.</li>
+<li>Server allocates + reads the JSON payload.</li>
+<li>Server calls <code>RequestEnvelope::try_from_wire(bytes)</code> — envelope
+shape first, bare-<code>Request</code> fallback for pre-envelope clients.</li>
+<li>Dispatch via <code>pcloud_daemon::dispatch::dispatch(...)</code>. A
+<code>pcloudd.dispatch</code> span is opened, parented to the envelope’s
+<code>traceparent</code> when present.</li>
+<li>Handler produces a typed <code>Response</code>. <code>encode_response</code> frames it
+with the same 8-byte header (kind = <code>Response</code>).</li>
+<li>Connection is one-shot per request in the current retained surface.
+A future streaming extension will use <code>MessageKind::Event</code>.</li>
+</ol>
+<h2 id="versioning--evolution"><a class="header" href="#versioning--evolution">Versioning &amp; evolution</a></h2>
+<ul>
+<li><code>IPC_PROTOCOL_VERSION</code> is bumped <strong>only on incompatible wire
+changes</strong>. Additive changes (new <code>Request</code> variants, new <code>Method</code>
+values, new <code>RequestEnvelope</code> fields, new <code>ResponseStatus</code> variants)
+are released at the same version.</li>
+<li><code>Request</code>, <code>Method</code>, <code>ResponseStatus</code>, and <code>RequestEnvelope</code> are all
+<code>#[non_exhaustive]</code>. Clients MUST treat every enum as open and fall
+back gracefully for unknown discriminants.</li>
+<li><code>traceparent</code> is already treated as opaque at the envelope layer,
+and the <code>RequestEnvelope</code> struct is marked <code>#[non_exhaustive]</code> so
+future context fields (baggage, sampling hints, backend identity)
+don’t break existing clients.</li>
+<li>The wire JSON for unit variants stays bare-string; data-bearing
+variants stay single-key objects. This is the contract
+<code>ResponseStatus::PolicyViolation</code> was added under and is the
+template for any future data-bearing status.</li>
+</ul>
+<h2 id="speaking-ipc-by-hand-with-socat"><a class="header" href="#speaking-ipc-by-hand-with-socat">Speaking IPC by hand with <code>socat</code></a></h2>
+<p>Useful for operator debugging and smoke tests — the daemon speaks the
+exact same wire regardless of caller. Frame <code>{ "Plain": { "method": "GetUserInfo" } }</code> and pipe it in:</p>
+<pre><code class="language-bash"># 1. Serialize the body.
+body='{"request":{"Plain":{"method":"GetUserInfo"}}}'
+
+# 2. Compute payload_len (u32 LE), version (1, u16 LE), message_type
+#    (Request = 1, u16 LE).
+len=$(printf '%s' "$body" | wc -c)
+python3 -c "
+import struct, sys
+body = b'''$body'''
+hdr = struct.pack('&lt;IHH', len(body), 1, 1)
+sys.stdout.buffer.write(hdr + body)
+" | socat - UNIX-CONNECT:$XDG_RUNTIME_DIR/pcloud/pcloud-rs/pcloud.sock \
+  | python3 -c "
+import struct, sys
+raw = sys.stdin.buffer.read()
+payload_len, version, kind = struct.unpack('&lt;IHH', raw[:8])
+print('header:', payload_len, version, kind)
+print('body:', raw[8:8+payload_len].decode('utf-8'))
+"
+</code></pre>
+<p>Expected output (assuming an authenticated session, <code>kind == 2</code> for
+<code>Response</code>):</p>
+<pre><code>header: 123 1 2
+body: {"status":"Ok","message":"{\"userid\":...,\"email\":\"...\"}"}
+</code></pre>
+<p>Common failure modes:</p>
+<ul>
+<li><code>Connection refused</code> → daemon is not running, or you targeted the
+wrong <code>runtime_dir</code>. Check <code>pcloudc status</code> or inspect
+<code>$runtime_dir/pcloud.sock</code>.</li>
+<li><code>permission denied</code> → you are not the daemon owner; the socket is
+<code>0600</code>, and the peer UID check rejects unrelated UIDs without
+writing a reply.</li>
+<li>Reading 0 bytes back after a valid send → you hit
+<code>PayloadTooLarge</code> or <code>TruncatedHeader</code>; the daemon closes the FD
+without responding by design.</li>
+</ul>
+<h2 id="testability-hooks"><a class="header" href="#testability-hooks">Testability hooks</a></h2>
+<ul>
+<li><code>PCLOUD_LIVE_E2E=1</code> opts into live-API end-to-end tests that
+exercise real frames against a staging account.</li>
+<li><code>PCLOUD_FUSE_TEST=1</code> gates FUSE integration tests that drive mount
+lifecycle IPC.</li>
+<li><code>PCLOUD_CHAOS=1</code> injects framed read/write faults in test/debug
+builds; never honoured in release.</li>
+</ul>
+<h2 id="see-also"><a class="header" href="#see-also">See also</a></h2>
+<ul>
+<li><a href="./cli.html">CLI Reference</a> — which CLI subcommands map to which
+<code>Request</code>.</li>
+<li><a href="./exit-codes.html">Exit Codes</a> — <code>ResponseStatus</code> → CLI exit-code
+ABI.</li>
+<li><a href="../../../enterprise/tracing.html">enterprise/tracing</a> — span hierarchy,
+sampling policy, and <code>attr_redact</code> allow-list.</li>
+<li><code>crates/pcloud-ipc/src/methods.rs</code> — authoritative <code>Method</code>,
+<code>Request</code>, <code>Response</code>, <code>RequestEnvelope</code>, <code>ResponseStatus</code>
+definitions.</li>
+<li><code>crates/pcloud-ipc/src/protocol.rs</code> — framing, constants, encoders /
+decoders.</li>
+<li><code>crates/pcloud-ipc/src/server.rs</code>,
+<code>crates/pcloud-ipc/src/transport.rs</code>,
+<code>crates/pcloud-ipc/src/platform/{linux,unix,windows}.rs</code> — transport
+and peer-identity plumbing.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../reference/config.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../reference/exit-codes.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../reference/config.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../reference/exit-codes.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

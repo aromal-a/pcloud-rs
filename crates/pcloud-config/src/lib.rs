@@ -53,10 +53,9 @@
 //! Build secure defaults under a test root and validate them:
 //!
 //! ```
-//! use std::path::PathBuf;
 //! use pcloud_config::{ConfigProfile, Environment};
 //! let profile = ConfigProfile::secure_defaults(
-//!     PathBuf::from("/tmp/pcloud-doc"),
+//!     std::env::temp_dir().join("pcloud-doc"),
 //!     Environment::Production,
 //! );
 //! profile.validate().unwrap();
@@ -73,12 +72,12 @@
 pub mod api;
 pub mod audit_verifier;
 pub mod auth;
+pub mod bandwidth_schedule;
 pub mod crypto_kms;
 pub mod data_residency;
 pub mod env;
 pub mod extensions;
 pub mod features;
-pub mod file_history;
 pub mod ha;
 pub mod integrity_sweeper;
 pub mod limits;
@@ -92,6 +91,8 @@ pub mod resilience;
 pub mod runtime;
 pub mod schema;
 pub mod sync_loop;
+pub mod traceparent;
+pub mod transport_protocol;
 pub mod upgrade;
 
 use std::path::PathBuf;
@@ -100,9 +101,9 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    api::ApiEndpoint, auth::AuthPolicy, crypto_kms::CryptoConfig,
-    data_residency::DataResidencyPolicy, extensions::ExtensionPolicy, features::FeatureFlags,
-    file_history::FileHistoryConfig, limits::ResourceLimits, mount::MountPolicy,
+    api::ApiEndpoint, auth::AuthPolicy, bandwidth_schedule::BandwidthScheduleConfig,
+    crypto_kms::CryptoConfig, data_residency::DataResidencyPolicy, extensions::ExtensionPolicy,
+    features::FeatureFlags, limits::ResourceLimits, mount::MountPolicy,
     observability::ObservabilityFlags, paths::ManagedPaths, rate_limit::RateLimitPolicy,
     resilience::ResiliencePolicy, runtime::RuntimePolicy, sync_loop::SyncLoopConfig,
     upgrade::UpgradePolicy,
@@ -231,13 +232,6 @@ pub struct ConfigProfile {
     /// it into the `CryptoShell` via `set_kms_provider`.
     #[serde(default)]
     pub crypto: CryptoConfig,
-    /// Optional `[file_history]` section configuring the
-    /// [`file_history::FileHistoryConfig::revision_url`] that the daemon
-    /// uses to resolve `log` / `diff` / `restore`. When absent or empty,
-    /// the daemon wires a `NullRevisionProvider` and returns a structured
-    /// "not configured" response on every call.
-    #[serde(default)]
-    pub file_history: FileHistoryConfig,
     /// Optional `[upgrade]` section controlling the daemon-handoff
     /// timing used by rolling upgrades. Defaults via
     /// `#[serde(default)]` so older envelopes load cleanly. See
@@ -250,6 +244,13 @@ pub struct ConfigProfile {
     /// See [`sync_loop::SyncLoopConfig`].
     #[serde(default)]
     pub sync_loop: SyncLoopConfig,
+    /// T1.4 — `[bandwidth.schedule]` section with time-of-day rules
+    /// and metered-network override. Default is `enabled = false`
+    /// (preserves pre-T1.4 behaviour: only the base
+    /// `BandwidthLimiter` cap applies). See
+    /// [`bandwidth_schedule::BandwidthScheduleConfig`].
+    #[serde(default)]
+    pub bandwidth_schedule: BandwidthScheduleConfig,
 }
 
 /// Errors returned by profile construction, validation, and loading.
@@ -296,6 +297,9 @@ pub enum ConfigError {
     /// `[sync]` section has out-of-range values.
     #[error("sync loop config is invalid: {0}")]
     InvalidSyncLoopConfig(&'static str),
+    /// `[bandwidth.schedule]` section has invalid rules (T1.4).
+    #[error("bandwidth schedule config is invalid: {0}")]
+    InvalidBandwidthSchedule(&'static str),
     /// `[limits]` IPC-cap bounds are invalid (ncx.59).
     /// See [`limits::ResourceLimits::validate_ipc_limits`] for the
     /// rules. Examples: `max_ipc_connections = 0`, or
@@ -353,9 +357,11 @@ impl ConfigProfile {
     /// - Production profile pins TLS transport.
     ///
     /// ```
-    /// use std::path::PathBuf;
     /// use pcloud_config::{ConfigProfile, Environment};
-    /// let p = ConfigProfile::secure_defaults(PathBuf::from("/tmp/x"), Environment::Production);
+    /// let p = ConfigProfile::secure_defaults(
+    ///     std::env::temp_dir().join("pcloud-secure-defaults"),
+    ///     Environment::Production,
+    /// );
     /// assert_eq!(p.runtime.state_dir_mode, 0o700);
     /// assert!(!p.mount.allow_other);
     /// ```
@@ -410,9 +416,9 @@ impl ConfigProfile {
             rate_limit: RateLimitPolicy::secure_defaults(),
             ha: ha::HaPolicy::secure_defaults(),
             crypto: CryptoConfig::default(),
-            file_history: FileHistoryConfig::default(),
             upgrade: UpgradePolicy::secure_defaults(),
             sync_loop: SyncLoopConfig::default(),
+            bandwidth_schedule: BandwidthScheduleConfig::default(),
         }
     }
 
@@ -420,9 +426,11 @@ impl ConfigProfile {
     /// violation encountered; no partial success.
     ///
     /// ```
-    /// use std::path::PathBuf;
     /// use pcloud_config::{ConfigProfile, Environment};
-    /// let p = ConfigProfile::secure_defaults(PathBuf::from("/tmp/x"), Environment::Development);
+    /// let p = ConfigProfile::secure_defaults(
+    ///     std::env::temp_dir().join("pcloud-validate"),
+    ///     Environment::Development,
+    /// );
     /// assert!(p.validate().is_ok());
     /// ```
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -430,7 +438,6 @@ impl ConfigProfile {
         self.api.validate(self.environment)?;
         self.extensions.validate()?;
         self.runtime.validate()?;
-        self.file_history.validate(self.environment)?;
         self.crypto
             .validate()
             .map_err(ConfigError::InvalidCryptoConfig)?;
@@ -442,6 +449,10 @@ impl ConfigProfile {
         self.sync_loop
             .validate()
             .map_err(ConfigError::InvalidSyncLoopConfig)?;
+
+        self.bandwidth_schedule
+            .validate()
+            .map_err(ConfigError::InvalidBandwidthSchedule)?;
 
         // ncx.59: reject IPC caps that are zero, clamped above the
         // validated upper bound, or that invert the global vs per-peer

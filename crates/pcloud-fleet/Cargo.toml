@@ -23,7 +23,6 @@ pcloud-secret = { path = "../pcloud-secret" }
 # Kept light: rustls-only (no native-tls), JSON bodies only, blocking client.
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "blocking"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-rustls-pemfile = "2"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 # rand_core 0.6 directly (transitive via ed25519-dalek's `rand_core`
 # feature). We only need `OsRng`, which does not go through the vulnerable

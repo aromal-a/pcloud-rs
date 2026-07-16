@@ -6,18 +6,26 @@
 //! - `create` / `write` / `flush` / `fsync` / `setattr(size)`
 //!   / `unlink` / `rename`            → [`WritePathService`]      (4.d)
 //!
-//! This module is **Linux-only** (the `fuser` crate itself is). It does not
+//! This module is available on **Linux and the supported BSD targets**, all
+//! backed by the `fuser` crate. It does not
 //! spawn any FUSE session; wiring it to a real kernel mount is the job of
 //! sub-task 2 in `pcloud-daemon`. Tests here only exercise the trait
 //! boundary with mock backends.
 
-#![cfg(target_os = "linux")]
+#![cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 
-// **PLATFORM:** Linux
-// **GATING:** `#[cfg(target_os = "linux")]` at line 14 (this is the real
+// **PLATFORM:** Linux, FreeBSD, NetBSD, OpenBSD, and DragonFly BSD
+// **GATING:** the Linux/BSD cfg at the top of this file
+// at line 15 (this is the real
 // gate — the entire module vanishes on non-Linux targets). The
 // "TODO(bd-xplat)" mentioned below is **not** a gap in the gate; it is
-// a reminder that the `fuser` crate itself is Linux-only, so shared
+// a reminder that the `fuser` crate is used only on Linux/BSD, so shared
 // code that wants cross-platform behaviour must go through the
 // portable [`crate::fuse_adapter::FuseAdapter`] trait (which macos/
 // windows implement in `src/platform/`). audit-06 LOW fuse L-3 /
@@ -29,12 +37,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
-// This module is gated by `#[cfg(target_os = "linux")]` at the top of the file.
-// The `fuser` crate is a Linux-only dep; on other platforms the platform trait
+// This module is gated to Linux/FreeBSD at the top of the file. On other
+// platforms the platform trait
 // (`FuseAdapter`) provides the abstraction boundary. See PLAN_CROSSPLATFORM.md §2.
 use fuser::{
     FileAttr, FileType, Filesystem, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEmpty,
-    ReplyEntry, ReplyOpen, ReplyWrite, Request, TimeOrNow,
+    ReplyEntry, ReplyOpen, ReplyStatfs, ReplyWrite, Request, TimeOrNow,
 };
 
 use crate::backend::{FileBackend, FolderBackend};
@@ -220,10 +228,9 @@ where
     U: FileUploadBackend,
 {
     /// Called by fuser once the FUSE session is established, before any kernel
-    /// requests are dispatched. We replay the on-disk write journal here so
-    /// that any writes acknowledged before a crash are recovered before new
-    /// kernel ops arrive. A failed replay is logged but does not abort the
-    /// mount — the operator can recover by inspecting the staging directory.
+    /// requests are dispatched. Until the mount layer grows a real replay
+    /// executor, any non-empty journal is unsafe to ignore: accepting new
+    /// writes would make previously acknowledged mutations ambiguous.
     fn init(
         &mut self,
         _req: &Request<'_>,
@@ -231,20 +238,39 @@ where
     ) -> std::result::Result<(), libc::c_int> {
         match self.writer.replay_journal() {
             Ok(records) if !records.is_empty() => {
-                log::info!(
-                    "pcloud-fs: journal replay recovered {} record(s) on mount",
+                log::error!(
+                    "pcloud-fs: refusing writable mount with {} unreplayed journal record(s)",
                     records.len()
                 );
+                return Err(libc::EIO);
             }
             Ok(_) => {}
             Err(e) => {
-                log::error!(
-                    "pcloud-fs: journal replay failed on startup: {e} — data may be inconsistent"
-                );
-                // Do not abort mount; log and continue so the user can recover.
+                log::error!("pcloud-fs: journal replay failed on startup: {e}");
+                return Err(libc::EIO);
             }
         }
         Ok(())
+    }
+
+    fn statfs(&mut self, _req: &Request<'_>, _ino: u64, reply: ReplyStatfs) {
+        match self.adapter.statfs() {
+            Ok((total_bytes, free_bytes)) => {
+                let (blocks, free_blocks) =
+                    crate::fuse_adapter::statfs_blocks(total_bytes, free_bytes);
+                reply.statfs(
+                    blocks,
+                    free_blocks,
+                    free_blocks,
+                    0,
+                    0,
+                    crate::fuse_adapter::STATFS_BLOCK_SIZE,
+                    255,
+                    crate::fuse_adapter::STATFS_BLOCK_SIZE,
+                );
+            }
+            Err(errno) => reply.error(errno),
+        }
     }
 
     fn lookup(&mut self, _req: &Request<'_>, parent: u64, name: &OsStr, reply: ReplyEntry) {
@@ -329,9 +355,10 @@ where
         };
 
         if want_write {
+            let already_staged = self.writer.has_open_inode(ino);
             // Seed the staging blob with current remote content (skipped
             // when O_TRUNC is set — caller explicitly asked for empty).
-            let existing_bytes = if trunc {
+            let existing_bytes = if trunc || already_staged {
                 Vec::new()
             } else if let Some(rh) = read_handle {
                 // Pull the whole remote file into memory. Small files are
@@ -353,13 +380,17 @@ where
                 reply.error(ENOENT);
                 return;
             };
-            if let Err(e) = self.writer.seed_blob(ino, &existing_bytes) {
-                reply.error(e.to_errno());
-                return;
+            if !trunc && !already_staged {
+                if let Err(e) = self.writer.seed_blob(ino, &existing_bytes) {
+                    reply.error(e.to_errno());
+                    return;
+                }
             }
-            if let Err(e) = self.writer.open_for_write(ino, path, append_mode, trunc) {
-                reply.error(e.to_errno());
-                return;
+            if !already_staged {
+                if let Err(e) = self.writer.open_for_write(ino, path, append_mode, trunc) {
+                    reply.error(e.to_errno());
+                    return;
+                }
             }
             let Some(fh) = self.fhs.allocate(FhEntry {
                 ino,
@@ -381,6 +412,70 @@ where
             };
             reply.opened(fh, 0);
         }
+    }
+
+    fn mknod(
+        &mut self,
+        _req: &Request<'_>,
+        parent: u64,
+        name: &OsStr,
+        mode: u32,
+        _umask: u32,
+        _rdev: u32,
+        reply: ReplyEntry,
+    ) {
+        // pCloud exposes regular files and directories only; devices, FIFOs,
+        // and sockets have no remote representation.
+        // libc exposes these constants as u16 on FreeBSD and u32 on the
+        // other supported kernels; normalize once at this ABI boundary.
+        #[allow(clippy::unnecessary_cast)]
+        let kind_mask = libc::S_IFMT as u32;
+        #[allow(clippy::unnecessary_cast)]
+        let regular_file = libc::S_IFREG as u32;
+        let kind = mode & kind_mask;
+        if kind != 0 && kind != regular_file {
+            reply.error(libc::EOPNOTSUPP);
+            return;
+        }
+        let Some(parent_path) = self.path_for(parent) else {
+            reply.error(ENOENT);
+            return;
+        };
+        let Some(full_path) = Self::join_child(&parent_path, name) else {
+            reply.error(EINVAL);
+            return;
+        };
+        let (ino, _generation) = match self
+            .inodes
+            .insert_or_get(&full_path, FsEntryKind::RegularFile)
+        {
+            Ok(pair) => pair,
+            Err(error) => {
+                reply.error(error.to_errno());
+                return;
+            }
+        };
+        let Some(name) = name.to_str() else {
+            reply.error(EINVAL);
+            return;
+        };
+        if let Err(error) = self.writer.create(ino, &parent_path, name) {
+            reply.error(error.to_errno());
+            return;
+        }
+        let attr = EntryAttr {
+            ino,
+            kind: FsEntryKind::RegularFile,
+            size: 0,
+            mode: self.adapter.options().file_mode,
+            uid: self.adapter.options().uid,
+            gid: self.adapter.options().gid,
+            mtime_epoch: None,
+            mtime_nsec: 0,
+        };
+        self.adapter
+            .publish_local_entry(&parent_path, name, attr.clone());
+        reply.entry(&self.ttl, &file_attr_from(&attr), 0);
     }
 
     fn read(

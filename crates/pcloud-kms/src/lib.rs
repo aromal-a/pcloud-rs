@@ -83,6 +83,11 @@ pub enum KmsError {
     Other(String),
 }
 
+#[cfg(feature = "vault")]
+const VAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(feature = "vault")]
+const VAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// An opaque identifier for the wrapping key inside the KMS.
 ///
 /// The string form is provider-specific:
@@ -567,18 +572,22 @@ impl HashicorpVault {
     /// # Errors
     ///
     /// Returns [`KmsError::Other`] if the blocking `reqwest` client
-    /// cannot be constructed.
+    /// cannot be constructed or if `vault_url` is not an absolute HTTPS URL.
     pub fn new(
         vault_url: impl Into<String>,
         token: pcloud_secret::secret_string::SecretString,
         transit_key: impl Into<String>,
     ) -> Result<Self, KmsError> {
+        let vault_url = validate_vault_url(vault_url.into())?;
         let client = reqwest::blocking::Client::builder()
             .use_rustls_tls()
+            .https_only(true)
+            .connect_timeout(VAULT_CONNECT_TIMEOUT)
+            .timeout(VAULT_REQUEST_TIMEOUT)
             .build()
             .map_err(|e| KmsError::Other(e.to_string()))?;
         Ok(Self {
-            vault_url: vault_url.into().trim_end_matches('/').to_string(),
+            vault_url,
             token,
             transit_key: transit_key.into(),
             client,
@@ -619,6 +628,24 @@ impl HashicorpVault {
         resp.json::<serde_json::Value>()
             .map_err(|_| KmsError::Malformed)
     }
+}
+
+#[cfg(feature = "vault")]
+fn validate_vault_url(raw: String) -> Result<String, KmsError> {
+    let parsed = reqwest::Url::parse(raw.trim())
+        .map_err(|_| KmsError::Other("vault_url must be an absolute https URL".to_owned()))?;
+    if parsed.scheme() != "https" {
+        return Err(KmsError::Other("vault_url must use https".to_owned()));
+    }
+    if parsed.host_str().is_none() {
+        return Err(KmsError::Other("vault_url must include a host".to_owned()));
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(KmsError::Other(
+            "vault_url must not include credentials".to_owned(),
+        ));
+    }
+    Ok(parsed.as_str().trim_end_matches('/').to_owned())
 }
 
 #[cfg(feature = "vault")]
@@ -809,7 +836,7 @@ mod pkcs11_real {
     //! add it behind the same provider; AES-GCM is the standard choice
     //! for DEK wrapping in HSM-backed envelope encryption.
     use super::{KeyId, KmsError, KmsProvider, PlaintextDek, WrappedDek};
-    use cryptoki::context::{CInitializeArgs, Pkcs11};
+    use cryptoki::context::{CInitializeArgs, CInitializeFlags, Pkcs11};
     use cryptoki::mechanism::Mechanism;
     use cryptoki::mechanism::aead::GcmParams;
     use cryptoki::object::{Attribute, ObjectHandle};
@@ -896,7 +923,7 @@ mod pkcs11_real {
             key_label: &str,
         ) -> Result<Self, KmsError> {
             let ctx = Pkcs11::new(module_path).map_err(map_err)?;
-            ctx.initialize(CInitializeArgs::OsThreads)
+            ctx.initialize(CInitializeArgs::new(CInitializeFlags::OS_LOCKING_OK))
                 .map_err(map_err)?;
             // Locate the slot.
             let slots = ctx.get_slots_with_token().map_err(map_err)?;
@@ -1305,6 +1332,51 @@ mod tests {
             .decrypt_dek(&KeyId(arn), &wrapped, Some("roundtrip"))
             .expect("decrypt_dek");
         assert_eq!(unwrapped.expose(), dek.expose());
+    }
+
+    #[cfg(feature = "vault")]
+    #[test]
+    fn vault_constructor_rejects_http_url() {
+        use pcloud_secret::secret_string::SecretString;
+
+        let err = HashicorpVault::new(
+            "http://vault.example.com:8200",
+            SecretString::new("token"),
+            "transit-key",
+        )
+        .expect_err("plaintext vault URL must be rejected");
+
+        assert!(err.to_string().contains("vault_url must use https"));
+    }
+
+    #[cfg(feature = "vault")]
+    #[test]
+    fn vault_constructor_rejects_url_credentials() {
+        use pcloud_secret::secret_string::SecretString;
+
+        let err = HashicorpVault::new(
+            "https://token@vault.example.com:8200",
+            SecretString::new("token"),
+            "transit-key",
+        )
+        .expect_err("credentials in vault URL must be rejected");
+
+        assert!(err.to_string().contains("must not include credentials"));
+    }
+
+    #[cfg(feature = "vault")]
+    #[test]
+    fn vault_constructor_accepts_https_url() {
+        use pcloud_secret::secret_string::SecretString;
+
+        let vault = HashicorpVault::new(
+            "https://vault.example.com:8200/",
+            SecretString::new("token"),
+            "transit-key",
+        )
+        .expect("https vault URL should construct");
+
+        assert_eq!(vault.vault_url, "https://vault.example.com:8200");
     }
 
     #[cfg(feature = "vault")]

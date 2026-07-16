@@ -1,39 +1,6 @@
 #!/bin/sh
 # PLATFORM: FreeBSD 13+
 #
-# rc.d service script for the pcloudd daemon.
-#
-# Install:
-#   install -m 0555 packaging/freebsd/pcloudd.rc /usr/local/etc/rc.d/pcloudd
-#   sysrc pcloudd_enable="YES"
-#   sysrc pcloudd_user="pcloud"         # optional; default below
-#   service pcloudd start
-#
-# Inputs (from /etc/rc.conf or rc.conf.local):
-#   pcloudd_enable   (YES/NO)   - master enable flag; default "NO"
-#   pcloudd_user     (string)   - run-as user; default "pcloudd"
-#   pcloudd_flags    (string)   - extra CLI flags passed to pcloudd
-#
-# Outputs:
-#   PID tracking is handled by rc.subr via pidfile= (set below).
-#   The daemon binary does NOT accept a -p/--pidfile flag; rc.subr
-#   monitors the process directly via ${pidfile}.
-#   Logs go to syslog via the daemon's internal logger.
-#
-# Security:
-#   - The script assumes a dedicated `pcloudd` user exists. Create with:
-#       pw useradd pcloudd -c 'pcloudd service' -d /nonexistent \
-#                          -s /usr/sbin/nologin -h -
-#   - The daemon's state root should be chowned to that user: 0700 perms.
-#   - rc.subr drops privileges before exec via the pcloudd_user variable.
-#
-# Test:
-#   service pcloudd onestart     # ignore rc.conf enable flag
-#   service pcloudd status
-#   service pcloudd stop
-#
-# Side effects: rc.subr creates /var/run/pcloudd.pid; on stop, rc.subr removes it.
-
 # PROVIDE: pcloudd
 # REQUIRE: LOGIN NETWORKING
 # KEYWORD: shutdown
@@ -43,30 +10,49 @@
 name="pcloudd"
 rcvar="pcloudd_enable"
 
-load_rc_config $name
+load_rc_config "$name"
 
-: ${pcloudd_enable:="NO"}
-: ${pcloudd_user:="pcloudd"}
-: ${pcloudd_flags:=""}
+: "${pcloudd_enable:=NO}"
+: "${pcloudd_user:=pcloudd}"
+: "${pcloudd_group:=pcloudd}"
+: "${pcloudd_root:=/var/lib/pcloud-rs}"
+: "${pcloudd_env_file:=/usr/local/etc/pcloud-rs/pcloudd.env}"
+: "${pcloudd_wrapper:=/usr/local/libexec/pcloudd-wrapper.sh}"
+: "${pcloudd_pidfile:=/var/run/pcloudd.pid}"
+: "${pcloudd_restart_delay:=5}"
 
-command="/usr/local/bin/pcloudd"
-# rc.subr tracks the PID via this file; pcloudd does not write it itself.
-# Do NOT pass -p to pcloudd — that flag does not exist on the Rust binary.
-# `serve` is required: without it pcloudd prints a one-shot summary and exits.
-pidfile="/var/run/${name}.pid"
-command_args="serve"
+command="/usr/sbin/daemon"
+pidfile="${pcloudd_pidfile}"
+required_files="${pcloudd_wrapper}"
+start_precmd="pcloudd_precmd"
 
-start_precmd()
+pcloudd_precmd()
 {
-    kldload -n fusefs 2>/dev/null || true
-    # Ensure the pid-file directory exists and is writable by the daemon user.
-    # rc.subr writes ${pidfile} = /var/run/${name}.pid, which lives directly in
-    # /var/run/ (always present on FreeBSD). If you change pidfile to a
-    # subdirectory (e.g. /var/run/pcloudd/pcloudd.pid), create the directory
-    # here with install -d -o ${pcloudd_user} -m 0755.
-    : # /var/run is always present; no subdirectory needed for the default pidfile path
+    if ! pw usershow "${pcloudd_user}" >/dev/null 2>&1; then
+        echo "pcloudd: service user does not exist: ${pcloudd_user}" >&2
+        return 1
+    fi
+
+    if [ -r "${pcloudd_env_file}" ]; then
+        # shellcheck disable=SC1090
+        . "${pcloudd_env_file}"
+    fi
+
+    : "${PCLOUD_ROOT:=${pcloudd_root}}"
+    : "${PCLOUD_ENV:=production}"
+    : "${PCLOUD_API_MODE:=tls}"
+    : "${PCLOUD_DURABLE_AUTH_TOKENS:=1}"
+    install -d -o "${pcloudd_user}" -g "${pcloudd_group}" -m 0700 \
+        "${PCLOUD_ROOT}"
+
+    export PCLOUD_ROOT PCLOUD_ENV PCLOUD_API_MODE PCLOUD_DURABLE_AUTH_TOKENS
+    export PCLOUDRS_TOKEN_FILE PCLOUDRS_USERNAME_FILE PCLOUDRS_PASSWORD_FILE
+    export PCLOUDRS_TFA_CODE_FILE PCLOUDRS_RECOVERY_CODE_FILE PCLOUDRS_TRUST_DEVICE
+    export PCLOUDRS_DAEMON_BIN
 }
 
-pcloudd_precmd="start_precmd"
+# -P tracks the supervisor rather than the restartable child. FreeBSD
+# daemon(8) forwards SIGTERM to pcloudd and removes the locked PID file.
+command_args="-f -S -T pcloudd -R ${pcloudd_restart_delay} -P ${pcloudd_pidfile} -u ${pcloudd_user} ${pcloudd_wrapper}"
 
 run_rc_command "$1"

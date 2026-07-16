@@ -1,0 +1,734 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>OIDC Identity Broker - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/../../enterprise/oidc-broker.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <blockquote>
+<p><strong>Pre-alpha scaffold — not live / not production-verified.</strong> This document
+describes design and unit-tested code that has not been validated against a
+real production deployment. Do not treat it as a shippable capability.
+See <code>CLAUDE.md</code> and <code>docs/enterprise/README.md</code> for the honesty rules.</p>
+</blockquote>
+<h1 id="enterprise-oidc-identity-broker--landed-pluggable-exchanger"><a class="header" href="#enterprise-oidc-identity-broker--landed-pluggable-exchanger">Enterprise OIDC Identity Broker — Landed (pluggable exchanger)</a></h1>
+<p>Status: <strong>Landed (unit-tested) with pluggable trusted-issuer exchanger.</strong>
+Crate <code>pcloud-idp</code> ships the <code>IdpBroker</code> trait, a concrete
+<code>OidcAuthorizationCodeBroker</code> implementor, and a pluggable
+<code>PcloudTokenExchanger</code> trait for the pCloud-side half of the handshake.
+The trait is object-safe (held behind <code>Arc&lt;dyn IdpBroker&gt;</code> in the daemon
+runtime plugin registry). Live pCloud trusted-issuer interop is <strong>not</strong>
+claimed — pCloud’s public API does not document a trusted-issuer
+exchange endpoint. See §10 for the honest caveat.</p>
+<p>Previously: the three <code>IdpBroker</code> methods on <code>UnimplementedBroker</code>
+panicked with <code>unimplemented!()</code>. They now return
+<code>IdpError::NotConfigured(&amp;'static str)</code>, so the daemon surfaces a typed,
+operator-actionable error instead of aborting.</p>
+<h2 id="0-what-actually-landed"><a class="header" href="#0-what-actually-landed">0. What actually landed</a></h2>
+<p>The Rust broker is a <strong>hand-rolled</strong> OIDC Authorization Code + PKCE
+implementor. We deliberately did <strong>not</strong> take on the <code>openidconnect</code>
+crate dependency; the audit surface of that crate pulls in transitive
+crypto we did not want to vendor, and we needed tight control over
+JWKS caching and <code>alg=none</code> rejection semantics. The live code:</p>
+<ul>
+<li><code>OidcAuthorizationCodeBroker</code> in <code>crates/pcloud-idp/src/oidc.rs</code>
+drives discovery, PKCE, the loopback callback, token exchange against
+the IdP, and ID-token verification.</li>
+<li>PKCE uses <strong>S256 only</strong>; <code>plain</code> is rejected at config parse and at
+runtime. The <code>code_verifier</code> is 256 bits of OS CSPRNG, held in
+<code>SecretString</code> for its lifetime and consumed by <code>complete_authorization</code>.</li>
+<li>JWKS verification accepts <strong>RS256 only</strong>. <code>alg=none</code>,
+symmetric-family algorithms (<code>HS*</code>), and any unlisted algorithm are
+rejected <strong>before</strong> signature verification runs — this is the
+canonical OIDC <code>alg=none</code> and algorithm-confusion defence.</li>
+<li>JWKS is cached in-memory with a <strong>1-hour TTL</strong>; expiry forces a
+rediscovery round-trip. Trust-on-first-use pinning behaviour from §4
+is enforced on top of the TTL cache.</li>
+<li>Every token (<code>id_token</code>, <code>access_token</code>, <code>refresh_token</code>,
+<code>code_verifier</code>) is wrapped in <code>pcloud_secret::SecretString</code> and
+never logged. Audit records carry <code>iss</code>, <code>sub</code>, <code>exp</code> only.</li>
+<li>The broker is fully exercised by offline unit tests against a stub
+IdP (discovery document, JWKS, token endpoint) — no network calls in
+CI. Tests cover: PKCE round-trip, <code>alg=none</code> rejection, RS256
+signature validation, JWKS cache TTL expiry, <code>nonce</code> mismatch,
+<code>state</code> mismatch, and refresh rejection surfacing
+<code>IdpError::RefreshRejected</code>.</li>
+</ul>
+<h2 id="1-problem"><a class="header" href="#1-problem">1. Problem</a></h2>
+<p>pCloud’s native authentication is a username + password flow, optionally
+augmented with TFA. That shape is incompatible with how enterprises gate
+access to third-party SaaS tools. Every non-trivial enterprise deployment we
+have seen at pCloud-compatible scale imposes at least one of:</p>
+<ul>
+<li><strong>No third-party password logins.</strong> Users do not have a usable pCloud
+password at all; their identity is held in an IdP (Okta, Azure AD, Ping,
+Google Workspace, Keycloak, ADFS, Duo SSO, OneLogin, JumpCloud).</li>
+<li><strong>Federation mandated via SAML 2.0 or OIDC.</strong> SSO is a compliance control:
+SOC 2 CC6.1, ISO 27001 A.9, and every large-customer security
+questionnaire asks whether the tool supports SAML or OIDC federation.</li>
+<li><strong>Conditional access.</strong> Access depends on device posture, IP range,
+geolocation, MFA freshness, and sometimes hardware-bound WebAuthn. These
+checks are enforced inside the IdP’s authorization UI, not at the SaaS.</li>
+<li><strong>Directory-backed lifecycle.</strong> Account provisioning and deprovisioning
+flow from the IdP via SCIM or LDAP. A terminated user must lose SaaS
+access the moment the IdP revokes their session, without the SaaS holding
+a long-lived independent password.</li>
+<li><strong>Kerberos / LDAP legacy.</strong> A nontrivial minority of on-prem shops still
+front-end AD directly. They typically run a federation gateway (ADFS,
+Keycloak with an LDAP user federation, or Azure AD Connect) that exposes
+OIDC to modern clients. A minority still expose only LDAP.</li>
+</ul>
+<p>pCloud’s <code>pcloud-rs</code> today offers none of that. This design introduces a
+broker layer that makes pCloud usable inside these environments without
+asking pCloud engineering to reimplement every federation protocol inside
+the pCloud session endpoint.</p>
+<h2 id="2-architecture"><a class="header" href="#2-architecture">2. Architecture</a></h2>
+<p>The broker lives on the client side, inside <code>pcloudc</code> / <code>pcloudcd</code>, and
+brokers trust between two independent systems:</p>
+<pre><code> ┌─────────────┐       ┌───────────────┐        ┌────────────────┐
+ │ Enterprise  │  (1)  │  pcloud-idp   │  (2)   │  pCloud API    │
+ │    IdP      │──────▶│    broker     │───────▶│ trusted-issuer │
+ │ (Okta/AAD)  │◀──JWT │  (pcloud-cli) │◀──tok──│   exchange     │
+ └─────────────┘       └───────────────┘        └────────────────┘
+</code></pre>
+<ol>
+<li>
+<p>The user runs:</p>
+<pre><code>pcloudc login --idp=oidc --issuer=https://corp.okta.com
+</code></pre>
+<p>The CLI resolves the <code>[auth.idp]</code> section of <code>config.toml</code>, constructs an
+<code>IdpConfig</code>, and hands it to an <code>IdpBroker</code> implementation.</p>
+</li>
+<li>
+<p>The broker fetches <code>https://corp.okta.com/.well-known/openid-configuration</code>,
+pins the JWKS, generates PKCE verifier / <code>state</code> / <code>nonce</code>, and opens the
+system browser on the authorization URL.</p>
+</li>
+<li>
+<p>The user authenticates at their IdP (password, WebAuthn, push,
+conditional-access prompts). The IdP redirects back to a loopback URI
+handled by the broker.</p>
+</li>
+<li>
+<p>The broker exchanges the authorization code for an ID token (JWT) +
+refresh token, verifies the signature against the pinned JWKS, and checks
+<code>iss</code>, <code>aud</code>, <code>exp</code>, and <code>nonce</code>.</p>
+</li>
+<li>
+<p>The broker POSTs the ID token to pCloud’s <strong>trusted-issuer exchange
+endpoint</strong> — this endpoint is a stub today; pCloud support will need to
+enable it. The endpoint returns a normal <code>auth</code> token that the rest of
+<code>pcloud-daemon</code> uses exactly as today.</p>
+</li>
+<li>
+<p>The daemon persists only the short-lived derivative pCloud token
+(following existing <code>auth_vault</code> rules: opt-in, 0600, 0700 parent dir).
+The IdP refresh token is stored alongside, secret-wrapped.</p>
+</li>
+</ol>
+<p>Crucially, pCloud never sees the enterprise password or any long-lived
+credential beyond the short-lived ID token. The broker is the only layer
+that speaks OIDC.</p>
+<h2 id="3-supported-flows"><a class="header" href="#3-supported-flows">3. Supported Flows</a></h2>
+<p>The crate enumerates four flows (<code>IdpFlow</code>). Only the first lands as a
+first-class implementation initially; the others are staged.</p>
+<h3 id="31-oidc-authorization-code--pkce-primary"><a class="header" href="#31-oidc-authorization-code--pkce-primary">3.1 OIDC Authorization Code + PKCE (primary)</a></h3>
+<p>RFC 6749 §4.1 + RFC 7636. Public-client flow — no client secret is ever
+stored on disk. The broker:</p>
+<ul>
+<li>generates a 256-bit <code>code_verifier</code> from the OS CSPRNG,</li>
+<li>derives <code>code_challenge = base64url(sha256(verifier))</code>,</li>
+<li>advertises <code>code_challenge_method=S256</code>,</li>
+<li>binds the callback to a loopback redirect URI (<code>http://127.0.0.1:&lt;port&gt;</code>)
+per RFC 8252, using an ephemeral port picked at runtime.</li>
+</ul>
+<p>PKCE closes the interception attack on public clients. S256 is mandatory;
+plain is rejected.</p>
+<h3 id="32-device-authorization-grant-headless-hosts"><a class="header" href="#32-device-authorization-grant-headless-hosts">3.2 Device Authorization Grant (headless hosts)</a></h3>
+<p>RFC 8628. When <code>--idp=oidc --flow=device</code>, the broker requests a device
+code from the IdP, prints a short URL and user code, and polls the token
+endpoint until the user authorizes on a second device. This is how
+<code>pcloudc</code> will log in from CI agents, servers, and SSH sessions without a
+browser. The polling cadence respects <code>interval</code> and honors <code>slow_down</code>.</p>
+<h3 id="33-saml-20-via-bridge"><a class="header" href="#33-saml-20-via-bridge">3.3 SAML 2.0 (via bridge)</a></h3>
+<p>Direct SAML is explicitly out of scope for <code>pcloud-idp</code>. Rationale:</p>
+<ul>
+<li>SAML is XML + XMLDSig + XML-ENC; the Rust ecosystem has no hardened
+implementation we can audit against XSW attacks.</li>
+<li>Every major IdP already exposes an OIDC façade; deployments that
+nominally mandate SAML for browser SSO can enable OIDC for desktop
+clients as a separate app registration. Okta, Azure AD, Ping, and ADFS
+all support this.</li>
+<li>For true SAML-only shops, we recommend Keycloak or Authentik as a
+SAML-to-OIDC bridge. This is a common enterprise pattern and moves the
+SAML attack surface out of <code>pcloud-rs</code>.</li>
+</ul>
+<p>The <code>IdpFlow::SamlBridge</code> variant exists so the operator config surface can
+document this choice; the broker implementation in that branch simply
+delegates to the OIDC flow against the bridge’s issuer URL.</p>
+<h3 id="34-ldap-legacy-seeding-only"><a class="header" href="#34-ldap-legacy-seeding-only">3.4 LDAP (legacy seeding only)</a></h3>
+<p>The LDAP flow is intentionally restricted. A simple bind against
+<code>ldap://ds.corp</code> is used <strong>once</strong>, only to seed a local enrollment record,
+and only when explicitly configured. After first login, the broker migrates
+the user to an OIDC enrollment against the configured issuer. This avoids
+holding LDAP credentials on the client and keeps the long-term code path on
+OIDC. Simple bind over cleartext LDAP is rejected: LDAPS or STARTTLS is
+mandatory.</p>
+<h2 id="4-trust--jwks"><a class="header" href="#4-trust--jwks">4. Trust &amp; JWKS</a></h2>
+<p>ID tokens are validated against the IdP’s JWKS:</p>
+<ul>
+<li>discovery: <code>GET {issuer}/.well-known/openid-configuration</code>,</li>
+<li>JWKS fetched from <code>jwks_uri</code> in the discovery document,</li>
+<li>cached on disk with the issuer hostname, keyed by <code>kid</code>.</li>
+</ul>
+<h3 id="pinning-strategy"><a class="header" href="#pinning-strategy">Pinning strategy</a></h3>
+<p>Three modes, operator-selectable in <code>[auth.idp]</code>:</p>
+<ol>
+<li><strong><code>pin_mode = "tofu"</code> (default).</strong> Trust-on-first-use: the first JWKS
+fetch is pinned by SHA-256 of the JWK set. Subsequent rotations are
+accepted only if a new key appears while at least one pinned key is
+still present — this implements the standard “overlap” rotation pattern
+that all major IdPs use.</li>
+<li><strong><code>pin_mode = "static"</code>.</strong> Operator-supplied JWKS fingerprint(s). No
+auto-rotation; changes require a config push. Appropriate for
+high-assurance deployments.</li>
+<li><strong><code>pin_mode = "ca"</code>.</strong> The IdP’s TLS certificate is pinned to a specific
+CA bundle. JWKS trust piggybacks on TLS. This is the weakest mode and is
+documented as such.</li>
+</ol>
+<p>No mode accepts system trust store alone. Public CA compromise is not an
+acceptable failure mode for an enterprise identity bridge.</p>
+<h2 id="5-token-lifecycle"><a class="header" href="#5-token-lifecycle">5. Token Lifecycle</a></h2>
+<ul>
+<li><strong>IdP ID token:</strong> typically 5–60 minutes. Used only to mint a pCloud
+session, then kept for re-exchange if the pCloud session is invalidated.</li>
+<li><strong>IdP refresh token:</strong> hours to days, per IdP policy. Stored
+<code>SecretString</code>-wrapped.</li>
+<li><strong>pCloud session token:</strong> the existing short-lived derivative. The daemon
+handles it via the existing <code>auth_backend</code> and <code>auth_vault</code>.</li>
+</ul>
+<p>Refresh flow:</p>
+<ol>
+<li>Daemon notices the pCloud session is about to expire.</li>
+<li>Daemon calls <code>IdpBroker::refresh(&amp;token)</code>.</li>
+<li>Broker POSTs <code>grant_type=refresh_token</code> to the IdP.</li>
+<li>On success, new ID token is exchanged for a new pCloud session.</li>
+<li>On <code>IdpError::RefreshRejected</code>, the daemon triggers interactive
+re-auth — no silent fallback to cached credentials.</li>
+</ol>
+<h2 id="6-failure-modes"><a class="header" href="#6-failure-modes">6. Failure Modes</a></h2>
+<ul>
+<li><strong>IdP unreachable during initial login.</strong> Hard failure. Login cannot
+proceed offline.</li>
+<li><strong>IdP unreachable during refresh.</strong> Soft failure: the cached pCloud
+session continues to be used until its own expiry, up to a configurable
+<code>cache_ttl</code> (default 24h). After that, interactive re-auth is forced.
+This matches enterprise expectations: a flaky IdP must not lock the
+entire workforce out of their files mid-workday, but it must not permit
+access beyond a short grace period either.</li>
+<li><strong>Refresh rejected.</strong> Treated as session revocation. The broker surfaces
+<code>IdpError::RefreshRejected</code>; the daemon wipes the cached session and
+prompts <code>pcloudc</code> to re-run <code>login</code>.</li>
+<li><strong>Signature validation failure.</strong> Hard error. The cached JWKS is
+invalidated, forcing a rediscovery on next login.</li>
+<li><strong>State/nonce mismatch on callback.</strong> Hard error; the challenge is
+dropped. No retry with reused PKCE material.</li>
+</ul>
+<h2 id="7-security"><a class="header" href="#7-security">7. Security</a></h2>
+<ul>
+<li>The broker <strong>never</strong> sees the user’s IdP password. The password is
+entered in the browser-hosted IdP UI.</li>
+<li><code>id_token</code> and <code>refresh_token</code> are wrapped in
+[<code>pcloud_secret::SecretString</code>]: zeroized on <code>Drop</code>, redacted in <code>Debug</code>.</li>
+<li>PKCE <code>code_verifier</code> is held in <code>SecretString</code> for its lifetime and
+consumed by <code>complete_authorization</code>, which drops it before returning.</li>
+<li>No secret is logged, printed, or included in audit events. Audit events
+log <em>issuer, subject (<code>sub</code>), and token expiry only</em>.</li>
+<li>The broker forbids password grant (ROPC). There is no surface in the
+<code>IdpBroker</code> trait to pass a password. This is an intentional
+API-level enforcement.</li>
+<li>Transport is TLS-only in production builds. The existing production
+transport policy applies: no plaintext downgrade, no endpoint override
+without validation.</li>
+</ul>
+<h2 id="8-operator-config"><a class="header" href="#8-operator-config">8. Operator Config</a></h2>
+<p>Example <code>config.toml</code>:</p>
+<pre><code class="language-toml">[auth.idp]
+enabled     = true
+issuer      = "https://corp.okta.com"
+client_id   = "0oa1example"
+flow        = "oidc-authorization-code"  # or "device-code", "saml-bridge", "ldap"
+scopes      = ["openid", "email", "profile", "groups"]
+pin_mode    = "tofu"                     # or "static", "ca"
+cache_ttl   = "24h"
+loopback_ports = [47000, 47001, 47002]   # first available is used
+</code></pre>
+<p>Validation rules:</p>
+<ul>
+<li><code>issuer</code> must be <code>https://</code>.</li>
+<li><code>scopes</code> must contain <code>openid</code>.</li>
+<li><code>client_id</code> must be non-empty.</li>
+<li><code>flow = "ldap"</code> requires <code>ldap_url = "ldaps://..."</code>; <code>ldap://</code> is rejected.</li>
+</ul>
+<h2 id="9-cli-ux"><a class="header" href="#9-cli-ux">9. CLI UX</a></h2>
+<pre><code>pcloudc login --idp=oidc --issuer=https://corp.okta.com
+pcloudc auth idp-list
+pcloudc auth idp-refresh
+pcloudc auth idp-logout
+</code></pre>
+<ul>
+<li><code>login --idp=oidc</code> opens the system browser and blocks until the loopback
+callback fires or the user hits Ctrl+C.</li>
+<li><code>auth idp-list</code> prints configured IdPs (issuer, client_id, flow,
+<code>cache_ttl</code>). No tokens are printed.</li>
+<li><code>auth idp-refresh</code> forces a refresh round-trip. Exits non-zero if the
+refresh is rejected.</li>
+<li><code>auth idp-logout</code> wipes the cached pCloud session and the IdP refresh
+token. Does not call the IdP’s end-session endpoint unless
+<code>--revoke-at-idp</code> is passed, because not every IdP supports it.</li>
+</ul>
+<h2 id="10-open-items--honest-gaps"><a class="header" href="#10-open-items--honest-gaps">10. Open Items — honest gaps</a></h2>
+<ul>
+<li>
+<p>pCloud’s <strong>trusted-issuer exchange endpoint is not documented.</strong> The
+landed broker completes the IdP half of the handshake (OIDC discovery,
+PKCE auth code, ID-token verification, refresh). The pCloud-side
+<code>ID token → pCloud auth token</code> exchange is delivered through the
+pluggable <code>PcloudTokenExchanger</code> trait
+(<code>crates/pcloud-idp/src/exchange.rs</code>):</p>
+<ul>
+<li><code>NullPcloudTokenExchanger</code> is the default and returns
+<code>IdpError::NotConfigured("pCloud trusted-issuer exchange endpoint not configured; set [oidc.trusted_issuer].exchange_url")</code>.
+No fabricated success, no panic.</li>
+<li><code>HttpPcloudTokenExchanger</code> (cargo feature <code>oidc-http-exchange</code>, on
+by default) POSTs the ID token to a configurable URL and parses a
+pCloud-shaped session response. Site operators that run their own
+JWT-to-pCloud bridge service can wire this in; no pCloud-hosted
+exchange endpoint is officially documented at the time of writing.</li>
+<li>HTTPS is enforced at construction time. Non-loopback <code>http://</code>
+URLs are rejected with <code>IdpError::NotConfigured</code>. Loopback
+plaintext is only permitted in <code>cfg(test)</code> / the
+<code>insecure-plaintext-exchange</code> feature, which is intentionally not
+enabled in any release build.</li>
+</ul>
+<p>This keeps the broker testable end-to-end against a stub exchange
+service today, without making a false claim that “log in to pCloud
+with Okta works in production” — it does not, until either pCloud
+publishes a trusted-issuer exchange endpoint or the operator stands
+up their own bridge and points <code>exchange_url</code> at it.</p>
+</li>
+<li>
+<p>SCIM user provisioning is out of scope for this crate.</p>
+</li>
+<li>
+<p>WebAuthn step-up inside the broker is out of scope; it is delegated to
+the IdP.</p>
+</li>
+</ul>
+<h3 id="101-operator-configuration"><a class="header" href="#101-operator-configuration">10.1 Operator configuration</a></h3>
+<pre><code class="language-toml">[oidc.trusted_issuer]
+exchange_url = "https://bridge.corp.example/pcloud/exchange"
+</code></pre>
+<p>If the key is absent, <code>NullPcloudTokenExchanger</code> is used and any login
+attempt surfaces the typed <code>IdpError::NotConfigured</code> above.</p>
+<h2 id="11-crate-layout"><a class="header" href="#11-crate-layout">11. Crate Layout</a></h2>
+<ul>
+<li><code>pcloud-idp</code> (this crate): trait scaffold, no I/O.</li>
+<li><code>pcloud-idp-oidc</code> (future): OIDC Authorization Code + PKCE + Device Code.</li>
+<li><code>pcloud-idp-ldap</code> (future, optional): LDAP seeding only.</li>
+</ul>
+<p>All implementors depend on <code>pcloud-idp</code> and on <code>pcloud-secret</code>. They do
+<strong>not</strong> depend on <code>pcloud-daemon</code>; the daemon wires them via its plugin
+registry.</p>
+<h2 id="12-interface--trait-shape"><a class="header" href="#12-interface--trait-shape">12. Interface / trait shape</a></h2>
+<p>Authoritative trait definition:</p>
+<ul>
+<li><code>IdpBroker</code> trait — <code>crates/pcloud-idp/src/lib.rs:258</code></li>
+<li><code>IdpConfig</code> — <code>crates/pcloud-idp/src/lib.rs:164</code></li>
+<li><code>AuthChallenge</code> (carries PKCE verifier as <code>SecretString</code>) —
+<code>crates/pcloud-idp/src/lib.rs:183</code></li>
+<li><code>IdpToken</code> (id/access/refresh tokens as <code>SecretString</code>) —
+<code>crates/pcloud-idp/src/lib.rs:200</code></li>
+<li><code>IdpError</code> — <code>crates/pcloud-idp/src/lib.rs:214</code></li>
+<li><code>OidcAuthorizationCodeBroker</code> — <code>crates/pcloud-idp/src/oidc.rs:47</code>
+<ul>
+<li><code>::new(issuer)</code> at <code>:66</code></li>
+<li><code>::with_redirect_uri(..)</code> at <code>:72</code></li>
+</ul>
+</li>
+<li>JWKS cache (1 h TTL constant) — <code>crates/pcloud-idp/src/jwks.rs:26</code>
+(<code>pub(crate) const JWKS_TTL: Duration = Duration::from_secs(3600);</code>)</li>
+<li>PKCE S256 helpers — <code>crates/pcloud-idp/src/pkce.rs</code></li>
+</ul>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Simplified; see crates/pcloud-idp/src/lib.rs:258 for the authoritative
+// declaration.
+#[async_trait]
+pub trait IdpBroker: Send + Sync {
+    async fn begin_authorization(&amp;self, cfg: &amp;IdpConfig) -&gt; Result&lt;AuthChallenge, IdpError&gt;;
+    async fn complete_authorization(
+        &amp;self,
+        cfg: &amp;IdpConfig,
+        challenge: AuthChallenge,
+        code: SecretString,
+    ) -&gt; Result&lt;IdpToken, IdpError&gt;;
+    async fn refresh(&amp;self, cfg: &amp;IdpConfig, token: &amp;IdpToken) -&gt; Result&lt;IdpToken, IdpError&gt;;
+}
+<span class="boring">}</span></code></pre>
+<h2 id="13-configuration-reference"><a class="header" href="#13-configuration-reference">13. Configuration reference</a></h2>
+<p>Every key in <code>[idp]</code> of <code>pcloud-rs.toml</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Purpose</th><th>Example</th></tr>
+</thead>
+<tbody>
+<tr><td><code>provider</code></td><td>enum string</td><td><code>"null"</code></td><td><code>"null"</code> | <code>"oidc"</code>. <code>null</code> disables the broker.</td><td><code>"oidc"</code></td></tr>
+<tr><td><code>issuer</code></td><td>string (URL)</td><td>—</td><td>OIDC issuer. Used for discovery and <code>iss</code> claim pin.</td><td><code>"https://id.corp.example"</code></td></tr>
+<tr><td><code>client_id</code></td><td>string</td><td>—</td><td>Public client ID registered at the IdP.</td><td><code>"pcloud-rs-desktop"</code></td></tr>
+<tr><td><code>redirect_uri</code></td><td>string (URL)</td><td><code>http://127.0.0.1/callback</code> (see <code>DEFAULT_REDIRECT_URI</code> @ <code>crates/pcloud-idp/src/oidc.rs:40</code>)</td><td>Loopback callback. Must be loopback in a public client.</td><td><code>"http://127.0.0.1:8765/callback"</code></td></tr>
+<tr><td><code>scopes</code></td><td><code>[string]</code></td><td><code>["openid","profile","email"]</code></td><td>Requested OIDC scopes.</td><td><code>["openid","groups"]</code></td></tr>
+<tr><td><code>jwks_ttl_seconds</code></td><td>integer</td><td><code>3600</code></td><td>Override the JWKS cache TTL. Lower values increase IdP QPS.</td><td><code>1800</code></td></tr>
+<tr><td><code>audience</code></td><td>string</td><td><code>client_id</code></td><td>Explicit <code>aud</code> claim value for verification.</td><td><code>"pcloud-rs-desktop"</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Credentials (client secrets, etc.) are <strong>never</strong> permitted in the config
+file — this is a public client. A non-empty <code>client_secret</code> key is a
+load-time error.</p>
+<h2 id="14-onboarding-recipe"><a class="header" href="#14-onboarding-recipe">14. Onboarding recipe</a></h2>
+<h3 id="beginner--deploy-in-5-steps"><a class="header" href="#beginner--deploy-in-5-steps">Beginner — deploy in 5 steps</a></h3>
+<ol>
+<li>Register <code>pcloud-rs-desktop</code> as a <strong>public</strong> client in your IdP with
+<code>http://127.0.0.1/callback</code> as the single allowed redirect URI.</li>
+<li>Record the issuer URL (whatever prefix exposes
+<code>/.well-known/openid-configuration</code>).</li>
+<li>Add <code>[idp]</code> to <code>/etc/pcloud-rs/pcloud-rs.toml</code>:
+<pre><code class="language-toml">[idp]
+provider  = "oidc"
+issuer    = "https://id.corp.example"
+client_id = "pcloud-rs-desktop"
+</code></pre>
+</li>
+<li><code>sudo systemctl restart pcloudcd</code> and check the audit log for
+<code>idp.provider=oidc loaded</code> and the discovery document hash.</li>
+<li>Run <code>pcloudc login --idp</code> on a test workstation; confirm the
+browser hands control back to the daemon and that <code>pcloudc status</code>
+prints the ID-token subject.</li>
+</ol>
+<h3 id="expert--terraform-integration"><a class="header" href="#expert--terraform-integration">Expert — Terraform integration</a></h3>
+<pre><code class="language-hcl">resource "okta_app_oauth" "pcloud-rs" {
+  label                     = "pcloud-rs-desktop"
+  type                      = "native"
+  grant_types               = ["authorization_code", "refresh_token"]
+  pkce_required             = true
+  token_endpoint_auth_method = "none"   # public client, PKCE only
+  redirect_uris             = ["http://127.0.0.1/callback"]
+  response_types            = ["code"]
+}
+
+resource "ansible_template" "pcloud-rs_toml" {
+  vars = {
+    issuer    = okta_auth_server.default.issuer
+    client_id = okta_app_oauth.pcloud-rs.client_id
+  }
+}
+</code></pre>
+<p>Enforce <code>token_endpoint_auth_method = "none"</code>: any IdP that returns a
+client secret will be rejected by <code>IdpConfig</code> validation at load time.</p>
+<h2 id="15-verification--prove-its-working"><a class="header" href="#15-verification--prove-its-working">15. Verification — prove it’s working</a></h2>
+<ol>
+<li><strong>Discovery pin</strong> — <code>journalctl -u pcloudcd | grep 'idp.discovery'</code>:
+must show the post-normalised issuer matching the configured value.</li>
+<li><strong><code>alg=none</code> defence</strong> — run the negative test:
+<pre><code>cargo test -p pcloud-idp rejects_alg_none
+</code></pre>
+covers <code>crates/pcloud-idp/src/jwks.rs</code> rejection path.</li>
+<li><strong>JWKS TTL</strong> — flip system clock +3601 s on a test box; the next
+verification must trigger a re-fetch (audit log <code>idp.jwks.refresh</code>).</li>
+<li><strong>Secret redaction</strong> — <code>pcloudc diag dump</code> must never emit the raw
+<code>id_token</code>; look for <code>SecretString(***redacted***)</code> in JSON output.</li>
+<li><strong>End-to-end login</strong> — <code>pcloudc login --idp &amp;&amp; pcloudc whoami</code>.</li>
+</ol>
+<h2 id="16-failure-modes--remediation"><a class="header" href="#16-failure-modes--remediation">16. Failure modes + remediation</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symptom / <code>IdpError</code></th><th>Root cause</th><th>Remediation</th></tr>
+</thead>
+<tbody>
+<tr><td><code>DiscoveryFailed</code></td><td>Issuer unreachable, TLS interception, wrong URL</td><td>Verify <code>openssl s_client -connect</code> to <code>issuer</code> succeeds; check corporate proxy’s CA chain.</td></tr>
+<tr><td><code>UnsupportedAlgorithm</code></td><td>IdP signs with HS256 or rotates to an unlisted alg</td><td>Force IdP to RS256; we do <strong>not</strong> loosen the allow-list.</td></tr>
+<tr><td><code>NonceMismatch</code> / <code>StateMismatch</code></td><td>Replay attempt, browser cache poisoning, concurrent login</td><td>Clear session, retry. Repeated hits imply attack — escalate.</td></tr>
+<tr><td><code>TokenExchangeFailed</code></td><td>Bad client config / clock skew</td><td>Check NTP (<code>timedatectl</code>); verify <code>client_id</code> exact match.</td></tr>
+<tr><td><code>NotConfigured("...exchange_url")</code></td><td><code>[oidc.trusted_issuer].exchange_url</code> absent / <code>NullPcloudTokenExchanger</code> active</td><td>Set <code>exchange_url</code> to your bridge service, or accept that SSO-to-pCloud is disabled. See §10.</td></tr>
+<tr><td>Loopback listener bind failure</td><td><code>127.0.0.1:*</code> blocked by a local firewall</td><td>Allowlist loopback; do <strong>not</strong> expose the listener on a routable IP.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="17-extension-points"><a class="header" href="#17-extension-points">17. Extension points</a></h2>
+<p>To add a new broker implementor (e.g. SAML bridge, device-code flow):</p>
+<ol>
+<li>Create a new crate (<code>pcloud-idp-&lt;name&gt;</code>).</li>
+<li>Depend on <code>pcloud-idp</code>, <code>pcloud-secret</code>, <code>async-trait</code>, <code>reqwest</code>
+with <code>rustls-tls</code> (no native-tls).</li>
+<li>Implement <code>IdpBroker</code> (<code>crates/pcloud-idp/src/lib.rs</code>). Return
+<code>IdpError::NotConfigured("...")</code> until a concrete trusted-issuer
+exchanger is wired — do <strong>not</strong> fabricate a success.</li>
+<li>Wire the implementor into the daemon plugin registry
+(<code>crates/pcloud-daemon/src/runtime.rs</code>) behind a <code>provider</code> string
+value. Default must remain <code>NullBroker</code>.</li>
+<li>Provide offline tests using an in-process stub discovery + JWKS +
+token endpoint. No network in CI.</li>
+</ol>
+<p>Security constraints for any new implementor:</p>
+<ul>
+<li>Must wrap <strong>every</strong> token in <code>SecretString</code>.</li>
+<li>Must reject <code>alg=none</code> and symmetric algorithms.</li>
+<li>Must use <code>rustls</code> with <code>https_only(true)</code> — see
+<code>crates/pcloud-idp/src/oidc.rs:79</code>.</li>
+</ul>
+<h2 id="18-cross-refs"><a class="header" href="#18-cross-refs">18. Cross-refs</a></h2>
+<ul>
+<li>CLI: <code>docs/book/src/cli/login.md</code> (<code>pcloudc login --idp</code>)</li>
+<li>Config schema: <code>docs/book/src/config/idp.md</code></li>
+<li>Runbook — IdP outage: <code>docs/runbooks/idp-outage.md</code></li>
+<li>Security model: <code>docs/book/src/security/model.md</code></li>
+<li>Secret wrappers: <code>crates/pcloud-secret/src/secret_string.rs</code></li>
+<li>Parity row: <code>C_FEATURE_PARITY_MATRIX.csv</code> (feature <code>idp.*</code>,
+marked <code>Rejected</code> for legacy C — OIDC is net-new in the Rust path)</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../enterprise/index.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../enterprise/policy.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../enterprise/index.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../enterprise/policy.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

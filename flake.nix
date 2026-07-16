@@ -49,7 +49,7 @@
           meta = {
             description = "pCloud command-line client (Rust rewrite)";
             license = [ pkgs.lib.licenses.mit pkgs.lib.licenses.asl20 ];
-            mainProgram = "pcloud-rs";
+            mainProgram = "pcloudc";
           };
         });
 
@@ -59,8 +59,10 @@
         # the SOURCE_DATE_EPOCH + --remap-path-prefix + --build-id=none
         # contract documented in docs/book/src/development/reproducible-builds.md.
         #
-        # Consumers: `nix build .#pcloud-rs-repro` reproduces exactly the
-        # artefact the release CI publishes under `target/release-repro/`.
+        # Consumers: `nix build .#pcloud-rs-repro` reproduces the same
+        # release-repro profile and deterministic RUSTFLAGS. It is not
+        # byte-identical to the signed GitHub release asset until the Nix
+        # build path is switched to cargo-auditable as well.
         pcloud-rs-repro = craneLib.buildPackage (commonArgs // {
           inherit cargoArtifacts;
           pname = "pcloud-rs-repro";
@@ -83,17 +85,19 @@
         packages = {
           default = pcloud-rs;
           pcloud-rs = pcloud-rs;
+          pcloudc = pcloud-rs;
+          pcloudd = pcloud-rs;
           pcloud-rs-repro = pcloud-rs-repro;
         };
 
         apps = {
           default = flake-utils.lib.mkApp {
             drv = pcloud-rs;
-            name = "pcloud-rs";
+            name = "pcloudc";
           };
-          pcloud-rs = flake-utils.lib.mkApp {
+          pcloudc = flake-utils.lib.mkApp {
             drv = pcloud-rs;
-            name = "pcloud-rs";
+            name = "pcloudc";
           };
           pcloudd = flake-utils.lib.mkApp {
             drv = pcloud-rs;
@@ -143,6 +147,17 @@
 
         checks = {
           inherit pcloud-rs pcloud-rs-repro;
+          fmt = craneLib.cargoFmt {
+            inherit src;
+          };
+          clippy = craneLib.cargoClippy (commonArgs // {
+            inherit cargoArtifacts;
+            cargoClippyExtraArgs = "--workspace --all-targets -- -D warnings";
+          });
+          test = craneLib.cargoTest (commonArgs // {
+            inherit cargoArtifacts;
+            cargoExtraArgs = "--workspace";
+          });
         };
       });
 }

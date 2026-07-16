@@ -5,22 +5,22 @@
 //! immediately — it never touches the network and is safe in CI.
 //!
 //! Run (dry):
-//!   cargo run -p pcloud-sdk --example crypto_lifecycle
+//!   cargo run -p pcloud-embedded-sdk --example crypto_lifecycle
 //!
 //! Run (live):
 //!   PCLOUD_LIVE=1 \
 //!   PCLOUD_EMAIL=user@example.com \
 //!   PCLOUD_PASSWORD=secret \
 //!   PCLOUD_CRYPTO_PASS=my-crypto-passphrase \
-//!   cargo run -p pcloud-sdk --example crypto_lifecycle
+//!   cargo run -p pcloud-embedded-sdk --example crypto_lifecycle
 
 // **PLATFORM:** all
 // **GATING:** PCLOUD_LIVE=1 required for network calls.
 
 use std::path::PathBuf;
 
+use pcloud_embedded_sdk::EmbeddedDaemon;
 use pcloud_ipc::{Method, Request, ResponseStatus};
-use pcloud_sdk::EmbeddedDaemon;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("PCLOUD_LIVE").is_err() {

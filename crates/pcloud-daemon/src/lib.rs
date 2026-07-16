@@ -21,7 +21,8 @@
 //! **Stability:** T1 internal — public API is not semver-stable across
 //! workspace revisions; external consumers should go through `pcloud-sdk`.
 //!
-//! **MSRV:** Rust 1.82 (workspace-pinned; edition 2024).
+//! **MSRV:** Rust 1.89 for the portable core; full workspace and release
+//! validation use the repository-pinned Rust 1.96.1 toolchain.
 //!
 //! **Features:**
 //! - `metrics` (off): enables Prometheus exporter via
@@ -32,8 +33,8 @@
 //!
 //! **Platform:** portable (Linux primary; FUSE-bound runtime on Linux).
 //!
-//! Not yet at full C parity — see `C_FEATURE_PARITY_MATRIX.csv` and open
-//! tracker items `bd-1du.4`, `bd-1du.10`.
+//! The retained C-symbol matrix is complete; release qualification remains
+//! governed separately by `STATUS.md` and the native/live platform gates.
 
 #![deny(missing_docs)]
 #![allow(clippy::pedantic)]
@@ -47,9 +48,12 @@
 // **GATING:** none (portable).
 
 pub use pcloud_backends::account_backend;
+pub mod account_scope;
 pub use pcloud_backends::auth_backend;
 pub mod audit_verifier_service;
 pub mod auth_vault;
+pub mod bandwidth_schedule_applier;
+pub mod metered_network;
 // HA lease: types (HaRuntime, LeaseError, LEASE_FILE_NAME) are
 // cross-platform; the `flock(2)`-based `LeaseHolder::try_acquire`
 // implementation is Unix-only (gated inside the module). Windows
@@ -71,6 +75,7 @@ pub use pcloud_backends::mount_discovery;
 pub mod mount_runtime;
 pub use pcloud_backends::notifications_backend;
 pub use pcloud_backends::path_resolver;
+pub mod power;
 pub use pcloud_backends::public_link_backend;
 pub mod rate_limit;
 // P6.1 follow-up: `session_lifecycle` and `refresh_loop` were lifted
@@ -91,12 +96,14 @@ pub mod signals;
 pub use pcloud_backends::sync_backend;
 pub use pcloud_backends::sync_suggest;
 pub use pcloud_backends::transfer_backend;
-pub mod transfer_bridge;
 pub mod transport_factory;
 pub use pcloud_backends::upload_journal;
 pub use pcloud_backends::upload_state;
 
-pub use bootstrap::{BootstrapError, bootstrap_shell, bootstrap_with_config};
+pub use account_scope::AccountScope;
+pub use bootstrap::{
+    BootstrapError, bootstrap_shell, bootstrap_with_config, bootstrap_with_config_and_account,
+};
 pub use dispatch::{dispatch, dispatch_with_peer, dispatch_with_peer_creds};
 pub use runtime::RuntimeShell;
 #[cfg(feature = "metrics")]
@@ -118,9 +125,9 @@ pub fn daemon_pid_path(state_dir: &std::path::Path) -> std::path::PathBuf {
     state_dir.join("daemon.pid")
 }
 
-// Unit tests exercise Unix-only paths (PermissionsExt::from_mode,
-// IpcServer::bind, serve_until_shutdown). Gated to Unix until the
-// Windows named-pipe IPC path lands (bd-xplat-windows).
+// These unit tests exercise Unix-specific permissions and socket paths.
+// Native Windows named-pipe behavior is covered in pcloud-ipc's hosted
+// cross-platform integration tests.
 #[cfg(all(test, unix))]
 mod tests {
     use std::fs;
@@ -2406,6 +2413,7 @@ mod tests {
                 remote_path: "/".to_owned(),
                 paused: false,
                 sync_type: pcloud_model::sync::SyncType::Full,
+                exclude_globs: Vec::new(),
             });
 
         let resp = dispatch(
@@ -2435,6 +2443,7 @@ mod tests {
                 remote_path: "/".to_owned(),
                 paused: true,
                 sync_type: pcloud_model::sync::SyncType::Full,
+                exclude_globs: Vec::new(),
             });
 
         let resp = dispatch(

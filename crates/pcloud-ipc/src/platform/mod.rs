@@ -5,7 +5,9 @@
 //! - OpenBSD,
 //! - NetBSD,
 //! - macOS      → `platform::unix::UnixIpc`     (getpeereid on AF_UNIX)
-//! - Windows    → `platform::windows::WindowsIpc` (named pipes + SID check) — scaffolded, not live-wired through serve_once_with_peer
+//! - illumos,
+//! - Solaris    → `platform::solarish::SolarishIpc` (getpeerucred on AF_UNIX)
+//! - Windows    → `platform::windows::WindowsIpc` (named pipes + SID check)
 //!
 //! This module defines the [`PlatformIpc`] trait and the [`ActivePlatform`]
 //! type alias resolved at compile time via `#[cfg]`. Callers in
@@ -27,6 +29,9 @@ pub mod linux;
     target_os = "dragonfly"
 ))]
 pub mod unix;
+
+#[cfg(any(target_os = "illumos", target_os = "solaris"))]
+pub mod solarish;
 
 #[cfg(windows)]
 pub mod windows;
@@ -67,7 +72,8 @@ pub trait PlatformIpc {
     /// ```text
     /// "linux-so-peercred"   // Linux (SO_PEERCRED on AF_UNIX)
     /// "unix-getpeereid"     // FreeBSD / OpenBSD / NetBSD / macOS (getpeereid(3))
-    /// "windows-named-pipe"  // Windows (named pipe + TokenUser SID match)
+    /// "solarish-getpeerucred" // illumos/Solaris (getpeerucred(3))
+    /// "windows-named-pipe"    // Windows (named pipe + TokenUser SID match)
     /// ```
     ///
     /// A fourth value may be added here if a future backend lands; callers
@@ -92,15 +98,15 @@ pub type ActivePlatform = linux::LinuxIpc;
 ))]
 pub type ActivePlatform = unix::UnixIpc;
 
+/// Alias resolved at compile time to the illumos/Solaris AF_UNIX backend.
+#[cfg(any(target_os = "illumos", target_os = "solaris"))]
+pub type ActivePlatform = solarish::SolarishIpc;
+
 /// Alias resolved at compile time to the platform backend for the
 /// current target OS.
 ///
-/// **Windows IPC status (Tier-3 scaffolded-only):** `WindowsIpc` compiles
-/// and the `bind_listener` / `peer_uid` / `peer_display` trait methods are
-/// implemented, but the named-pipe backend is **not** wired through the
-/// `serve_once_with_peer` accept loop in `transport.rs`. Windows is
-/// therefore Tier-3 for IPC — compile-tested in CI but not live-verified
-/// end-to-end. Live wiring is tracked under `bd-xplat-windows`.
-/// See `STATUS.md` platform matrix and `CLAUDE.md` for the honest posture.
+/// The Windows backend is wired through the shared client and server loops.
+/// Native Windows CI executes its same-user SID-authentication round trip;
+/// cross-user rejection remains a privileged qualification case.
 #[cfg(windows)]
 pub type ActivePlatform = windows::WindowsIpc;

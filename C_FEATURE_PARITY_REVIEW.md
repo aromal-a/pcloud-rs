@@ -1,5 +1,40 @@
 # C Feature Parity Review
 
+## Current Snapshot — 2026-05-01
+
+Single source of truth for counts remains [`STATUS.md`](./STATUS.md), derived
+from `C_FEATURE_PARITY_MATRIX.csv`. Current CSV tally is **156 Implemented /
+0 Partial / 0 Missing / 30 Rejected (186 rows)**.
+
+Zero Partial rows remain. The matrix is functionally complete; final closure
+is a documentation/sign-off exercise rather than a feature-implementation
+exercise.
+
+Most recently closed (Fire 91, 2026-05-01):
+
+- Row 94 — SDK `UploadSession` public route is now **Implemented**. Public
+  `EmbeddedDaemon::start_upload` is driven by the production daemon-backed
+  `RuntimeUploadDriver` in
+  [`crates/pcloud-sdk/src/upload_session.rs`](./crates/pcloud-sdk/src/upload_session.rs);
+  `ConflictMode` is honoured end-to-end and threaded through to
+  `upload_save`, and an on-wire test exercises the chunked
+  create/write/save sequence with conflict policy against a programmable
+  TCP mock (see `start_upload_drives_chunked_sequence_with_conflict_threaded_to_save`).
+
+Previously closed in this wave: rows 124, 138, 142 (crypto-share /
+team-share IPC reachability and live proof) and rows 147, 148, 168
+(specialty public-link helpers reachability) — all now Implemented on
+the active Rust path.
+
+Rows 93 (`upload_writefromfile`) and 149 (`ptree_public_link`) are also
+Implemented: row 93 exposes distinct upload/source offsets through
+IPC/CLI/SDK; row 149 exposes root/folder/file path targets through daemon
+resolution.
+
+The Audit 03 section below is historical and kept for archaeology; its
+intermediate counts and row list are superseded by this snapshot and
+`STATUS.md`.
+
 ## Audit 03 Review — 2026-04-18
 
 A line-level reconciliation of `C_FEATURE_PARITY_MATRIX.csv` against the
@@ -27,7 +62,7 @@ Findings:
       side and routes through `Request::CreateTreePublicLink`. A
       dedicated `Request::CreateTreePublicLinkFromPaths` variant is the
       remaining wiring work.
-- **All 28 `Rejected` rows match `REJECTED-RATIONALES-14042026.md`**
+- **At Audit 03 time, all 28 `Rejected` rows matched `REJECTED-RATIONALES-14042026.md`**
   one-to-one by row number. No orphan rationales, no unjustified
   Rejections.
 - **Three stale path citations were repaired in the CSV.** Rows 69
@@ -69,46 +104,51 @@ If you are new to the parity effort, read this section first.
 - **Not the source of truth for counts.** Counts live in
   [`STATUS.md`](./STATUS.md) per ADR 0009. When this file's
   historical sections disagree with `STATUS.md`, `STATUS.md` wins.
-- **Not a release-readiness claim.** The rewrite is pre-alpha.
-  `bd-1du.10` (final parity gate) and `bd-1du.4` (mounted-drive
-  proof) are still open. Do not read this document as an
-  "everything is done" document. The "What Is Actually Left"
-  section below states exactly what is not.
+- **Not a release-readiness claim.** The matrix is functionally
+  complete (zero Partial rows as of 2026-05-01), but cross-platform
+  mounted-drive hardware proof and final reviewer sign-off are still
+  open. Do not read this document as an "everything is done" document.
+  The "What Is Actually Left" section below states exactly what is
+  not.
 - **Historical sections are frozen.** The audit notes after
   "Historical Audit Notes" are wave-by-wave records retained for
   code archaeology. Some of their intermediate counts are obsolete;
   that is by design — we do not rewrite history, we point at the
   matrix and at `STATUS.md` instead.
 
-## Current Tally (2026-04-16)
+## Current Tally (2026-05-01)
 
 Single source of truth for counts: [`STATUS.md`](./STATUS.md). Do not
 hard-code counts in this narrative — link to `STATUS.md` instead.
 Rejected per-row justifications live in
 `REJECTED-RATIONALES-14042026.md`.
 
-Open parity beads:
+Historical parity labels:
 
 - `bd-1du`
 - `bd-1du.4`
 - `bd-1du.10`
 
-`bd-1du.10` remains open. Do **not** claim full parity, production readiness, enterprise readiness, or drop-in replacement while it remains open.
+These labels are provenance only; no live `.beads/issues.jsonl` entry tracks
+parity work today because zero Partial rows remain. Do **not** claim full
+parity, production readiness, enterprise readiness, or drop-in replacement
+until the final parity gate (release proof + reviewer sign-off) closes.
 
 ### What Is Actually Left
 
-The remaining work is now narrow and proof-oriented:
+The remaining work is now narrow and proof-oriented (no feature work):
 
-- final parity gating, truth-surface reconciliation, and release-proof work remain open under `bd-1du.10`
-- **two Partial rows remain** in the matrix as of 2026-04-18 (Audit 03):
-    - Row 93 — `upload_writefromfile` server-side-copy IPC wiring gap
-    - Row 149 — `ptree_public_link` path-based IPC variant
-- previously Partial rows 76, 85, 92, 94, and 187 have been Implemented;
-  rows 93 and 149 remain Partial because narrow IPC/CLI wiring is still
-  missing above an already-landed backend
-- the remaining work is the final parity-proof gate (`bd-1du.10`): close
-  the two Partial rows, land macOS/Windows FUSE hardware verification,
-  re-run the nine-gate CI, and obtain human reviewer sign-off (see
+- **zero Partial rows remain** in the matrix as of 2026-05-01 (Fire 91)
+- previously Partial rows 76, 85, 92, 93, 94, 124, 138, 142, 147, 148, 149,
+  168, and 187 have all been Implemented; Fire 91 closed row 94 by wiring
+  `EmbeddedDaemon::start_upload` to the production daemon-backed
+  `RuntimeUploadDriver`
+  ([`crates/pcloud-sdk/src/upload_session.rs`](./crates/pcloud-sdk/src/upload_session.rs))
+  with `ConflictMode` threaded end-to-end and an on-wire chunked-sequence
+  test
+- the remaining work is the final parity-proof gate: land macOS/Windows
+  FUSE hardware verification, re-run the nine-gate CI, and obtain human
+  reviewer sign-off (see
   [`STATUS.md`](./STATUS.md) for current counts and
   [`PARITY-PROOF-CHECKLIST.md`](./PARITY-PROOF-CHECKLIST.md) for the
   line-level closure list)
@@ -127,7 +167,7 @@ These areas are implemented on the retained Rust path and should not be describe
 
 ### Review Discipline
 
-The detailed sections below are retained as historical audit notes. They are useful for code archaeology, but many of their intermediate counts and blocker lists are obsolete. Treat the matrix and the three currently open beads as the source of truth, not the older wave-by-wave summaries.
+The detailed sections below are retained as historical audit notes. They are useful for code archaeology, but many of their intermediate counts and blocker lists are obsolete. Treat the matrix and `STATUS.md` as the source of truth, not the older wave-by-wave summaries or historical bead labels.
 
 ---
 
@@ -307,7 +347,11 @@ Security-relevant deltas vs C:
 
 ## Current Summary
 
-The Rust implementation now mirrors the retained C/C++ `pcloud-rs` feature set. All retained rows are `Implemented`; the rest are `Rejected` with per-row rationale in `REJECTED-RATIONALES-14042026.md`. Source of truth for counts: [`STATUS.md`](./STATUS.md).
+The Rust implementation now mirrors the full retained C/C++ `pcloud-rs`
+feature set on the active path: zero retained rows remain `Partial` as of
+2026-05-01 (Fire 91). The rest of the non-implemented surface is `Rejected`
+with per-row rationale in `REJECTED-RATIONALES-14042026.md`. Source of truth
+for counts: [`STATUS.md`](./STATUS.md).
 
 The Rust path is no longer just a narrow secure core. It now has:
 
@@ -320,7 +364,9 @@ The Rust path is no longer just a narrow secure core. It now has:
 - typed store/settings/value-KV parity
 - SDK upload helpers and account utilities
 
-Remaining closure work is proof-oriented rather than capability-oriented: mounted-drive/FUSE live-host verification under `bd-1du.4`, and the final parity-proof gate `bd-1du.10` (Reviewer-19 regrade and closing-commit SHA). The work is substantially complete; see `STATUS.md` and `bd show bd-1du.10` for the final gate.
+Remaining closure work is release-proof and reviewer sign-off only — no
+feature gaps remain. The historical `bd-1du.*` labels are provenance only;
+see `STATUS.md` for the final gate and current counts.
 
 ## Review Basis
 
@@ -475,7 +521,8 @@ Why still partial:
 
 ### Sync Engine Core
 
-Status: `Implemented` (live-mount proof still owed under `bd-1du.4`)
+Status: `Implemented` (Linux live proof landed; cross-platform mount proof
+remains release-gating evidence)
 
 Rust implements:
 
@@ -554,16 +601,17 @@ Evidence:
 Coverage notes:
 
 - Rust has `gettreepublink` in both ID-based (`create_tree_public_link`) and path-resolved (`create_tree_public_link_from_paths` / `..._default`) shapes; the default path now uses `RemotePathResolver` (`pcloud-daemon/src/path_resolver.rs`) which walks absolute pCloud-drive paths via authenticated `listfolder` calls, caches results under a bounded TTL keyed on `(sha256(token), path)`, distinguishes folder/file/missing/ambiguous targets with typed errors, and refuses to fabricate identifiers — mirroring the semantics of C's `pfs_fldr_id_by_path` / `pfs_fldr_resolve_path` while being stricter about silent `0` fallbacks
-- `getfilepublink` / `getfolderpublink` now expose the optional `expire`, `maxdownloads`, `maxtraffic` (and `linkpassword` for folders) parameter surface, matching `do_psync_file_public_link` and `do_psync_folder_public_link_full`
-- `publink/createfolderlinkandsend` is mirrored by `create_folder_updownlink(folder_id, mail, can_upload)`, matching `do_psync_folder_updownlink_link`
-- `create_screenshot_public_link` mirrors `do_psync_screenshot_public_link`: `getfilepublink` + optional `changepublink` with `now + delay` rounded down to the hour, defaulting to 30 days when `delay == 0` and `has_delay` is set
+- `getfilepublink` / plain `getfolderpublink` are reachable, and the specialty folder-link-with-options surface for `do_psync_folder_public_link_full` (row 147) is now Implemented end-to-end via IPC/daemon/CLI/SDK
+- `publink/createfolderlinkandsend` (row 148) is now Implemented end-to-end via IPC/daemon/CLI/SDK on top of the `create_folder_updownlink(folder_id, mail, can_upload)` backend
+- `create_screenshot_public_link` (row 168) is now Implemented end-to-end via IPC/daemon/CLI/SDK, including the C-compatible delayed-expire calculation
 - upload-access helpers now exist for `publink/listemailswithaccess`, `publink/addaccess`, and `publink/removeaccess`
 - bookmark/pin helpers now exist for `publink/listpins`, `publink/unpin`, and `publink/changepin`
 - `psync_delete_all_links_folder` / `psync_delete_all_links_file` iterate the local pfs links cache and are deliberately Rejected; callers use `list_public_links` + `delete_public_link`/`delete_upload_link`
 
 ### Filesystem And Mount
 
-Status: `Implemented` (live mounted-drive proof still owed under `bd-1du.4`)
+Status: `Implemented` (Linux live mounted-drive proof landed; macOS/Windows
+live-host proof remains release-gating evidence)
 
 C provides a real mounted filesystem path backed by the sync engine.
 
@@ -635,10 +683,10 @@ Remaining gaps (tracked):
 - `psync_crypto_change_crypto_pass` / `_unlocked`: Implemented on the active Rust path. `CryptoShell::change_password` verifies the old passphrase against the stored HMAC fingerprint in constant time, runs a constant-time byte compare between old and new passwords to refuse no-op rotations, then delegates to `change_password_unlocked`, which rotates the Argon2 derivation salt and setup fingerprint, signs a version-tagged opaque blob with HMAC-SHA256 under the *current* master key, and returns the blob for upload via `crypto_changeuserprivate`. Integration test `crates/pcloud-daemon/tests/crypto_change_password.rs` covers the full setup -> unlock -> rotate -> lock -> reunlock -> rotate-from-locked cycle against the in-process Development transport.
 - `psync_crypto_crypto_send_change_user_private`: Implemented via `pcloud-proto::crypto_api::CryptoApi::send_change_user_private`, `pcloud-daemon::crypto_backend::CryptoRuntime`, the `Method::SendCryptoChangeUserPrivate` IPC variant, and the SDK helper `EmbeddedDaemon::crypto_send_change_user_private`.
 - `psync_crypto_priv_key_flags`: Implemented as `KeyManager.private_flags` (default 0; `PRIV_KEY_FLAG_TEMP_PASS=1` mirrors C `PSYNC_CRYPTO_FLAG_TEMP_PASS`). Surfaced through `CryptoShell::priv_key_flags`, the `Method::GetCryptoPrivKeyFlags` IPC variant, and `EmbeddedDaemon::crypto_priv_key_flags`. Rotation via `change_password[_unlocked]` updates the value.
-- `psync_crypto_share_folder` / `account_teamshare`: temppass derivation lives in `pcloud-crypto::share_temppass` and is wired through `SharesRuntime::crypto_share_folder` / `crypto_account_team_share`. Both retained rows are now `Implemented` in the matrix; see the Shares section for design and coverage notes.
+- `psync_crypto_share_folder` / `account_teamshare`: temppass/RSA backend code lives in `pcloud-crypto` and `SharesRuntime`; retained rows 124, 138, and 142 are now Implemented with IPC/daemon/CLI/SDK reachability and the supporting proof landed.
 - `psync_crypto_hassubscription` / `isexpired` / `expires`: billing surface; explicitly `Rejected` on the crypto parity slice and left to the account/userinfo path.
 
-### Public Links (historical narrative — superseded by the `Implemented` status above)
+### Public Links (historical narrative — superseded by the current snapshot above)
 
 Status: `Implemented`
 
@@ -714,8 +762,8 @@ Rust implementation (bd-1du.7):
 
 Coverage notes:
 
-- `psync_crypto_share_folder` / `psync_crypto_account_teamshare` are fully
-  implemented on the active Rust path. The temppass derivation lives in
+- `psync_crypto_share_folder` / `psync_crypto_account_teamshare` have backend
+  crypto/proto pieces, but are not fully reachable from IPC/CLI/SDK. The temppass derivation lives in
   `pcloud-crypto::share_temppass` and is driven by
   `SharesRuntime::crypto_share_folder` /
   `SharesRuntime::crypto_account_team_share`. It wraps the active
@@ -834,37 +882,39 @@ But it only wraps the narrow current daemon request surface and does not yet mir
 
 ## Conclusion
 
-The Rust implementation now mirrors the retained C/C++ feature surface.
-All retained rows are `Implemented`; the rest are `Rejected` with rationale
-in `REJECTED-RATIONALES-14042026.md`. See [`STATUS.md`](./STATUS.md) for
-the authoritative counts.
+The Rust implementation now mirrors the full retained C/C++ feature surface
+on the active path: zero retained rows remain `Partial` as of 2026-05-01
+(Fire 91). The rest are `Rejected` with rationale in
+`REJECTED-RATIONALES-14042026.md`. See [`STATUS.md`](./STATUS.md) for the
+authoritative counts.
 
 Honest current label:
 
-- substantially complete; final parity-proof gate (`bd-1du.10`) still
-  owes Reviewer-19 regrade and the closing-commit SHA; live mounted-drive
-  host-run still owed under `bd-1du.4`.
+- functionally complete on parity; the final parity-proof gate still owes
+  cross-platform mounted-drive hardware verification, the nine-gate CI
+  re-run, and human reviewer sign-off before release claims are honest.
 
-Not yet honest (until `bd-1du.10` closes):
+Not yet honest (until the final parity gate closes):
 
-- full C feature parity
 - production ready
 - enterprise ready
 - drop-in replacement for all `psynclib` use cases
 
-See [`STATUS.md`](./STATUS.md) and `bd show bd-1du.10` for the final
-gate status.
+See [`STATUS.md`](./STATUS.md) for the final gate status.
 
 ## Priority Gaps
 
-The broad capability gaps that dominated earlier waves are closed.
-Residual work is proof-oriented, not feature-oriented:
+The broad capability gaps that dominated earlier waves are closed and zero
+Partial rows remain. The remaining priorities are release-proof, not feature
+work:
 
-1. live-host mounted-drive proof under `bd-1du.4`
-2. final parity-proof gate under `bd-1du.10` (Reviewer-19 regrade +
-   closing-commit SHA)
+1. Cross-platform live-host mounted-drive proof (macOS `fuse-t`, Windows
+   WinFSP) — hardware verification only.
+2. Re-run of the nine-gate CI against the final tree.
+3. Human reviewer sign-off.
 
-The tracker and execution program for these gaps should follow [RUST-PLANS/30-C-FEATURE-PARITY-EXECUTION-PLAN.md](/home/ezechiel203/Projects/FORKS/pcloud-rs/RUST-PLANS/30-C-FEATURE-PARITY-EXECUTION-PLAN.md).
+The execution program for these gaps should follow `STATUS.md`,
+`C_FEATURE_PARITY_MATRIX.csv`, and the active closure checklist.
 
 ## Audit Pass 2026-04-14 (CLI-coverage agent)
 

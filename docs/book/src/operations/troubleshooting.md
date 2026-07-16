@@ -53,9 +53,9 @@ sudo umount -l /path/to/mountpoint        # last resort
 # macOS:
 diskutil unmount force /path/to/mountpoint
 
-# Windows (WinFSP):
-sc stop pcloudd-svc
-# Then restart the service.
+# Windows (WinFSP, per-user daemon):
+pcloudc stop
+pcloudc start
 ```
 
 After unmount, restart the daemon and re-mount. The next mount creates
@@ -63,10 +63,10 @@ a fresh FUSE channel.
 
 > **Background.** Linux now reaps stale mounts on `SIGTERM`/`SIGINT`
 > via the daemon's signal handler (`crates/pcloud-fs/src/platform/
-> linux.rs::reap_all_mounts`). On BSD and Windows the reaper is Tier-3
-> — operators should expect to perform manual cleanup if the daemon
-> dies abruptly. See `CLAUDE.md` § "Signal-driven mount cleanup
-> posture" for the full posture.
+> linux.rs::reap_all_mounts`). BSD uses its native mount lifecycle; Windows
+> maintains an active WinFSP registry and console-control reaper. A hard kill
+> can still require native recovery tooling, so crash recovery belongs in each
+> release qualification run.
 
 ### 1.2 `fusermount3: not found` / no FUSE binary on PATH
 

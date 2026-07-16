@@ -53,7 +53,7 @@
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
@@ -65,6 +65,17 @@ pub const DEFAULT_METRICS_PORT: u16 = 9353;
 pub const ENV_METRICS_PORT: &str = "PCLOUD_METRICS_PORT";
 /// Environment variable (+ dev-only gate) enabling wildcard binding.
 pub const ENV_METRICS_BIND_ALL: &str = "PCLOUD_METRICS_BIND_ALL";
+
+/// Maximum simultaneous metrics connection handler threads.
+const MAX_CONCURRENT_METRICS_CONNECTIONS: usize = 32;
+
+struct ConnectionSlot(Arc<AtomicUsize>);
+
+impl Drop for ConnectionSlot {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Release);
+    }
+}
 
 /// Snapshot returned by the runtime on every scrape. Intentionally owned
 /// strings/bools so the closure can sample lock-free state under a mutex
@@ -115,10 +126,26 @@ impl ExporterConfig {
     /// wired by the daemon based on its resolved `Environment`.
     #[must_use]
     pub fn from_env(allow_wildcard: bool) -> Self {
-        let port = std::env::var(ENV_METRICS_PORT)
-            .ok()
-            .and_then(|v| v.parse::<u16>().ok())
-            .unwrap_or(DEFAULT_METRICS_PORT);
+        let port = match std::env::var(ENV_METRICS_PORT) {
+            Ok(raw) => match raw.parse::<u16>() {
+                Ok(port) => port,
+                Err(err) => {
+                    eprintln!(
+                        "metrics exporter: invalid {ENV_METRICS_PORT}={raw:?}: {err}; \
+                         using default port {DEFAULT_METRICS_PORT}"
+                    );
+                    DEFAULT_METRICS_PORT
+                }
+            },
+            Err(std::env::VarError::NotPresent) => DEFAULT_METRICS_PORT,
+            Err(err) => {
+                eprintln!(
+                    "metrics exporter: failed to read {ENV_METRICS_PORT}: {err}; \
+                     using default port {DEFAULT_METRICS_PORT}"
+                );
+                DEFAULT_METRICS_PORT
+            }
+        };
         Self {
             port,
             allow_wildcard,
@@ -215,14 +242,45 @@ where
         .set_nonblocking(true)
         .expect("set_nonblocking on listener");
 
+    let in_flight = Arc::new(AtomicUsize::new(0));
     while !shutdown.load(Ordering::SeqCst) {
         match listener.accept() {
             Ok((stream, _peer)) => {
+                let mut current = in_flight.load(Ordering::Acquire);
+                let acquired = loop {
+                    if current >= MAX_CONCURRENT_METRICS_CONNECTIONS {
+                        break false;
+                    }
+                    match in_flight.compare_exchange_weak(
+                        current,
+                        current + 1,
+                        Ordering::AcqRel,
+                        Ordering::Acquire,
+                    ) {
+                        Ok(_) => break true,
+                        Err(observed) => current = observed,
+                    }
+                };
+                if !acquired {
+                    eprintln!(
+                        "metrics exporter: connection limit ({MAX_CONCURRENT_METRICS_CONNECTIONS}) \
+                         reached; dropping connection"
+                    );
+                    continue;
+                }
                 let snap = Arc::clone(&snapshot);
+                let counter = Arc::clone(&in_flight);
                 // Per-connection thread; bound lifetime by timeouts below.
-                let _ = thread::Builder::new()
+                if let Err(err) = thread::Builder::new()
                     .name("pcloud-metrics-conn".into())
-                    .spawn(move || handle_connection(stream, snap.as_ref()));
+                    .spawn(move || {
+                        let _slot = ConnectionSlot(counter);
+                        handle_connection(stream, snap.as_ref());
+                    })
+                {
+                    eprintln!("metrics exporter: failed to spawn connection thread: {err}");
+                    in_flight.fetch_sub(1, Ordering::Release);
+                }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(100));
@@ -311,7 +369,9 @@ where
 fn read_request_line(stream: &mut TcpStream) -> Option<(String, String)> {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
-    reader.read_line(&mut line).ok()?;
+    if reader.read_line(&mut line).is_err() {
+        return None;
+    }
     let trimmed = line.trim_end_matches(['\r', '\n']);
     let mut parts = trimmed.split_whitespace();
     let method = parts.next()?.to_owned();
@@ -321,7 +381,10 @@ fn read_request_line(stream: &mut TcpStream) -> Option<(String, String)> {
     let mut drained = 0usize;
     loop {
         let mut header = String::new();
-        let n = reader.read_line(&mut header).ok()?;
+        let n = match reader.read_line(&mut header) {
+            Ok(n) => n,
+            Err(_) => return None,
+        };
         if n == 0 {
             break;
         }

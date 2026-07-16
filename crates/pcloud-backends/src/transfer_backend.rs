@@ -19,7 +19,7 @@ use pcloud_config::{ConfigProfile, api::ApiMode};
 use pcloud_proto::{
     BinaryApiTransport, DownloadLink, EncodedRequest, FrameParseError, HttpDownloadConfig,
     HttpDownloadError, ParseLimits, ProtocolMethod, ResponseParseError, SignedDownload,
-    TransferApi, TransferApiError, TransportConfig, TransportError, UploadSession,
+    TransferApi, TransferApiError, TransportConfig, TransportError, UploadInfo, UploadSession,
     async_transfer::StreamFrame,
     auth_api::{ApiServerHintConsumer, ProtocolTransport},
     fetch_download, fetch_download_verified_streaming,
@@ -137,6 +137,12 @@ pub enum TransferBackendError {
     #[error(transparent)]
     /// `Network` variant.
     Network(#[from] TransportError),
+    /// Resilient-wrapper-only condition (circuit-breaker open, rate-limit
+    /// exceeded, retry-budget exhausted). CLAUDEREV deferred-set D5.2
+    /// (fire 50). Carries the human-readable description from
+    /// [`pcloud_proto::resilient_transport::ResilientError`].
+    #[error("resilient transport refused request: {0}")]
+    Resilient(String),
     #[error(transparent)]
     /// `Download` variant.
     Download(#[from] HttpDownloadError),
@@ -175,12 +181,20 @@ pub enum TransferBackendError {
 enum TransferTransportMode {
     Development(DevelopmentTransferTransport),
     Network(BinaryApiTransport),
+    /// Production network transport wrapped in a circuit-breaker /
+    /// rate-limiter / retry-budget envelope. CLAUDEREV deferred-set
+    /// D5.2 (fire 50) — second of 7 per-backend `ResilientTransport`
+    /// migrations after D5.1 (auth canary).
+    ResilientNetwork(
+        Box<pcloud_proto::resilient_transport::ResilientTransport<BinaryApiTransport>>,
+    ),
 }
 
 impl ProtocolTransport for TransferTransportMode {
     type Error = TransferBackendError;
 
     fn execute(&self, request: &EncodedRequest) -> Result<Value, Self::Error> {
+        use pcloud_proto::resilient_transport::ResilientError;
         match self {
             Self::Development(transport) => transport
                 .execute(request)
@@ -188,6 +202,22 @@ impl ProtocolTransport for TransferTransportMode {
             Self::Network(transport) => transport
                 .execute(request)
                 .map_err(TransferBackendError::from),
+            Self::ResilientNetwork(transport) => {
+                transport.execute(request).map_err(|err| match err {
+                    // Inner transport returned a permanent or
+                    // exhausted-retry error. Surface as the existing
+                    // `Network` variant so callers' error handling is
+                    // unchanged.
+                    ResilientError::Inner(transport_err) => {
+                        TransferBackendError::Network(transport_err)
+                    }
+                    // Wrapper-only conditions (circuit-breaker, rate-limit,
+                    // budget exhausted) — typed `Resilient(String)` so
+                    // callers can tell "the network failed" from "the
+                    // wrapper held the request back".
+                    other => TransferBackendError::Resilient(other.to_string()),
+                })
+            }
         }
     }
 }
@@ -197,6 +227,11 @@ impl ApiServerHintConsumer for TransferTransportMode {
         match self {
             Self::Development(transport) => transport.apply_api_server_hint(api_server),
             Self::Network(transport) => transport.apply_api_server_hint(api_server),
+            // Reach the inner `BinaryApiTransport` through the
+            // resilient wrapper's `inner_arc()` accessor.
+            Self::ResilientNetwork(transport) => {
+                transport.inner_arc().apply_api_server_hint(api_server)
+            }
         }
     }
 }
@@ -266,7 +301,7 @@ impl std::io::Write for ObservingWriter {
 ///
 /// - Dispatches `GetFileLink`, `Download`, `UploadCreate`, `UploadWrite`,
 ///   `UploadSave`, `UploadFile`, and `UploadData` IPC request frames from
-///   `pcloud-daemon::dispatch` and the `pcloud_sdk` helpers.
+///   `pcloud-daemon::dispatch` and the `pcloud_embedded_sdk` helpers.
 /// - Issues the pCloud protocol methods `getfilelink`, `getpubzip`,
 ///   `upload_create`, `upload_write`, `upload_save`, and `uploadfile`;
 ///   signed HTTP downloads are executed against the URLs returned by
@@ -341,6 +376,47 @@ impl TransferRuntime {
                 ..HttpDownloadConfig::default()
             },
             network_transport,
+            upload_pacer: None,
+        }
+    }
+
+    /// Construct a `TransferRuntime` whose API transport is wrapped in
+    /// `pcloud_proto::resilient_transport::ResilientTransport`. CLAUDEREV
+    /// deferred-set D5.2 (fire 50): production-grade wrapping for the
+    /// transfer backend (every byte of every upload/download flows
+    /// through here, so the resilient wrap has more material impact
+    /// than the auth canary).
+    ///
+    /// `network_transport` is preserved at the inner-`BinaryApiTransport`
+    /// layer (extracted via the wrapper's `inner_arc()` accessor) so the
+    /// mount runtime's composed `PcloudFsShim` keeps using the same
+    /// underlying byte-transport — only the API request path goes
+    /// through the resilient wrap.
+    ///
+    /// Callers (typically the daemon bootstrap) build the resilient
+    /// transport via `pcloud-daemon::transport_factory::TransportFactory::wrap_binary`
+    /// and pass it here. Dev/test callers should keep using
+    /// [`Self::from_config`].
+    #[must_use]
+    pub fn from_resilient_transport(
+        config: &ConfigProfile,
+        resilient: pcloud_proto::resilient_transport::ResilientTransport<BinaryApiTransport>,
+    ) -> Self {
+        // Extract a clone of the inner BinaryApiTransport for the
+        // `network_transport()` accessor (used by the mount runtime).
+        // The mount runtime uses the bare transport for raw byte I/O;
+        // only the API request path benefits from resilient wrapping.
+        let inner_clone = (*resilient.inner_arc()).clone();
+        Self {
+            api: TransferApi::new(TransferTransportMode::ResilientNetwork(Box::new(resilient))),
+            mode: TransferMode::Network,
+            download: HttpDownloadConfig {
+                use_tls: matches!(config.api.mode, ApiMode::Tls),
+                connect_timeout: std::time::Duration::from_millis(config.api.connect_timeout_ms),
+                read_timeout: std::time::Duration::from_millis(config.api.read_timeout_ms),
+                ..HttpDownloadConfig::default()
+            },
+            network_transport: Some(inner_clone),
             upload_pacer: None,
         }
     }
@@ -453,6 +529,41 @@ impl TransferRuntime {
         )
     }
 
+    /// Open an upload session with a caller-stable idempotency key.
+    pub fn upload_create_idempotent(
+        &self,
+        auth_token: SecretString,
+        parent_folder_id: u64,
+        file_name: impl Into<String>,
+        file_size: u64,
+        idempotency_key: String,
+    ) -> Result<UploadSession, TransferApiError<TransferBackendError>> {
+        self.api.upload_create_idempotent(
+            auth_token.expose_secret(),
+            parent_folder_id,
+            file_name,
+            file_size,
+            Some(idempotency_key),
+        )
+    }
+
+    /// Query server-authoritative size and SHA-1 for an open upload.
+    pub fn upload_info(
+        &self,
+        auth_token: SecretString,
+        upload_id: u64,
+        chunk_id: u64,
+    ) -> Result<UploadInfo, TransferApiError<TransferBackendError>> {
+        self.api
+            .upload_info(auth_token.expose_secret(), upload_id, chunk_id)
+    }
+
+    /// Whether this runtime uses deterministic development fixtures.
+    #[must_use]
+    pub const fn is_development(&self) -> bool {
+        matches!(self.mode, TransferMode::Development)
+    }
+
     /// Invoke `download_bytes` on this backend.
     ///
     /// See the module-level documentation for the dispatch contract, error
@@ -550,17 +661,16 @@ impl TransferRuntime {
             }
         }
 
-        let file = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(dest_path)
-            .map_err(|e| TransferBackendError::Download(HttpDownloadError::Io(e)))?;
-        let buf_writer = std::io::BufWriter::with_capacity(64 * 1024, file);
-        let mut writer = ObservingWriter::new(buf_writer, observer);
-
         match self.mode {
             TransferMode::Development => {
+                let file = std::fs::OpenOptions::new()
+                    .create(true)
+                    .write(true)
+                    .truncate(true)
+                    .open(dest_path)
+                    .map_err(|e| TransferBackendError::Download(HttpDownloadError::Io(e)))?;
+                let buf_writer = std::io::BufWriter::with_capacity(64 * 1024, file);
+                let mut writer = ObservingWriter::new(buf_writer, observer);
                 let signed = SignedDownload {
                     host: link
                         .hosts
@@ -587,6 +697,19 @@ impl TransferRuntime {
             TransferMode::Network => {
                 let mut last_error = None;
                 for host in &link.hosts {
+                    // Every advertised-host attempt starts from an empty
+                    // destination. A failed host may have written a valid
+                    // prefix before disconnecting; reusing that writer would
+                    // append the next host's full body and silently corrupt
+                    // the file.
+                    let file = std::fs::OpenOptions::new()
+                        .create(true)
+                        .write(true)
+                        .truncate(true)
+                        .open(dest_path)
+                        .map_err(|e| TransferBackendError::Download(HttpDownloadError::Io(e)))?;
+                    let buf_writer = std::io::BufWriter::with_capacity(64 * 1024, file);
+                    let mut writer = ObservingWriter::new(buf_writer, observer.clone());
                     let (host, port) = split_host_port(host);
                     let signed = SignedDownload {
                         host,
@@ -612,11 +735,16 @@ impl TransferRuntime {
                             })?;
                             return Ok((signed, written));
                         }
-                        Err(err) => last_error = Some(err),
+                        Err(err) => {
+                            // Drop closes the failed attempt before the next
+                            // OpenOptions::truncate(true), preventing two live
+                            // handles from racing over the same destination.
+                            drop(writer);
+                            last_error = Some(err);
+                        }
                     }
                 }
                 // Best-effort cleanup on total failure.
-                let _ = writer.into_inner_file();
                 let _ = std::fs::remove_file(dest_path);
                 Err(TransferBackendError::Download(last_error.unwrap_or(
                     HttpDownloadError::Malformed("download link missing host"),
@@ -635,7 +763,7 @@ impl TransferRuntime {
         session: &UploadSession,
         payload: &[u8],
     ) -> Result<StreamFrame, TransferBackendError> {
-        self.upload_bytes_with_observer(auth_token, session, payload, None)
+        self.upload_bytes_with_observer_and_conflict(auth_token, session, payload, None, None)
     }
 
     /// Audit-06 §4-opus HIGH variant of [`Self::upload_bytes`] that
@@ -650,6 +778,23 @@ impl TransferRuntime {
         session: &UploadSession,
         payload: &[u8],
         observer: Option<TransferProgressObserver>,
+    ) -> Result<StreamFrame, TransferBackendError> {
+        self.upload_bytes_with_observer_and_conflict(auth_token, session, payload, observer, None)
+    }
+
+    /// Variant of [`Self::upload_bytes_with_observer`] that threads an
+    /// optional [`ConflictParam`] into the bundled `upload_save` call so
+    /// SDK callers can express `ifhash`-conditional overwrite or
+    /// `ifhash="new"` create-if-absent semantics. `None` preserves the
+    /// historical behaviour (no `ifhash` param emitted, server applies
+    /// its default policy).
+    pub fn upload_bytes_with_observer_and_conflict(
+        &self,
+        auth_token: SecretString,
+        session: &UploadSession,
+        payload: &[u8],
+        observer: Option<TransferProgressObserver>,
+        conflict: Option<ConflictParam>,
     ) -> Result<StreamFrame, TransferBackendError> {
         match self.mode {
             TransferMode::Development => {
@@ -704,12 +849,12 @@ impl TransferRuntime {
                         .duration_since(UNIX_EPOCH)
                         .unwrap_or_default()
                         .as_secs(),
-                    // ctime/conflict were added by a concurrent agent. Keep the
-                    // current behaviour: no explicit ctime, no conflict policy
-                    // override. The owning agent is expected to thread these
-                    // from the upload session.
+                    // bd-1du row 94: conflict policy is now threaded
+                    // from the SDK upload session through this entry
+                    // point. `None` preserves the historical behaviour
+                    // (server applies its default).
                     ctime: None,
-                    conflict: None,
+                    conflict: conflict.clone(),
                     idempotency_key: None,
                 };
                 let response = transport.execute(&upload_save.encode()?)?;
@@ -719,6 +864,125 @@ impl TransferRuntime {
                     stream_id: session.upload_id as u32,
                     payload_len: payload.len(),
                 })
+            }
+        }
+    }
+
+    /// Issue a standalone `upload_write` for one chunk at `upload_offset`.
+    /// Used by the SDK's chunked driver
+    /// (`pcloud_embedded_sdk::upload_session::UploadSession`) so it can emit
+    /// `upload_create` → N × `upload_write` → `upload_save` separately
+    /// instead of the bundled write+save path used by [`Self::upload_bytes`].
+    ///
+    /// Returns `Ok(new_offset)` (i.e. `upload_offset + buf.len()`) on
+    /// success. In `TransferMode::Development` the call is a no-op and
+    /// returns the post-write offset.
+    pub fn upload_write_chunk(
+        &self,
+        auth_token: SecretString,
+        upload_id: u64,
+        upload_offset: u64,
+        chunk_id: u64,
+        buf: &[u8],
+    ) -> Result<u64, TransferBackendError> {
+        self.upload_write_chunk_idempotent(
+            auth_token,
+            upload_id,
+            upload_offset,
+            chunk_id,
+            buf,
+            None,
+        )
+    }
+
+    /// Standalone chunk write with a retry-stable idempotency key.
+    #[allow(clippy::too_many_arguments)]
+    pub fn upload_write_chunk_idempotent(
+        &self,
+        auth_token: SecretString,
+        upload_id: u64,
+        upload_offset: u64,
+        chunk_id: u64,
+        buf: &[u8],
+        idempotency_key: Option<String>,
+    ) -> Result<u64, TransferBackendError> {
+        let new_offset = upload_offset.saturating_add(buf.len() as u64);
+        match self.mode {
+            TransferMode::Development => Ok(new_offset),
+            TransferMode::Network => {
+                let transport = self
+                    .network_transport
+                    .as_ref()
+                    .ok_or(TransferBackendError::NetworkExecutionUnavailable)?;
+                let upload_write = UploadWriteRequest {
+                    auth_token: pcloud_proto::redacted::RedactedProtoString::from(
+                        auth_token.expose_secret().to_owned(),
+                    ),
+                    upload_id,
+                    upload_offset,
+                    chunk_id,
+                    idempotency_key,
+                };
+                let encoded = upload_write.encode_with_body(buf.len() as u64)?;
+                if let Some(pacer) = self.upload_pacer.as_ref() {
+                    pacer.acquire_blocking(buf.len() as u64);
+                }
+                let response = transport.execute_with_body(&encoded, buf)?;
+                expect_ok_result(response.as_hash(), "upload_write")?;
+                Ok(new_offset)
+            }
+        }
+    }
+
+    /// Issue a standalone `upload_save` to commit an open upload session
+    /// with an optional [`ConflictParam`]. Pairs with
+    /// [`Self::upload_create`] + N × [`Self::upload_write_chunk`] to give
+    /// the SDK a true chunked driver surface (bd-1du row 94).
+    ///
+    /// In `TransferMode::Development` returns success without touching
+    /// the wire — matching the dispatch contract of the other dev-mode
+    /// stubs in this module.
+    pub fn upload_save_session(
+        &self,
+        auth_token: SecretString,
+        session: &UploadSession,
+        conflict: Option<ConflictParam>,
+        modified_at_unix: u64,
+    ) -> Result<(), TransferBackendError> {
+        self.upload_save_session_idempotent(auth_token, session, conflict, modified_at_unix, None)
+    }
+
+    /// Commit an upload with a retry-stable idempotency key.
+    pub fn upload_save_session_idempotent(
+        &self,
+        auth_token: SecretString,
+        session: &UploadSession,
+        conflict: Option<ConflictParam>,
+        modified_at_unix: u64,
+        idempotency_key: Option<String>,
+    ) -> Result<(), TransferBackendError> {
+        match self.mode {
+            TransferMode::Development => Ok(()),
+            TransferMode::Network => {
+                let transport = self
+                    .network_transport
+                    .as_ref()
+                    .ok_or(TransferBackendError::NetworkExecutionUnavailable)?;
+                let upload_save = UploadSaveRequest {
+                    auth_token: pcloud_proto::redacted::RedactedProtoString::from(
+                        auth_token.expose_secret().to_owned(),
+                    ),
+                    parent_folder_id: session.parent_folder_id,
+                    file_name: session.file_name.clone(),
+                    upload_id: session.upload_id,
+                    modified_at_unix,
+                    ctime: None,
+                    conflict,
+                    idempotency_key,
+                };
+                let response = transport.execute(&upload_save.encode()?)?;
+                expect_ok_result(response.as_hash(), "upload_save")?;
+                Ok(())
             }
         }
     }
@@ -733,7 +997,7 @@ impl TransferRuntime {
     ///
     /// - `auth_token`: SecretString — daemon-held bearer token.
     /// - `upload_id`: open upload session id (from
-    ///   [`Self::upload_create_session`] or the chunked driver).
+    ///   `Self::upload_create_session` or the chunked driver).
     /// - `upload_offset`: offset inside the upload at which the copied
     ///   bytes land. `0` for the first server-side copy in a session.
     /// - `chunk_id`: caller-allocated correlation id (`pupload.c:847`,
@@ -1004,6 +1268,53 @@ impl TransferRuntime {
         }
     }
 
+    /// Fetch one half-open byte range `[start, end)` from a signed download
+    /// link. Network mode tries every advertised host in order; development
+    /// mode returns the corresponding slice of its deterministic fixture
+    /// body. This is the canonical bounded read primitive used by
+    /// `remote_fs::RemoteFs` and avoids exposing transfer-mode branching to
+    /// filesystem consumers.
+    pub fn read_range(
+        &self,
+        link: &pcloud_proto::DownloadLink,
+        start: u64,
+        end: u64,
+    ) -> Result<Vec<u8>, TransferBackendError> {
+        if end < start {
+            return Err(TransferBackendError::Malformed(
+                "download range end precedes start",
+            ));
+        }
+        match self.mode {
+            TransferMode::Development => {
+                let body = format!("downloaded:{}", link.path).into_bytes();
+                let start = usize::try_from(start).unwrap_or(usize::MAX).min(body.len());
+                let end = usize::try_from(end).unwrap_or(usize::MAX).min(body.len());
+                Ok(body[start..end].to_vec())
+            }
+            TransferMode::Network => {
+                let mut last_error = None;
+                for host in &link.hosts {
+                    let (host, port) = split_host_port(host);
+                    let signed = SignedDownload {
+                        host,
+                        port,
+                        path: link.path.clone(),
+                        dwltag: link.download_tag.clone(),
+                        range: Some((start, end)),
+                    };
+                    match fetch_download(&signed, &self.download) {
+                        Ok(bytes) => return Ok(bytes),
+                        Err(error) => last_error = Some(error),
+                    }
+                }
+                Err(TransferBackendError::Download(last_error.unwrap_or(
+                    HttpDownloadError::Malformed("download link missing host"),
+                )))
+            }
+        }
+    }
+
     /// Delete a remote file by numeric id. Mirrors C
     /// `task_deletefile` (`pclsync/pupload.c:1650-1661`). Returns
     /// `Ok(())` on success.
@@ -1030,12 +1341,7 @@ impl TransferRuntime {
         to_name: impl Into<String>,
     ) -> Result<(), TransferApiError<TransferBackendError>> {
         self.api
-            .rename_file(
-                auth_token.expose_secret(),
-                file_id,
-                to_folder_id,
-                to_name,
-            )
+            .rename_file(auth_token.expose_secret(), file_id, to_folder_id, to_name)
             .map(|_| ())
     }
 }
@@ -2645,6 +2951,79 @@ mod verify_tests {
         // Hooked through classify: server reports same → OK.
         let classified = classify_file_hashes(Some(&digest), Some(&digest));
         assert_eq!(classified, VerifyClassification::Ok);
+    }
+
+    #[test]
+    fn streaming_download_truncates_partial_body_before_host_fallback() {
+        use super::TransferRuntime;
+        use pcloud_config::{
+            ConfigProfile, Environment,
+            api::{ApiEndpoint, ApiMode},
+        };
+        use pcloud_proto::DownloadLink;
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        use std::thread;
+
+        let partial_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let partial_address = partial_listener.local_addr().unwrap();
+        let partial_server = thread::spawn(move || {
+            let (mut stream, _) = partial_listener.accept().unwrap();
+            let mut request = [0_u8; 512];
+            let _ = stream.read(&mut request).unwrap();
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nbad")
+                .unwrap();
+        });
+
+        let fallback_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let fallback_address = fallback_listener.local_addr().unwrap();
+        let fallback_server = thread::spawn(move || {
+            let (mut stream, _) = fallback_listener.accept().unwrap();
+            let mut request = [0_u8; 512];
+            let _ = stream.read(&mut request).unwrap();
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nfallback",
+                )
+                .unwrap();
+        });
+
+        let mut config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-stream-fallback-test"),
+            Environment::Production,
+        );
+        config.api = ApiEndpoint {
+            mode: ApiMode::Plaintext,
+            host: partial_address.ip().to_string(),
+            port: partial_address.port(),
+            server_name: partial_address.ip().to_string(),
+            connect_timeout_ms: 2_000,
+            read_timeout_ms: 2_000,
+            tls_revocation_check: Default::default(),
+        };
+        let runtime = TransferRuntime::from_config(&config);
+        let tmp = tempfile::tempdir().unwrap();
+        let destination = tmp.path().join("fallback.bin");
+        let (_, written) = runtime
+            .download_to_path(
+                &DownloadLink {
+                    path: "/fallback.bin".to_owned(),
+                    hosts: vec![
+                        format!("{}:{}", partial_address.ip(), partial_address.port()),
+                        format!("{}:{}", fallback_address.ip(), fallback_address.port()),
+                    ],
+                    download_tag: None,
+                    api_server: None,
+                },
+                &destination,
+            )
+            .unwrap();
+
+        partial_server.join().unwrap();
+        fallback_server.join().unwrap();
+        assert_eq!(written, 8);
+        assert_eq!(std::fs::read(destination).unwrap(), b"fallback");
     }
 
     /// Proof for bd-pcloud-rs-s1p.87: a 50 MiB download streams to disk

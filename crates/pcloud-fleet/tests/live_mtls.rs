@@ -44,6 +44,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use ed25519_dalek::{Signer, SigningKey};
 use pcloud_fleet::{FleetError, MtlsFleetAgent, MtlsFleetConfig};
+use rustls::pki_types::{CertificateDer, pem::PemObject};
 use tempfile::TempDir;
 
 fn mk_config(tmp: &std::path::Path, base_url: String) -> MtlsFleetConfig {
@@ -154,8 +155,7 @@ async fn tampered_body_signature_is_rejected() {
     let status = tokio::task::spawn_blocking(move || -> u16 {
         let ca_pem = std::fs::read(&ca_path).unwrap();
         let mut roots = rustls::RootCertStore::empty();
-        let mut r = std::io::Cursor::new(&ca_pem);
-        for c in rustls_pemfile::certs(&mut r) {
+        for c in CertificateDer::pem_slice_iter(&ca_pem) {
             roots.add(c.unwrap()).unwrap();
         }
         let tls = rustls::ClientConfig::builder()

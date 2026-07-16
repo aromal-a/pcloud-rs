@@ -1,32 +1,27 @@
 [package]
-name = "pcloud-sdk"
+name = "pcloud-embedded-sdk"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish.workspace = true
-description = "Embeddable high-level SDK surface for pcloud-rs (auth, upload/download helpers)."
+publish = false
+rust-version.workspace = true
+description = "Internal embedded-daemon compatibility API for pcloud-rs."
 
-# TODO(bd-1du): tls-native feature flag not implemented; pcloud-proto hard-pins
-# rustls + ring with no way for SDK consumers to opt into native-tls.  To add
-# native-tls support: (1) add `native-tls = { version = "0.2", optional = true }`
-# to pcloud-proto/Cargo.toml and gate the TcpStream TLS wrapping in
-# pcloud-proto/src/transport.rs behind `#[cfg(feature = "tls-native")]`; (2)
-# proxy the feature here as:
-#
-#   [features]
-#   tls-rustls = ["pcloud-proto/tls-rustls"]
-#   tls-native = ["pcloud-proto/tls-native"]
-#
-# Until then, rustls + webpki-roots is the only supported transport backend.
+[lib]
+name = "pcloud_embedded_sdk"
+
+# The embedded compatibility transport is rustls + webpki-roots through
+# pcloud-proto.
+# Native TLS is intentionally outside the supported feature surface.
 
 [features]
-# pcloud-sdk has no optional deps today (§8:221 audit compliance).
+# pcloud-embedded-sdk has no optional deps today (§8:221 audit compliance).
 # All deps are unconditional; the crate compiles correctly with no flags.
-# Feature gates will be added here when optional surfaces are introduced
-# (e.g. `mount = ["dep:pcloud-fs"]` once pcloud-fs is an optional dep).
+# Keeping an empty feature matrix avoids advertising unqualified variants.
 default = []
 
 [dependencies]
+base64 = "0.22"
 pcloud-config = { path = "../pcloud-config" }
 pcloud-daemon = { path = "../pcloud-daemon" }
 pcloud-error = { path = "../pcloud-error" }
@@ -37,6 +32,7 @@ pcloud-plugin-api = { path = "../pcloud-plugin-api" }
 pcloud-proto = { path = "../pcloud-proto" }
 pcloud-secret = { path = "../pcloud-secret" }
 pcloud-store = { path = "../pcloud-store" }
+serde_json.workspace = true
 thiserror.workspace = true
 tokio = { version = "1", default-features = false, features = ["sync"] }
 zeroize.workspace = true

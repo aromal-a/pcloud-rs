@@ -14,6 +14,37 @@ Source: waves 1-9 captured in `FINAL-PARITY-PROOF-WAVE*.md`,
 
 ## [Unreleased]
 
+### Removed scaffolding without a public pCloud API backing (2026-05-01)
+
+**Removed**
+
+- T1.2 file-version listing/restore: `RevisionProvider` trait,
+  `NullRevisionProvider`, `HttpRevisionProvider` (and the
+  `file-history-http` cargo feature), `Method::FileHistory`,
+  `Request::FileHistory`, `Command::FileHistory` / `FileDiff` /
+  `FileRestore`, the `pcloudc history` / `diff` / `restore`
+  subcommands, `crates/pcloud-config/src/file_history.rs`,
+  `crates/pcloud-daemon/tests/file_history_provider.rs`, and
+  `crates/pcloud-proto/src/revision_provider.rs`. Reason: pCloud's
+  public API exposes no `listrevisions` / `revertfile` for
+  third-party clients; see `docs/future-pcloud-clone-api.md`.
+- T2.1.d differential-upload execute path: `DeltaUploadTransport`
+  trait, `execute_delta_upload`, in-tree mock. The `pcloud-rsync`
+  codec primitives stay. Reason: `upload_writefromfile` does not
+  expose byte-range / block-index semantics; see
+  `docs/future-pcloud-clone-api.md`.
+- T2.2.b parallel HTTP-range fetcher: `fetch_parallel` and the
+  mockserver `/download` Range route. The `plan_ranges` planner
+  stays. Reason: see `docs/future-pcloud-clone-api.md`.
+- T2.6 QUIC transport: `quinn` workspace dependency, the `quic`
+  cargo feature, and the `QuicTransport` scaffold. The
+  `transport_protocol` selector and `resolve_after_handshake`
+  matrix stay. Reason: see `docs/future-pcloud-clone-api.md`.
+- T4.4 server-side dedup awareness CLI: `Method::GetStorageSummary`,
+  `StorageSummaryPayload`, the `pcloudc storage` command and its
+  renderer. Reason: `userinfo` does not expose per-account physical
+  bytes / dedup ratio; see `docs/future-pcloud-clone-api.md`.
+
 ### Dual crypto backend: pclsync-compat + enhanced (2026-04-18)
 
 **Added**

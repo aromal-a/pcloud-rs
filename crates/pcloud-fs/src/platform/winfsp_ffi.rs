@@ -1,13 +1,11 @@
 //! **PLATFORM: Windows only.** Hand-rolled thin FFI bindings against the
 //! WinFSP (Windows File System Proxy) public C ABI.
 //!
-//! ============================================================================
-//!  PHASE-1 SCAFFOLDING -- NOT YET TESTED ON WINDOWS
-//!  This module compiles against declared types only. No Windows target build,
-//!  no runtime validation, no WinFSP linkage, no dispatcher lifecycle test.
-//!  Treat every symbol here as a structural placeholder until
-//!  bd-1du.4 Agent A proves it against a real winfsp-x64.dll.
-//! ============================================================================
+//! Native Windows CI compiles these declarations and owns a WinFSP
+//! read/write/unmount smoke test. The hand-written ABI remains release-gated:
+//! a successful native workflow against the supported WinFSP installer must
+//! be retained for each shipped artifact; source-level checks alone are not
+//! evidence of Windows mount qualification.
 //!
 //! # Rationale
 //!
@@ -18,17 +16,16 @@
 //!   `CLAUDE.md` "Security and Enterprise Rules").
 //! * WinFSP's C ABI is small and stable enough that a hand-rolled binding
 //!   keeps the exposed `unsafe` surface minimal and reviewable.
-//! * Dynamic loading of `winfsp-x64.dll` via `LoadLibraryW` lets us
-//!   gracefully report `MountError::Unsupported` when the MSI is not
-//!   installed, instead of failing at link time.
+//! * Dynamic loading of a canonical Program Files `winfsp-x64.dll` via
+//!   `LoadLibraryExW` lets us gracefully report `MountError::Unsupported`
+//!   when the MSI is not installed, instead of failing at link time.
 //!
 //! # Runtime loading
 //!
 //! The WinFSP MSI installer (https://winfsp.dev/) places
-//! `winfsp-x64.dll` into `%ProgramFiles(x86)%\WinFsp\bin\` and adds the
-//! directory to the machine `PATH`. [`load_winfsp`] relies on the standard
-//! Win32 loader search order to find it; operators on locked-down hosts
-//! can alternatively ship the DLL next to the daemon executable.
+//! `winfsp-x64.dll` into `%ProgramFiles(x86)%\WinFsp\bin\`. [`load_winfsp`]
+//! loads only canonical Program Files candidates with safe search flags; it
+//! deliberately ignores the current directory and `PATH`.
 //!
 //! # Bindings subset
 //!
@@ -54,7 +51,7 @@
 #![allow(non_snake_case, non_camel_case_types, dead_code)]
 
 use std::ffi::c_void;
-use std::os::raw::{c_int, c_ulong};
+use std::os::raw::c_ulong;
 
 // We reuse the shared Win32 foundation types exported by the already-present
 // `windows` crate (feature set already includes Win32 storage/system items
@@ -95,21 +92,24 @@ pub const STATUS_MEDIA_WRITE_PROTECTED: NTSTATUS = NTSTATUS(0xC000_00A2_u32 as i
 //  Volume params (subset of FSP_FSCTL_VOLUME_PARAMS)
 // ---------------------------------------------------------------------------
 
-/// Max bytes for the UTF-16 volume prefix / file-system name in
-/// `FSP_FSCTL_VOLUME_PARAMS`. Per WinFSP `fsctl.h`.
-pub const FSP_FSCTL_VOLUME_PREFIX_SIZE: usize = 192;
-pub const FSP_FSCTL_VOLUME_FSNAME_SIZE: usize = 16;
+/// WinFSP disk control-device name accepted by
+/// `FspFileSystemCreate`.
+pub const FSP_FSCTL_DISK_DEVICE_NAME: &str = "WinFsp.Disk";
+/// Byte capacity of the UTF-16 volume prefix in
+/// `FSP_FSCTL_VOLUME_PARAMS`. WinFSP declares this as
+/// `192 * sizeof(WCHAR)`.
+pub const FSP_FSCTL_VOLUME_PREFIX_SIZE: usize = 192 * size_of::<u16>();
+/// Byte capacity of the UTF-16 file-system name in
+/// `FSP_FSCTL_VOLUME_PARAMS`. WinFSP declares this as
+/// `16 * sizeof(WCHAR)`.
+pub const FSP_FSCTL_VOLUME_FSNAME_SIZE: usize = 16 * size_of::<u16>();
 
 /// Subset of `FSP_FSCTL_VOLUME_PARAMS` (WinFSP `fsctl.h`).
 ///
-/// We only declare fields the adapter actually reads/writes. All other
-/// fields are packed into [`Self::reserved_tail`] as bytes; WinFSP will
-/// zero them through [`FspFileSystemCreate`]'s volume-params pointer.
-///
-/// NOTE: The true struct layout is WinFSP-internal and version-sensitive.
-/// A final Windows-side build must validate `size_of::<VolumeParams>() ==
-/// sizeof(FSP_FSCTL_VOLUME_PARAMS)` and each field offset against the
-/// installed WinFSP headers before we claim runtime parity.
+/// We declare the complete V0 prefix used by the adapter and retain the V1
+/// extension as an opaque 48-byte tail. Native Windows tests assert the
+/// upstream 504-byte size and the prefix/name/tail offsets from WinFSP
+/// `fsctl.h`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct VolumeParams {
@@ -128,10 +128,10 @@ pub struct VolumeParams {
     pub prefix: [u16; FSP_FSCTL_VOLUME_PREFIX_SIZE / 2],
     /// UTF-16 filesystem name (e.g. `"pCloud"`), NUL-padded.
     pub file_system_name: [u16; FSP_FSCTL_VOLUME_FSNAME_SIZE / 2],
-    /// Opaque tail to pad out to the real WinFSP struct size. The Windows
-    /// build must tune this constant against the installed headers; until
-    /// then, treat the struct as "the interesting prefix".
-    pub reserved_tail: [u8; 256],
+    /// Opaque WinFSP V1 extension fields. Their combined size is 48 bytes;
+    /// keeping them opaque preserves the upstream 504-byte ABI while this
+    /// adapter uses only the V0 fields above.
+    pub reserved_tail: [u8; 48],
 }
 
 /// `FSP_FSCTL_VOLUME_INFO`.
@@ -492,7 +492,9 @@ pub struct FSP_FILE_SYSTEM_INTERFACE {
 //   (3) are never replaced after `load_winfsp` returns.
 // There is no interior mutability. Concurrent reads across dispatcher
 // threads are therefore safe.
+// SAFETY: see block above.
 unsafe impl Sync for FSP_FILE_SYSTEM_INTERFACE {}
+// SAFETY: see block above.
 unsafe impl Send for FSP_FILE_SYSTEM_INTERFACE {}
 
 // ---------------------------------------------------------------------------
@@ -543,9 +545,9 @@ pub type FnFspFileSystemAddDirInfo = unsafe extern "system" fn(
     bytes_transferred: *mut u32,
 ) -> BOOLEAN;
 
-/// `FspFileSystemAddDirInfo` with `DirInfo == NULL` terminates the stream
-/// (writes the NULL-record sentinel). Same symbol — we call it through the
-/// same function pointer.
+// `FspFileSystemAddDirInfo` with `DirInfo == NULL` terminates the stream
+// (writes the NULL-record sentinel). Same symbol — we call it through the
+// same function pointer.
 
 // ---------------------------------------------------------------------------
 //  Dynamic loader
@@ -612,10 +614,84 @@ pub struct WinFspLibrary {
 //
 //   Therefore sharing the struct across dispatcher threads cannot
 //   introduce a data race at the Rust-memory-model level.
+// SAFETY: see SAFETY rationale at the start of this comment block (line 584).
 unsafe impl Sync for WinFspLibrary {}
+// SAFETY: see SAFETY rationale at the start of this comment block (line 584).
 unsafe impl Send for WinFspLibrary {}
 
-/// Attempt to `LoadLibraryW("winfsp-x64.dll")` and resolve the lifecycle
+const WINFSP_DLL_NAME: &str = "winfsp-x64.dll";
+
+fn winfsp_candidate_paths() -> Vec<std::path::PathBuf> {
+    let mut candidates = Vec::new();
+    for var in ["ProgramFiles(x86)", "ProgramFiles"] {
+        if let Some(root) = std::env::var_os(var) {
+            let candidate = std::path::PathBuf::from(root)
+                .join("WinFsp")
+                .join("bin")
+                .join(WINFSP_DLL_NAME);
+            if !candidates.iter().any(|existing| existing == &candidate) {
+                candidates.push(candidate);
+            }
+        }
+    }
+    candidates
+}
+
+fn canonical_winfsp_dll_path(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    let canonical = std::fs::canonicalize(path).ok()?;
+    let file_name = canonical.file_name()?.to_string_lossy();
+    if !file_name.eq_ignore_ascii_case(WINFSP_DLL_NAME) {
+        return None;
+    }
+    if !std::fs::metadata(&canonical)
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    Some(canonical)
+}
+
+fn load_winfsp_module() -> Result<Option<HMODULE>, String> {
+    use std::os::windows::ffi::OsStrExt as _;
+
+    use windows::Win32::System::LibraryLoader::{
+        LOAD_LIBRARY_FLAGS, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_SYSTEM32,
+        LoadLibraryExW,
+    };
+
+    let flags =
+        LOAD_LIBRARY_FLAGS(LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR.0 | LOAD_LIBRARY_SEARCH_SYSTEM32.0);
+    let mut load_errors = Vec::new();
+
+    for candidate in winfsp_candidate_paths() {
+        let Some(path) = canonical_winfsp_dll_path(&candidate) else {
+            continue;
+        };
+        let name: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+
+        // SAFETY: `name` is a canonical absolute path encoded as a
+        // NUL-terminated UTF-16 string. `LoadLibraryExW` receives a NULL
+        // reserved file handle and flags that restrict dependency lookup to the
+        // DLL's own directory plus System32.
+        match unsafe { LoadLibraryExW(PCWSTR(name.as_ptr()), HANDLE::default(), flags) } {
+            Ok(module) if !module.is_invalid() => return Ok(Some(module)),
+            Ok(_) => load_errors.push(format!("{}: invalid module handle", path.display())),
+            Err(err) => load_errors.push(format!("{}: {err}", path.display())),
+        }
+    }
+
+    if load_errors.is_empty() {
+        Ok(None)
+    } else {
+        Err(format!(
+            "failed to load canonical WinFSP DLL candidate(s): {}",
+            load_errors.join("; ")
+        ))
+    }
+}
+
+/// Attempt to load WinFSP from a canonical Program Files path and resolve the lifecycle
 /// entry points.
 ///
 /// Returns `Ok(None)` when the DLL is simply missing (caller maps to
@@ -624,31 +700,21 @@ unsafe impl Send for WinFspLibrary {}
 ///
 /// # Platform
 ///
-/// Relies on the Win32 loader search order. The WinFSP MSI installer adds
-/// `%ProgramFiles(x86)%\WinFsp\bin` to the machine `PATH`; operators on
-/// restricted hosts may instead co-locate `winfsp-x64.dll` with the
-/// daemon executable.
+/// Uses `LoadLibraryExW` with `LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR |
+/// LOAD_LIBRARY_SEARCH_SYSTEM32` against canonical Program Files candidates.
+/// Relative DLL names, current-directory lookup, and `PATH` lookup are
+/// intentionally not used.
 pub fn load_winfsp() -> Result<Option<WinFspLibrary>, String> {
-    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
+    use windows::Win32::System::LibraryLoader::GetProcAddress;
 
-    // UTF-16 name including trailing NUL.
-    let name: Vec<u16> = "winfsp-x64.dll\0".encode_utf16().collect();
-
-    // SAFETY: `LoadLibraryW` expects a NUL-terminated UTF-16 string.
-    // `name` is owned locally, NUL-terminated, and alive for the call.
-    let module = unsafe { LoadLibraryW(PCWSTR(name.as_ptr())) };
-    let module = match module {
-        Ok(h) if !h.is_invalid() => h,
-        // Any error (missing DLL, ACCESS_DENIED) is treated as "not
-        // installed" for probe purposes. The caller surfaces the install
-        // hint.
-        _ => return Ok(None),
+    let Some(module) = load_winfsp_module()? else {
+        return Ok(None);
     };
 
     // Helper: resolve a symbol or fail loudly (version mismatch).
     //
     // SAFETY: `GetProcAddress` with a module handle returned by
-    // `LoadLibraryW` is defined behavior; the returned pointer lifetime is
+    // `LoadLibraryExW` is defined behavior; the returned pointer lifetime is
     // tied to the module, which we keep resident for process lifetime.
     unsafe fn resolve<T: Copy>(module: HMODULE, name: &[u8]) -> Result<T, String> {
         // We rely on `name` being ASCII + NUL-terminated.
@@ -674,6 +740,9 @@ pub fn load_winfsp() -> Result<Option<WinFspLibrary>, String> {
     //
     // # Safety
     // Same contract as `resolve`; only callable during `load_winfsp`.
+    // SAFETY: same as `resolve` (see line 662) — caller must guarantee
+    // the resolved fn-pointer signature matches `T`. Only invoked under
+    // `load_winfsp`.
     unsafe fn resolve_optional<T: Copy>(module: HMODULE, name: &[u8]) -> Option<T> {
         // SAFETY: same as `resolve` — narrow the 2024-edition unsafe
         // block around the specific GetProcAddress call.
@@ -786,6 +855,19 @@ mod tests {
     }
 
     #[test]
+    fn volume_params_layout_matches_winfsp_abi() {
+        // Matches the WinFSP static assertions in `fsctl.h`:
+        //     sizeof(FSP_FSCTL_VOLUME_PARAMS_V0) == 456
+        //     sizeof(FSP_FSCTL_VOLUME_PARAMS) == 504
+        assert_eq!(core::mem::size_of::<VolumeParams>(), 504);
+        assert_eq!(core::mem::offset_of!(VolumeParams, prefix), 40);
+        assert_eq!(core::mem::offset_of!(VolumeParams, file_system_name), 424);
+        assert_eq!(core::mem::offset_of!(VolumeParams, reserved_tail), 456);
+        assert_eq!(FSP_FSCTL_VOLUME_PREFIX_SIZE / size_of::<u16>(), 192);
+        assert_eq!(FSP_FSCTL_VOLUME_FSNAME_SIZE / size_of::<u16>(), 16);
+    }
+
+    #[test]
     fn userctx_roundtrip_on_zeroed_struct() {
         // Fabricate a zeroed `FSP_FILE_SYSTEM`-shaped buffer, set the
         // user-context slot via the inline accessor, then read it back.
@@ -794,16 +876,24 @@ mod tests {
         let mut buf: FspFileSystemLayout = unsafe { core::mem::zeroed() };
         let fs: PFspFileSystem = (&mut buf as *mut FspFileSystemLayout).cast::<c_void>();
 
+        // SAFETY (test-only): `fs` points at a stack-resident
+        // `FspFileSystemLayout` we own for the test scope; the
+        // get/set_user_context helpers only touch the
+        // `UserContext` field offset, never dereference any pointer
+        // beyond the layout. The "dummy" payload is a literal bit
+        // pattern that we never deref.
         // Null before any write.
         assert!(unsafe { get_user_context(fs) }.is_null());
 
         // A non-null dummy pointer — we only inspect the bit pattern, we
         // never dereference it.
         let dummy: *mut c_void = 0xDEAD_BEEF_CAFE_F00D_usize as *mut c_void;
+        // SAFETY: see test-scope SAFETY block earlier in this fn (test-only).
         unsafe { set_user_context(fs, dummy) };
         assert_eq!(unsafe { get_user_context(fs) }, dummy);
 
         // Clearing works too.
+        // SAFETY: see test-scope SAFETY block earlier in this fn (test-only).
         unsafe { set_user_context(fs, core::ptr::null_mut()) };
         assert!(unsafe { get_user_context(fs) }.is_null());
     }

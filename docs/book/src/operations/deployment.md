@@ -82,11 +82,12 @@ terminates authentication and forwards to `127.0.0.1:<port>`.
 Every artefact leaving the staging repo MUST pass:
 
 1. **Source pin** — build from a signed Git tag; record commit SHA.
-2. **Reproducible build** — clean container; record SLSA-style
-   provenance (builder identity, source URI, source SHA, build
-   command).
-3. **sha256 manifest** — publish `SHA256SUMS.txt`; sign with the
-   release key (cosign or minisign); verify on-host before execution.
+2. **Reproducible build** — clean container; record builder identity,
+   source URI, source SHA, and build command. Current public workflows do
+   not emit SLSA provenance.
+3. **sha256 manifest** — publish checksum files and sign the artefacts the
+   workflow actually signs. Current raw binary releases use cosign blob
+   signatures; package `SHA256SUMS` is not signed yet.
 4. **Dependency audit** — `cargo audit` and `cargo deny check`; fail
    on any unresolved RUSTSEC advisory.
 5. **License audit** — `cargo deny check licenses` against the

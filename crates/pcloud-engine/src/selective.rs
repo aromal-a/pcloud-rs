@@ -64,6 +64,12 @@ pub struct SelectivePolicy {
     excludes: GlobSet,
     has_includes: bool,
     has_excludes: bool,
+    /// Raw include pattern strings, retained so a policy can be
+    /// re-composed (e.g. layering on additional config-driven excludes
+    /// from `SyncRootRecord.exclude_globs`).
+    include_patterns: Vec<String>,
+    /// Raw exclude pattern strings, retained for the same reason.
+    exclude_patterns: Vec<String>,
 }
 
 /// Errors produced while loading or parsing a `.pcloudsync` file.
@@ -137,7 +143,112 @@ impl SelectivePolicy {
             excludes: GlobSet::empty(),
             has_includes: false,
             has_excludes: false,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
         }
+    }
+
+    /// Build a policy whose only effect is to exclude paths matching any
+    /// pattern in `patterns`. T1.1: lets `SyncRootRecord.exclude_globs`
+    /// drive a config-source policy independently of the on-disk
+    /// `.pcloudsync` file.
+    ///
+    /// Empty / whitespace-only patterns are silently skipped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SelectiveError::ParseError`] if any pattern fails to
+    /// compile as a glob; the offending pattern is reported with a
+    /// 1-based index.
+    pub fn from_exclude_patterns(patterns: &[String]) -> Result<Self, SelectiveError> {
+        let mut excludes = GlobSetBuilder::new();
+        let mut exclude_patterns = Vec::new();
+        for (idx, pat) in patterns.iter().enumerate() {
+            let trimmed = pat.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let glob = Glob::new(trimmed).map_err(|err| SelectiveError::ParseError {
+                line: idx + 1,
+                pattern: trimmed.to_owned(),
+                message: err.to_string(),
+            })?;
+            excludes.add(glob);
+            exclude_patterns.push(trimmed.to_owned());
+        }
+        let has_excludes = !exclude_patterns.is_empty();
+        let excludes = excludes.build().map_err(|err| SelectiveError::ParseError {
+            line: 0,
+            pattern: String::new(),
+            message: err.to_string(),
+        })?;
+        Ok(Self {
+            includes: GlobSet::empty(),
+            excludes,
+            has_includes: false,
+            has_excludes,
+            include_patterns: Vec::new(),
+            exclude_patterns,
+        })
+    }
+
+    /// Compose `self` with additional exclude patterns. Includes from
+    /// `self` are preserved; excludes are unioned. Used by the engine to
+    /// layer `SyncRootRecord.exclude_globs` on top of the on-disk
+    /// `.pcloudsync` policy without touching the file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SelectiveError::ParseError`] if any added pattern fails
+    /// to compile.
+    pub fn with_additional_excludes(&self, patterns: &[String]) -> Result<Self, SelectiveError> {
+        let mut combined_excludes: Vec<String> = self.exclude_patterns.clone();
+        for pat in patterns {
+            let trimmed = pat.trim();
+            if !trimmed.is_empty() {
+                combined_excludes.push(trimmed.to_owned());
+            }
+        }
+        let mut include_builder = GlobSetBuilder::new();
+        for pat in &self.include_patterns {
+            let glob = Glob::new(pat).map_err(|err| SelectiveError::ParseError {
+                line: 0,
+                pattern: pat.clone(),
+                message: err.to_string(),
+            })?;
+            include_builder.add(glob);
+        }
+        let mut exclude_builder = GlobSetBuilder::new();
+        for pat in &combined_excludes {
+            let glob = Glob::new(pat).map_err(|err| SelectiveError::ParseError {
+                line: 0,
+                pattern: pat.clone(),
+                message: err.to_string(),
+            })?;
+            exclude_builder.add(glob);
+        }
+        let includes = include_builder
+            .build()
+            .map_err(|err| SelectiveError::ParseError {
+                line: 0,
+                pattern: String::new(),
+                message: err.to_string(),
+            })?;
+        let excludes = exclude_builder
+            .build()
+            .map_err(|err| SelectiveError::ParseError {
+                line: 0,
+                pattern: String::new(),
+                message: err.to_string(),
+            })?;
+        Ok(Self {
+            includes,
+            excludes,
+            has_includes: !self.include_patterns.is_empty(),
+            has_excludes: !combined_excludes.is_empty(),
+            include_patterns: self.include_patterns.clone(),
+            exclude_patterns: combined_excludes,
+        })
     }
 
     /// Parse a `.pcloudsync` policy from an in-memory string. Primarily
@@ -162,6 +273,8 @@ impl SelectivePolicy {
         let mut excludes = GlobSetBuilder::new();
         let mut has_includes = false;
         let mut has_excludes = false;
+        let mut include_patterns: Vec<String> = Vec::new();
+        let mut exclude_patterns: Vec<String> = Vec::new();
 
         for (idx, raw_line) in contents.lines().enumerate() {
             let line = raw_line.trim();
@@ -184,9 +297,11 @@ impl SelectivePolicy {
             if is_exclude {
                 excludes.add(glob);
                 has_excludes = true;
+                exclude_patterns.push(pattern_text.to_owned());
             } else {
                 includes.add(glob);
                 has_includes = true;
+                include_patterns.push(pattern_text.to_owned());
             }
         }
 
@@ -206,6 +321,8 @@ impl SelectivePolicy {
             excludes,
             has_includes,
             has_excludes,
+            include_patterns,
+            exclude_patterns,
         })
     }
 
@@ -330,6 +447,74 @@ mod tests {
             }
             other => panic!("expected ParseError, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn from_exclude_patterns_excludes_only() {
+        let policy =
+            SelectivePolicy::from_exclude_patterns(&["*.tmp".to_owned(), "build/**".to_owned()])
+                .expect("parses");
+        assert!(!policy.has_includes());
+        assert!(policy.has_excludes());
+        assert!(!policy.matches("foo.tmp"));
+        assert!(!policy.matches("build/release/x"));
+        // No includes => default permissive for non-excluded paths.
+        assert!(policy.matches("src/main.rs"));
+    }
+
+    #[test]
+    fn from_exclude_patterns_skips_blank_entries() {
+        let policy = SelectivePolicy::from_exclude_patterns(&[
+            String::new(),
+            "  ".to_owned(),
+            "*.bak".to_owned(),
+        ])
+        .expect("parses");
+        assert!(policy.has_excludes());
+        assert!(!policy.matches("a.bak"));
+    }
+
+    #[test]
+    fn from_exclude_patterns_invalid_returns_err() {
+        let err = SelectivePolicy::from_exclude_patterns(&["[unclosed".to_owned()])
+            .expect_err("must fail");
+        match err {
+            SelectiveError::ParseError { line, pattern, .. } => {
+                assert_eq!(line, 1);
+                assert_eq!(pattern, "[unclosed");
+            }
+            other => panic!("expected ParseError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn with_additional_excludes_layers_on_top() {
+        // Base policy from a `.pcloudsync` file with includes + one exclude.
+        let base = SelectivePolicy::parse("docs/**\n!docs/secret.md\n").expect("parses");
+        // Layer in config-driven excludes from `SyncRootRecord.exclude_globs`.
+        let composed = base
+            .with_additional_excludes(&["**/*.tmp".to_owned()])
+            .expect("composes");
+
+        // Original include + exclude still in effect.
+        assert!(composed.matches("docs/readme.md"));
+        assert!(!composed.matches("docs/secret.md"));
+        // New exclude blocks `.tmp` even within the includes.
+        assert!(!composed.matches("docs/scratch.tmp"));
+        // Outside includes is still excluded by the baseline policy.
+        assert!(!composed.matches("other/file.txt"));
+    }
+
+    #[test]
+    fn with_additional_excludes_preserves_allow_all_when_no_includes() {
+        let base = SelectivePolicy::allow_all();
+        let composed = base
+            .with_additional_excludes(&["target/**".to_owned()])
+            .expect("composes");
+        assert!(!composed.has_includes());
+        assert!(composed.has_excludes());
+        assert!(composed.matches("src/main.rs"));
+        assert!(!composed.matches("target/release/x"));
     }
 
     #[test]

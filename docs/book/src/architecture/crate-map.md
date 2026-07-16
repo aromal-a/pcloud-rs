@@ -33,24 +33,25 @@ the thin `IpcClient` helper. Both `pcloud-cli` and `pcloud-web` depend on
 it; the daemon depends on it for decoding. It is a pure library with no
 side effects.
 
-**`pcloud-daemon`** — the Unix daemon crate. It contains `bootstrap.rs`
+**`pcloud-daemon`** — the cross-platform daemon crate. It contains `bootstrap.rs`
 (process setup, directory creation, vault unlock, store open), `runtime.rs`
 (the dispatch engine, request handler, and panic-safe wrappers), the
 per-subsystem backends (`auth_backend`, `sync_backend`, `transfer_backend`,
 `public_link_backend`, `shares_backend`, `backup_backend`, `account_backend`),
-and the platform-specific Unix IPC acceptor. It is the trust-boundary crate:
-every authoritative decision is made inside it.
+and the shared serve loop over `pcloud-ipc`'s native Unix-socket or Windows
+named-pipe transport. It is the trust-boundary crate: every authoritative
+decision is made inside it.
 
-**`pcloud-daemon-win`** — the Windows daemon crate. It mirrors
-`pcloud-daemon`'s dispatch surface but replaces the Unix-socket acceptor
-with a named-pipe acceptor, SID-DACL construction, and `GetNamedPipeClientProcessId`-based
-peer verification. It reuses the platform-neutral backends and runtime
-directly; only the IPC, service-control, and vault glue differ.
+**`pcloud-daemon-win`** — an experimental, unshipped Windows SCM host. It
+wraps `pcloud-daemon::serve_with_shutdown` with SCM lifecycle reporting. It
+does not own a second dispatch or IPC implementation; native named-pipe and
+SID authentication live in `pcloud-ipc`. The supported Windows package starts
+the normal `pcloudd.exe` process per-user.
 
-**`pcloud-backends`** — a shared library crate holding backend implementations
-that both `pcloud-daemon` and `pcloud-daemon-win` consume. This is where the
-per-subsystem business logic lives in its platform-neutral form, so the two
-daemon binaries stay thin.
+**`pcloud-backends`** — a shared library crate holding platform-neutral
+backend implementations consumed by the daemon runtime and focused adapters.
+This is where the canonical `RemoteFs` namespace and per-subsystem business
+logic live.
 
 ## Protocol
 
@@ -97,9 +98,11 @@ that `bd-1du.4` is actively hardening into full mounted-drive parity. The
 page cache in this crate is the O(1) LRU + `Arc<Vec<u8>>` hot-path
 documented in [Performance](./performance.md).
 
-**`pcloud-bench`** — Criterion micro-benchmarks for the performance-critical
-paths (`chunked_flush`, `upload_session`, `page_cache_evict`). Landed under
-plan item `C4`; results are regression-gated by the release checklist.
+**Crate-local benches** — Criterion micro-benchmarks live under each owning
+crate's `benches/` directory, for example `pcloud-fs` (`chunked_flush`,
+`page_cache`) and `pcloud-embedded-sdk` (`upload_session`). There is no aggregate
+`pcloud-bench` workspace member today; the release checklist uses the
+crate-local commands directly.
 
 ## Crypto and security
 
@@ -146,12 +149,20 @@ read amplification).
 
 ## SDK
 
-**`pcloud-sdk`** — the embeddable Rust SDK. Third parties who want to
-drive pCloud without running the daemon can link this crate directly. It
-re-exports the safe subset of `pcloud-proto`, adds high-level helpers
-(`upload_data`, `upload_file`, `upload_file_as`, etc.), and exposes
-crypto, public-link, share, and account operations with the same
-`SecretString` discipline the daemon uses internally.
+**`pcloud-sdk`** — the focused third-party SDK, located at
+`crates/pcloud-sdk-public`. Version 1.0 is a blocking client for the
+owner-authenticated local daemon. Its contract contains only SDK-owned,
+non-exhaustive types and the `Client::remote()` / `RemoteDrive` filesystem
+surface: stat, list, bounded range read, resumable upload/download, copy,
+move, delete, mkdir, and folder share. It does not expose raw IPC request or
+backend types. The source package is prepared for staged publication after
+`pcloud-model` and `pcloud-ipc`, but no registry release exists yet.
+
+**`pcloud-embedded-sdk`** — the broad in-process compatibility API, located at
+`crates/pcloud-sdk`. It embeds the daemon runtime and retains historical auth,
+crypto, public-link, share, account, raw dispatch, and upload-session helpers
+for first-party integrations. It is version 0.1, evolving, and deliberately
+`publish = false`; it is not the stable third-party contract.
 
 ## Config
 
@@ -223,20 +234,22 @@ Each crate is assigned a stability tier. The tier is a promise about how
 carefully we treat API changes, not a quality claim — pre-alpha crates can
 still be well-tested.
 
-- **Tier S (stable core)** — `pcloud-secret`, `pcloud-error`, `pcloud-model`,
-  `pcloud-ipc`. API changes require an ADR. These crates are what plugins
-  and SDK consumers see.
-- **Tier I (internal stable)** — `pcloud-proto`, `pcloud-store`,
+- **Tier S (stable contract)** — `pcloud-sdk` 1.x and its SDK-owned public
+  types. Breaking API changes require a major version. `pcloud-model` and
+  `pcloud-ipc` are release-chain dependencies, but their types are not
+  re-exported by the SDK contract.
+- **Tier I (internal stable)** — `pcloud-secret`, `pcloud-error`,
+  `pcloud-model`, `pcloud-ipc`, `pcloud-proto`, `pcloud-store`,
   `pcloud-crypto`, `pcloud-auth`, `pcloud-backends`, `pcloud-observability`,
   `pcloud-resilience`, `pcloud-engine`. API is stable inside the workspace;
   external consumers should use `pcloud-sdk` instead.
 - **Tier E (evolving)** — `pcloud-daemon`, `pcloud-daemon-win`,
-  `pcloud-cli`, `pcloud-web`, `pcloud-sdk`, `pcloud-config`, `pcloud-cache`,
-  `pcloud-fs`, `pcloud-session`. Changes are scrutinised but do not
+  `pcloud-cli`, `pcloud-web`, `pcloud-config`, `pcloud-cache`,
+  `pcloud-fs`, `pcloud-session`, `pcloud-embedded-sdk`. Changes are scrutinised but do not
   block on an ADR.
 - **Tier X (experimental / bounded)** — `pcloud-p2p`, `pcloud-kms`,
   `pcloud-idp`, `pcloud-plugin-*`, `pcloud-fleet`, `pcloud-chaos`,
-  `pcloud-mockserver`, `pcloud-compat`, `pcloud-bench`, `pcloud-live-e2e`,
+  `pcloud-mockserver`, `pcloud-compat`, `pcloud-live-e2e`,
   `pcloud-policy`. Feature-gated or test-harness crates. May change shape
   without notice.
 
@@ -245,13 +258,14 @@ still be well-tested.
 Text-only diagram; read edges as "depends on".
 
 ```
-pcloud-cli ------> pcloud-ipc ------> pcloud-model
-    |                                    ^
-    v                                    |
-pcloud-sdk --+-> pcloud-proto -----------+
-             +-> pcloud-backends --+
-                                   |
-pcloud-daemon / pcloud-daemon-win -+
+pcloud-cli ----------> pcloud-ipc ------> pcloud-model
+pcloud-sdk ----------> pcloud-ipc
+
+pcloud-embedded-sdk --+-> pcloud-daemon
+                      +-> pcloud-proto
+                      +-> pcloud-backends
+
+pcloud-daemon / pcloud-daemon-win ---> pcloud-backends
     |                              |
     |                              +-> pcloud-store ---> pcloud-model
     |                              +-> pcloud-cache ---> pcloud-store
@@ -273,17 +287,17 @@ pcloud-web --> pcloud-ipc (same client path as pcloud-cli)
 test-only:
   pcloud-mockserver --> pcloud-proto
   pcloud-chaos ------> pcloud-proto, pcloud-store
-  pcloud-live-e2e ---> pcloud-sdk
-  pcloud-bench ------> pcloud-fs, pcloud-daemon
+  pcloud-live-e2e ---> pcloud-embedded-sdk
   pcloud-compat -----> pcloud-store
-  pcloud-fleet ------> pcloud-sdk (fleet orchestration harness)
 ```
 
 Rules:
 
 - Nothing depends on `pcloud-cli` except the binary itself and its tests.
-- `pcloud-sdk` is a *peer* of `pcloud-daemon`, not upstream or downstream of
-  it. Both consume `pcloud-backends`.
+- `pcloud-sdk` is downstream of `pcloud-ipc`; the daemon is the only owner of
+  remote state and secrets on the stable SDK path.
+- `pcloud-embedded-sdk` is allowed to link the daemon and internal backends,
+  but no external package should depend on that compatibility surface.
 - `pcloud-observability` is allowed to be depended on from anywhere except
   `pcloud-secret` and `pcloud-error` (they would create a cycle through
   `tracing`).
@@ -301,6 +315,9 @@ the canonical reference.
   no `eyre`. `Error::kind()` is exhaustive on a closed `ErrorKind` enum.
 - `pcloud-ipc::{Request, Response, IpcClient, protocol}` — frames, bounded
   body, peer-cred helpers.
+- `pcloud-sdk::{Client, RemoteDrive, RemoteEntry, RemoteListing, RemoteRead,
+  RemoteUploadResult, RemoteDownloadResult, ShareOptions, Error}` — the
+  focused SemVer 1.x third-party contract.
 - `pcloud-model::*` — pure types, no behaviour.
 - `pcloud-plugin-api::{Plugin, PluginContext, PluginResult}` — versioned
   plugin trait, discovery path (`~/.config/pcloud/plugins.d` on Linux).
@@ -318,10 +335,12 @@ the canonical reference.
 - **Why not a single monolithic crate?** It would compile faster on a
   single change to one module but slower on a clean build; more importantly,
   trust boundaries would be policed by review alone, not by `Cargo.toml`.
-- **Why separate `pcloud-daemon-win` instead of `#[cfg(windows)]` in
-  `pcloud-daemon`?** Because the Windows path has additional dependencies
-  (`windows-sys`, SCM glue) that we do not want to pull into the Unix
-  build's dep graph. A separate crate keeps both binaries lean.
+- **Why is `pcloud-daemon-win` separate from the supported Windows path?**
+  It is an experimental SCM host kept out of the public installer because
+  the supported named-pipe, DPAPI, and WinFSP runtime must share the
+  interactive user's SID. The released Windows path is `pcloudd.exe`
+  started per-user by `pcloudc start`; the separate crate lets SCM
+  experiments avoid changing that security boundary.
 - **Why keep `pcloud-mockserver` in-tree?** Because live e2e runs depend on
   shaped server responses; shipping our own TLS-speaking mock gives us
   deterministic protocol tests without pinning against a real staging env.

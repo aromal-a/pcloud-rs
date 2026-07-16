@@ -31,9 +31,10 @@
 //! Portable; TLS is mandatory in production profiles.
 
 use std::{
+    fmt,
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
-    net::{TcpStream, ToSocketAddrs},
+    net::{IpAddr, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, Instant},
@@ -49,7 +50,7 @@ use thiserror::Error;
 use crate::tls::shared_config;
 
 /// `SignedDownload` — signed download.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct SignedDownload {
     /// Optional byte range (half-open, `[start, end)`). When set, the GET
     /// is issued with a `Range: bytes=start-end_inclusive` header. The
@@ -64,6 +65,32 @@ pub struct SignedDownload {
     pub path: String,
     /// The `dwltag` field (dwltag).
     pub dwltag: Option<String>,
+}
+
+impl fmt::Debug for SignedDownload {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SignedDownload")
+            .field("range", &self.range)
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("path", &RedactedDownloadField(self.path.len()))
+            .field(
+                "dwltag",
+                &self
+                    .dwltag
+                    .as_ref()
+                    .map(|tag| RedactedDownloadField(tag.len())),
+            )
+            .finish()
+    }
+}
+
+struct RedactedDownloadField(usize);
+
+impl fmt::Debug for RedactedDownloadField {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<redacted {} bytes>", self.0)
+    }
 }
 
 /// `HttpDownloadConfig` — http download config.
@@ -206,6 +233,12 @@ pub enum HttpDownloadError {
     /// `Malformed` variant (malformed).
     #[error("http response was malformed: {0}")]
     Malformed(&'static str),
+    /// Plaintext HTTP is restricted to loopback test fixtures.
+    #[error("plaintext HTTP downloads are only permitted for loopback hosts, got '{host}'")]
+    PlaintextForbidden {
+        /// Hostname component of the rejected plaintext download.
+        host: String,
+    },
     /// `ChunkedUnsupported` variant (chunked unsupported).
     #[error("chunked transfer encoding is not supported yet")]
     ChunkedUnsupported,
@@ -288,9 +321,7 @@ pub fn fetch_download_verified_streaming<W: Write>(
     expected_sha256: Option<[u8; 32]>,
     sink: &mut W,
 ) -> Result<u64, HttpDownloadError> {
-    let port = download
-        .port
-        .unwrap_or(if config.use_tls { 443 } else { 80 });
+    let port = download_port(download, config)?;
     let stream = connect_socket(&download.host, port, config)?;
     let mut hasher = expected_sha256.map(|_| Sha256::new());
     let deadline = request_deadline(config);
@@ -748,9 +779,7 @@ fn range_stream(
     part_path: &Path,
     hasher: &mut Sha256,
 ) -> Result<(u16, bool, u64), HttpDownloadError> {
-    let port = download
-        .port
-        .unwrap_or(if config.use_tls { 443 } else { 80 });
+    let port = download_port(download, config)?;
     let stream = connect_socket(&download.host, port, config)?;
     let deadline = request_deadline(config);
 
@@ -787,6 +816,29 @@ fn range_stream(
             &mut plain, &request, config, part_path, offset, hasher, deadline,
         )
     }
+}
+
+fn download_port(
+    download: &SignedDownload,
+    config: &HttpDownloadConfig,
+) -> Result<u16, HttpDownloadError> {
+    if !config.use_tls && !is_loopback_host(&download.host) {
+        return Err(HttpDownloadError::PlaintextForbidden {
+            host: download.host.clone(),
+        });
+    }
+    Ok(download
+        .port
+        .unwrap_or(if config.use_tls { 443 } else { 80 }))
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    let trimmed = host.trim_matches(['[', ']']);
+    trimmed.eq_ignore_ascii_case("localhost")
+        || trimmed
+            .parse::<IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
 }
 
 fn range_do<S>(
@@ -1220,6 +1272,51 @@ mod tests {
 
         assert_eq!(bytes, b"hello");
         server.join().expect("server thread should finish");
+    }
+
+    #[test]
+    fn signed_download_debug_redacts_bearer_material() {
+        let signed = SignedDownload {
+            host: "files.example.com".to_owned(),
+            port: Some(443),
+            path: "/get/signed-secret-path/report.txt".to_owned(),
+            dwltag: Some("download-tag-secret".to_owned()),
+            range: Some((0, 4)),
+        };
+
+        let rendered = format!("{signed:?}");
+        assert!(!rendered.contains("signed-secret-path"));
+        assert!(!rendered.contains("download-tag-secret"));
+        assert!(rendered.contains("redacted"));
+    }
+
+    #[test]
+    fn plaintext_download_rejects_non_loopback_host() {
+        let err = fetch_download(
+            &SignedDownload {
+                host: "files.example.com".to_owned(),
+                port: Some(80),
+                path: "/get/abc/report.txt".to_owned(),
+                dwltag: Some("download-tag".to_owned()),
+                range: None,
+            },
+            &HttpDownloadConfig {
+                use_tls: false,
+                connect_timeout: Duration::from_secs(2),
+                read_timeout: Duration::from_secs(2),
+                write_timeout: Duration::from_secs(2),
+                max_header_bytes: 4096,
+                total_request_timeout: Duration::from_secs(30),
+                max_body_bytes: 1024,
+                bandwidth_pacer: None,
+            },
+        )
+        .expect_err("plaintext non-loopback download should be rejected");
+
+        assert!(matches!(
+            err,
+            HttpDownloadError::PlaintextForbidden { ref host } if host == "files.example.com"
+        ));
     }
 
     #[test]

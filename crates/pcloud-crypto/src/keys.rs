@@ -108,7 +108,7 @@ pub struct KeyManager {
     #[serde(skip)]
     pub active_key_material: Option<SecretBytes>,
     /// Monotonic timestamp of the last successful authenticated crypto
-    /// operation. Used by [`Self::check_ttl`] to decide whether the in-memory
+    /// operation. Used by `Self::check_ttl` to decide whether the in-memory
     /// key has exceeded [`Self::cache_ttl_secs`].
     ///
     /// `None` until the first authenticated operation after `start()`. Not
@@ -290,5 +290,155 @@ impl KeyManager {
         };
         let computed = Self::fingerprint_for(key);
         computed.0.ct_eq(&stored.0).into()
+    }
+}
+
+/// Length (bytes) of a per-folder KEK derived by [`derive_folder_kek`].
+pub const FOLDER_KEK_LEN: usize = 32;
+
+/// T2.4.c — derive a per-folder Key-Encryption Key (KEK) from the
+/// account-wide master key for one specific encrypted folder.
+///
+/// # Primitive
+///
+/// Single-block HKDF-SHA256-Expand: `HMAC-SHA256(master, info || 0x01)`,
+/// where `info = b"pcloud-crypto::folder-kek::v1::{folder_id}"`. Because
+/// the input keying material (the Argon2id-derived master key) is
+/// already 32 bytes of high-entropy uniform key material, the HKDF
+/// "Extract" step is unnecessary (RFC 5869 §3.3) — Expand alone is
+/// sufficient and produces output that is computationally
+/// indistinguishable from random under the HMAC PRF assumption. The
+/// output is one SHA-256 block (32 bytes), so the single-block Expand
+/// form (`HMAC(master, info || 0x01)`) is exact.
+///
+/// The `info` string is domain-separated by literal label
+/// (`pcloud-crypto::folder-kek::v1`) and version tag (`v1`) so that:
+///
+/// - the derived KEK can never collide with the setup fingerprint
+///   (label `pcloud-crypto/fingerprint/v1`), per-file content keys,
+///   or filename tags;
+/// - a future v2 KEK schedule can ship without invalidating v1
+///   ciphertext (the older folders keep deriving v1 KEKs).
+///
+/// `folder_id` is encoded in decimal-string form rather than little-
+/// endian bytes so the info string is human-readable in audit logs
+/// and is unambiguous across endian boundaries.
+///
+/// # Security properties
+///
+/// - **Domain separation:** different folders get different KEKs even
+///   under the same master key, so a compromise of one folder's KEK
+///   reveals no bits of any other folder's KEK (HMAC PRF assumption).
+/// - **Master-key isolation:** different masters produce different
+///   KEKs even for the same `folder_id` (PRF assumption).
+/// - **Determinism:** the same `(master, folder_id)` pair always
+///   derives the same KEK so storage at rest doesn't have to persist
+///   per-folder KEK bytes — they are re-derived on demand from the
+///   in-memory master plus the folder id.
+/// - **No raw-key escape:** the master is borrowed in `SecretBytes`
+///   and never copied out of the HMAC engine; the returned KEK is
+///   wrapped in `SecretBytes` and zeroizes on drop.
+///
+/// # Out of scope
+///
+/// - Inter-folder isolation under a *compromised process*: once
+///   unlocked, every derived KEK lives in the same address space as
+///   every other unlocked KEK. The per-folder KEK design protects
+///   *plaintext folders* from ever seeing encrypted-folder key
+///   material (they bypass derivation entirely) and protects *at-rest
+///   encrypted folders* from each other when the daemon is locked.
+///
+/// # Panics
+///
+/// `expect()` on `Hmac::new_from_slice` is infallible for any
+/// non-empty key length; `SecretBytes` callers never produce a
+/// zero-length master key (it is always 32 bytes from `derive_key_material`).
+#[must_use]
+pub fn derive_folder_kek(master: &SecretBytes, folder_id: u64) -> SecretBytes {
+    // Build the domain-separated info string.
+    let info = format!("pcloud-crypto::folder-kek::v1::{folder_id}");
+    // Single-block HKDF-Expand: HMAC(master, info || 0x01). Since the
+    // master is already a 32-byte uniform key (Argon2id output) we skip
+    // the Extract step (RFC 5869 §3.3) and the single-block Expand
+    // produces exactly FOLDER_KEK_LEN = 32 bytes.
+    // INVARIANT: HMAC-SHA256 accepts keys of any non-zero length per
+    // RFC 2104; `new_from_slice` only fails for a zero-length key,
+    // which `SecretBytes` callers never produce.
+    let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(master.expose_secret())
+        .expect("HMAC-SHA256 accepts any key length");
+    mac.update(info.as_bytes());
+    mac.update(&[0x01u8]);
+    let bytes: [u8; FOLDER_KEK_LEN] = mac.finalize().into_bytes().into();
+    SecretBytes::new(bytes.to_vec())
+}
+
+#[cfg(test)]
+mod folder_kek_tests {
+    use super::*;
+    use pcloud_secret::ExposeSecret;
+
+    fn master_a() -> SecretBytes {
+        SecretBytes::new(vec![0x11u8; DERIVED_KEY_LEN])
+    }
+
+    fn master_b() -> SecretBytes {
+        SecretBytes::new(vec![0x22u8; DERIVED_KEY_LEN])
+    }
+
+    /// Same master + same folder id -> same KEK. Required so the
+    /// daemon can re-derive a folder's KEK on demand without
+    /// persisting per-folder KEK bytes.
+    #[test]
+    fn derive_folder_kek_is_deterministic() {
+        let m = master_a();
+        let k1 = derive_folder_kek(&m, 42);
+        let k2 = derive_folder_kek(&m, 42);
+        assert_eq!(k1.expose_secret(), k2.expose_secret());
+        assert_eq!(k1.expose_secret().len(), FOLDER_KEK_LEN);
+    }
+
+    /// Different folder ids -> different KEKs. The load-bearing
+    /// per-folder isolation property: a compromise of /Documents'
+    /// KEK reveals no bits of /Photos' KEK.
+    #[test]
+    fn derive_folder_kek_diverges_per_folder() {
+        let m = master_a();
+        let k_doc = derive_folder_kek(&m, 10);
+        let k_photo = derive_folder_kek(&m, 20);
+        assert_ne!(k_doc.expose_secret(), k_photo.expose_secret());
+    }
+
+    /// Different masters -> different KEKs even for the same folder
+    /// id. Two distinct accounts unlocking folder #42 must never
+    /// derive the same KEK.
+    #[test]
+    fn derive_folder_kek_diverges_per_master() {
+        let k_a = derive_folder_kek(&master_a(), 42);
+        let k_b = derive_folder_kek(&master_b(), 42);
+        assert_ne!(k_a.expose_secret(), k_b.expose_secret());
+    }
+
+    /// `folder_id = 0` is a valid id (root folder); ensure the
+    /// info-string formatting handles it without collapsing into
+    /// the empty case.
+    #[test]
+    fn derive_folder_kek_handles_zero_id() {
+        let m = master_a();
+        let k0 = derive_folder_kek(&m, 0);
+        let k1 = derive_folder_kek(&m, 1);
+        assert_ne!(k0.expose_secret(), k1.expose_secret());
+        assert_eq!(k0.expose_secret().len(), FOLDER_KEK_LEN);
+    }
+
+    /// The KEK must not leak via `Debug` — `SecretBytes` redacts on
+    /// `Debug` formatting. Belt-and-braces check that the wrapper is
+    /// what we returned.
+    #[test]
+    fn derive_folder_kek_returned_as_secret_bytes() {
+        let m = master_a();
+        let k = derive_folder_kek(&m, 7);
+        let dbg = format!("{:?}", k);
+        // SecretBytes redacts; ensure the raw key bytes don't appear.
+        assert!(!dbg.contains("11"));
     }
 }

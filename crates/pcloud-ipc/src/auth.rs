@@ -5,12 +5,13 @@
 //! value type and the `current_effective_uid()` helper. Peer-credential
 //! *recovery* is platform-specific and lives in [`crate::platform`]:
 //! Linux → `SO_PEERCRED`, BSD/macOS → `getpeereid`, Windows → named pipe
-//! SID check (stub).**
+//! TokenUser SID check.**
 //!
 //! `current_effective_uid()` uses `libc::geteuid` and compiles on any
-//! Unix target; on Windows a different notion of "current user identity"
-//! (SID) is required and will be added alongside the named-pipe
-//! backend.
+//! Unix target. Windows authorization is completed by the native named-pipe
+//! backend before it constructs a [`PeerIdentity`]; the legacy `uid` field is
+//! therefore the sentinel `0` there, while `pid` retains the authenticated
+//! client process id for audit correlation.
 
 use serde::{Deserialize, Serialize};
 
@@ -71,12 +72,10 @@ pub fn current_effective_uid() -> u32 {
     }
     #[cfg(windows)]
     {
-        // Windows has no Unix-style uid. The caller's security principal
-        // is identified by SID, not uid; peer authentication on Windows
-        // goes through `platform::windows::peer_uid` which returns a
-        // stable hash of the TokenUser SID. Returning 0 here is a
-        // placeholder for code paths that haven't yet been refactored
-        // off this function on Windows (tracked under bd-xplat-windows).
+        // Windows has no Unix-style uid. The native named-pipe listener
+        // authenticates the client TokenUser SID before a PeerIdentity
+        // reaches shared dispatch, so shared uid-shaped accounting uses
+        // a single-owner sentinel rather than duplicating SID checks.
         0
     }
 }

@@ -61,9 +61,11 @@
 // **PLATFORM:** all
 // **GATING:** feature = "pclsync-v2"
 
-use pkcs1::{DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey, EncodeRsaPublicKey};
 use rsa::Oaep;
-use rsa::rand_core::OsRng;
+use rsa::pkcs1::{
+    DecodeRsaPrivateKey, DecodeRsaPublicKey, EncodeRsaPrivateKey, EncodeRsaPublicKey,
+};
+use rsa::rand_core::UnwrapErr;
 pub use rsa::{RsaPrivateKey, RsaPublicKey};
 use sha1::Sha1;
 use static_assertions::const_assert_eq;
@@ -248,7 +250,7 @@ impl SymKeyVer1 {
 /// Generate a fresh RSA-4096 keypair using the OS RNG (matches
 /// `pssl_gen_rsa(PSYNC_CRYPTO_RSA_SIZE)` at `pssl.c:482-495`).
 pub fn generate_keypair() -> Result<RsaKeyPair, PclsyncRsaError> {
-    let mut rng = OsRng;
+    let mut rng = UnwrapErr(getrandom4::SysRng);
     let private = RsaPrivateKey::new(&mut rng, PCLSYNC_RSA_BITS)
         .map_err(|e| PclsyncRsaError::KeyGen(e.to_string()))?;
     let public = RsaPublicKey::from(&private);
@@ -261,8 +263,8 @@ pub fn generate_keypair() -> Result<RsaKeyPair, PclsyncRsaError> {
 /// `PCLSYNC_RSA_BYTES` (= 512) bytes.
 pub fn oaep_wrap(pubkey: &RsaPublicKey, sym: &SymKeyVer1) -> Result<Vec<u8>, PclsyncRsaError> {
     let mut plaintext = serialize_sym_key_ver1(sym);
-    let mut rng = OsRng;
-    let padding = Oaep::new::<Sha1>();
+    let mut rng = UnwrapErr(getrandom4::SysRng);
+    let padding = Oaep::<Sha1>::new();
     let ct = pubkey
         .encrypt(&mut rng, padding, &plaintext)
         .map_err(|_| PclsyncRsaError::Oaep);
@@ -286,7 +288,7 @@ pub fn oaep_unwrap(privkey: &RsaPrivateKey, wrapped: &[u8]) -> Result<SymKeyVer1
             expected: PCLSYNC_RSA_BYTES,
         });
     }
-    let padding = Oaep::new::<Sha1>();
+    let padding = Oaep::<Sha1>::new();
     let mut plaintext = privkey
         .decrypt(padding, wrapped)
         .map_err(|_| PclsyncRsaError::Oaep)?;
@@ -448,7 +450,7 @@ mod tests {
     fn generate_keypair_bits_4096() {
         let kp = generate_keypair().expect("keygen succeeds");
         // Modulus should be exactly 4096 bits; n.bits() returns the bit length.
-        assert_eq!(kp.public().n().bits(), PCLSYNC_RSA_BITS);
+        assert_eq!(kp.public().n().bits(), PCLSYNC_RSA_BITS as u32);
         // Size in bytes.
         assert_eq!(kp.public().size(), PCLSYNC_RSA_BYTES);
     }

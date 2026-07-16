@@ -1,0 +1,696 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Partial Transfers (Resume) - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/operations/partial-transfers.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="partial-transfer-resume-uploads-h5-downloads-h6"><a class="header" href="#partial-transfer-resume-uploads-h5-downloads-h6">Partial Transfer Resume (Uploads H5, Downloads H6)</a></h1>
+<h2 id="1-purpose"><a class="header" href="#1-purpose">1. Purpose</a></h2>
+<p>Two crash-safe mechanisms in the Rust rewrite that the legacy C client
+did not have in a durable form:</p>
+<ul>
+<li><strong>Upload resume (H5)</strong> — NDJSON sidecar written next to each staged
+payload; replayed on daemon start, cross-checked with the server via
+<code>upload_status</code>, classified into a <strong>seven-variant <code>ResumeOutcome</code></strong>.</li>
+<li><strong>Download resume (H6)</strong> — HTTP <code>Range</code>-aware download at
+<code>pcloud-proto::fetch_download_resumable</code>, with <code>.part</code> staging,
+atomic rename on success, and prefix re-hash before trust.</li>
+</ul>
+<p>This page lets an operator reason about what happens when the daemon
+is killed mid-transfer, and tells a contributor how to migrate more
+daemon sites onto these entry points.</p>
+<p>All file paths are relative to ``.</p>
+<h2 id="2-prereqs"><a class="header" href="#2-prereqs">2. Prereqs</a></h2>
+<ul>
+<li><code>pcloud-daemon</code> at the version that includes H5 wiring (bootstrap
+replay + mount-runtime re-replay; verified in
+<code>crates/pcloud-daemon/src/bootstrap.rs</code> and
+<code>crates/pcloud-daemon/src/mount_runtime.rs</code>).</li>
+<li>For uploads: authenticated session; staging directory writable at
+<code>0700</code> with sidecars at <code>0600</code>.</li>
+<li>For downloads: destination directory writable; enough free space
+for <code>&lt;dest&gt;.part</code> (equal to the final file size).</li>
+<li>Native JSON parser for status selectors (<code>jq</code>, <code>ConvertFrom-Json</code>,
+etc.).</li>
+</ul>
+<h2 id="3-conceptual-background"><a class="header" href="#3-conceptual-background">3. Conceptual background</a></h2>
+<h3 id="scope-and-honesty-statement"><a class="header" href="#scope-and-honesty-statement">Scope and honesty statement</a></h3>
+<p>Resume is not one feature — it is two independent subsystems sharing
+a design philosophy: <strong>write the minimum crash-safe breadcrumb,
+re-derive everything else by asking the server.</strong></p>
+<ul>
+<li><strong>Upload resume (H5)</strong> is <strong>wired into the daemon.</strong> Both bootstrap
+and the mount runtime call <code>replay_upload_sidecars</code> on start-up.
+Any sidecar left by a previous daemon is evaluated and either
+resumed, trimmed, or retired.</li>
+<li><strong>Download resume (H6)</strong> is a <strong>library API on <code>pcloud-proto</code></strong>
+(<code>fetch_download_resumable</code>). It is <strong>not yet the default path</strong> for
+every daemon-side download. Existing callers of
+<code>fetch_download_verified</code> need to be migrated one site at a time.
+Until then, a daemon-mediated download of a large file interrupted
+by a daemon restart will <strong>re-fetch from byte 0</strong>, not from the
+last committed offset.</li>
+</ul>
+<p>If you are deciding whether it is safe to kill <code>pcloudd</code> mid-transfer:
+uploads survive that, downloads launched through
+<code>fetch_download_verified</code> do not, downloads launched through
+<code>fetch_download_resumable</code> do.</p>
+<h3 id="upload-resume-h5"><a class="header" href="#upload-resume-h5">Upload resume (H5)</a></h3>
+<p>The pCloud upload API is three-phase:</p>
+<ol>
+<li><code>upload_create</code> — allocates a server-side upload id.</li>
+<li><code>upload_write</code> — pushes bytes at a given offset (one or more calls).</li>
+<li><code>upload_save</code> — atomically materialises the uploaded content.</li>
+</ol>
+<p>If the daemon dies between phases 2 and 3, the server retains the
+partial upload for a grace period, but the <em>client</em> has no built-in
+memory of which upload id belonged to which local inode, how far
+through the file it was, or whether the last <code>upload_write</code> was
+acknowledged. H5 adds that memory, crash-safely, without trusting any
+in-memory state across a restart.</p>
+<h4 id="sidecar-layout"><a class="header" href="#sidecar-layout">Sidecar layout</a></h4>
+<p>For every in-flight upload the daemon writes a sidecar next to the
+staged payload under the staging directory:</p>
+<pre><code>&lt;runtime-staging&gt;/ino-&lt;inode&gt;.upload-progress
+</code></pre>
+<p>NDJSON: one JSON record per line, append-only during a live upload,
+rewritten in place on heartbeat updates. Each record carries at
+minimum:</p>
+<ul>
+<li>the local inode number (primary key),</li>
+<li>the server-assigned upload id,</li>
+<li>the acknowledged byte offset,</li>
+<li>the SHA-256 of the prefix up to that offset,</li>
+<li>a monotonic <code>heartbeat_unix_secs</code> timestamp updated on every
+successful <code>upload_write</code> acknowledgement.</li>
+</ul>
+<p>All sidecar writes go through <strong>write-temp → <code>fsync(file)</code> → rename →
+<code>fsync(dir)</code></strong>. A crash at any point leaves either the previous
+consistent sidecar (rename not committed) or the new consistent
+sidecar (rename committed and both <code>fsync</code> calls returned). A
+subsequent replay never observes a half-written state.</p>
+<h4 id="the-upload_status-probe"><a class="header" href="#the-upload_status-probe">The <code>upload_status</code> probe</a></h4>
+<p>Replay does not trust the sidecar unconditionally. On replay the
+daemon calls an <code>upload_status</code> protocol method and cross-checks:</p>
+<ul>
+<li>If server offset <strong>equals</strong> sidecar offset → resume at that
+offset.</li>
+<li>If server offset <strong>exceeds</strong> sidecar offset → sidecar is behind;
+advance to the server offset. No bytes re-uploaded.</li>
+<li>If server offset <strong>is less than</strong> sidecar offset → server trimmed
+our tail; rewind and re-send from there.</li>
+<li>If the upload id is gone (expired / GC’d) → mark for a fresh
+<code>upload_create</code>.</li>
+</ul>
+<p>This is always a network round trip at start-up. Deliberate: the
+sidecar is an <em>optimistic</em> local cache; the server is the only source
+of truth for durably-persisted bytes.</p>
+<h4 id="resumeoutcome--the-seven-variant-taxonomy"><a class="header" href="#resumeoutcome--the-seven-variant-taxonomy"><code>ResumeOutcome</code> — the seven-variant taxonomy</a></h4>
+<p><code>replay_upload_sidecars</code> in <code>crates/pcloud-fs/src/write_path.rs</code>
+emits one <code>ResumeOutcome</code> value per sidecar it evaluates:</p>
+<ol>
+<li><strong><code>Resumed</code></strong> — sidecar and server agree; upload continues from
+the recorded offset. Next <code>upload_write</code> is issued at that offset.</li>
+<li><strong><code>ServerAhead</code></strong> — server offset is larger than sidecar; sidecar
+is rewritten to match the server. No bytes re-uploaded.</li>
+<li><strong><code>SidecarTrimmed</code></strong> — server offset is smaller than sidecar;
+sidecar is rewound to the server offset, bytes past that point
+are re-sent.</li>
+<li><strong><code>Expired</code></strong> — server no longer recognises the upload id; the
+sidecar is retired and a fresh <code>upload_create</code> is queued.</li>
+<li><strong><code>Stalled</code></strong> — the sidecar heartbeat is older than the stall
+timeout AND the server has no meaningful progress. Upload is
+aborted with a retryable error. Stall timeout defaults to
+<strong>10 minutes</strong> (<code>DEFAULT_HEARTBEAT_TIMEOUT</code> in
+<code>write_path.rs::846</code>).</li>
+<li><strong><code>Unparseable</code></strong> — sidecar on disk is corrupt or from an
+incompatible version. Left in place for operator inspection; a
+warning is logged. Diagnostic-only; the upload state is not used.</li>
+<li><strong><code>BackendError</code></strong> — <code>upload_status</code> itself failed (network, auth,
+server error). Sidecar is not modified; re-evaluated on the next
+replay tick.</li>
+</ol>
+<p>Callers that want outcomes without acting (boot-time diagnostics)
+can use <code>enumerate_upload_sidecars</code>, which parses sidecars but does
+not talk to the server.</p>
+<h4 id="where-replay-runs"><a class="header" href="#where-replay-runs">Where replay runs</a></h4>
+<ul>
+<li><code>crates/pcloud-daemon/src/bootstrap.rs</code> — replay pass at daemon
+start-up, after the vault is loaded and before the mount comes up.
+<code>Resumed</code> / <code>ServerAhead</code> / <code>SidecarTrimmed</code> outcomes are handed
+to the active upload backend so transfers resume.</li>
+<li><code>crates/pcloud-daemon/src/mount_runtime.rs</code> — re-runs replay when
+the mount is (re)activated, because a mount may come up later than
+the daemon itself (for example after interactive <code>crypto start</code>
+or <code>pcloudc mount</code>).</li>
+</ul>
+<p>Both sites treat <code>BackendError</code> as non-fatal and reschedule; both
+treat <code>Expired</code> / <code>Stalled</code> as terminal for the current upload and
+surface them through the normal transfer-error path.</p>
+<h3 id="download-resume-h6"><a class="header" href="#download-resume-h6">Download resume (H6)</a></h3>
+<p>HTTP downloads against the pCloud signed-URL infrastructure are a
+single <code>GET</code> whose response body is the file. If the connection dies
+halfway through, the cleanest recovery is to reissue <code>GET</code> with a
+<code>Range: bytes=N-</code> header. Two prerequisites:</p>
+<ul>
+<li>the server must honour <code>Range</code>,</li>
+<li>the client must prove that bytes already on disk are correct before
+trusting them as the resume prefix.</li>
+</ul>
+<p><code>fetch_download_resumable</code> lives at
+<code>crates/pcloud-proto/src/http_download.rs</code>. Contract:</p>
+<ul>
+<li>The target is written to <code>&lt;dest&gt;.part</code> while in flight; atomically
+renamed to <code>&lt;dest&gt;</code> only on successful, hash-verified completion.</li>
+<li>On entry, if <code>&lt;dest&gt;.part</code> exists, its length <code>N</code> is the resume
+offset. Request issued with <code>Range: bytes=N-</code>.</li>
+<li>The on-disk prefix is re-hashed against the expected-final-hash’s
+prefix before any new bytes are appended. This is a <strong>full-length
+rescan of the <code>.part</code> file</strong>. Cost is <strong>O(file-size)</strong> and is
+documented on the function: resuming a half-downloaded 10 GiB
+archive reads 5 GiB from disk before the first new byte is
+fetched.</li>
+<li>If the prefix hash does not match the expected hash (the file on
+the server changed, or <code>.part</code> was corrupted between runs), the
+<code>.part</code> is deleted and the download restarts from byte 0. <strong>No
+partial data is ever silently concatenated.</strong></li>
+<li>If the server responds to <code>Range</code> with <code>200 OK</code> instead of
+<code>206 Partial Content</code> — typically because the signed URL is routed
+through a CDN that does not advertise <code>Accept-Ranges: bytes</code> — the
+client <strong>falls back to a full-file download</strong>, discarding the old
+<code>.part</code>. The fallback is unconditional; a <code>200</code> response is never
+spliced onto a <code>.part</code> prefix.</li>
+</ul>
+<p>The returned <code>DownloadOutcome</code> enum surfaces which branch ran:</p>
+<ul>
+<li><strong><code>Fresh</code></strong> — no <code>.part</code> existed, or the server returned <code>200</code>
+without a usable <code>Accept-Ranges: bytes</code>; full download issued.</li>
+<li><strong><code>Resumed</code></strong> — <code>.part</code> existed, prefix hash matched, server
+returned <code>206 Partial Content</code> starting at the requested offset.</li>
+<li><strong><code>FullReplace</code></strong> — <code>.part</code> existed but prefix hash mismatched, or
+server forced a <code>206 → 200</code> fallback; <code>.part</code> was replaced.</li>
+</ul>
+<p>In all three terminal states the final on-disk file is
+hash-verified end-to-end before the rename; no unverified byte
+reaches <code>&lt;dest&gt;</code>.</p>
+<h2 id="4-step-by-step-procedure-operator"><a class="header" href="#4-step-by-step-procedure-operator">4. Step-by-step procedure (operator)</a></h2>
+<h3 id="41-check-sidecar-state-on-a-running-daemon"><a class="header" href="#41-check-sidecar-state-on-a-running-daemon">4.1 Check sidecar state on a running daemon</a></h3>
+<pre><code class="language-bash"># Staging dir is under the runtime directory:
+ls -la "$XDG_RUNTIME_DIR/pcloud-rs/staging"/*.upload-progress
+
+# Check status (human):
+pcloudc status sync          # inline transfer summary
+pcloudc doctor               # bundles upload sidecar health
+
+# Machine-readable (selector):
+pcloudc doctor --json \
+  | jq '.checks[] | select(.id == "transfers.sidecars")'
+</code></pre>
+<h3 id="42-kill-the-daemon-mid-upload-safe"><a class="header" href="#42-kill-the-daemon-mid-upload-safe">4.2 Kill the daemon mid-upload (safe)</a></h3>
+<pre><code class="language-bash">systemctl --user stop pcloud-rs-daemon     # SIGTERM → drain
+# Inspect surviving sidecars:
+ls -la "$XDG_RUNTIME_DIR/pcloud-rs/staging"/*.upload-progress
+
+systemctl --user start pcloud-rs-daemon    # bootstrap runs replay
+# Verify:
+pcloudc doctor --json \
+  | jq '.checks[] | select(.id == "transfers.sidecars") | .detail.outcomes'
+# Example output:
+# { "Resumed": 12, "ServerAhead": 1, "SidecarTrimmed": 0,
+#   "Expired": 0, "Stalled": 0, "Unparseable": 0, "BackendError": 0 }
+</code></pre>
+<h3 id="43-watch-for-stalled-sidecars"><a class="header" href="#43-watch-for-stalled-sidecars">4.3 Watch for <code>Stalled</code> sidecars</a></h3>
+<pre><code class="language-bash"># Stalled sidecars mean an upload has been idle past the 10-minute
+# heartbeat. They are flagged in the daemon log and in doctor.
+journalctl --user -u pcloud-rs-daemon \
+  | grep -E 'Stalled|sidecar.stalled'
+</code></pre>
+<h2 id="5-verification"><a class="header" href="#5-verification">5. Verification</a></h2>
+<p>A resume path is “healthy” when:</p>
+<ul>
+<li><code>pcloudc doctor --json | jq '.checks[] | select(.id == "transfers.sidecars") | .level'</code> returns <code>"ok"</code>,</li>
+<li>no <code>Unparseable</code> outcomes on boot — unparseables are <strong>diagnostic
+signals</strong>, not recovery events,</li>
+<li>no growth in <code>BackendError</code> counts across multiple replay ticks
+(one or two are fine; sustained failure means the network / auth
+path is broken),</li>
+<li>for downloads: after resume, the final <code>blake3</code>/<code>sha256</code> of
+<code>&lt;dest&gt;</code> matches the expected-final-hash argument; the file is
+present at <code>&lt;dest&gt;</code>, the <code>.part</code> is gone.</li>
+</ul>
+<h2 id="6-rollback"><a class="header" href="#6-rollback">6. Rollback</a></h2>
+<p>There is no explicit “undo resume” — the subsystems themselves are
+idempotent. The recovery actions are:</p>
+<ul>
+<li><strong>Operator re-queue.</strong> If an upload lands in <code>Expired</code> repeatedly,
+delete the staged payload <strong>and</strong> the sidecar together, then
+re-queue the file for upload.</li>
+<li><strong>Start fresh.</strong> For a single broken download, delete <code>&lt;dest&gt;.part</code>
+and re-issue the download through the same call site.</li>
+<li><strong>Clean staging.</strong> To force a full reset, drain the daemon, remove
+every <code>*.upload-progress</code> sidecar under the staging directory,
+and restart. All in-flight uploads restart from byte 0.</li>
+</ul>
+<h2 id="7-tradeoffs--tuning"><a class="header" href="#7-tradeoffs--tuning">7. Tradeoffs / tuning</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Knob</th><th>Default</th><th>Tradeoff</th></tr>
+</thead>
+<tbody>
+<tr><td><code>DEFAULT_HEARTBEAT_TIMEOUT</code></td><td>10 min</td><td>Shorter → more <code>Stalled</code> false positives; longer → slower abort.</td></tr>
+<tr><td>Prefix re-hash on resume (H6)</td><td>mandatory</td><td>Cost is O(file size); non-negotiable — removing it breaks integrity.</td></tr>
+<tr><td><code>fetch_download_resumable</code> vs <code>fetch_download_verified</code></td><td>caller-chosen</td><td>Resumable carries <code>.part</code> staging + range logic; verified is simpler but not crash-safe.</td></tr>
+<tr><td>Sidecar fsync frequency</td><td>per-ack</td><td>More fsyncs = stronger durability, higher write amplification.</td></tr>
+<tr><td>Upload parallelism</td><td>caller</td><td>More parallel uploads = more sidecars = more replay work at boot.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="8-common-failure-modes"><a class="header" href="#8-common-failure-modes">8. Common failure modes</a></h2>
+<ol>
+<li>
+<p><strong>Worked scenario: daemon crash mid-upload.</strong></p>
+<ul>
+<li>Symptom: <code>systemctl --user status pcloud-rs-daemon</code> reports
+abnormal exit; sidecars remain under staging.</li>
+<li>Recovery: restart the daemon. Bootstrap runs replay; outcomes
+should be dominated by <code>Resumed</code> / <code>ServerAhead</code>. Watch
+<code>doctor</code> for <code>Stalled</code> entries — those are the ones needing
+attention.</li>
+</ul>
+</li>
+<li>
+<p><strong>Worked scenario: network blip mid-download.</strong></p>
+<ul>
+<li>Symptom: the active HTTP stream disconnects; <code>&lt;dest&gt;.part</code>
+grows to N bytes and stops.</li>
+<li>Recovery (resumable call site): rerun the operation. H6 sees
+<code>&lt;dest&gt;.part</code> of length N, issues <code>Range: bytes=N-</code>, re-hashes
+the prefix, receives <code>206</code> and appends. <code>DownloadOutcome == Resumed</code>.</li>
+<li>Recovery (verified-only call site): the download restarts from
+byte 0 on retry. Known gap; migrate the call site.</li>
+</ul>
+</li>
+<li>
+<p><strong>Worked scenario: force-restart handling.</strong></p>
+<ul>
+<li>Symptom: <code>kill -9 pcloudd</code> (NOT a graceful drain) — sidecars
+may lag the last ack by one heartbeat cycle.</li>
+<li>Recovery: on next boot, <code>ServerAhead</code> is the common outcome;
+the sidecar rewrites itself to match the server. No data loss.</li>
+</ul>
+</li>
+<li>
+<p><strong><code>Unparseable</code> sidecars after a version bump.</strong></p>
+<ul>
+<li>Cause: sidecar format changed between versions.</li>
+<li>Fix: delete the unparseable sidecar file <strong>and</strong> the
+associated staged payload together, then re-queue the upload.
+Never try to hand-edit a sidecar.</li>
+</ul>
+</li>
+<li>
+<p><strong><code>BackendError</code> dominates replay outcomes.</strong></p>
+<ul>
+<li>Cause: auth not re-established yet; network offline;
+<code>upload_status</code> rejected by the server for a revoked token.</li>
+<li>Fix: <code>pcloudc doctor --json | jq '.checks[] | select(.id == "auth")'</code>; re-authenticate if necessary. Replay retries on
+the next tick — no operator action is typically needed once
+auth is restored.</li>
+</ul>
+</li>
+</ol>
+<h2 id="9-security--compliance-notes"><a class="header" href="#9-security--compliance-notes">9. Security / compliance notes</a></h2>
+<ul>
+<li><strong>Sidecars contain no secrets.</strong> Only an upload id, an offset, a
+digest, and a timestamp. The upload id is a server-issued handle;
+it does not grant account access on its own. Sidecars inherit
+<code>0700</code> on the staging directory and are created <code>0600</code>.</li>
+<li><strong>Sidecar integrity is not authenticated.</strong> A local attacker with
+UID access could corrupt a sidecar — but they already have UID
+access, which is inside the daemon’s trust boundary. The corrupt
+sidecar is classified <code>Unparseable</code> and does not poison recovery.</li>
+<li><strong>Download prefix re-hash is mandatory.</strong> If an attacker tampers
+with <code>&lt;dest&gt;.part</code>, the re-hash fails and the download restarts
+from byte 0. There is no “trust-the-prefix” shortcut.</li>
+<li><strong>No byte reaches <code>&lt;dest&gt;</code> unverified.</strong> End-to-end final hash is
+checked before the rename in every <code>DownloadOutcome</code> branch.</li>
+<li><strong><code>0700</code> / <code>0600</code> permissions are enforced</strong> — do not loosen them;
+the daemon refuses to start with a permissive staging directory
+(<code>doctor</code> check <code>staging.mode_invalid</code>).</li>
+</ul>
+<h2 id="10-contributor-notes"><a class="header" href="#10-contributor-notes">10. Contributor notes</a></h2>
+<ul>
+<li>Prefer <code>fetch_download_resumable</code> when adding new daemon transfer
+paths.</li>
+<li>When porting an existing <code>fetch_download_verified</code> call site:
+<ul>
+<li>switch the destination handling to a <code>.part</code>-staged path,</li>
+<li>add the expected-final-hash argument so the resume prefix check
+can run,</li>
+<li>extend the call site tests to cover all three
+<code>DownloadOutcome</code> branches (<code>Fresh</code>, <code>Resumed</code>, <code>FullReplace</code>).</li>
+</ul>
+</li>
+<li>H5 is ready to add more callers: if you write a new upload-like
+path, use <code>replay_upload_sidecars</code> as the recovery seam and emit
+the same <code>ResumeOutcome</code> taxonomy so <code>doctor</code> aggregates stay
+useful.</li>
+</ul>
+<h2 id="101-upload-via-mounted-drive-linux-pre-alpha"><a class="header" href="#101-upload-via-mounted-drive-linux-pre-alpha">10.1 Upload via mounted drive (Linux, pre-alpha)</a></h2>
+<p>Status: <strong>landed on both Linux compositions</strong>. <code>PcloudFsShim</code> and the
+object-safe <code>FuserShim&lt;A&gt;</code> delegate to the same <code>WritePathService</code> when a
+writer is attached. An adapter without a writer returns <code>ENOSYS</code> instead of
+silently accepting mutations.</p>
+<h3 id="what-the-recipe-proves"><a class="header" href="#what-the-recipe-proves">What the recipe proves</a></h3>
+<p>Writing a file through the kernel VFS against a <code>PcloudFsShim</code>-backed
+FUSE mount:</p>
+<ol>
+<li>stages bytes on-disk under <code>&lt;state_dir&gt;/stage/&lt;blob-name&gt;</code>,</li>
+<li>journals <code>Create</code> / <code>Write</code> / <code>FlushBarrier</code> records under
+<code>&lt;state_dir&gt;/journal.bin</code> with the <code>fsync(file)+fsync(dir)</code> barrier
+described in §3,</li>
+<li>finalizes via <code>upload_file</code> for an explicit small-file flush or uses
+resumable <code>upload_create</code> / bounded <code>upload_write</code> / <code>upload_save</code> when the
+chunk threshold is reached,</li>
+<li>survives an unmount → remount cycle: once the server has absorbed
+the upload, the next cold mount reads the file back byte-identical
+through the kernel VFS via the <code>ProtoFuseAdapter</code> read path.</li>
+</ol>
+<p>The integration proof is
+<code>crates/pcloud-fs/tests/fuse_write_path_live.rs::write_unmount_remount_readback_byte_identical</code>
+(gated on <code>PCLOUD_LIVE_E2E=1</code> or <code>PCLOUD_FUSE_TEST=1</code>). It drives the
+whole loop through a real Linux FUSE kernel mount.</p>
+<h3 id="supported-write-side-fuse-ops-on-pcloudfsshim"><a class="header" href="#supported-write-side-fuse-ops-on-pcloudfsshim">Supported write-side FUSE ops on <code>PcloudFsShim</code></a></h3>
+<p>Wired through <code>WritePathService</code>:</p>
+<ul>
+<li><code>create</code> — allocates an in-progress write handle + journals a
+<code>JournalOp::Create</code>. Publishes the new entry into the adapter’s
+local metadata cache so subsequent <code>lookup</code> / <code>readdir</code> succeed
+before the upload finalizes.</li>
+<li><code>write</code> — appends bytes into the per-inode staging blob, journals a
+<code>JournalOp::Write</code>, bumps the local size published to <code>getattr</code> so
+in-flight reads see monotonically-growing length.</li>
+<li><code>flush</code> / <code>fsync</code> — forces a finalize via <code>upload_file</code> once the
+staging blob is at rest. <code>flush</code> is a no-op on read-only handles.</li>
+<li><code>release</code> — runs the final flush, tears down the write handle, and
+invalidates the parent directory and file cache entries so the
+next <code>readdir</code> pulls the server-assigned <code>file_id</code>.</li>
+<li><code>setattr(size)</code> — truncate, journaled via <code>JournalOp::Truncate</code>.</li>
+<li><code>unlink</code> — propagates to the remote via <code>unlink_remote</code>, forgets
+the local metadata cache entry.</li>
+<li><code>rename</code> — propagates to the remote via <code>rename_remote</code>, carries
+any cached attribute over to the destination path.</li>
+<li><code>mkdir</code> / <code>rmdir</code> — forwarded to the <code>FolderBackend</code> directly
+(no staging — directories are metadata-only on pCloud).</li>
+</ul>
+<h3 id="operator-recipe"><a class="header" href="#operator-recipe">Operator recipe</a></h3>
+<pre><code class="language-bash"># 1. Bring up a writable mount through the daemon.
+pcloudc mount --read-write /mnt/pcloud
+
+# 2. Write a file — the kernel VFS drives FUSE `create`/`write`/
+#    `release` through the shim, and the release triggers an
+#    `upload_file` call on the wired transport.
+cp ~/report.pdf /mnt/pcloud/Documents/
+
+# 3. Force a flush before unmount. `sync` targets the whole mount;
+#    for a single file use `fsync(2)` equivalent (e.g. python
+#    `os.fsync(f.fileno())`).
+sync /mnt/pcloud
+
+# 4. Check upload-sidecar state if you want proof a finalize did
+#    or did not complete — sidecars live under:
+ls -la &lt;state_dir&gt;/stage/*.sidecar 2&gt;/dev/null
+
+# 5. Unmount — flushes all pending handles, journals FlushBarrier.
+pcloudc unmount /mnt/pcloud
+</code></pre>
+<h3 id="interaction-with-h5-upload-resume"><a class="header" href="#interaction-with-h5-upload-resume">Interaction with H5 upload resume</a></h3>
+<p>The chunked write path writes the same <code>ResumeOutcome</code>-emitting sidecars as
+the standalone uploader. An explicit small-file flush uses <code>upload_file</code>; a
+crash after <code>FlushBarrier</code> but before the upload ack is safe because the next
+daemon start replays the journal and re-emits the upload. The existing replay path
+(<code>crates/pcloud-daemon/src/bootstrap.rs</code>,
+<code>crates/pcloud-daemon/src/mount_runtime.rs</code>) already calls
+<code>replay_upload_sidecars</code> on mount (re)activation, so no additional
+operator step is required.</p>
+<h3 id="honesty-statement"><a class="header" href="#honesty-statement">Honesty statement</a></h3>
+<p>This is <strong>pre-alpha</strong>. What is <strong>not</strong> yet in place:</p>
+<ul>
+<li>a clean release-commit run of the strict Linux mount and 2 GiB transfer gate;</li>
+<li>credentialed pCloud mount/transfer qualification rather than deterministic
+local backends;</li>
+<li>per-release native qualification for macOS and Windows writable mounts;</li>
+<li>BSD hardware/VM and NAS-appliance qualification.</li>
+</ul>
+<p>Until those release gates pass, do <strong>not</strong> claim “production-ready” or
+“drop-in replacement” for the mounted-drive surface.</p>
+<h2 id="11-cross-references"><a class="header" href="#11-cross-references">11. Cross-references</a></h2>
+<ul>
+<li><code>crates/pcloud-fs/src/write_path.rs</code> — H5 sidecar writer +
+<code>ResumeOutcome</code> variants.</li>
+<li><code>crates/pcloud-daemon/src/bootstrap.rs</code> — replay at boot.</li>
+<li><code>crates/pcloud-daemon/src/mount_runtime.rs</code> — replay on mount
+(re)activation.</li>
+<li><code>crates/pcloud-proto/src/http_download.rs</code> — H6 download +
+<code>DownloadOutcome</code>.</li>
+<li><code>crates/pcloud-proto/tests/http_download_integrity.rs</code> —
+integration tests for the three download branches.</li>
+<li><a href="./upgrade.html">Upgrade</a> — sidecar behavior across a graceful drain.</li>
+<li><a href="./runbook.html">Runbook</a> — playbooks for stuck transfers.</li>
+<li><a href="../reference/cli.html#doctor">CLI reference — <code>doctor</code></a>.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../operations/rc-soak.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../operations/web-ui.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../operations/rc-soak.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../operations/web-ui.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

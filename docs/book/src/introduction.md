@@ -9,16 +9,12 @@
 
 ## What this project is
 
-`pcloud-rs` is the next generation of the pCloud console client. Two
-code trees live side-by-side in the repository:
-
-- **Legacy C/C++** — `main.cpp`, `pclsync_lib.cpp`, `pclsync/`. Retained for
-  capability auditing and as a behavioural reference while the Rust rewrite
-  catches up on the long tail of features. New development on this tree is
-  limited to security fixes.
-- **Rust workspace** — `pcloud-rs`. The forward-looking implementation:
-  typed protocol clients, a daemon/runtime split, secure local IPC, SQLite
-  persistence, and an embeddable SDK. All new features land here.
+`pcloud-rs` is the next generation of the pCloud console client. This fork
+contains the Rust workspace only: typed protocol clients, a daemon/runtime
+split, secure local IPC, SQLite persistence, mounted-drive adapters, and two
+deliberately separate Rust SDK surfaces. The removed legacy C/C++ client is
+available from the upstream `pcloudcc` repository and is used only as a
+behavioural/parity reference.
 
 The rewrite exists because the C codebase had accumulated years of
 hand-rolled concurrency, leak-prone allocations, and security defaults that
@@ -27,16 +23,14 @@ protocol behaviour bit-for-bit compatible while tightening the memory,
 secret-handling, and IPC model — without having to prove manual correctness
 on every pointer.
 
-The binary you will actually run is called **`pcloudc`** (short, no extra
-`c`). The daemon is **`pcloud-daemon`**. The legacy C binary was
-`pcloud-rs`; we keep the old name as a transparent alias on Unix during the
-transition.
+The client executable is **`pcloudc`** and the daemon executable is
+**`pcloudd`**.
 
 ## What this project is *not*
 
-The Rust tree is **substantially complete** but the final parity-proof
-beads are still open (`bd-1du.4` filesystem/mount parity, `bd-1du.10`
-parity-proof gate). Until those are closed we do **not** describe the
+The retained C capability matrix is functionally complete, but native release
+qualification, clean-baseline integration, SDK publication, and credentialed
+live tests remain open. Until those gates close we do **not** describe the
 Rust path as:
 
 - "full parity",
@@ -54,27 +48,23 @@ reality is the failure mode we care most about preventing.
 
 | Tier | Platforms | Policy |
 |------|-----------|--------|
-| **T1** | Linux (glibc, x86_64 + aarch64), macOS 13+, Windows 10+ | CI-gated, packaged, release-blocking. |
-| **T2** | FreeBSD 13+, Linux-musl (Alpine, static builds) | Built in CI, tested on best-effort, community-supported. |
-| **T3** | OpenBSD, NetBSD, Windows 7/8 | Source-only. Patches welcome; breakage does not block a release. |
+| **T1** | Linux, macOS, Windows, FreeBSD, NetBSD, OpenBSD, DragonFly BSD, illumos/OmniOS, Solaris | Native release-commit gates are release-blocking. Solaris-family targets qualify the portable library/CLI/API surface; kernel mounting is explicitly unsupported there. |
+| **T2** | Synology DSM, QNAP QTS/QuTS, ASUSTOR ADM | Candidate packages plus vendor-hardware install, upgrade, reboot, transfer, and uninstall qualification. |
 
-A T1 regression blocks a release. A T2 regression opens a tracker bead but
-ships. A T3 regression is accepted if a fix is non-trivial — users on T3
-platforms are expected to build from source and be comfortable debugging
-their own environment. The mounted-drive experience is Linux-first (FUSE
-via `fuse3`), macOS-second (`fuse-t`). Windows uses a separate
-projected-filesystem (ProjFS) backend; that surface is still gated behind
-`bd-1du.4`. BSD FUSE support exists but is T2/T3.
+A T1 regression blocks a release. Tier 2 remains explicitly unqualified until
+the vendor-hardware matrices pass. Mounted-drive implementations are FUSE on
+Linux/BSD, fuse-t on macOS, and WinFSP on Windows. A workflow definition or a
+locally built package is not native-platform qualification evidence.
 
 ## High-level architecture
 
 ```
  +------------------+        +-------------------------------+
- |  pcloudc (CLI)   |        |  SDK / embedders              |
- |  interactive +   |        |  (Rust crate: pcloud-sdk)     |
+ |  pcloudc (CLI)   |        |  pcloud-sdk 1.x               |
+ |  interactive +   |        |  blocking RemoteDrive client |
  |  --json scripts  |        |                               |
  +--------+---------+        +---------------+---------------+
-          | local IPC                        | in-process
+          | local IPC                        | local IPC
           | Unix socket 0600                 |
           | SO_PEERCRED / ucred              |
           v                                  v
@@ -100,12 +90,12 @@ projected-filesystem (ProjFS) backend; that surface is still gated behind
 ```
 
 Each box is a crate in the `pcloud-rs` workspace. Crates are thin and
-composable: `pcloud-proto` owns the wire format, backends own side
-effects, the daemon owns the lifecycle, and the CLI/SDK are just two
-different front doors to the same IPC surface. The separation means you
-can embed the daemon in another Rust program (via `pcloud-sdk`) without
-ever starting an IPC socket, or you can drive a running daemon from any
-language that can write a line-delimited JSON protocol.
+composable: `pcloud-proto` owns the pCloud wire format, backends own side
+effects, the daemon owns lifecycle and secrets, and the CLI/public SDK are two
+front doors to the same owner-authenticated IPC surface. The broad historical
+in-process API still exists separately as the unpublished
+`pcloud-embedded-sdk`; it is a first-party compatibility surface, not the
+stable third-party SDK.
 
 ## Security posture snapshot
 
@@ -132,25 +122,24 @@ security dimension we could tighten without breaking the protocol:
   active control path rather than being silently logged and dropped. If
   the audit log can't fdatasync, the daemon refuses to proceed.
 
-Read the full model in [`SECURITY-MODEL.md`](../security/security-model.md)
-and the rationale for each rejected legacy behaviour in
-[`REJECTED-RATIONALES-14042026.md`](../archive/rejected-rationales.md).
+Read the full [security model](security/model.md) and the rationale for each
+rejected legacy behaviour in the parity matrix.
 
 ## How to read this book
 
 The chapters are ordered for a first-time user working through a full
 install, login, and sync. If you are a returning reader:
 
-- **Operators** — skip to the [Operations handbook](../operations/index.md)
-  for runbooks, systemd units, and incident response.
-- **Packagers and distributors** — see
-  [Packaging notes](../packaging/index.md) for the binary layout, file
-  modes, and post-install hooks we expect.
-- **SDK consumers** — [SDK reference](../sdk/index.md) documents the
-  `pcloud-sdk` crate and the in-process daemon embedding pattern.
-- **Contributors** — [Development](../dev/index.md) covers the crate
-  layout, parity matrix workflow, and how to add a new command without
-  breaking the existing CLI surface.
+- **Operators** — use the [runbook](operations/runbook.md) for service and
+  incident procedures.
+- **Packagers and distributors** — see the
+  [packaging reference](reference/packaging.md) for binary layout, file modes,
+  and current publication status.
+- **SDK consumers** — [SDK reference](reference/sdk.md) documents the focused
+  `pcloud-sdk` 1.x contract and its daemon requirement.
+- **Contributors** — [Crate map](architecture/crate-map.md) covers the crate
+  layout; [Adding a command](development/adding-a-command.md) covers the
+  request workflow.
 
 Every code block in this handbook is copy-paste runnable on at least one
 of the T1 platforms. Commands are annotated where behaviour differs
@@ -167,5 +156,5 @@ between Linux, macOS, and Windows.
   progress, remove it cleanly.
 - [`STATUS.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/STATUS.md)
   — the single source of truth for "is feature X done yet?".
-- [Architecture Decision Records](../architecture/adrs.md) — why the
+- [Architecture Decision Records](adr/index.md) — why the
   rewrite made the shape it did.

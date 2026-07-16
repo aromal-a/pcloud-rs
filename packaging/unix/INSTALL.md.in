@@ -1,0 +1,15 @@
+# pcloud-rs @VERSION@ for @PLATFORM@/@ARCH@
+
+This is a native binary package candidate. Its `root/` directory mirrors the
+filesystem paths to install. Verify both the adjacent archive checksum and
+`MANIFEST.sha256` before copying any payload as root.
+
+The candidate does not create a service account or enable the daemon. Follow
+the platform instructions shipped under `root/usr/local/share/doc/pcloud-rs/`
+to create the dedicated `pcloudd` identity, configure an owner-only credential
+file, validate the service definition, and enable it explicitly.
+
+Kernel mounting is deliberately unavailable on illumos and Oracle Solaris;
+the CLI, daemon IPC, remote transfer, copy, and sharing surfaces remain usable.
+DragonFly includes its native FUSE mount adapter, subject to a successful
+release-commit live-mount gate.

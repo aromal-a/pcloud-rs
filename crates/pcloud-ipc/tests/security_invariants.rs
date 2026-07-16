@@ -1,18 +1,14 @@
 #![allow(clippy::pedantic)]
-//! # Security invariants integration harness (IPC & secrets slice)
+//! # Security invariants integration harness (IPC slice)
 //!
 //! This test file backs the architecture-scoped security model
 //! (`docs/book/src/architecture/security-model.md`, SEC-XX rows). Tests are
 //! grouped by invariant and named `sec_XX_<short_slug>` so a reviewer can
 //! map a doc row to a test in one step.
 //!
-//! This file lives in the `pcloud-ipc` crate because that crate (together
-//! with its dev-dep on `pcloud-secret`) is the narrowest build surface that
-//! still reaches every invariant that is practically testable from
-//! userspace:
+//! This file lives in the `pcloud-ipc` crate because it is the narrowest build
+//! surface that reaches the IPC invariants testable from userspace:
 //!
-//! - Secret-wrapper invariants (Debug redaction, Zeroize exposure):
-//!   SEC-01, SEC-02, SEC-04.
 //! - IPC socket / transport invariants (peer-cred authorization, 1 MiB
 //!   frame cap, protocol version pin, 0600/0700 mode on bind):
 //!   SEC-10, SEC-11, SEC-12, SEC-13.
@@ -38,96 +34,6 @@ use pcloud_ipc::{
     IpcServer, PeerIdentity, Request, Response, ResponseStatus, encode_request_bare,
     protocol::{self, IPC_PROTOCOL_VERSION, MAX_IPC_PAYLOAD_LEN, ProtocolError},
 };
-use pcloud_secret::{
-    ExposeSecret, SecretMaterial, secret_bytes::SecretBytes, secret_string::SecretString,
-};
-use zeroize::Zeroize;
-
-// -------------------------------------------------------------------------
-// SEC-01 — every long-lived secret-bearing field uses a secret wrapper.
-// -------------------------------------------------------------------------
-//
-// Call-site enforcement is tracked by `grep expose_secret` discipline and
-// by the compile-fail regression in
-// `crates/pcloud-secret/tests/serialize_is_forbidden.rs`. This test asserts
-// the public trait surface a reviewer reaches for — length exposure without
-// content leakage.
-
-#[test]
-fn sec_01_wrappers_expose_len_without_content() {
-    let s = SecretString::new("long-auth-token-value");
-    assert_eq!(s.expose_len(), "long-auth-token-value".len());
-    let b = SecretBytes::new(vec![0xAB; 64]);
-    assert_eq!(b.expose_len(), 64);
-}
-
-// -------------------------------------------------------------------------
-// SEC-02 — Debug output for secret types redacts content.
-// -------------------------------------------------------------------------
-
-#[test]
-fn sec_02_secret_string_debug_is_redacted() {
-    let s = SecretString::new("hunter2-very-unique-literal");
-    let rendered = format!("{s:?}");
-    assert!(rendered.contains("<redacted>"), "debug: {rendered}");
-    assert!(
-        !rendered.contains("hunter2-very-unique-literal"),
-        "debug leaked secret literal: {rendered}"
-    );
-}
-
-#[test]
-fn sec_02_secret_bytes_debug_is_redacted() {
-    let b = SecretBytes::new(b"mac-tag-abcdef-1234".to_vec());
-    let rendered = format!("{b:?}");
-    assert!(rendered.contains("<redacted>"), "debug: {rendered}");
-    assert!(
-        !rendered.contains("mac-tag-abcdef-1234"),
-        "debug leaked secret literal: {rendered}"
-    );
-}
-
-#[test]
-fn sec_02_secret_string_pretty_debug_is_redacted() {
-    // Alternate-debug `{:#?}` is used by several tracing adapters.
-    let s = SecretString::new("pretty-print-should-not-leak");
-    let rendered = format!("{s:#?}");
-    assert!(rendered.contains("<redacted>"), "pretty debug: {rendered}");
-    assert!(!rendered.contains("pretty-print-should-not-leak"));
-}
-
-// -------------------------------------------------------------------------
-// SEC-04 — dropped secrets are scrubbed via Zeroize.
-// -------------------------------------------------------------------------
-//
-// True "memory-after-drop" observation is not sound from safe Rust. What we
-// assert is (a) the wrapper exposes `zeroize::Zeroize`, (b) calling
-// `.zeroize()` produces an empty value, and (c) `expose_secret()` sees the
-// scrubbed state. The ZeroizeOnDrop derive is the contract that turns (a)
-// into the runtime Drop behaviour; its correctness is guarded by the
-// `zeroize` crate's own tests and by
-// `crates/pcloud-secret/tests/proptest_zeroize_invariants.rs`.
-
-#[test]
-fn sec_04_secret_string_zeroize_empties_wrapper() {
-    let mut s = SecretString::new("soon-to-be-zeroized");
-    assert_eq!(s.expose_len(), "soon-to-be-zeroized".len());
-    <SecretString as Zeroize>::zeroize(&mut s);
-    assert!(s.is_empty(), "zeroize must leave the wrapper empty");
-    assert_eq!(format!("{s:?}"), "SecretString(<redacted>)");
-    assert_eq!(s.expose_secret(), "");
-}
-
-#[test]
-fn sec_04_secret_bytes_zeroize_empties_wrapper() {
-    let mut b = SecretBytes::new(vec![0x11; 32]);
-    assert_eq!(b.expose_len(), 32);
-    <SecretBytes as Zeroize>::zeroize(&mut b);
-    assert!(b.is_empty());
-    assert_eq!(format!("{b:?}"), "SecretBytes(<redacted>)");
-    assert_eq!(b.expose_secret(), &[] as &[u8]);
-}
-
 // -------------------------------------------------------------------------
 // SEC-10 — the IPC socket is 0600 on a 0700 parent directory.
 // -------------------------------------------------------------------------

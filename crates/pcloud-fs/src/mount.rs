@@ -81,7 +81,13 @@ impl MountService {
 /// Pre-check `/etc/fuse.conf` for an uncommented `user_allow_other`
 /// line. On platforms where the file cannot exist (Windows, macOS) the
 /// check is a no-op.
-#[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd"))]
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
 fn check_user_allow_other() -> Result<(), MountPolicyError> {
     const PATH: &str = "/etc/fuse.conf";
     let contents = match std::fs::read_to_string(PATH) {
@@ -110,7 +116,13 @@ fn check_user_allow_other() -> Result<(), MountPolicyError> {
     Ok(())
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "freebsd", target_os = "netbsd")))]
+#[cfg(not(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+)))]
 fn check_user_allow_other() -> Result<(), MountPolicyError> {
     Ok(())
 }

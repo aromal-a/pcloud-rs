@@ -78,11 +78,10 @@ actual test files. Invariants marked `[review-only]` are enforced by code
 but not yet exercised from a userspace test — the enforcement site is
 named instead of a test so a reviewer can audit the invariant directly.
 
-The consolidated top-level harness for the invariants flagged by the
-2026-04-16 audit as documented-but-unenforced lives in
-`crates/pcloud-ipc/tests/security_invariants.rs`; each test there is named
-`sec_XX_<short_slug>` so a reviewer can map a doc row to a test in one
-step.
+IPC-boundary invariants are consolidated in
+`crates/pcloud-ipc/tests/security_invariants.rs`; secret-container invariants
+remain in the owning `pcloud-secret` crate so the publishable IPC package does
+not acquire an unrelated dev-dependency.
 
 ### Secret containers
 
@@ -91,13 +90,11 @@ step.
   - Enforcement: `crates/pcloud-secret/src/{secret_string,secret_bytes}.rs`.
   - Tests: `crates/pcloud-secret/tests/redaction_and_zeroize.rs`,
     `crates/pcloud-secret/tests/serialize_is_forbidden.rs`
-    (compile-fail guard against `Serialize` being re-derived),
-    `crates/pcloud-ipc/tests/security_invariants.rs::sec_01_*`.
+    (compile-fail guard against `Serialize` being re-derived).
 - **SEC-02** — `Debug` for any secret type redacts contents.
   - Enforcement: hand-written `impl Debug` in `pcloud-secret`.
-  - Tests: `crates/pcloud-secret/tests/redaction_and_zeroize.rs`,
-    `crates/pcloud-ipc/tests/security_invariants.rs::sec_02_*`
-    (covers standard and `{:#?}` alternate-debug formats).
+  - Tests: `crates/pcloud-secret/tests/redaction_and_zeroize.rs` and its
+    property tests over arbitrary strings/bytes.
 - **SEC-03** `[review-only]` — `tracing::event!` cannot log a secret field
   even if a caller tries.
   - Enforcement: the observability crate never accepts raw
@@ -111,11 +108,10 @@ step.
 - **SEC-04** — A dropped secret is overwritten via `zeroize::Zeroize`.
   - Enforcement: `#[derive(ZeroizeOnDrop)]` on both wrappers; belt-and-
     braces hand-rolled `impl Zeroize` delegates to the inner buffer.
-  - Tests: `crates/pcloud-secret/tests/redaction_and_zeroize.rs`,
-    `crates/pcloud-secret/tests/proptest_zeroize_invariants.rs`,
-    `crates/pcloud-ipc/tests/security_invariants.rs::sec_04_*`
-    (asserts `<Wrapper as Zeroize>::zeroize` empties the wrapper and
-    that `expose_secret()` sees the scrubbed state).
+  - Tests: `crates/pcloud-secret/tests/redaction_and_zeroize.rs` and
+    `crates/pcloud-secret/tests/proptest_zeroize_invariants.rs` (asserts
+    `<Wrapper as Zeroize>::zeroize` empties the wrapper and that
+    `expose_secret()` sees the scrubbed state).
   - Note: observing the memory content of a freed allocation is UB in
     safe Rust. The tests therefore verify the wrapper-level contract;
     the actual post-drop scrub is guaranteed by the `zeroize` crate's

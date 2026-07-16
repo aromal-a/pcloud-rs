@@ -59,7 +59,9 @@ level fail the load with a JSON-pointer-precise error (see
 ## Location & discovery
 
 The loader does **not** implement automatic file discovery — the daemon
-and CLI take an explicit `--config <path>` argument. The canonical
+and CLI take an explicit `--config <path>` argument, or a mandatory
+`PCLOUD_CONFIG=<path>` override when that environment variable is set.
+The file must be a JSON envelope, not TOML. The canonical
 candidate paths returned by
 `pcloud_config::loader::default_candidate_paths(home)` are:
 
@@ -473,6 +475,7 @@ not rely on them).
 
 | Env var | Target field | Notes |
 |---|---|---|
+| `PCLOUD_CONFIG` | loader input path | Mandatory JSON config path when set; not a profile field. |
 | `PCLOUD_ROOT` | `paths.*`, `extensions.plugin_dir` | Coarse override. Re-roots every managed path and the plugin dir under `<root>/{config,state,runtime,cache,plugins}`. Applied first; targeted vars below still win for their field. |
 | `PCLOUD_ENV` | `environment` | Also snaps `api.mode` to the env's secure default when `PCLOUD_API_MODE` is not set. |
 | `PCLOUD_API_MODE` | `api.mode` | Wins over the `PCLOUD_ENV` snap. Production still rejects `Plaintext` at validate time. |
@@ -487,6 +490,24 @@ not rely on them).
 | `PCLOUD_PLUGIN_ALLOW_CRYPTO` | `extensions.allow_crypto_capability` | Requires `plugins_enabled=true`. |
 | `PCLOUD_DURABLE_AUTH_TOKENS` | `features.durable_auth_tokens_enabled` | Gates the on-disk auth-token vault. |
 | `PCLOUD_MIGRATE_LEGACY_PATHS` | (not a profile field) | When `=1`, enables opt-in copy of `~/.pcloud/` into the XDG layout on first-run migration. |
+
+### Secret bootstrap environment
+
+The following variables are consumed by daemon bootstrap before it starts
+serving IPC. They are not `ConfigProfile` fields and are not general
+configuration overrides.
+
+| Env var | Purpose |
+|---|---|
+| `PCLOUDRS_TOKEN_FILE` | Path to a regular owner-only `0600` file containing an auth token for headless startup. |
+| `PCLOUDRS_USERNAME_FILE` / `PCLOUDRS_PASSWORD_FILE` | First-boot username/password files. They must be set together and follow the same owner/mode rules as token files. |
+| `PCLOUDRS_TFA_CODE_FILE` / `PCLOUDRS_RECOVERY_CODE_FILE` | Mutually exclusive second-factor files for non-interactive username/password login. |
+| `PCLOUDRS_TRUST_DEVICE` | Boolean. Requests a trusted-device login after successful TFA bootstrap. |
+| `CREDENTIALS_DIRECTORY` | systemd credential directory. When set, daemon bootstrap looks for `pcloud-rs-token`, `pcloud-rs-username`, `pcloud-rs-password`, `pcloud-rs-tfa-code`, and `pcloud-rs-recovery-code` as fallbacks for the matching `PCLOUDRS_*_FILE` variables. |
+
+Never place account passwords, TFA codes, recovery codes, or bearer tokens
+directly in `Environment=`. Use file-backed credentials or systemd
+`LoadCredential=` / `LoadCredentialEncrypted=` and keep files owner-only.
 
 ### Example: multi-instance under a test root
 

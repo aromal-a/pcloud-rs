@@ -4,14 +4,14 @@
 //!
 //! This demonstrates the typed SDK wrapper for the `ptree_public_link`
 //! path-based variant (row 149, bd-1du). The daemon resolves each absolute
-//! pCloud-drive path to a remote folder id under the authenticated session
+//! pCloud-drive path to a remote folder or file id under the authenticated session
 //! before issuing the tree-link create call — no manual id lookup required.
 //!
 //! Without `PCLOUD_LIVE=1` this example prints a usage hint and exits
 //! immediately — it never touches the network and is safe in CI.
 //!
 //! Run (dry):
-//!   cargo run -p pcloud-sdk --example create_tree_public_link_from_paths
+//!   cargo run -p pcloud-embedded-sdk --example create_tree_public_link_from_paths
 //!
 //! Run (live):
 //!   PCLOUD_LIVE=1 \
@@ -19,15 +19,15 @@
 //!   PCLOUD_PASSWORD=secret \
 //!   PCLOUD_PATHS=/Documents,/Photos \
 //!   PCLOUD_LINK_NAME="My shared bundle" \
-//!   cargo run -p pcloud-sdk --example create_tree_public_link_from_paths
+//!   cargo run -p pcloud-embedded-sdk --example create_tree_public_link_from_paths
 
 // **PLATFORM:** all
 // **GATING:** PCLOUD_LIVE=1 required for network calls.
 
 use std::path::PathBuf;
 
+use pcloud_embedded_sdk::EmbeddedDaemon;
 use pcloud_ipc::{Request, ResponseStatus, redacted::RedactedString};
-use pcloud_sdk::EmbeddedDaemon;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     if std::env::var("PCLOUD_LIVE").is_err() {

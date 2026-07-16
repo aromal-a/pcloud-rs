@@ -163,6 +163,23 @@ fn dyn_shim_write_file_and_readback_via_kernel_vfs() {
         Err(e) => panic!("unexpected error creating file: {e}"),
     }
 
+    let uploads = upload.uploads.lock().expect("recorded uploads lock");
+    assert_eq!(
+        uploads.len(),
+        2,
+        "flush plus fsync must both reach the upload backend"
+    );
+    assert_eq!(uploads.last().expect("fsync upload").2, payload);
+    drop(uploads);
+
+    assert_eq!(
+        std::fs::metadata(&file_path)
+            .expect("metadata after write")
+            .len(),
+        payload.len() as u64,
+        "kernel-visible size must follow a completed write"
+    );
+
     // -- readback through the kernel VFS --
     let readback = std::fs::read(&file_path).expect("readback");
     assert_eq!(

@@ -1,0 +1,563 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>DLP Built-in - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/../../plugins/dlp-builtin.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="built-in-dlp-pre-upload-scanner-plugin"><a class="header" href="#built-in-dlp-pre-upload-scanner-plugin">Built-in DLP Pre-Upload Scanner Plugin</a></h1>
+<p>Crate: <code>pcloud-plugin-dlp</code> (wave H10)</p>
+<h2 id="1-purpose"><a class="header" href="#1-purpose">1. Purpose</a></h2>
+<p><code>pcloud-plugin-dlp</code> ships the first in-tree plugin that runs
+<strong>synchronously on the pre-upload path</strong> to detect obvious secret
+material before files leave the host. Unlike the three other
+first-party plugins (which are observational or scheduler-driven),
+DLP sits on the hot path: the daemon does not begin an upload until
+the plugin has returned a verdict or hit the configured timeout.</p>
+<p>It is intentionally small, opinionated, and single-user. See
+<a href="../enterprise/dlp.html"><code>pcloud-plugin-dlp-enterprise</code></a> for custom
+rulesets, tenant policy, audit stream forwarding, and whole-file
+scanning.</p>
+<h2 id="2-why-this-plugin-exists--the-incident-class-it-prevents"><a class="header" href="#2-why-this-plugin-exists--the-incident-class-it-prevents">2. Why this plugin exists — the incident class it prevents</a></h2>
+<p>Every week, someone on every team drags one of these files into their
+pCloud sync folder:</p>
+<ul>
+<li><code>.env</code> with <code>AWS_ACCESS_KEY_ID=AKIA…</code> and the matching secret on the
+next line.</li>
+<li><code>id_rsa</code>, <code>id_ed25519</code>, or a <code>.pem</code> file dumped into <code>~/Documents</code>
+for “temporary safekeeping”.</li>
+<li>a JWT pasted into a <code>scratchpad.txt</code> while debugging an auth flow.</li>
+<li>a <code>tokens.json</code> export from a browser session.</li>
+<li>a Git bundle containing repo history that includes long-since-rotated
+keys the scrubber forgot.</li>
+</ul>
+<p>None of these are attacks. They are mistakes. Catching them at the
+moment of upload — before the bytes cross the network — removes the
+window in which a public link could ever be issued for the offending
+file. The scanner is tuned so that <strong>audit-only mode is the default</strong>,
+because a DLP that says “no” to a user’s upload without a warm-up
+period is a DLP that gets turned off.</p>
+<h2 id="3-capabilities"><a class="header" href="#3-capabilities">3. Capabilities</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Capability</th><th style="text-align: center">Required</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>ObserveStatus</code></td><td style="text-align: center">yes</td><td>Only capability the plugin needs.</td></tr>
+<tr><td><code>SyncControl</code></td><td style="text-align: center">no</td><td>Scanner does not pause/resume sync.</td></tr>
+<tr><td><code>CryptoControl</code></td><td style="text-align: center">no</td><td>Scanner never touches key material.</td></tr>
+<tr><td><code>NetworkEgress</code></td><td style="text-align: center">no</td><td>Scanner never initiates network traffic.</td></tr>
+</tbody>
+</table>
+</div>
+<p>No extra <code>PCLOUD_PLUGIN_ALLOW_*</code> env flag is needed; the master
+<code>PCLOUD_PLUGINS_ENABLED=1</code> is enough.</p>
+<p><strong>Runtime-gated enforcement.</strong> <code>ObserveStatus</code> is enforced inside
+<code>PluginRegistry::dispatch</code> on every pre-upload scan call. If the
+operator revokes the capability (by removing it from the plugin
+manifest set in config, or by disabling the runtime), the DLP
+scanner’s <code>PreUploadScan</code> handler is <strong>never</strong> invoked — the registry
+emits <code>plugin.capability.denied{plugin=dlp, op=pre_upload_scan, missing=ObserveStatus}</code> and the upload proceeds on the unscanned path
+(treat revocation as an audited “no DLP coverage” decision, not as a
+quiet pass-through). A panicking scan handler is caught by the
+registry and the DLP plugin is de-registered for the rest of the
+daemon’s lifetime; restart required.</p>
+<h2 id="4-configuration-reference"><a class="header" href="#4-configuration-reference">4. Configuration reference</a></h2>
+<p><code>[plugins.dlp]</code> in <code>pcloud.conf</code>:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th style="text-align: right">Default</th><th>Validation</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>enabled</code></td><td>bool</td><td style="text-align: right"><code>true</code></td><td>—</td><td>Master switch.</td></tr>
+<tr><td><code>strict_mode</code></td><td>bool</td><td style="text-align: right"><code>false</code></td><td>—</td><td><code>false</code> = audit-only, <code>true</code> = enforce.</td></tr>
+<tr><td><code>timeout_ms</code></td><td>u32</td><td style="text-align: right"><code>5000</code></td><td><code>&gt; 0</code>; host truncates &gt; 30 000</td><td>Hard upper bound per scan.</td></tr>
+<tr><td><code>[plugins.dlp.rules]</code></td><td>boolean table</td><td style="text-align: right"><code>{}</code></td><td>Keys must be one of the 6 rule IDs</td><td>Per-rule on/off overrides.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Rule IDs recognised under <code>[plugins.dlp.rules]</code>:</p>
+<ul>
+<li><code>AWS_ACCESS_KEY</code></li>
+<li><code>AWS_SECRET_KEY</code></li>
+<li><code>PRIVATE_KEY_PEM</code></li>
+<li><code>JWT</code></li>
+<li><code>GENERIC_PASSWORD_LITERAL</code></li>
+<li><code>HIGH_ENTROPY</code></li>
+</ul>
+<p>Unlisted rule IDs default to <code>true</code> (enabled). An unknown key is
+rejected by the config parser.</p>
+<p>Example <code>pcloud.conf</code>:</p>
+<pre><code class="language-toml">[plugins.dlp]
+enabled      = true
+strict_mode  = false
+timeout_ms   = 5000
+
+[plugins.dlp.rules]
+AWS_ACCESS_KEY = true
+HIGH_ENTROPY   = false     # noisy on photo sync roots
+</code></pre>
+<h2 id="5-lifecycle--event-flow"><a class="header" href="#5-lifecycle--event-flow">5. Lifecycle + event flow</a></h2>
+<pre><code>                 upload initiated                 upload bytes leave host
+ ┌──────────────────────┐                                   │
+ │ pcloud-fs / transfer │                                   │
+ └──────────┬───────────┘                                   │
+            │ PreUploadScan { path, size, content_hash,     │
+            │   first_bytes ≤ 4 KiB, mime_guess }           │
+            ▼                                               │
+     ┌──────────────┐                                       │
+     │ DLP scanner  │─── timeout_ms budget ─────┐           │
+     └──────┬───────┘                           │           │
+            │ DlpScanResult { verdict, audit }  │           │
+            ▼                                   ▼           │
+     ┌──────────────┐              ┌───────────────────┐    │
+     │ audit sink   │◀── HMAC ──── │ host fallback:    │    │
+     │  (append)    │              │   allow + audit   │    │
+     └──────┬───────┘              └─────────┬─────────┘    │
+            │                                │              │
+            └──────── combined verdict ──────┴──────────────▶
+                             │
+                             ▼
+                   Allow  → upload proceeds
+                   Deny   → upload rejected (strict only)
+                   Other  → reserved; not emitted today
+</code></pre>
+<ul>
+<li><code>first_bytes</code> is capped by the host at 4 KiB.</li>
+<li><code>path</code> is hashed (<code>SHA-256</code>, hex) before anything is logged.</li>
+<li><code>content_hash</code> is supplied by the host so the scanner never re-hashes
+the file.</li>
+<li>Timeout is enforced by the host; the plugin itself is synchronous
+inside the budget.</li>
+</ul>
+<h2 id="6-rule-taxonomy"><a class="header" href="#6-rule-taxonomy">6. Rule taxonomy</a></h2>
+<p>The scanner ships with <strong>six rules</strong>. Each is a lexical match against
+<code>first_bytes</code> (plus, in one case, entropy).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Rule ID</th><th>Detection</th><th>False-positive class</th></tr>
+</thead>
+<tbody>
+<tr><td><code>AWS_ACCESS_KEY</code></td><td>Regex <code>AKIA[0-9A-Z]{16}</code></td><td>Very rare; AWS’s own prefix is unique.</td></tr>
+<tr><td><code>AWS_SECRET_KEY</code></td><td>“secret” keyword within 40 chars of a 40+ char base64-ish token</td><td>Config files using the word “secret” as label.</td></tr>
+<tr><td><code>PRIVATE_KEY_PEM</code></td><td>Regex <code>-----BEGIN .* PRIVATE KEY-----</code></td><td>None that are not also real PEM material.</td></tr>
+<tr><td><code>JWT</code></td><td>Regex <code>eyJ[…].eyJ[…].[…]</code></td><td>Base64 structures that happen to split 3-way.</td></tr>
+<tr><td><code>GENERIC_PASSWORD_LITERAL</code></td><td>Case-insensitive <code>password[=:]\s*\S{8,}</code></td><td>Tutorials, docs, shell examples.</td></tr>
+<tr><td><code>HIGH_ENTROPY</code></td><td>Shannon entropy of <code>first_bytes</code> &gt; 7.5 bits/byte, no known magic</td><td>Encrypted archives, novel compressed formats.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="high_entropy-magic-number-suppression"><a class="header" href="#high_entropy-magic-number-suppression">HIGH_ENTROPY magic-number suppression</a></h3>
+<p><code>HIGH_ENTROPY</code> is suppressed when <code>first_bytes</code> starts with one of 15
+recognised compressed / media magic numbers. Otherwise, every
+<code>.jpg</code>, <code>.mp4</code>, or <code>.zip</code> in a photo sync root would trip the rule.</p>
+<p>The suppression list (exact prefixes checked by
+<code>is_known_binary_magic</code>):</p>
+<ol>
+<li><code>gzip</code> (<code>0x1F 0x8B</code>)</li>
+<li><code>zip</code>  (<code>PK\x03\x04</code>, <code>PK\x05\x06</code>, <code>PK\x07\x08</code>)</li>
+<li><code>jpeg</code> (<code>0xFF 0xD8 0xFF</code>)</li>
+<li><code>png</code>  (<code>\x89PNG\r\n\x1A\n</code>)</li>
+<li><code>bzip2</code> (<code>BZh</code>)</li>
+<li><code>xz</code>   (<code>\xFD 7zXZ</code>)</li>
+<li><code>7z</code>   (<code>7z\xBC\xAF\x27\x1C</code>)</li>
+<li><code>ogg</code>  (<code>OggS</code>)</li>
+<li><code>flac</code> (<code>fLaC</code>)</li>
+<li><code>pdf</code>  (<code>%PDF-</code>)</li>
+<li><code>RIFF</code> (<code>RIFF</code> + <code>WAVE</code> / <code>AVI </code> / <code>WEBP</code>)</li>
+<li><code>GIF8</code> (<code>GIF87a</code> / <code>GIF89a</code>)</li>
+<li><code>mp4/ftyp</code> (offset-4 <code>ftyp</code>)</li>
+<li><code>mkv/webm</code> (<code>\x1A\x45\xDF\xA3</code>)</li>
+<li><code>zstd</code> (<code>\x28\xB5\x2F\xFD</code>)</li>
+</ol>
+<p>Encrypted archives (e.g. <code>7z</code> with <code>-mhe=on</code>) typically <em>pass</em> magic
+suppression and therefore still trip <code>HIGH_ENTROPY</code> — which is usually
+the correct outcome: encrypted blobs leaving the host should at least
+be audited.</p>
+<h2 id="7-performance-and-path-hash-audit"><a class="header" href="#7-performance-and-path-hash-audit">7. Performance and path-hash audit</a></h2>
+<h3 id="scan-prefix-size-throughput-knob"><a class="header" href="#scan-prefix-size-throughput-knob">Scan prefix size (throughput knob)</a></h3>
+<p>The plugin always sees <em>at most</em> the first 4 KiB of a file. The host
+truncates <code>first_bytes</code> to that bound regardless of file size. Scan
+cost is therefore O(4 KiB) per file, independent of file size — a scan
+completes in single-digit milliseconds on any modern hardware.</p>
+<h3 id="path-hash-only-audit"><a class="header" href="#path-hash-only-audit">Path-hash-only audit</a></h3>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>pub struct DlpAuditEvent {
+    pub path_hash: String,      // SHA-256(path), hex — never the raw path
+    pub rule_ids: Vec&lt;String&gt;,
+    pub verdict: UploadScanVerdict,
+}
+<span class="boring">}</span></code></pre>
+<p>The plugin <strong>never</strong> writes:</p>
+<ul>
+<li>the raw file path,</li>
+<li>any byte of the file contents,</li>
+<li><code>first_bytes</code> or any slice thereof,</li>
+<li>the regex match text.</li>
+</ul>
+<p>Only the SHA-256 path hash, the matched rule IDs, and the verdict ever
+reach the audit stream. This keeps the DLP audit log safe to forward
+to central logging without re-leaking the very data the scanner is
+trying to protect.</p>
+<h2 id="8-outputs"><a class="header" href="#8-outputs">8. Outputs</a></h2>
+<ul>
+<li><strong>Audit log entry</strong> per scan (<code>DlpAuditEvent</code>), HMAC-chained by the
+host’s audit engine.</li>
+<li><strong>Daemon log line</strong> at <code>info</code> for hits, <code>debug</code> for clean scans.</li>
+<li><strong>No desktop notification</strong> (DLP is silent; hits go to the audit log).</li>
+<li><strong>IPC response</strong> in strict mode: the upload RPC fails with a
+<code>Denied</code> verdict; <code>pcloudc pending</code> shows the denial.</li>
+</ul>
+<h2 id="9-test-recipes"><a class="header" href="#9-test-recipes">9. Test recipes</a></h2>
+<h3 id="unit-tests-built-in"><a class="header" href="#unit-tests-built-in">Unit tests (built-in)</a></h3>
+<pre><code class="language-bash">cargo test -p pcloud-plugin-dlp
+</code></pre>
+<p>Covered: AWS access-key detection, PEM private-key header, high-entropy
+random buffer trip, known compressed magic suppression, strict-mode
+deny, audit-only allow, per-rule disable, path-hash redaction
+invariant.</p>
+<h3 id="manual-verification-with-a-scratch-file"><a class="header" href="#manual-verification-with-a-scratch-file">Manual verification with a scratch file</a></h3>
+<pre><code class="language-bash"># 1. make sure DLP audits upload attempts
+export PCLOUD_PLUGINS_ENABLED=1
+
+cat &gt; /tmp/fake.env &lt;&lt;'EOF'
+AWS_ACCESS_KEY_ID=AKIA1234567890ABCDEF
+AWS_SECRET_ACCESS_KEY=abcdef1234567890abcdef1234567890abcdef12
+EOF
+
+# 2. drop it into a sync root, trigger an upload cycle
+pcloudc sync resume &lt;sync_root_id&gt;
+
+# 3. verify DLP audit record via the field selector
+pcloudc --field rule_ids --json pending
+
+# 4. inspect the audit log (path_hash only, no path)
+pcloudc --json audit verify | jq '.[] | select(.kind == "dlp")'
+</code></pre>
+<p>The <code>rule_ids</code> field should include <code>AWS_ACCESS_KEY</code> (and possibly
+<code>AWS_SECRET_KEY</code>). No raw path is printed anywhere.</p>
+<h3 id="strict-mode-regression"><a class="header" href="#strict-mode-regression">Strict-mode regression</a></h3>
+<pre><code class="language-bash"># audit-only first
+pcloudc config set plugins.dlp.strict_mode false
+pcloudc sync resume &lt;root&gt;   # should succeed, audit logged
+
+# enable strict
+pcloudc config set plugins.dlp.strict_mode true
+pcloudc sync resume &lt;root&gt;   # should fail with Deny
+</code></pre>
+<h2 id="10-failure-modes"><a class="header" href="#10-failure-modes">10. Failure modes</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symptom</th><th>Cause</th><th>Remedy</th></tr>
+</thead>
+<tbody>
+<tr><td>Upload blocked on a file that is clearly fine</td><td><code>HIGH_ENTROPY</code> trip, no magic match</td><td>Disable <code>HIGH_ENTROPY</code> in <code>[plugins.dlp.rules]</code>.</td></tr>
+<tr><td>Scanner timed out, upload auditied as allowed</td><td>Extremely slow host or huge regex config</td><td>Raise <code>timeout_ms</code> cautiously, file an issue.</td></tr>
+<tr><td>Audit log missing entries</td><td>Plugin disabled or audit sink unreachable</td><td><code>pcloudc audit verify</code>; check <code>[plugins.dlp].enabled</code>.</td></tr>
+<tr><td>False positives on <code>.git/objects/*</code></td><td>Packfiles are high-entropy and not on magic list</td><td>Add <code>.git</code> to sync ignore list, or disable rule.</td></tr>
+<tr><td>Strict mode blocking legitimate work</td><td>Rule hit on a tutorial or doc</td><td>Tune <code>[plugins.dlp.rules]</code>; roll back to audit-only.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="11-limitations-honest"><a class="header" href="#11-limitations-honest">11. Limitations (honest)</a></h2>
+<ul>
+<li><strong>First 4 KiB only.</strong> A secret that only appears after the first 4
+KiB of a large file will not be caught. Whole-file scans are an
+enterprise feature.</li>
+<li><strong>Regex-based, not semantic.</strong> The rules match lexical patterns.
+They will miss sophisticated encoded secrets and can false-positive
+on high-entropy compressed payloads whose magic number is not on the
+suppression list. Start in audit-only.</li>
+<li><strong>No quarantine directory.</strong> The built-in scanner only emits <code>Allow</code>
+or <code>Deny</code>. Moving bad files into a quarantine directory is an
+enterprise feature.</li>
+<li><strong>No per-sync-root policy.</strong> The rule set is global. If you need
+different rules per sync root, the enterprise plugin supports that.</li>
+<li><strong>Strict-mode surprises.</strong> A broken rule config in strict mode
+blocks uploads. Validate in audit-only first.</li>
+<li><strong>No auto-remediation.</strong> The plugin never deletes, overwrites, or
+moves the offending file. That is intentional.</li>
+<li><strong>Single-user scope.</strong> No central policy push, no tenant boundaries.</li>
+</ul>
+<h2 id="12-tuning-home-deploy-vs-faang-enterprise"><a class="header" href="#12-tuning-home-deploy-vs-faang-enterprise">12. Tuning: home deploy vs. FAANG enterprise</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Knob / concern</th><th>Home / single-user</th><th>Enterprise / fleet</th></tr>
+</thead>
+<tbody>
+<tr><td><code>strict_mode</code></td><td><code>false</code> (audit-only) for weeks</td><td><code>true</code> after baseline, with exception workflow in place</td></tr>
+<tr><td><code>timeout_ms</code></td><td>Default <code>5000</code></td><td><code>2000</code>–<code>3000</code> behind a load balancer; watch p99 scan time</td></tr>
+<tr><td><code>HIGH_ENTROPY</code></td><td><code>false</code> on photo/video sync roots</td><td><code>true</code> everywhere; rely on magic-number suppression</td></tr>
+<tr><td>Audit forwarding</td><td>Local log only</td><td>Use <code>pcloud-enterprise-dlp</code> for centralised SIEM feeds</td></tr>
+<tr><td>Rule customisation</td><td>Stock 6 rules</td><td>Use enterprise plugin for custom detectors</td></tr>
+<tr><td>Per-tenant policy</td><td>n/a</td><td>Enterprise plugin</td></tr>
+<tr><td>Operator alerting</td><td>None (desktop user sees their own log)</td><td>Wire audit stream to PagerDuty / Opsgenie</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="13-security-posture"><a class="header" href="#13-security-posture">13. Security posture</a></h2>
+<ul>
+<li><code>#![forbid(unsafe_code)]</code> and <code>#![deny(missing_docs)]</code>.</li>
+<li>No network I/O. No disk I/O outside the pre-upload window handed in
+by the host.</li>
+<li>No raw paths or file content in any log, audit event, or error
+message — only SHA-256 path hashes.</li>
+<li>Audit events are integrity-protected by the host’s HMAC-chained
+audit log.</li>
+<li>Hard per-file timeout prevents a runaway regex from wedging the
+upload pipeline; host falls back to the configured <code>on_timeout</code>
+policy (default: allow + audit).</li>
+</ul>
+<h2 id="14-cli-interactions"><a class="header" href="#14-cli-interactions">14. CLI interactions</a></h2>
+<p>The plugin does not add subcommands. User-facing touch points:</p>
+<ul>
+<li><code>pcloudc pending</code> — shows uploads queued and, in strict mode,
+uploads blocked by DLP (the audit record carries the <code>rule_ids</code>).</li>
+<li><code>pcloudc audit verify</code> / <code>pcloudc audit-verify</code> — verifies the
+integrity of the local audit log that carries DLP verdicts.</li>
+<li><code>pcloudc doctor</code> — surfaces recent DLP activity in its diagnostics
+bundle.</li>
+<li><code>pcloudc --json pending</code> returns DLP audit entries in a stable JSON
+envelope. Use the field selector (e.g.
+<code>pcloudc --field rule_ids pending</code>) to extract specific values
+without a JSON post-processor.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../plugins/backup-schedule.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../plugins/publink-expiry.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../plugins/backup-schedule.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../plugins/publink-expiry.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

@@ -1,8 +1,9 @@
 # **PLATFORM MATRIX:**
 # - Linux: full support (tier 1) — FUSE via `fuser`.
-# - FreeBSD: tier 2 (most deps work)
-# - macOS: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.4 (fuse-t via direct C FFI, not a crate dep).
-# - Windows: tier 1 planned — see PLAN_CROSSPLATFORM.md §3.5 (WinFsp).
+# - FreeBSD / NetBSD / OpenBSD / DragonFlyBSD: native FUSE support.
+# - macOS: fuse-t via direct C FFI; strict native live gate.
+# - Windows: WinFSP via direct C FFI; strict native live gate.
+# - illumos / Solaris / other Unix: portable API/CLI, explicit unsupported mount.
 
 [package]
 name = "pcloud-fs"
@@ -10,7 +11,8 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Mounted-drive / FUSE integration scaffolding (readdir, staging, journal) for pcloud-rs."
+rust-version.workspace = true
+description = "Cross-platform mounted-drive integration, staging, and crash-safe writeback for pcloud-rs."
 
 [dependencies]
 pcloud-cache = { path = "../pcloud-cache" }
@@ -39,13 +41,18 @@ libc = { workspace = true }
 [target.'cfg(target_os = "linux")'.dependencies]
 fuser.workspace = true
 
+[target.'cfg(any(target_os = "freebsd", target_os = "netbsd", target_os = "openbsd", target_os = "dragonfly"))'.dependencies]
+# fuser's non-Linux build requires the native libfuse-compatible ABI
+# (fusefs on FreeBSD/OpenBSD, refuse on NetBSD).
+fuser = { workspace = true, features = ["libfuse"] }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 # NOTE: fuse-t binding is via direct C FFI in pcloud-fs/src/platform/macos_ffi.rs,
-# not a separate crate. Phase-1 scaffolding; not yet validated on macOS hardware.
+# not a separate crate. A labelled native runner owns the strict live gate.
 # libc is pulled in by the broader `cfg(unix)` stanza above.
 
 [target.'cfg(windows)'.dependencies]
-# PHASE-1 SCAFFOLDING (bd-1du.4): WinFSP adapter via hand-rolled FFI.
+# WinFSP adapter via hand-rolled FFI.
 # We deliberately do NOT depend on the third-party `winfsp` crate; see
 # `src/platform/winfsp_ffi.rs` for rationale (auditable unsafe surface,
 # graceful DLL-missing handling, secret-handling discipline).

@@ -204,7 +204,7 @@ fn remount_after_clean_unmount() {
     }
 
     let folder = Arc::new(MockFolderBackend::new());
-    folder.insert_dir("/", 1, vec![("a.txt", false, None, Some(1))]);
+    folder.insert_dir_with_sizes("/", 1, vec![("a.txt", false, None, Some(1), Some(5))]);
     let files = Arc::new(MockFileBackend::new());
     files.insert_file(1, b"first".to_vec());
 
@@ -262,6 +262,13 @@ fn remount_after_clean_unmount() {
     }
 
     // Verify we can still read.
+    assert_eq!(
+        std::fs::metadata(tmp.path().join("a.txt"))
+            .expect("stat after remount")
+            .len(),
+        5,
+        "remount must preserve the authoritative remote size"
+    );
     match std::fs::read(tmp.path().join("a.txt")) {
         Ok(bytes) => assert_eq!(bytes, b"first"),
         Err(err) if should_skip_io_error(&err) => {}

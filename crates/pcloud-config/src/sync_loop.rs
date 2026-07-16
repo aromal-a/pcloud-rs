@@ -109,9 +109,27 @@ pub struct SyncLoopConfig {
     /// `Unknown` (i.e. "do not pause") because the engine crate
     /// intentionally does not pull `battery`/`starship-battery` —
     /// platform-specific delegation can be wired by the daemon if
-    /// required. See [`pcloud_engine::power`] for the reader trait.
+    /// required. See `pcloud_engine` (the `power` module) for the
+    /// reader trait — the path is not a published intra-doc link
+    /// because `pcloud_engine` is a sibling crate not re-exported
+    /// from `pcloud-config`.
     #[serde(default)]
     pub pause_on_battery: bool,
+    /// **T2.1.c (plan-side only).** Minimum local-file size, in bytes,
+    /// at which the planner attempts a differential ("rsync-style")
+    /// upload. Files strictly smaller than this threshold always go
+    /// down the full-upload path because the rolling-hash + signature
+    /// overhead exceeds the bandwidth saved on small payloads.
+    ///
+    /// Default: `4 * 1024 * 1024` (4 MiB) — matches the
+    /// [`DEFAULT_DIFFERENTIAL_THRESHOLD_BYTES`] constant.
+    ///
+    /// Note: as of T2.1.c the field controls *planning* only. The
+    /// engine computes a delta and stores it on the planned operation
+    /// for later execution; actual upload-via-`upload_writefromfile`
+    /// is gated on upstream byte-range API parity (T2.1 follow-up).
+    #[serde(default = "default_differential_threshold_bytes")]
+    pub differential_threshold_bytes: u64,
 }
 
 impl Default for SyncLoopConfig {
@@ -126,6 +144,7 @@ impl Default for SyncLoopConfig {
             conflict_policy: default_conflict_policy(),
             upload_chunk_size: default_upload_chunk_size(),
             pause_on_battery: false,
+            differential_threshold_bytes: default_differential_threshold_bytes(),
         }
     }
 }
@@ -155,6 +174,18 @@ fn default_conflict_policy() -> String {
 pub const DEFAULT_UPLOAD_CHUNK_SIZE: usize = 10 * 1024 * 1024;
 fn default_upload_chunk_size() -> usize {
     DEFAULT_UPLOAD_CHUNK_SIZE
+}
+
+/// Default differential-sync threshold: 4 MiB.
+///
+/// Files strictly smaller than this size skip the rolling-hash /
+/// signature path because the per-block hashing overhead exceeds the
+/// bandwidth saved by a partial upload. The constant is exposed so the
+/// engine planner and tests can share the same default without
+/// re-hardcoding.
+pub const DEFAULT_DIFFERENTIAL_THRESHOLD_BYTES: u64 = 4 * 1024 * 1024;
+fn default_differential_threshold_bytes() -> u64 {
+    DEFAULT_DIFFERENTIAL_THRESHOLD_BYTES
 }
 
 impl SyncLoopConfig {
@@ -297,6 +328,25 @@ mod tests {
     fn pause_on_battery_default_is_false() {
         let cfg = SyncLoopConfig::default();
         assert!(!cfg.pause_on_battery);
+    }
+
+    #[test]
+    fn differential_threshold_default_is_four_mib() {
+        let cfg = SyncLoopConfig::default();
+        assert_eq!(cfg.differential_threshold_bytes, 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn differential_threshold_missing_field_deserializes_to_default() {
+        // Older envelopes that pre-date T2.1.c omit the field
+        // entirely; serde must fall back to the default constant.
+        let json = serde_json::to_string(&SyncLoopConfig::default()).unwrap();
+        assert!(json.contains("differential_threshold_bytes"));
+        let back: SyncLoopConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            back.differential_threshold_bytes,
+            DEFAULT_DIFFERENTIAL_THRESHOLD_BYTES
+        );
     }
 
     #[test]

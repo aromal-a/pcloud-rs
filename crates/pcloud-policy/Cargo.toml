@@ -4,13 +4,17 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 description = "Policy enforcement layer (OPA/Rego) for the pcloud-rs Rust daemon."
 
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
-regorus = "0.9"
+# The default feature set also enables Regorus's bytecode VM (`rvm`), which
+# this crate never calls and which pulls the unmaintained `bincode` crate.
+# Keep the full Rego evaluator and Arc-backed values without the unused VM.
+regorus = { version = "0.9", default-features = false, features = ["full-opa", "arc"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -9,10 +9,10 @@
 # `pcloudd` (from pcloud-daemon). The `service` stanza therefore references
 # `opt_bin/"pcloudd"`, not a dashed variant like `pcloud-daemon`.
 
-class Pcloudcc < Formula
+class PcloudRs < Formula
   desc "pCloud command-line client and sync daemon (Rust rewrite)"
-  homepage "https://github.com/pcloudcom/pcloud-rs"
-  url "https://github.com/pcloudcom/pcloud-rs/archive/refs/tags/vX.Y.Z.tar.gz"
+  homepage "https://github.com/ezechiel203/pcloud-rs"
+  url "https://github.com/ezechiel203/pcloud-rs/archive/refs/tags/vX.Y.Z.tar.gz"
   sha256 "SHA256_PLACEHOLDER"
   license any_of: ["MIT", "Apache-2.0"]
 
@@ -37,9 +37,9 @@ class Pcloudcc < Formula
   service do
     # `pcloudd` is the binary name declared in
     # crates/pcloud-daemon/Cargo.toml `[[bin]] name = "pcloudd"`.
-    # --foreground keeps the process in the foreground so `brew services`
-    # can supervise it directly (brew invokes launchctl under the hood).
-    run [opt_bin/"pcloudd", "--foreground"]
+    # `serve` runs the foreground IPC loop so `brew services` can supervise it
+    # directly (brew invokes launchctl under the hood).
+    run [opt_bin/"pcloudd", "serve"]
     keep_alive true
     log_path var/"log/pcloud-rs.log"
     error_log_path var/"log/pcloud-rs.err.log"

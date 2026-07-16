@@ -1,0 +1,125 @@
+name: Security audit
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # weekly Monday
+  push:
+    paths: ['**/Cargo.lock', '**/Cargo.toml', 'audit.toml', 'deny.toml']
+  pull_request:
+    paths: ['**/Cargo.lock', '**/Cargo.toml', 'audit.toml', 'deny.toml']
+
+jobs:
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.1
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.1 --locked
+      - name: Run cargo audit with time-boxed exceptions
+        run: |
+          cargo audit --deny warnings \
+            --ignore RUSTSEC-2023-0071
+
+  deny:
+    name: cargo deny
+    runs-on: ubuntu-latest
+    # SARIF upload requires security-events: write; the action falls back to
+    # table output when the permission is absent (e.g. fork PRs).
+    permissions:
+      contents: read
+      security-events: write
+    # audit-06 wave-2 (bd-pcloud-rs-ncx.76): pin a cargo-deny version that
+    # supports `--format sarif` natively. Previous wave fell back to an
+    # empty SARIF stub when the installed cargo-deny didn't understand the
+    # flag — that silently hid real violations from the Security tab. We
+    # now fail the job if SARIF generation doesn't produce a non-empty file.
+    # cargo-deny 0.19.x understands the v2 config schema used by deny.toml
+    # and emits SARIF 2.1.0 verbatim.
+    env:
+      CARGO_DENY_VERSION: "0.19.8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.96.1
+      - name: Install cargo-deny (pinned for SARIF support)
+        run: |
+          cargo install cargo-deny \
+            --version "${CARGO_DENY_VERSION}" \
+            --locked
+      - name: Run cargo deny (human-readable)
+        id: cargo-deny-check
+        continue-on-error: true
+        run: cargo deny --locked check
+      - name: Generate cargo-deny SARIF
+        id: cargo-deny-sarif
+        run: |
+          set -euo pipefail
+          # `cargo deny` exits non-zero on findings, but we still want the
+          # SARIF output so GitHub can render the annotations. `|| true`
+          # would swallow a binary / flag regression, so we instead check
+          # the output file size explicitly below.
+          cargo deny --locked --format sarif check \
+            > deny-results.sarif || true
+          # Fail hard if cargo-deny did not produce a non-empty SARIF.
+          # This catches:
+          #   - the installed binary rejecting `--format sarif`,
+          #   - a regression that swallows all findings into an empty file.
+          # Do NOT write an empty stub: that hides real violations.
+          if [ ! -s deny-results.sarif ]; then
+            echo "ERROR: cargo-deny did not produce any SARIF output." >&2
+            echo "       Check that cargo-deny ${CARGO_DENY_VERSION} supports --format sarif." >&2
+            exit 1
+          fi
+          # Parse the JSON to confirm it has a 'runs' array. An empty array
+          # is acceptable (truly no findings); a missing 'runs' field is a
+          # malformed SARIF and must fail the step.
+          python3 -c 'import json, sys; d = json.load(open("deny-results.sarif")); assert "runs" in d, "missing runs"; print(f"SARIF runs: {len(d[\"runs\"])}")'
+      - name: Upload cargo-deny SARIF to Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: deny-results.sarif
+          category: cargo-deny
+        if: always() && steps.cargo-deny-sarif.outcome == 'success'
+      - name: Re-fail if cargo deny found violations
+        if: steps.cargo-deny-check.outcome == 'failure'
+        run: exit 1
+
+  container-scan:
+    name: Trivy container scan
+    runs-on: ubuntu-latest
+    # Run on schedule only — building the image on every Cargo.toml push
+    # would be expensive and is not useful without a real release image.
+    if: github.event_name == 'schedule'
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Docker image for scanning
+        run: docker build -f packaging/docker/Dockerfile -t pcloud-rs:scan .
+      - name: Run Trivy vulnerability scanner (SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: 'pcloud-rs:scan'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+      - name: Upload Trivy SARIF to Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy
+        if: always()
+      - name: Fail on CRITICAL/HIGH findings
+        # Re-run in table mode to get a human-readable summary on failure.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: 'pcloud-rs:scan'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'

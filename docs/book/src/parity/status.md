@@ -2,7 +2,7 @@
 
 The authoritative tally lives in
 [`STATUS.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/STATUS.md)
-at the root of the `` tree. This page reproduces the current
+at the repository root. This page reproduces the current
 counts for convenience and cross-references the closure checklist and
 reviewer footnotes. If the numbers here ever drift from `STATUS.md`,
 **`STATUS.md` wins** — update it first and reconcile back here.
@@ -43,37 +43,31 @@ For the current Implemented / Partial / Missing / Rejected counts, see
 Rejected-row per-item justification lives in
 [`REJECTED-RATIONALES-14042026.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/REJECTED-RATIONALES-14042026.md).
 
-## Open Parity Beads
+## Parity Tracking
 
-- `bd-1du` — Close verified C-to-Rust feature parity gaps (epic)
-- `bd-1du.4` — Replace filesystem shell with real mounted-drive parity
-- `bd-1du.10` — Prove and gate final C parity claims
+The historical `bd-1du.*` and `gptrev-01` labels in older review notes are
+provenance, not current release evidence. `STATUS.md` plus
+`C_FEATURE_PARITY_MATRIX.csv` are the active tracking source. See ADR
+[0009 — Parity Matrix Truth Source](../adr/0009.md) for why `STATUS.md` is
+authoritative.
 
-`bd-1du.10` is still open. Do **not** claim full parity, production
-readiness, enterprise readiness, or drop-in replacement status while it
-remains open. See ADR
-[0009 — Parity Matrix Truth Source](../adr/0009.md) for why `STATUS.md`
-is authoritative.
+The current matrix has no Partial or Missing rows. That does **not** establish
+production, enterprise, or drop-in replacement readiness: live pCloud,
+native-mount, signed-package, upgrade, and appliance gates are separate and
+remain binding.
 
-## Remaining Partial Rows
+## Closed Partial Rows
 
-For the authoritative list of current `Partial` rows see
-[`STATUS.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/STATUS.md).
-As of Audit 03 (2026-04-18), two genuine Partial rows remain:
+The seven Partial rows recorded on 2026-04-30 were closed by the May 1 parity
+work. In particular, SDK row 94 now drives the production chunked driver and
+threads `ConflictMode` to `upload_save`; crypto/team shares and the public-link
+variants have user-facing IPC routes. For current evidence and exact counts,
+see [`STATUS.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/STATUS.md).
 
-- **Row 93** (`transfers,upload_writefromfile`) — proto encoder exists;
-  `Request::UploadWriteFromFile` IPC variant and CLI caller are not yet
-  wired. TODO at `crates/pcloud-backends/src/transfer_backend.rs:601-613`.
-- **Row 149** (`links,ptree_public_link`) — id-based IPC is wired
-  end-to-end; path-based CLI variant resolves paths client-side rather
-  than via a dedicated daemon-side IPC variant.
-
-The footnotes below (Reviewer 19 risk-of-misread notes) are retained
-because they explain nuances of the flipped rows that auditors should
-still understand — in particular that daemon-side FUSE mount-lifecycle
-wiring and live-host proof are still owed under `bd-1du.4`, and the
-final parity-proof gate under `bd-1du.10` (Reviewer-19 regrade +
-closing-commit SHA) is still open.
+The footnotes below are retained as reviewer context but have been updated to
+avoid stale row-status claims. Linux FUSE row-level parity is now `Implemented`;
+macOS/Windows live-host mount proof and the final reviewer sign-off remain
+release-gating evidence, not extra `Missing` rows.
 
 Closure of the remaining gate items is tracked in the
 [`bd-1du.10` closure checklist](https://github.com/ezechiel203/pcloud-rs/blob/main/docs/parity/bd-1du-10-closure-checklist.md)
@@ -93,31 +87,21 @@ example of this distinction — see footnote [^fuse-wiring] and ADR
 Reviewer 19's parity-honesty audit (grade B+) flagged three rows that
 are classified correctly but easy to misread. Their footnotes are
 reproduced below verbatim so readers do not need to cross-open the
-review.
+review.[^fuse-wiring][^upload-session-stubs][^sdk-shell-scope]
 
-[^fuse-wiring]: **FUSE trait methods vs daemon wiring.** The
-    `FuseAdapter` write path landed (`PcloudFsShim::create/write/flush/fsync/unlink/rename`
-    in `crates/pcloud-fs/src/fuse_adapter.rs:845+`), but the
-    **daemon mount lifecycle wiring is still pending**:
-    `crates/pcloud-daemon/src/mount_runtime.rs:324` shows only
-    placeholder dispatch — no real `WritePathService` instance is
-    created on daemon mount lifecycle, and the
-    `tests/fuse_mount_integration.rs` integration exercises
-    `WritePathService` directly, not a live kernel FUSE mount. A
-    live mounted-drive host run has not yet been executed. Tracked
-    under `bd-1du.4.6`.
+[^fuse-wiring]: **FUSE trait methods vs daemon wiring.** This Reviewer-19
+    warning is superseded for the Linux row-level verdict: row 85 is
+    `Implemented` after the Linux mounted-drive path was wired and live-verified.
+    The remaining caution is platform/release evidence: macOS `fuse-t` and
+    Windows WinFSP still need real hardware live-host proof before release-grade
+    claims.
 
 [^upload-session-stubs]: **`UploadSession` pause/resume/cancel.**
-    These publish state transitions but are **cooperative stubs**
-    over the single-shot daemon path — see `TODO(stub)` markers in
-    `crates/pcloud-sdk/src/upload_session.rs`. The SDK exports them
-    as `pub fn` which looks production-ready; wire semantics will
-    only unlock once the chunked upload state machine (matrix
-    row 93) lands in the daemon.
+    This warning is superseded. `EmbeddedDaemon::start_upload` drives the
+    production `RuntimeUploadDriver`, and `ConflictMode` reaches the save
+    frame. Live release qualification remains a separate gate.
 
 [^sdk-shell-scope]: **`embedded library shell` scope.** Row 187
-    (`sdk,embedded library shell`) reflects **SDK control-plane
-    scope** (auth/TFA/transfers/account/backup/folder helpers).
-    The row lists 20+ helpers under one label; remaining breadth
-    is FS-level library helpers tied to `bd-1du.4`. The row will
-    stay Partial until mounted-drive parity lands.
+    (`sdk,embedded library shell`) is `Implemented` for the SDK control-plane
+    scope listed in the matrix. Remaining work is release/platform proof, not
+    a change to row 187's implemented verdict.

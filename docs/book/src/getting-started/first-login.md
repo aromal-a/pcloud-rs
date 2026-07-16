@@ -87,15 +87,14 @@ systemctl --user start pcloudd
 systemctl --user enable pcloudd           # optional: start on login
 systemctl --user status pcloudd           # verify "active (running)"
 
-# macOS — launchd (installed by brew / .pkg)
-brew services start pcloud-rs                    # if Homebrew-installed
+# macOS — launchd (after a local source/package build)
 launchctl kickstart -k gui/$(id -u)/dev.pcloud-rs.daemon
 
-# Windows — Services
-Start-Service pcloud-daemon
+# Windows — per-user daemon (same SID as IPC/DPAPI/WinFSP)
+pcloudc start
 
 # Any platform — foreground (useful for debugging; Ctrl-C to stop)
-pcloud-daemon --foreground
+pcloudd serve
 
 # Any platform — friendly wrapper (spawn detached, logs to state dir)
 pcloudc start
@@ -107,11 +106,10 @@ What each command does:
   manager to activate the unit. Exit code 0 means active; a non-zero
   exit or `status: failed` means read the journal:
   `journalctl --user -u pcloudd -n 50`.
-- `pcloudc start` — the cross-platform fallback. Spawns
-  `pcloud-daemon` detached, redirects stdio to
-  `~/.pcloud/state/daemon.log`, and returns once the IPC socket is
-  reachable. `pcloudc login` calls this automatically if it finds no
-  running daemon.
+- `pcloudc start` — the cross-platform fallback. Spawns `pcloudd serve`
+  under the current user, redirects stdio to the platform data directory,
+  and returns once an authenticated IPC health request succeeds. `pcloudc
+  login` can offer the same startup when it finds no running daemon.
 
 Common failures and fixes:
 
@@ -434,8 +432,8 @@ must run as you; no root is ever required.
 
 - [First sync](first-sync.md) — register your first local ↔ remote
   pairing.
-- [Mount a virtual drive](first-sync.md#5-first-mount-linux) — Linux
-  only today; macOS / Windows / BSD scaffolded behind `bd-1du.4`.
+- [Mount a virtual drive](first-sync.md#5-first-mount-linux) — uses FUSE,
+  fuse-t, or WinFSP according to the qualified native target.
 - [Create a public link](first-sync.md#6-first-public-link) — share
   one file without granting account access.
 - [Back up a directory](first-sync.md#7-first-backup-snapshot) —

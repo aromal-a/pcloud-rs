@@ -118,16 +118,15 @@ fn keychain_vault_backend_name_contract() {
         "keychain",
         "macOS backend name must remain 'keychain' for diagnostics"
     );
-    // Intentionally do NOT call store/load/clear here — those require a
-    // real login Keychain, which is out of scope for this scaffold.
+    // The live Keychain round trip remains an ignored, exclusive native test;
+    // this fast test protects the diagnostic contract.
 }
 
-/// Windows DPAPI vault is a tier-1 planned backend. Same rationale as
-/// the macOS keychain scaffold above: only the `backend_name()` shape
-/// contract is asserted until a Windows CI target is available.
+/// Fast Windows DPAPI diagnostic-contract test. Native Windows CI supplies the
+/// target; a separate live round trip owns master-key behavior.
 #[cfg(windows)]
 #[test]
-fn dpapi_vault_unimplemented_until_real_windows_run() {
+fn dpapi_vault_backend_name_is_stable() {
     use pcloud_daemon::vault::dpapi::DpapiVault;
     let path = std::env::temp_dir().join("pcloud-dpapi-fallback");
     let vault = DpapiVault::new(&path);

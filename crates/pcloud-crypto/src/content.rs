@@ -142,7 +142,7 @@ pub fn derive_file_key(master: &SecretBytes, file_seed: &[u8]) -> SecretBytes {
 /// Nonce: 12 bytes ([`NONCE_LEN`]) from the OS CSPRNG via `getrandom`.
 /// Tag: 16 bytes ([`TAG_LEN`]) appended by the AEAD.
 /// AAD: the 4-byte big-endian `sector_index`, which is also embedded in
-/// the frame header so [`open_sector`] can verify it *before* the AEAD
+/// the frame header so `open_sector` can verify it *before* the AEAD
 /// call. The frame layout is `[u32 index][12-byte nonce][ct || 16-byte tag]`.
 ///
 /// # Security

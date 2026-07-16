@@ -70,7 +70,7 @@ daemon's lifetime; restart required.
 | `enabled`       | bool            | `true`  | —                                             | Master switch.                        |
 | `strict_mode`   | bool            | `false` | —                                             | `false` = audit-only, `true` = enforce. |
 | `timeout_ms`    | u32             | `5000`  | `> 0`; host truncates > 30 000                | Hard upper bound per scan.            |
-| `[plugins.dlp.rules]` | table<bool> | `{}`    | Keys must be one of the 6 rule IDs            | Per-rule on/off overrides.            |
+| `[plugins.dlp.rules]` | boolean table | `{}`  | Keys must be one of the 6 rule IDs            | Per-rule on/off overrides.            |
 
 Rule IDs recognised under `[plugins.dlp.rules]`:
 

@@ -19,8 +19,8 @@ install -Dm0644 pcloud.conf.5 $(DESTDIR)/usr/share/man/man5/pcloud.conf.5
 
 ## Linting
 
-All pages must pass `mandoc -T lint` cleanly. CI enforces this via the
-`manpage-lint` job in `.github/workflows/rust.yml`. To lint locally:
+All pages must pass `mandoc -T lint` cleanly. `cargo xtask docker` enforces
+this inside its Debian portability container. To lint directly:
 
 ```
 mandoc -T lint packaging/man/*.1 packaging/man/*.5
@@ -41,8 +41,8 @@ mandoc -T lint packaging/man/*.1 packaging/man/*.5
 | openSUSE              | No                             | `zypper install mandoc`   |
 | macOS                 | Yes (base system uses mandoc)  | —                         |
 
-GitHub Actions' `ubuntu-latest` image does NOT include `mandoc` by
-default, so the `manpage-lint` job installs it via `apt`.
+The Docker gate installs `mandoc` explicitly in its disposable checker
+container.
 
 ## Previewing
 

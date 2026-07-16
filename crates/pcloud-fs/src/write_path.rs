@@ -110,6 +110,11 @@ pub enum WritePathError {
     /// path containing `/`).
     #[error("invalid argument: {0}")]
     Invalid(&'static str),
+    /// A configured per-file or process-wide staging ceiling would be
+    /// exceeded. Maps to `ENOSPC` so callers can distinguish capacity from
+    /// malformed input.
+    #[error("staging capacity exhausted: {0}")]
+    NoSpace(&'static str),
     /// Generic pCloud filesystem error (wraps [`FsError`]).
     #[error(transparent)]
     Fs(#[from] FsError),
@@ -122,14 +127,15 @@ pub enum WritePathError {
 
 impl WritePathError {
     /// Map this error to a POSIX errno suitable for a FUSE reply.
-    /// Invalid/NotOpen map to `EINVAL`; other variants map to `EIO` or
-    /// the embedded [`FsError`]'s own errno.
+    /// Invalid/NotOpen map to `EINVAL`, staging exhaustion maps to `ENOSPC`,
+    /// and other variants map to `EIO` or the embedded [`FsError`]'s errno.
     #[must_use]
     pub fn to_errno(&self) -> i32 {
         match self {
             Self::Fs(e) => e.to_errno(),
             Self::Invalid(_) => crate::errors::EINVAL,
             Self::NotOpen(_) => crate::errors::EINVAL,
+            Self::NoSpace(_) => crate::errors::ENOSPC,
             _ => crate::errors::EIO,
         }
     }
@@ -299,7 +305,8 @@ pub const DEFAULT_CHUNK_RETRY_ATTEMPTS: u32 = 5;
 
 /// Initial backoff between chunk retries. Doubles on every retry
 /// (1s, 2s, 4s, 8s, 16s by default). Used by the chunked flush retry
-/// loop in [`WritePathService::chunked_flush`].
+/// loop in `WritePathService::chunked_flush` (private; intra-doc link
+/// disabled per CLAUDEREV P1.3).
 pub const DEFAULT_CHUNK_RETRY_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 
 /// Default wall-clock interval for time-based forced flushes of idle dirty
@@ -339,9 +346,10 @@ pub struct WritePathOptions {
     /// Default [`DEFAULT_CHUNK_RETRY_INITIAL_BACKOFF`] (1 second).
     pub chunk_retry_initial_backoff: Duration,
     /// Process-wide aggregate staging ceiling (M-5.4). A `write` that would
-    /// push [`GLOBAL_STAGING_BYTES`] past this value is rejected with
-    /// `ENOSPC`. Default is [`DEFAULT_MAX_GLOBAL_STAGING_BYTES`] (2 GiB).
-    /// Set to `usize::MAX` to disable (not recommended).
+    /// push `GLOBAL_STAGING_BYTES` (private static; intra-doc link disabled
+    /// per CLAUDEREV P1.3) past this value is rejected with `ENOSPC`.
+    /// Default is [`DEFAULT_MAX_GLOBAL_STAGING_BYTES`] (2 GiB). Set to
+    /// `usize::MAX` to disable (not recommended).
     pub max_global_staging_bytes: usize,
 }
 
@@ -427,6 +435,10 @@ struct WriteHandle {
     blob_name: String,
     /// Dirty-byte count since last flush.
     dirty_bytes: u64,
+    /// True when a non-byte mutation (create/truncate) or byte write is
+    /// pending upload. Kept separate from `dirty_bytes` so empty-file
+    /// creates and `O_TRUNC` still drain while byte accounting stays exact.
+    dirty_ops: bool,
     /// Last flush timestamp.
     last_flush: Instant,
     /// `O_APPEND` semantics.
@@ -481,6 +493,10 @@ impl<B: FileUploadBackend> WritePathService<B> {
         let path = path.into();
         let blob_name = blob_name_for_ino(ino);
         if o_trunc {
+            self.journal_append(JournalOp::Truncate {
+                path: path.clone(),
+                new_size: 0,
+            })?;
             self.stage.truncate_blob(&blob_name, 0)?;
         } else if !self.stage.blob_path(&blob_name)?.exists() {
             self.stage.write_blob_full(&blob_name, &[])?;
@@ -489,6 +505,7 @@ impl<B: FileUploadBackend> WritePathService<B> {
             path,
             blob_name,
             dirty_bytes: 0,
+            dirty_ops: o_trunc,
             last_flush: Instant::now(),
             append_mode,
         }));
@@ -497,6 +514,19 @@ impl<B: FileUploadBackend> WritePathService<B> {
             .map_err(|_| WritePathError::Internal("handles mutex poisoned"))?
             .insert(ino, handle);
         Ok(())
+    }
+
+    /// Return whether `ino` already has a live staging/write context.
+    ///
+    /// OpenBSD's FUSE VFS creates regular files as `mknod` followed by
+    /// `open`; the second operation must reuse the context created by the
+    /// first or it would discard the pending empty-file create marker.
+    #[must_use]
+    pub fn has_open_inode(&self, ino: u64) -> bool {
+        self.handles
+            .lock()
+            .map(|handles| handles.contains_key(&ino))
+            .unwrap_or(false)
     }
 
     /// Seed the staging blob for `ino` with `bytes`. Used when opening an
@@ -514,11 +544,17 @@ impl<B: FileUploadBackend> WritePathService<B> {
             return Err(WritePathError::Invalid("name"));
         }
         let full = join_path(parent_path, name);
-        self.open_for_write(ino, full, false, true)?;
         self.journal_append(JournalOp::Create {
             parent_path: parent_path.to_owned(),
             name: name.to_owned(),
         })?;
+        self.stage.write_blob_full(&blob_name_for_ino(ino), &[])?;
+        self.open_for_write(ino, full, false, false)?;
+        let handle = self.get_handle(ino)?;
+        let mut h = handle
+            .lock()
+            .map_err(|_| WritePathError::Internal("create handle mutex poisoned"))?;
+        h.dirty_ops = true;
         Ok(())
     }
 
@@ -560,7 +596,7 @@ impl<B: FileUploadBackend> WritePathService<B> {
         if max < usize::MAX {
             let written_end = effective_offset.saturating_add(data.len() as u64);
             if written_end > max as u64 {
-                return Err(WritePathError::Invalid(
+                return Err(WritePathError::NoSpace(
                     "write would exceed max_staging_bytes ceiling",
                 ));
             }
@@ -587,7 +623,7 @@ impl<B: FileUploadBackend> WritePathService<B> {
                     prev,
                     data.len()
                 );
-                return Err(WritePathError::Invalid(
+                return Err(WritePathError::NoSpace(
                     "write would exceed process-wide max_global_staging_bytes ceiling",
                 ));
             }
@@ -612,6 +648,7 @@ impl<B: FileUploadBackend> WritePathService<B> {
                 .lock()
                 .map_err(|_| WritePathError::Internal("write handle mutex poisoned"))?;
             h.dirty_bytes = dirty;
+            h.dirty_ops = true;
         }
 
         let now = Instant::now();
@@ -729,6 +766,7 @@ impl<B: FileUploadBackend> WritePathService<B> {
                 );
             }
             h.dirty_bytes = 0;
+            h.dirty_ops = false;
             h.last_flush = now;
         }
 
@@ -740,6 +778,7 @@ impl<B: FileUploadBackend> WritePathService<B> {
         // `/slo` endpoint reflects sustained write-path performance.
         let flush_latency = now.saturating_duration_since(flush_started);
         slo_hook::observe_flush(total_size, flush_latency);
+        self.checkpoint_journal_path(&path);
         Ok(())
     }
 
@@ -906,21 +945,11 @@ impl<B: FileUploadBackend> WritePathService<B> {
         let flushed_bytes = std::fs::metadata(&blob_path).map(|m| m.len()).unwrap_or(0);
         self.backend.upload_file(&parent, &name, &blob_path)?;
 
-        // F-01 fix: checkpoint the journal AFTER the backend confirms the upload.
-        // A crash between upload success and journal reset is safe — replay will
-        // re-upload (idempotent). A crash before upload would leave the journal
-        // intact so it can re-drive the upload on restart.
-        if let Err(e) = self
-            .journal
-            .lock()
-            .map_err(|_| WritePathError::Internal("journal mutex poisoned in flush"))
-            .and_then(|mut j| j.reset().map_err(WritePathError::Journal))
-        {
-            log::warn!(
-                "pcloud-fs: journal checkpoint failed after upload — \
-                 journal will replay the write on next mount (safe but redundant): {e}"
-            );
-        }
+        // F-01/F-04 fix: checkpoint only records for the path whose
+        // backend upload has completed. The journal is shared across
+        // dirty inodes; resetting it wholesale after one file upload
+        // can erase recovery records for unrelated dirty files.
+        self.checkpoint_journal_path(&path);
 
         // Reset dirty accounting.
         let now = Instant::now();
@@ -937,6 +966,7 @@ impl<B: FileUploadBackend> WritePathService<B> {
                 );
             }
             h.dirty_bytes = 0;
+            h.dirty_ops = false;
             h.last_flush = now;
         }
 
@@ -965,8 +995,14 @@ impl<B: FileUploadBackend> WritePathService<B> {
                 .map_err(|_| WritePathError::Internal("truncate handle mutex poisoned"))?;
             (h.blob_name.clone(), h.path.clone())
         };
-        self.stage.truncate_blob(&blob_name, new_size)?;
         self.journal_append(JournalOp::Truncate { path, new_size })?;
+        self.stage.truncate_blob(&blob_name, new_size)?;
+        {
+            let mut h = handle
+                .lock()
+                .map_err(|_| WritePathError::Internal("truncate handle mutex poisoned"))?;
+            h.dirty_ops = true;
+        }
         Ok(())
     }
 
@@ -1022,7 +1058,7 @@ impl<B: FileUploadBackend> WritePathService<B> {
                 .iter()
                 .filter_map(|(ino, h)| {
                     let h = h.lock().ok()?;
-                    if h.dirty_bytes > 0
+                    if h.dirty_ops
                         && now.saturating_duration_since(h.last_flush)
                             >= self.options.flush_interval
                     {
@@ -1053,7 +1089,7 @@ impl<B: FileUploadBackend> WritePathService<B> {
                 .iter()
                 .filter_map(|(ino, h)| {
                     let h = h.lock().ok()?;
-                    if h.dirty_bytes > 0 { Some(*ino) } else { None }
+                    if h.dirty_ops { Some(*ino) } else { None }
                 })
                 .collect(),
             Err(_) => return vec![(0, Err(WritePathError::Internal("handles mutex poisoned")))],
@@ -1106,6 +1142,23 @@ impl<B: FileUploadBackend> WritePathService<B> {
         Ok(bytes[start..end].to_vec())
     }
 
+    /// Return the current logical length of the staging blob backing
+    /// `ino`. Mount shims use this after writes and truncates so the
+    /// kernel-visible attributes follow the authoritative local staging
+    /// state, including append and sparse-write growth.
+    pub fn staged_len(&self, ino: u64) -> Result<u64, WritePathError> {
+        let handle = self.get_handle(ino)?;
+        let blob_name = {
+            let h = handle
+                .lock()
+                .map_err(|_| WritePathError::Internal("write handle mutex poisoned"))?;
+            h.blob_name.clone()
+        };
+        let path = self.stage.blob_path(&blob_name)?;
+        let metadata = std::fs::metadata(path).map_err(crate::staging::StagingError::from)?;
+        Ok(metadata.len())
+    }
+
     /// Replay any pending records from the on-disk journal. Returns the
     /// recovered records so the caller can re-drive backend uploads on
     /// remount.
@@ -1130,7 +1183,10 @@ impl<B: FileUploadBackend> WritePathService<B> {
     pub fn release(&self, ino: u64) {
         if let Ok(mut handles) = self.handles.lock() {
             let blob_name_and_clean = handles.get(&ino).and_then(|handle| {
-                handle.lock().ok().map(|h| (h.blob_name.clone(), h.dirty_bytes == 0))
+                handle
+                    .lock()
+                    .ok()
+                    .map(|h| (h.blob_name.clone(), !h.dirty_ops))
             });
 
             // M-5.4: when a handle is removed without a prior flush (e.g.
@@ -1196,6 +1252,20 @@ impl<B: FileUploadBackend> WritePathService<B> {
             .lock()
             .map_err(|_| WritePathError::Internal("journal mutex poisoned"))?;
         Ok(j.append(op)?)
+    }
+
+    fn checkpoint_journal_path(&self, path: &str) {
+        if let Err(e) = self
+            .journal
+            .lock()
+            .map_err(|_| WritePathError::Internal("journal mutex poisoned in checkpoint"))
+            .and_then(|mut j| j.checkpoint_path(path).map_err(WritePathError::Journal))
+        {
+            log::warn!(
+                "pcloud-fs: journal checkpoint failed for {path} after upload — \
+                 journal will replay the write on next mount (safe but redundant): {e}"
+            );
+        }
     }
 
     /// Staging dir, for diagnostics.
@@ -2003,6 +2073,37 @@ mod tests {
     }
 
     #[test]
+    fn o_trunc_without_followup_write_is_journaled_and_drained() {
+        let d = tempdir().unwrap();
+        let (svc, backend) = build_service(d.path());
+        svc.create(14, "/", "empty-after-trunc.txt").unwrap();
+        svc.write(14, 0, b"old bytes").unwrap();
+        svc.flush(14).unwrap();
+
+        svc.open_for_write(14, "/empty-after-trunc.txt".to_owned(), false, true)
+            .unwrap();
+        let records = svc.replay_journal().unwrap();
+        assert!(
+            records.iter().any(|record| matches!(
+                &record.op,
+                JournalOp::Truncate { path, new_size }
+                    if path == "/empty-after-trunc.txt" && *new_size == 0
+            )),
+            "O_TRUNC must append a replayable truncate record before staging mutation: {records:?}"
+        );
+
+        let outcomes = svc.drain_all();
+        assert_eq!(outcomes.len(), 1);
+        assert!(outcomes[0].1.is_ok(), "drain failed: {outcomes:?}");
+        let uploads = backend.uploads.lock().unwrap();
+        assert_eq!(uploads.get("/empty-after-trunc.txt").unwrap(), b"");
+        assert!(
+            svc.replay_journal().unwrap().is_empty(),
+            "successful drain must checkpoint the O_TRUNC journal record"
+        );
+    }
+
+    #[test]
     fn flush_threshold_triggers_upload_mid_write() {
         let d = tempdir().unwrap();
         let stage = StagingDir::open(d.path().join("stage")).unwrap();
@@ -2035,6 +2136,13 @@ mod tests {
         svc.create(15, "/", "t.bin").unwrap();
         svc.write(15, 0, b"0123456789").unwrap();
         svc.truncate(15, 4).unwrap();
+        let records = svc.replay_journal().unwrap();
+        assert!(
+            records.iter().any(
+                |r| matches!(&r.op, JournalOp::Truncate { path, new_size } if path == "/t.bin" && *new_size == 4)
+            ),
+            "truncate must be journaled before flush/checkpoint: {records:?}"
+        );
         svc.flush(15).unwrap();
         let uploads = backend.uploads.lock().unwrap();
         assert_eq!(uploads.get("/t.bin").unwrap(), b"0123");
@@ -2870,7 +2978,7 @@ mod tests {
     }
 
     /// Writes beyond [`WritePathOptions::max_staging_bytes`] must be
-    /// rejected with `EINVAL` rather than allowed to grow the staging
+    /// rejected with `ENOSPC` rather than allowed to grow the staging
     /// blob unbounded. The guard is checked on the first write that
     /// would cross the ceiling.
     #[test]
@@ -2894,7 +3002,8 @@ mod tests {
         svc.write(505, 2048, &vec![0u8; 2048]).unwrap();
         // Over the cap: rejected.
         let err = svc.write(505, 4096, &[0u8; 1]).unwrap_err();
-        assert!(matches!(err, WritePathError::Invalid(_)), "got {err:?}");
+        assert!(matches!(err, WritePathError::NoSpace(_)), "got {err:?}");
+        assert_eq!(err.to_errno(), crate::errors::ENOSPC);
     }
 
     /// Default [`WritePathOptions`] must pin chunk size and staging ceiling
@@ -2955,7 +3064,9 @@ mod tests {
         svc.create(1, "/", "ordered.txt").unwrap();
         svc.write(1, 0, b"hello journal ordering").unwrap();
         let records = svc.replay_journal().expect("replay must succeed");
-        let has_write = records.iter().any(|r| matches!(r.op, JournalOp::Write { .. }));
+        let has_write = records
+            .iter()
+            .any(|r| matches!(r.op, JournalOp::Write { .. }));
         assert!(
             has_write,
             "F-01: journal must contain Write record before flush; got {records:?}"
@@ -2989,6 +3100,44 @@ mod tests {
         assert!(
             after.is_empty(),
             "F-01: journal must be empty after successful flush; got {after:?}"
+        );
+    }
+
+    #[test]
+    fn flush_checkpoint_preserves_unrelated_dirty_inode_records() {
+        let d = tempdir().unwrap();
+        let stage = StagingDir::open(d.path().join("stage")).unwrap();
+        let journal = WriteJournal::open(stage.journal_path()).unwrap();
+        let backend = Arc::new(MockUploadBackend::new());
+        let svc = WritePathService::new(
+            stage,
+            journal,
+            Arc::clone(&backend),
+            WritePathOptions {
+                flush_threshold_bytes: 1024 * 1024 * 1024,
+                flush_interval: Duration::from_secs(3600),
+                ..WritePathOptions::default()
+            },
+        );
+        svc.create(1, "/", "a.txt").unwrap();
+        svc.write(1, 0, b"uploaded").unwrap();
+        svc.create(2, "/", "b.txt").unwrap();
+        svc.write(2, 0, b"still dirty").unwrap();
+
+        svc.flush(1).unwrap();
+
+        let after = svc.replay_journal().unwrap();
+        assert!(
+            after
+                .iter()
+                .any(|r| matches!(&r.op, JournalOp::Write { path, .. } if path == "/b.txt")),
+            "checkpoint for /a.txt must preserve dirty /b.txt records: {after:?}"
+        );
+        assert!(
+            !after
+                .iter()
+                .any(|r| matches!(&r.op, JournalOp::Write { path, .. } if path == "/a.txt")),
+            "checkpoint for /a.txt should remove flushed /a.txt records: {after:?}"
         );
     }
 

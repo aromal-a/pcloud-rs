@@ -1,0 +1,670 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Packaging - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/reference/packaging.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="packaging-reference"><a class="header" href="#packaging-reference">Packaging reference</a></h1>
+<blockquote>
+<p>Authoritative sources: the <code>packaging/</code> subtree at the repo root and
+<code>.github/workflows/</code>. The operations-view summary table lives at
+<a href="../operations/packaging-matrix.html"><code>operations/packaging-matrix.md</code></a>;
+this page is the deep per-channel reference. Anything that conflicts
+with either file is wrong — the code and workflow YAMLs win.</p>
+</blockquote>
+<blockquote>
+<p><strong>Evidence callout (2026-07-16).</strong> There is no public GitHub release and no
+published package channel. Linux raw and package jobs, strict
+signed/notarized macOS and signed Windows installer jobs, and Tier-2 NAS
+candidate jobs are defined in CI. Definitions are not successful-run
+evidence: consult the release-commit logs and signatures. Docker/GHCR and
+SLSA provenance remain unimplemented.</p>
+</blockquote>
+<h2 id="who-this-page-is-for"><a class="header" href="#who-this-page-is-for">Who this page is for</a></h2>
+<ul>
+<li><strong>Downstream packagers</strong>: skip to the per-format section
+(<a href="#linux-channels">Linux</a> / <a href="#macos-channels">macOS</a> /
+<a href="#windows-channels">Windows</a> / <a href="#bsd-channels">BSD</a>). Each section
+lists the recipe path, build command, output artefact, signing
+posture, install layout, and honest status.</li>
+<li><strong>Release engineers</strong>: read
+<a href="#signing-pipelines">Signing pipelines</a> for the current vs
+target state of each credential, and
+<a href="#ci-matrix">CI matrix</a> for what the GitHub Actions workflow does
+per platform.</li>
+<li><strong>Auditors</strong>: focus on
+<a href="#reproducibility">Reproducibility</a> and the
+<a href="#credential-inventory">Credential inventory</a> table under signing.</li>
+</ul>
+<h2 id="directory-layout"><a class="header" href="#directory-layout">Directory layout</a></h2>
+<p>Every channel lives under <code>packaging/</code> at the repo root. See also
+<a href="../../../../packaging/README.html"><code>packaging/README.md</code></a> for the
+in-tree index.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Path</th><th>Scope</th><th>Key files</th></tr>
+</thead>
+<tbody>
+<tr><td><code>packaging/appimage/</code></td><td>Linux AppImage</td><td><code>AppRun</code>, <code>build-appimage.sh</code>, <code>pcloud-rs.desktop</code></td></tr>
+<tr><td><code>packaging/bsd/</code></td><td>Shared BSD notes</td><td><code>README.md</code></td></tr>
+<tr><td><code>packaging/chocolatey/</code></td><td>Windows Chocolatey</td><td><code>pcloud-rs.nuspec</code>, <code>tools/</code></td></tr>
+<tr><td><code>packaging/docker/</code></td><td>Local OCI container image recipe</td><td><code>Dockerfile</code>, <code>docker-compose.yml</code></td></tr>
+<tr><td><code>packaging/flatpak/</code></td><td>Linux Flatpak</td><td><code>com.pcloud.pcloud-rs.yaml</code>, <code>.metainfo.xml</code>, <code>.desktop</code></td></tr>
+<tr><td><code>packaging/freebsd/</code></td><td>FreeBSD rc.d</td><td><code>pcloudd.rc</code></td></tr>
+<tr><td><code>packaging/homebrew/</code></td><td>macOS Homebrew</td><td><code>pcloud-rs.rb</code>, <code>Casks/</code></td></tr>
+<tr><td><code>packaging/macos/</code></td><td>launchd + entitlements</td><td><code>com.pcloud.pcloudd.plist</code>, <code>com.pcloud.pcloud-rs.plist</code>, <code>entitlements.plist</code></td></tr>
+<tr><td><code>packaging/man/</code></td><td>Man pages</td><td><code>pcloudc.1</code>, <code>pcloudd.1</code>, <code>pcloud.conf.5</code></td></tr>
+<tr><td><code>packaging/nas/</code></td><td>Synology/QNAP/ASUSTOR</td><td>package builders, metadata, shared supervisor, validation</td></tr>
+<tr><td><code>packaging/netbsd/</code></td><td>NetBSD rc.d</td><td><code>pcloudd</code></td></tr>
+<tr><td><code>packaging/openbsd/</code></td><td>OpenBSD rc.d</td><td><code>pcloudd</code></td></tr>
+<tr><td><code>packaging/scoop/</code></td><td>Windows Scoop bucket</td><td><code>pcloud-rs.json</code></td></tr>
+<tr><td><code>packaging/signing/</code></td><td>Cross-channel signing wrappers</td><td><code>sign-macos.sh</code>, <code>notarize-macos.sh</code>, <code>sign-windows.ps1</code></td></tr>
+<tr><td><code>packaging/snap/</code></td><td>Linux Snap</td><td><code>snapcraft.yaml</code></td></tr>
+<tr><td><code>packaging/windows/wix/</code></td><td>WiX MSI/Burn source</td><td><code>pcloud-rs.wxs</code>, <code>pcloud-rs-bundle.wxs</code>, <code>License.rtf</code></td></tr>
+<tr><td><code>packaging/winget/</code></td><td>Windows winget</td><td><code>pcloud-rs.yaml</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The package is called <code>pcloud-rs</code>; its two executable entry points are
+<code>pcloudc</code> (client) and <code>pcloudd</code> (daemon).</p>
+<h2 id="linux-channels"><a class="header" href="#linux-channels">Linux channels</a></h2>
+<h3 id="debian--ubuntu--deb"><a class="header" href="#debian--ubuntu--deb">Debian / Ubuntu — <code>.deb</code></a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>cargo-deb</code> metadata in <code>crates/pcloud-daemon/Cargo.toml</code>.</li>
+<li><strong>Build command (local)</strong>: <code>cargo build --release --workspace -p pcloud-cli -p pcloud-daemon</code> followed by <code>cargo deb --no-build --no-strip --package pcloud-daemon</code>.</li>
+<li><strong>Artefact</strong>: <code>pcloud-rs_&lt;version&gt;_amd64.deb</code>.</li>
+<li><strong>Signing</strong>: <code>release-packaging.yml</code> emits <code>SHA256SUMS</code> and GPG
+detached signatures when all release-key secrets are configured. Dry runs
+remain visibly unsigned when they are absent.</li>
+<li><strong>Install layout</strong>:
+<ul>
+<li><code>/usr/bin/pcloudc</code></li>
+<li><code>/usr/bin/pcloudd</code></li>
+<li><code>/etc/pcloud-rs/pcloudd.env.example</code></li>
+<li><code>/usr/share/man/man1/pcloudc.1</code>, <code>pcloudd.1</code></li>
+<li><code>/usr/share/man/man5/pcloud.conf.5</code></li>
+<li><code>/lib/systemd/system/pcloudd.service</code></li>
+</ul>
+</li>
+<li><strong>Post-install</strong>: <code>systemctl daemon-reload</code>; service is <strong>not</strong>
+auto-enabled.</li>
+</ul>
+<h3 id="fedora--rhel--opensuse--rpm"><a class="header" href="#fedora--rhel--opensuse--rpm">Fedora / RHEL / openSUSE — <code>.rpm</code></a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>cargo-generate-rpm</code> metadata in
+<code>crates/pcloud-daemon/Cargo.toml</code>.</li>
+<li><strong>Artefact</strong>: <code>pcloud-rs-&lt;version&gt;-&lt;rel&gt;.x86_64.rpm</code>.</li>
+<li><strong>Signing</strong>: <code>release-packaging.yml</code> emits <code>SHA256SUMS</code> and GPG detached
+signatures when all release-key secrets are configured. No package has been
+published.</li>
+<li><strong>Install layout</strong>: identical to <code>.deb</code>.</li>
+</ul>
+<h3 id="arch-linux-aur"><a class="header" href="#arch-linux-aur">Arch Linux (AUR)</a></h3>
+<p>No <code>pcloud-rs</code>, <code>pcloud-rs-bin</code>, or <code>pcloud-rs-git</code> AUR recipe is published.
+There is no in-tree <code>PKGBUILD</code>; source builds are the only current path.</p>
+<h3 id="nix--nixos"><a class="header" href="#nix--nixos">Nix / NixOS</a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>flake.nix</code> at the repo root (not under <code>packaging/</code>).
+Exposes <code>packages.&lt;system&gt;.{pcloud-rs,pcloud-rs-repro,pcloudc,pcloudd}</code>
+and <code>apps.&lt;system&gt;.{pcloudc,pcloudd}</code>. <code>default</code> runs <code>pcloudc</code>.
+<strong>No <code>nixosModules</code>
+output exists yet</strong> — any documentation referring to
+<code>nixosModules.pcloud-rs</code> is incorrect; a NixOS service module is a
+planned contribution, not a current flake output.</li>
+<li><strong>Build command</strong>: <code>nix build .#pcloud-rs</code>.</li>
+<li><strong>Artefact</strong>: <code>$out/bin/{pcloudc,pcloudd}</code> in the Nix store.
+The <code>apps.pcloudd</code> and <code>apps.pcloudc</code> outputs point at the correct
+binary names (<code>pcloudc</code> and <code>pcloudd</code>).</li>
+<li><strong>Signing</strong>: Nix store hash (no external signature required).</li>
+<li><strong>Reproducibility</strong>: <code>flake.lock</code> is committed; the build is
+pinned via a nixpkgs revision in the flake inputs.</li>
+</ul>
+<h3 id="flatpak"><a class="header" href="#flatpak">Flatpak</a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>packaging/flatpak/com.pcloud.pcloud-rs.yaml</code>, targeting
+<code>org.freedesktop.Platform//24.08</code>.</li>
+<li><strong>Build command</strong>:
+<code>flatpak-builder --install-deps-from=flathub build/ packaging/flatpak/com.pcloud.pcloud-rs.yaml</code>.</li>
+<li><strong>Artefact</strong>: Flatpak export ready for <code>flatpak build-bundle</code>.</li>
+<li><strong>Signing</strong>: none locally. Flathub would sign a future accepted submission;
+no Flathub application exists today.</li>
+<li><strong>Sandbox posture</strong>: <code>--share=network</code> grants general network access; Flatpak
+does not provide the host allow-list previously claimed here. The manifest is
+development scaffolding and still needs offline vendored sources.</li>
+</ul>
+<h3 id="snap"><a class="header" href="#snap">Snap</a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>packaging/snap/snapcraft.yaml</code>.</li>
+<li><strong>Build command</strong>: <code>snapcraft</code> in the <code>packaging/snap/</code> directory
+(or via <code>snapcraft remote-build</code>).</li>
+<li><strong>Artefact</strong>: local <code>pcloud-rs_&lt;version&gt;_amd64.snap</code> candidate.</li>
+<li><strong>Signing</strong>: none locally. No Snap Store package exists.</li>
+<li><strong>Confinement</strong>: <code>strict</code>. The <code>fuse-support</code> and <code>removable-media</code>
+interfaces are <strong>declared but not auto-connected</strong> — operators
+connect manually (<code>snap connect pcloud-rs:fuse-support</code>).</li>
+</ul>
+<h3 id="appimage"><a class="header" href="#appimage">AppImage</a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>packaging/appimage/AppRun</code>,
+<code>packaging/appimage/build-appimage.sh</code>,
+<code>packaging/appimage/pcloud-rs.desktop</code>.</li>
+<li><strong>Build command</strong>: <code>bash packaging/appimage/build-appimage.sh</code>.</li>
+<li><strong>Artefact</strong>: local <code>pcloud-rs-&lt;arch&gt;.AppImage</code> candidate.</li>
+<li><strong>Signing</strong>: unsigned by current CI; <code>appimagetool --sign</code> is a future
+release workflow step.</li>
+</ul>
+<h3 id="docker--oci"><a class="header" href="#docker--oci">Docker / OCI</a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>packaging/docker/Dockerfile</code> and
+<code>packaging/docker/docker-compose.yml</code>.</li>
+<li><strong>Build command</strong>:
+<code>docker build -f packaging/docker/Dockerfile -t pcloud-rs/pcloud-rs:&lt;tag&gt; .</code></li>
+<li><strong>Artefact</strong>: local OCI image. No GHCR publish workflow exists today.</li>
+<li><strong>Signing</strong>: none today. Add a Docker publish workflow before advertising
+cosign OCI signatures.</li>
+</ul>
+<h2 id="macos-channels"><a class="header" href="#macos-channels">macOS channels</a></h2>
+<h3 id="homebrew-formula--cask-scaffold"><a class="header" href="#homebrew-formula--cask-scaffold">Homebrew formula / cask scaffold</a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>packaging/homebrew/pcloud-rs.rb</code>;
+<code>packaging/homebrew/Casks/</code> holds the cask variant that ships the
+signed <code>.pkg</code> installer.</li>
+<li><strong>Build status</strong>: the formula still contains a future tag URL and checksum.
+There is no tap and no supported <code>brew install pcloud-rs</code> command.</li>
+<li><strong>Artefact</strong>: no published formula, cask, or bottle.</li>
+<li><strong>Signing posture</strong>: bottles inherit the Developer ID signature
+applied during the release build (<strong>pending</strong> — see below).</li>
+</ul>
+<h3 id="launchd-integration"><a class="header" href="#launchd-integration">launchd integration</a></h3>
+<ul>
+<li><strong>Recipe</strong>:
+<ul>
+<li><code>packaging/macos/com.pcloud.pcloudd.plist</code> — LaunchDaemon (system
+scope).</li>
+<li><code>packaging/macos/com.pcloud.pcloud-rs.plist</code> — LaunchAgent (user
+scope).</li>
+<li><code>packaging/macos/entitlements.plist</code> — minimum entitlements for
+the hardened runtime.</li>
+</ul>
+</li>
+</ul>
+<h3 id="signed-and-notarized-pkg"><a class="header" href="#signed-and-notarized-pkg">Signed and notarized <code>.pkg</code></a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>packaging/macos/build-pkg.sh</code>, invoked by the
+<code>macos-installer</code> job in <code>release-packaging.yml</code> on a labelled native
+fuse-t runner.</li>
+<li><strong>Artefact</strong>: <code>pcloud-rs-&lt;version&gt;-macos-&lt;arch&gt;.pkg</code>.</li>
+<li><strong>Signing</strong>:
+<ol>
+<li><code>codesign --options runtime --timestamp --entitlements entitlements.plist --sign "Developer ID Application: ..."</code> each
+binary.</li>
+<li><code>pkgbuild</code> → raw installer.</li>
+<li><code>productsign --sign "Developer ID Installer: ..."</code>.</li>
+<li><code>xcrun notarytool submit --wait</code> → <code>stapler staple</code>.</li>
+</ol>
+</li>
+<li><strong>Gate</strong>: required secrets are checked before build; native fuse-t
+read/write/unmount tests must pass; <code>pkgutil</code>, <code>spctl</code>, and stapler validate
+the result before upload. A release is supported only after this job has
+actually passed with active Apple credentials. See
+<a href="../../../../packaging/signing/README.html"><code>packaging/signing/README.md</code></a>
+§7 for the first-time runbook.</li>
+</ul>
+<h2 id="windows-channels"><a class="header" href="#windows-channels">Windows channels</a></h2>
+<h3 id="wix-msi-and-winfsp-burn-bootstrapper"><a class="header" href="#wix-msi-and-winfsp-burn-bootstrapper">WiX MSI and WinFSP Burn bootstrapper</a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>packaging/windows/wix/pcloud-rs.wxs</code> and
+<code>pcloud-rs-bundle.wxs</code>.</li>
+<li><strong>Build command</strong>:
+<code>candle pcloud-rs.wxs &amp;&amp; light pcloud-rs.wixobj -o pcloud-rs-&lt;version&gt;-x64.msi</code>.</li>
+<li><strong>Artefacts</strong>: signed <code>pcloud-rs-&lt;version&gt;-x64.msi</code> and a signed
+<code>pcloud-rs-&lt;version&gt;-x64-setup.exe</code> bundle containing the pcloud-rs MSI and
+checksum-pinned, vendor-signature-verified WinFSP 2.1 MSI.</li>
+<li><strong>Signing</strong>: Authenticode EV via
+<code>packaging/signing/sign-windows.ps1</code>
+(wraps <code>signtool.exe /fd SHA256 /tr &lt;timestamp&gt; /td SHA256</code>).</li>
+<li><strong>Gate</strong>: the public job fails if its PFX/password secrets are absent. Rust
+executables, MSI, detached Burn engine, and final bundle are signed in the
+required WiX sequence. A supported release still requires a successful
+native run with a real credential. See
+<a href="../../../../packaging/signing/README.html"><code>packaging/signing/README.md</code></a>
+§2 for EV-cert acquisition guidance.</li>
+<li><strong>Install layout</strong>: <code>%ProgramFiles%\pcloud-rs\{pcloudc.exe,pcloudd.exe}</code>.
+<code>pcloudc start</code> launches the daemon under the interactive user’s SID; the
+MSI deliberately does not register an incompatible machine service.</li>
+</ul>
+<h3 id="winget"><a class="header" href="#winget">winget</a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>packaging/winget/pcloud-rs.yaml</code>.</li>
+<li><strong>Artefact</strong>: channel manifest intended to point at a versioned signed MSI.</li>
+<li><strong>Signing</strong>: inherits Authenticode from the strict MSI workflow once its
+placeholder version, URL, and hash are updated.</li>
+</ul>
+<h3 id="chocolatey"><a class="header" href="#chocolatey">Chocolatey</a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>packaging/chocolatey/pcloud-rs.nuspec</code> +
+<code>packaging/chocolatey/tools/chocolateyinstall.ps1</code>.</li>
+<li><strong>Build command</strong>: <code>choco pack</code> in that directory.</li>
+<li><strong>Artefact</strong>: <code>pcloud-rs.&lt;version&gt;.nupkg</code>.</li>
+<li><strong>Install</strong>: scaffold package downloads + verifies the MSI SHA-256, then
+chains <code>msiexec /i</code>.</li>
+<li><strong>Signing</strong>: inherits Authenticode from the strict MSI workflow once the
+channel manifest is updated.</li>
+</ul>
+<h3 id="scoop"><a class="header" href="#scoop">Scoop</a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>packaging/scoop/pcloud-rs.json</code>.</li>
+<li><strong>Install</strong>: unavailable; no public bucket exists.</li>
+<li><strong>Artefact</strong>: scaffold portable <code>.zip</code> manifest. SHA-256 is verified by
+Scoop itself; Authenticode inheritance requires a signed MSI/ZIP workflow.</li>
+</ul>
+<h2 id="bsd-channels"><a class="header" href="#bsd-channels">BSD channels</a></h2>
+<h3 id="freebsd"><a class="header" href="#freebsd">FreeBSD</a></h3>
+<ul>
+<li><strong>Recipe</strong>: in-tree <code>packaging/freebsd/pcloudd.rc</code> lifecycle asset only.</li>
+<li><strong>Publication</strong>: no downstream port or binary package exists.</li>
+</ul>
+<h3 id="openbsd"><a class="header" href="#openbsd">OpenBSD</a></h3>
+<ul>
+<li><strong>Recipe</strong>: in-tree <code>packaging/openbsd/pcloudd</code> rc.d asset only.</li>
+<li><strong>Publication</strong>: no downstream port or binary package exists.</li>
+</ul>
+<h3 id="netbsd"><a class="header" href="#netbsd">NetBSD</a></h3>
+<ul>
+<li><strong>Recipe</strong>: in-tree <code>packaging/netbsd/pcloudd</code> rc.d asset only.</li>
+<li><strong>Publication</strong>: no downstream pkgsrc package exists.</li>
+</ul>
+<h3 id="dragonfly-bsd"><a class="header" href="#dragonfly-bsd">DragonFly BSD</a></h3>
+<ul>
+<li><strong>Recipe</strong>: <code>packaging/dragonfly/pcloudd</code> plus the deterministic Unix
+candidate builder. No downstream port or binary package exists.</li>
+</ul>
+<blockquote>
+<p>FreeBSD, NetBSD, OpenBSD, and DragonFly BSD have explicit native
+workspace and live FUSE jobs. Those definitions become proof only after the
+corresponding release-commit jobs pass.</p>
+</blockquote>
+<h2 id="nas-channels-tier-2-candidates"><a class="header" href="#nas-channels-tier-2-candidates">NAS channels (Tier 2 candidates)</a></h2>
+<ul>
+<li><strong>Synology DSM 7:</strong> <code>packaging/nas/synology/build-spk.sh</code> produces one
+<code>.spk</code> per architecture.</li>
+<li><strong>QNAP QTS/QuTS hero:</strong> <code>packaging/nas/qnap/build-qpkg.sh</code> uses the pinned
+official QDK to produce and re-extract a <code>.qpkg</code>.</li>
+<li><strong>ASUSTOR ADM 5:</strong> <code>packaging/nas/asustor/build-apk.sh</code> uses ASUSTOR’s
+checksum-pinned official APKG tool and a validated 90×90 PNG.</li>
+<li><strong>CI posture:</strong> x86-64 and arm64 static-musl payload candidates are uploaded
+as Actions artifacts, not attached to the public release.</li>
+<li><strong>Qualification:</strong> install, upgrade, start/stop, reboot,
+uninstall/reinstall, live transfer, and optional FUSE testing on vendor
+hardware are mandatory before promotion.</li>
+</ul>
+<h2 id="signing-pipelines"><a class="header" href="#signing-pipelines">Signing pipelines</a></h2>
+<h3 id="credential-inventory"><a class="header" href="#credential-inventory">Credential inventory</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Channel</th><th>Credential</th><th>Format</th><th>Status</th></tr>
+</thead>
+<tbody>
+<tr><td>Raw Linux binaries + SBOMs</td><td>GitHub OIDC identity → sigstore</td><td>ephemeral (keyless)</td><td><strong>Live in <code>release.yml</code></strong></td></tr>
+<tr><td>Linux <code>.deb</code> / <code>.rpm</code></td><td>release GPG key, passphrase, and key id</td><td>armored key in an ephemeral keyring</td><td>workflow signs when secrets exist; public policy must require them</td></tr>
+<tr><td>Docker / OCI</td><td>none today</td><td>n/a</td><td>Publish/sign workflow pending</td></tr>
+<tr><td>Linux AppImage / tarball</td><td>none today</td><td>n/a</td><td>Release workflow pending</td></tr>
+<tr><td>macOS signing</td><td>Developer ID Application + Installer identities</td><td>ephemeral Keychain imported from <code>.p12</code></td><td>mandatory in strict job</td></tr>
+<tr><td>macOS notarisation</td><td>Apple ID + app-specific password + Team ID</td><td><code>notarytool</code></td><td>mandatory in strict job</td></tr>
+<tr><td>Windows Authenticode</td><td>code-signing certificate</td><td>ephemeral <code>.pfx</code></td><td>mandatory in strict job</td></tr>
+<tr><td>Windows timestamp</td><td>RFC 3161 URL (DigiCert / Sectigo / GlobalSign)</td><td>public</td><td>ready</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="scripts"><a class="header" href="#scripts">Scripts</a></h3>
+<p>Live under <a href="../../../../packaging/signing/"><code>packaging/signing/</code></a>:</p>
+<ul>
+<li><code>sign-macos.sh</code> — <code>codesign</code> + <code>productsign</code> wrapper. Enforces
+<code>--options runtime</code> and <code>--timestamp</code>.</li>
+<li><code>notarize-macos.sh</code> — <code>xcrun notarytool submit --wait</code> +
+<code>stapler staple</code> + <code>stapler validate</code>.</li>
+<li><code>sign-windows.ps1</code> — <code>signtool.exe</code> wrapper (EV token or cloud
+HSM).</li>
+<li><code>README.md</code> — full operator guide, including EV cert acquisition,
+CI keychain setup, rejection rollback plan.</li>
+</ul>
+<h3 id="sigstore-cosign-raw-linux-binaries-and-sboms"><a class="header" href="#sigstore-cosign-raw-linux-binaries-and-sboms">Sigstore cosign (raw Linux binaries and SBOMs)</a></h3>
+<ul>
+<li>Workflow: <code>.github/workflows/release.yml</code> signs raw <code>pcloudd</code>,
+<code>pcloudc</code>, their <code>.sha256</code> files, and SBOM JSON files with
+<code>cosign sign-blob</code>.</li>
+<li>Identity: this repository’s <code>release.yml</code> workflow at the selected tag.</li>
+<li>No long-lived secret is required for the keyless path. The GitHub OIDC
+token is issued per-run and exchanged with Fulcio for a short-lived
+signing cert. If <code>COSIGN_KEY</code> is configured, the workflow falls back to
+key-based signatures and no <code>.pem</code> certificate is emitted.</li>
+</ul>
+<h3 id="gpg-linux-artefacts"><a class="header" href="#gpg-linux-artefacts">GPG (Linux artefacts)</a></h3>
+<ul>
+<li>Release key fingerprint is published in the README at release time
+(not hard-coded here to avoid drift).</li>
+<li><code>release-packaging.yml</code> emits detached armored signatures for <code>.deb</code>,
+<code>.rpm</code>, and <code>SHA256SUMS</code> when all GPG release secrets exist. It logs and
+continues without signatures for contributor dry runs, so public promotion
+policy must verify that the expected signature files exist.</li>
+<li>Key rotation: tracked in the release checklist; requires republishing
+artefacts with the new signature and advising downstream packagers.</li>
+</ul>
+<h3 id="apple-developer-id--notarisation"><a class="header" href="#apple-developer-id--notarisation">Apple Developer ID + notarisation</a></h3>
+<ul>
+<li>Hardened runtime: enabled via <code>--options runtime</code> in
+<code>sign-macos.sh</code>.</li>
+<li>Entitlements: <code>packaging/macos/entitlements.plist</code> — the file
+intentionally requests the <strong>minimum</strong> entitlements. Enabling
+<code>com.apple.security.cs.disable-library-validation</code> (needed for
+fuse-t on some configurations) is gated behind explicit review
+because it weakens hardened-runtime DYLD protections.</li>
+<li>CI: <code>.github/workflows/release-packaging.yml</code> imports the <code>.p12</code> into an
+ephemeral build keychain, signs, and runs
+<code>xcrun notarytool submit --wait</code> + <code>stapler</code>. See
+<code>packaging/signing/README.md</code> §7 for the first-time runbook,
+including the dry-run on a <code>v0.0.0-rc1</code> tag.</li>
+</ul>
+<h3 id="windows-authenticode-ev"><a class="header" href="#windows-authenticode-ev">Windows Authenticode EV</a></h3>
+<ul>
+<li>Token options (cost/tradeoff table in
+<a href="../../../../packaging/signing/README.html"><code>packaging/signing/README.md</code></a>
+§2): DigiCert USB SafeNet token, SSL.com eSigner cloud, DigiCert
+KeyLocker, Azure Key Vault with an imported EV cert. CI compatibility
+varies by issuer.</li>
+<li>The current strict CI path imports a base64-encoded PFX into an ephemeral
+runner file and uses <code>sign-windows.ps1</code>. CSP/KSP and cloud-HSM providers
+require a separate provider-specific integration and are not selected
+automatically.</li>
+</ul>
+<h2 id="reproducibility"><a class="header" href="#reproducibility">Reproducibility</a></h2>
+<ul>
+<li><code>cargo build --locked --release</code>: <code>Cargo.lock</code> is committed and
+pinned. <code>--locked</code> refuses to update it at release time.</li>
+<li><code>SOURCE_DATE_EPOCH</code>: every release job sets
+<code>SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct "$GITHUB_REF_NAME")</code>.
+Most toolchains honour it transitively.</li>
+<li><code>flake.lock</code>: pins <code>rust-overlay</code>, <code>nixpkgs</code>, and any other flake
+input. A NixOS rebuilder can reproduce the tree byte-for-byte from
+the lock file.</li>
+<li>Build-info embed: the binary embeds the short commit hash and
+<code>rustc</code> version via a <code>build.rs</code> so that signed artefacts can be
+traced back to a reproducible commit.</li>
+<li><strong>Never modify artefact contents after signing.</strong> Signing is a leaf
+step. If a post-sign tweak is needed, re-build, re-sign.</li>
+</ul>
+<h2 id="local-cicd-matrix"><a class="header" href="#local-cicd-matrix">Local CI/CD matrix</a></h2>
+<p>GitHub Actions is inactive. <code>cargo xtask ci</code> is the authoritative gate:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Stage</th><th>Execution host</th><th>Scope</th></tr>
+</thead>
+<tbody>
+<tr><td><code>cargo xtask compat</code></td><td>local Linux/Unix host</td><td>portable-core/Wasmtime MSRV and optional features</td></tr>
+<tr><td><code>cargo xtask host</code></td><td>local Linux/Unix host</td><td>fmt, check, Clippy, tests, docs, dependency audit</td></tr>
+<tr><td><code>cargo xtask coverage</code></td><td>local Linux host</td><td>workspace LCOV plus live FUSE and 90% policy</td></tr>
+<tr><td><code>cargo xtask package</code></td><td>local host</td><td>NAS/portable-Unix metadata and SDK packages</td></tr>
+<tr><td><code>cargo xtask docker</code></td><td>local Docker daemon</td><td>OCI/musl build, CLI smoke, Debian compile, manpage lint</td></tr>
+<tr><td><code>cargo xtask windows</code></td><td>native Windows over key-only SSH</td><td>MSVC check/test/build and named-pipe/WinFSP smoke</td></tr>
+<tr><td><code>cargo xtask release</code></td><td>operator release host</td><td>full CI plus reproducible Linux binaries</td></tr>
+</tbody>
+</table>
+</div>
+<p>macOS signing/notarization and native BSD/Solaris qualification still require
+operator-provided native hosts. Publishing and signing remain explicit
+operator actions; the local pipeline does not upload artifacts by itself.</p>
+<h2 id="slsa-provenance"><a class="header" href="#slsa-provenance">SLSA provenance</a></h2>
+<p>No SLSA provenance is emitted by the current local pipeline. Treat SLSA as a
+target-state requirement, not a current release property.</p>
+<h2 id="see-also"><a class="header" href="#see-also">See also</a></h2>
+<ul>
+<li><a href="../operations/packaging-matrix.html"><code>operations/packaging-matrix.md</code></a>
+— operations-view summary table (tier, service-manager entry,
+signing posture).</li>
+<li><a href="../../../../packaging/README.html"><code>packaging/README.md</code></a> — in-tree
+index with the honest per-channel status.</li>
+<li><a href="../../../../packaging/signing/README.html"><code>packaging/signing/README.md</code></a>
+— deep operator guide for Apple + Windows signing (cert acquisition,
+CI keychain setup, rejection rollback).</li>
+<li><a href="../development/release-checklist.html">Release checklist</a>.</li>
+<li><a href="../development/reproducible-builds.html">Reproducible builds</a>.</li>
+<li><a href="../architecture/platform-support.html"><code>architecture/platform-support.md</code></a>
+— current platform support posture.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../reference/exit-codes.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../enterprise/index.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../reference/exit-codes.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../enterprise/index.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

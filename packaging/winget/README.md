@@ -23,7 +23,8 @@ holds the split copies that winget actually consumes.
 
 ## Notes
 
-- `Scope: machine` reflects that the daemon registers a Windows service.
+- `Scope: machine` reflects the Program Files installation and WinFSP driver;
+  the daemon itself runs per-user via `pcloudc start`.
 - WinFsp is installed separately; winget will not pull it as a dependency
   because winget manifest v1.5.0 does not model hard package dependencies
   the way Chocolatey does. Document WinFsp prerequisite in release notes.

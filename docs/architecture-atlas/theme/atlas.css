@@ -1,0 +1,35 @@
+:root {
+  --atlas-green: #1f9d68;
+  --atlas-amber: #d69e2e;
+  --atlas-red: #d95c5c;
+  --atlas-blue: #4c8bf5;
+}
+
+.atlas-supported,
+.atlas-experimental,
+.atlas-unqualified {
+  display: inline-block;
+  border-radius: 999px;
+  color: #fff;
+  font-size: 0.82em;
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 0.1rem 0.35rem 0.1rem 0;
+  padding: 0.25rem 0.65rem;
+}
+
+.atlas-supported { background: var(--atlas-green); }
+.atlas-experimental { background: var(--atlas-amber); }
+.atlas-unqualified { background: var(--atlas-red); }
+
+table {
+  width: 100%;
+}
+
+code {
+  overflow-wrap: anywhere;
+}
+
+.content main {
+  max-width: 1100px;
+}

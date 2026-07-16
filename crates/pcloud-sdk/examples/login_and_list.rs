@@ -10,9 +10,9 @@
 //! only exercises the local in-process dispatch surface (status, sync-root
 //! listing) so it never touches the network in CI.
 //!
-//! Run with: `cargo run -p pcloud-sdk --example login_and_list`
+//! Run with: `cargo run -p pcloud-embedded-sdk --example login_and_list`
 //! Live mode: `PCLOUD_LIVE=1 PCLOUD_USERNAME=... PCLOUD_PASSWORD=... \
-//!             cargo run -p pcloud-sdk --example login_and_list`
+//!             cargo run -p pcloud-embedded-sdk --example login_and_list`
 
 // **PLATFORM:** all
 // **GATING:** none (portable).
@@ -20,8 +20,8 @@
 use std::path::PathBuf;
 
 use pcloud_config::Environment;
+use pcloud_embedded_sdk::EmbeddedDaemon;
 use pcloud_ipc::{Method, Request};
-use pcloud_sdk::EmbeddedDaemon;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Use a scratch root under the temp dir so the example never stamps on

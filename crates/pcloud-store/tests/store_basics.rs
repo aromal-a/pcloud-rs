@@ -10,7 +10,7 @@
 
 use std::path::PathBuf;
 
-use pcloud_store::schema::{SCHEMA_VERSION_V11, read_schema_version};
+use pcloud_store::schema::{SCHEMA_VERSION_V12, read_schema_version};
 use pcloud_store::{StoreError, StoreHandle, bootstrap_profile, persist_profile, value_kv};
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -31,7 +31,7 @@ fn bootstrap_succeeds_on_fresh_path() {
     let _ = std::fs::remove_file(&path);
 
     let (profile, integrity) = bootstrap_profile(&path).expect("bootstrap should succeed");
-    assert_eq!(profile.schema_version, 11, "should reach v11");
+    assert_eq!(profile.schema_version, 12, "should reach v12");
     assert_eq!(integrity, pcloud_store::integrity::IntegrityStatus::Clean);
     assert_eq!(profile.db_path, path);
 }
@@ -55,10 +55,10 @@ fn second_open_on_same_path_sees_existing_schema_version() {
     let _ = std::fs::remove_file(&path);
 
     let (first, _) = bootstrap_profile(&path).expect("first bootstrap");
-    assert_eq!(first.schema_version, 11);
+    assert_eq!(first.schema_version, 12);
 
     let (second, _) = bootstrap_profile(&path).expect("second bootstrap on same file");
-    assert_eq!(second.schema_version, 11);
+    assert_eq!(second.schema_version, 12);
 }
 
 // ── value_kv round-trip ───────────────────────────────────────────────────────
@@ -179,13 +179,13 @@ fn persist_then_reopen_preserves_schema_version() {
 // ── migration is idempotent ───────────────────────────────────────────────────
 
 #[test]
-fn bootstrap_on_existing_v11_file_is_idempotent() {
-    let path = temp_db("idempotent-v11");
+fn bootstrap_on_existing_v12_file_is_idempotent() {
+    let path = temp_db("idempotent-v12");
     let _ = std::fs::remove_file(&path);
 
     for _ in 0..3 {
         let (p, _) = bootstrap_profile(&path).expect("bootstrap should be idempotent");
-        assert_eq!(p.schema_version, 11);
+        assert_eq!(p.schema_version, 12);
     }
 }
 
@@ -200,7 +200,7 @@ fn migration_user_version_matches_target_after_bootstrap() {
 
     let (profile, _) = bootstrap_profile(&path).expect("first bootstrap");
     assert_eq!(
-        profile.schema_version, SCHEMA_VERSION_V11,
+        profile.schema_version, SCHEMA_VERSION_V12,
         "schema_version in StoreProfile must match the target constant"
     );
 
@@ -208,7 +208,7 @@ fn migration_user_version_matches_target_after_bootstrap() {
     let conn = rusqlite::Connection::open(&path).expect("open");
     let on_disk = read_schema_version(&conn).expect("read_schema_version");
     assert_eq!(
-        on_disk, SCHEMA_VERSION_V11,
+        on_disk, SCHEMA_VERSION_V12,
         "on-disk PRAGMA user_version must equal target after bootstrap"
     );
 }
@@ -224,7 +224,7 @@ fn migration_is_idempotent_and_user_version_stable() {
         let (profile, _) = bootstrap_profile(&path)
             .unwrap_or_else(|_| panic!("bootstrap run {run} should succeed"));
         assert_eq!(
-            profile.schema_version, SCHEMA_VERSION_V11,
+            profile.schema_version, SCHEMA_VERSION_V12,
             "run {run}: schema_version must be stable at target version"
         );
     }
@@ -232,7 +232,7 @@ fn migration_is_idempotent_and_user_version_stable() {
     let conn = rusqlite::Connection::open(&path).expect("open");
     let on_disk = read_schema_version(&conn).expect("read_schema_version");
     assert_eq!(
-        on_disk, SCHEMA_VERSION_V11,
+        on_disk, SCHEMA_VERSION_V12,
         "user_version stable after repeated bootstrap"
     );
 }
@@ -250,5 +250,57 @@ fn store_handle_reports_path_on_missing_dir() {
         Err(StoreError::Sql(_)) | Err(StoreError::Io(_)) => {} // expected
         Ok(_) => {} // SQLite might auto-create; accept if so
         Err(other) => panic!("unexpected error variant: {other:?}"),
+    }
+}
+
+// ── concurrent writers + busy_timeout (CLAUDEREV iter-1 SYNC-H-04-5) ──────────
+
+/// Closes the iter-1 finding that the short-lived facade had no
+/// `SQLITE_BUSY` mitigation. With `busy_timeout = 5000` installed by
+/// [`pcloud_store::tune_connection`] (called inside every short-lived
+/// `value_kv::open`), two threads each running a 50-write burst against
+/// the same database file must both finish without surfacing a
+/// `SQLITE_BUSY` error to the caller.
+///
+/// Without the busy handler, this test surfaces ~30-60 `SqliteFailure`
+/// errors with `code: DatabaseBusy` on contended runs (it was the
+/// reported regression mode in the iter-1 audit). With the handler,
+/// SQLite's engine retries each contended statement internally with
+/// exponential-backoff sleeps for up to 5 s, so all 100 writes succeed.
+#[test]
+fn concurrent_writers_do_not_surface_sqlite_busy() {
+    use std::sync::Arc;
+    use std::thread;
+
+    let path = temp_db("concurrent-writers");
+    let _ = std::fs::remove_file(&path);
+    let _ = bootstrap_profile(&path).expect("bootstrap");
+
+    // Pre-seed a row so set_string in both threads exercises UPDATE
+    // (the more contention-prone path) rather than INSERT.
+    value_kv::set_string(&path, "shared_key", "seed").expect("seed");
+
+    let path = Arc::new(path);
+    let writers = (0..2)
+        .map(|tid| {
+            let path = Arc::clone(&path);
+            thread::spawn(move || -> Result<(), StoreError> {
+                for i in 0..50 {
+                    let key = format!("k_{tid}_{i}");
+                    value_kv::set_string(&path, &key, &format!("v_{tid}_{i}"))?;
+                    // Also touch the shared row to force write-lock contention.
+                    value_kv::set_string(&path, "shared_key", &format!("upd_{tid}_{i}"))?;
+                }
+                Ok(())
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for (tid, handle) in writers.into_iter().enumerate() {
+        let result = handle.join().expect("writer thread should not panic");
+        assert!(
+            result.is_ok(),
+            "writer {tid} surfaced an error (busy_timeout failed?): {result:?}",
+        );
     }
 }

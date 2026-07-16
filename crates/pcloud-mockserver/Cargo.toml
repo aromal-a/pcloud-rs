@@ -4,6 +4,7 @@ edition.workspace = true
 version.workspace = true
 license.workspace = true
 publish.workspace = true
+rust-version.workspace = true
 description = "Local in-process HTTP mock of the pCloud REST API for integration tests. No network access required; no production secrets involved."
 
 [lib]

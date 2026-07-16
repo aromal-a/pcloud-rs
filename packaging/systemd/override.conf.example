@@ -1,8 +1,12 @@
-# pcloudd.service drop-in override — broaden IPAddressAllow for pCloud API
+# pcloudd.service drop-in override — OPT-IN strict egress allow-listing
 #
-# The shipped unit restricts outbound to localhost only, which blocks access to
-# the pCloud API endpoints (binapi.pcloud.com, eapi.pcloud.com, and their CDN
-# ranges).  Operators MUST install a drop-in to allow the necessary traffic.
+# As of CLAUDEREV iter-2 (2026-04-30) the SHIPPED `pcloudd.service` no longer
+# sets `IPAddressDeny=any` / `IPAddressAllow=localhost`. Outbound traffic is
+# routed by the host firewall, not the unit. A default install therefore
+# reaches `*.pcloud.com` without any drop-in.
+#
+# Install this drop-in ONLY when you want a strict cgroup-level egress
+# allow-list (defence-in-depth on top of the host firewall).
 #
 # Installation:
 #   # System unit (DynamicUser path):
@@ -23,12 +27,12 @@
 # Alternatively allow all egress and rely on TLS pinning / hostname validation:
 #   IPAddressAllow=any
 #
-# The default shipped unit also has IPAddressDeny=any before the Allow list;
-# this drop-in resets and replaces both stanzas.
+# Audit reference: CLAUDEREV/iter-3/11-deploy-ops-delta.md DEPLOY-DOC-REGRESSION-11.3a.
 
 [Service]
-# Reset the deny-all default before adding the allow list.
-IPAddressDeny=
+# Belt-and-braces: this drop-in adds the deny-all gate that the shipped unit
+# no longer carries by default, then re-allows what the daemon actually needs.
+IPAddressDeny=any
 IPAddressAllow=localhost
 
 # pCloud EU API cluster (eapi.pcloud.com) — update if IPs rotate.

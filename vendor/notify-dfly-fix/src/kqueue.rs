@@ -457,6 +457,7 @@ impl Drop for KqueueWatcher {
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::{Config, KqueueWatcher, RecursiveMode};
     use crate::Watcher;

@@ -29,10 +29,49 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+
+/// Process-global counter of fs-watcher overflow events.
+///
+/// Incremented every time [`emit_overflow_event`] fires — i.e. every
+/// time the bounded notify-thread channel fills (kernel queue
+/// pressure, inotify watch-list overflow, slow consumer) and the
+/// watcher emits a synthetic [`FsEventKind::Overflow`] marker that
+/// asks the consumer to perform a full sync-root rescan instead of
+/// silently losing point events.
+///
+/// Embedders fan this counter into their preferred metrics frontend
+/// (Prometheus, Datadog, …) by polling it from a worker thread.
+/// Reading is `Relaxed`; writes use `AcqRel` so a fan-in observer
+/// always sees an increasing monotonic count.
+///
+/// CLAUDEREV iter-1 SYNC-H-04-1 fix (fire 19, 2026-04-30): the
+/// recovery rescan was already wired (Overflow event triggers full
+/// rescan downstream); this counter closes the missing-telemetry
+/// half of the finding so operators can see overflow frequency
+/// without scraping `log::warn!` lines.
+static FS_WATCHER_OVERFLOWS: AtomicU64 = AtomicU64::new(0);
+
+/// Read the current value of the process-global overflow counter.
+///
+/// Monotonic across the process lifetime. Resets only by daemon
+/// restart. Useful for Prometheus-style scraping or in-process
+/// burn-rate alerting.
+#[must_use]
+pub fn overflow_count() -> u64 {
+    FS_WATCHER_OVERFLOWS.load(Ordering::Relaxed)
+}
+
+/// Test-only: reset the overflow counter back to zero. Used by unit
+/// tests in this crate to start each test with a clean slate.
+#[cfg(test)]
+fn reset_overflow_count_for_test() {
+    FS_WATCHER_OVERFLOWS.store(0, Ordering::Release);
+}
 
 use pcloud_engine::fs_events::{FsEvent, FsEventKind};
 use pcloud_model::ids::SyncId;
@@ -112,6 +151,7 @@ impl FsWatcher {
         // 1024 slots cover normal burst traffic; overflow is surfaced via
         // the inotify-overflow log below rather than silently dropped.
         let (tx, rx) = mpsc::sync_channel(1024);
+        let overflow_tx = tx.clone();
         let root = root_path
             .canonicalize()
             .unwrap_or_else(|_| root_path.to_path_buf());
@@ -126,9 +166,17 @@ impl FsWatcher {
             move |result: Result<Event, notify::Error>| {
                 match result {
                     Ok(event) => {
-                        // Discard if the debounce thread is full; this is
-                        // preferable to an unbounded queue growing under load.
-                        let _ = notify_tx.try_send(event);
+                        // The raw notify queue is bounded. If it fills,
+                        // force a full sync-root rescan rather than
+                        // silently losing point events.
+                        if let Err(err) = notify_tx.try_send(event) {
+                            match err {
+                                mpsc::TrySendError::Full(_event) => {
+                                    emit_overflow_event(&overflow_tx, sync_id);
+                                }
+                                mpsc::TrySendError::Disconnected(_event) => {}
+                            }
+                        }
                     }
                     Err(err) => {
                         // Surface inotify overflow and similar kernel errors
@@ -137,6 +185,7 @@ impl FsWatcher {
                             "fs watcher event overflow: {err}; \
                              some local changes may be missed until next full scan"
                         );
+                        emit_overflow_event(&overflow_tx, sync_id);
                     }
                 }
             },
@@ -163,6 +212,52 @@ impl FsWatcher {
     }
 }
 
+fn emit_overflow_event(tx: &mpsc::SyncSender<FsEvent>, sync_id: SyncId) {
+    // CLAUDEREV iter-1 SYNC-H-04-1 fix: bump the process-global
+    // overflow counter so operators can read overflow frequency
+    // without scraping log lines. AcqRel write pairs with Relaxed
+    // reads in `overflow_count` for monotonic-progress visibility
+    // across fan-in observers.
+    FS_WATCHER_OVERFLOWS.fetch_add(1, Ordering::AcqRel);
+    log::warn!(
+        "fs watcher backpressure for sync_id={}: forcing full local rescan",
+        sync_id.get()
+    );
+    let event = FsEvent {
+        sync_id,
+        path: ".".to_owned(),
+        entry_kind: EntryKind::Folder,
+        kind: FsEventKind::Overflow,
+    };
+    if let Err(err) = tx.send(event) {
+        log::warn!(
+            "fs watcher overflow marker could not be delivered for sync_id={}: {err}",
+            sync_id.get()
+        );
+    }
+}
+
+/// Per-path entry in the debouncer's pending map.
+///
+/// CLAUDEREV iter-1 SYNC-H-04-2 fix (fire 20, 2026-04-30): tracks
+/// **both** the first-seen and last-seen timestamps so a path being
+/// continuously churned (e.g. a log file appended-to every <`debounce`)
+/// cannot stall forever inside the debouncer. The flush rule is:
+///
+///   flush if  (now - last_seen >= debounce)         // quiescence
+///         OR  (now - first_seen >= MAX_DEBOUNCE)    // max-age guard
+///
+/// `MAX_DEBOUNCE` is `2 × debounce` — bounded worst-case latency per
+/// path. Without the max-age guard, the prior implementation kept
+/// refreshing `last_seen` on every event and never flushed under
+/// continuous churn — that's the iter-1 stall.
+struct PendingEntry {
+    kind: FsEventKind,
+    entry_kind: EntryKind,
+    first_seen: Instant,
+    last_seen: Instant,
+}
+
 /// Internal debounce loop: reads raw notify events, filters, coalesces
 /// by path within `debounce` windows, and emits [`FsEvent`]s.
 fn debounce_loop(
@@ -172,8 +267,12 @@ fn debounce_loop(
     sync_id: SyncId,
     debounce: Duration,
 ) {
-    // Map from relative path to (last event kind, last seen time).
-    let mut pending: HashMap<String, (FsEventKind, EntryKind, Instant)> = HashMap::new();
+    // CLAUDEREV iter-1 SYNC-H-04-2 fix: 2× the per-event debounce as
+    // the max-age guard. Continuous churn on a single path will now
+    // flush at most `MAX_DEBOUNCE` after first observation, regardless
+    // of how often the same path is touched after that.
+    let max_debounce = debounce.saturating_mul(2);
+    let mut pending: HashMap<String, PendingEntry> = HashMap::new();
 
     loop {
         // Drain with a timeout so we can flush pending events.
@@ -193,47 +292,82 @@ fn debounce_loop(
                         } else {
                             EntryKind::File
                         };
-                        pending.insert(rel, (kind, entry_kind, Instant::now()));
+                        let now = Instant::now();
+                        // Preserve `first_seen` if the path is already
+                        // pending — that's the max-age anchor.
+                        match pending.get_mut(&rel) {
+                            Some(existing) => {
+                                existing.kind = kind;
+                                existing.entry_kind = entry_kind;
+                                existing.last_seen = now;
+                            }
+                            None => {
+                                pending.insert(
+                                    rel,
+                                    PendingEntry {
+                                        kind,
+                                        entry_kind,
+                                        first_seen: now,
+                                        last_seen: now,
+                                    },
+                                );
+                            }
+                        }
                     }
                 }
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Flush all pending events whose debounce window has elapsed.
-                flush_pending(&mut pending, &output_tx, sync_id, debounce);
+                flush_pending(&mut pending, &output_tx, sync_id, debounce, max_debounce);
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                // Watcher dropped; flush remaining and exit.
-                flush_pending(&mut pending, &output_tx, sync_id, Duration::ZERO);
+                // Watcher dropped; flush remaining (zero-debounce, zero-max-age).
+                flush_pending(
+                    &mut pending,
+                    &output_tx,
+                    sync_id,
+                    Duration::ZERO,
+                    Duration::ZERO,
+                );
                 break;
             }
         }
 
-        // Also flush events that have matured.
-        flush_pending(&mut pending, &output_tx, sync_id, debounce);
+        // Also flush events that have matured (either by quiescence
+        // or by max-age) after every iteration.
+        flush_pending(&mut pending, &output_tx, sync_id, debounce, max_debounce);
     }
 }
 
-/// Flush pending events whose debounce window has elapsed.
+/// Flush pending events whose debounce window has elapsed by EITHER
+/// rule:
+/// - quiescence: `now - last_seen >= debounce` (no recent churn), OR
+/// - max-age:    `now - first_seen >= max_debounce` (continuous-churn
+///   bypass — the iter-1 SYNC-H-04-2 fix).
 fn flush_pending(
-    pending: &mut HashMap<String, (FsEventKind, EntryKind, Instant)>,
+    pending: &mut HashMap<String, PendingEntry>,
     tx: &mpsc::SyncSender<FsEvent>,
     sync_id: SyncId,
     debounce: Duration,
+    max_debounce: Duration,
 ) {
     let now = Instant::now();
     let matured: Vec<String> = pending
         .iter()
-        .filter(|(_, (_, _, ts))| now.duration_since(*ts) >= debounce)
+        .filter(|(_, e)| {
+            let quiet = now.duration_since(e.last_seen) >= debounce;
+            let aged = now.duration_since(e.first_seen) >= max_debounce;
+            quiet || aged
+        })
         .map(|(k, _)| k.clone())
         .collect();
 
     for path in matured {
-        if let Some((kind, entry_kind, _)) = pending.remove(&path) {
+        if let Some(entry) = pending.remove(&path) {
             let event = FsEvent {
                 sync_id,
                 path,
-                entry_kind,
-                kind,
+                entry_kind: entry.entry_kind,
+                kind: entry.kind,
             };
             if tx.send(event).is_err() {
                 // Consumer dropped; stop flushing.
@@ -317,6 +451,7 @@ use pcloud_engine::local_scan::LocalScanEntry;
 pub fn fs_events_to_local_scan_entries(events: &[FsEvent]) -> Vec<LocalScanEntry> {
     events
         .iter()
+        .filter(|event| event.kind != FsEventKind::Overflow)
         .map(|event| LocalScanEntry {
             sync_id: event.sync_id,
             path: event.path.clone(),
@@ -407,6 +542,117 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    /// CLAUDEREV iter-1 SYNC-H-04-2 fix (fire 20): a path that is
+    /// **continuously** churned (e.g. a log file appended to faster
+    /// than `debounce`) must still flush within `max_debounce` after
+    /// first observation, rather than stalling forever inside the
+    /// debouncer. This test directly exercises `flush_pending` with
+    /// hand-constructed `PendingEntry` records to bypass the timing
+    /// of `recv_timeout` and assert the flush rule.
+    #[test]
+    fn flush_pending_respects_max_age_under_continuous_churn() {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<FsEvent>(8);
+        let sync_id = SyncId::new(42);
+        let debounce = Duration::from_millis(50);
+        let max_debounce = debounce.saturating_mul(2);
+
+        // Pretend the path was first seen `max_debounce + 1ms` ago
+        // but is being actively churned right now (last_seen = now).
+        // Without the max-age guard this entry would never flush.
+        let now = Instant::now();
+        let mut pending: HashMap<String, PendingEntry> = HashMap::new();
+        pending.insert(
+            "logs/app.log".to_owned(),
+            PendingEntry {
+                kind: FsEventKind::Write,
+                entry_kind: EntryKind::File,
+                first_seen: now - max_debounce - Duration::from_millis(1),
+                last_seen: now,
+            },
+        );
+
+        flush_pending(&mut pending, &tx, sync_id, debounce, max_debounce);
+
+        let event = rx
+            .try_recv()
+            .expect("max-age path must flush even under continuous churn");
+        assert_eq!(event.path, "logs/app.log");
+        assert_eq!(event.kind, FsEventKind::Write);
+        assert_eq!(event.sync_id, sync_id);
+        assert!(pending.is_empty(), "flushed entry must be removed");
+    }
+
+    /// Companion: a path that is actively churned but FRESH (first
+    /// seen recently) MUST NOT flush yet — only when either the
+    /// quiescence window or the max-age window opens.
+    #[test]
+    fn flush_pending_holds_fresh_continuously_churned_path() {
+        let (tx, rx) = std::sync::mpsc::sync_channel::<FsEvent>(8);
+        let sync_id = SyncId::new(42);
+        let debounce = Duration::from_millis(50);
+        let max_debounce = debounce.saturating_mul(2);
+
+        let now = Instant::now();
+        let mut pending: HashMap<String, PendingEntry> = HashMap::new();
+        pending.insert(
+            "logs/app.log".to_owned(),
+            PendingEntry {
+                kind: FsEventKind::Write,
+                entry_kind: EntryKind::File,
+                first_seen: now,
+                last_seen: now,
+            },
+        );
+
+        flush_pending(&mut pending, &tx, sync_id, debounce, max_debounce);
+
+        assert!(
+            rx.try_recv().is_err(),
+            "fresh path should not flush yet — quiescence window not open and max-age not reached"
+        );
+        assert_eq!(pending.len(), 1, "fresh entry must remain pending");
+    }
+
+    /// CLAUDEREV iter-1 SYNC-H-04-1 fix (fire 19): bumping
+    /// `emit_overflow_event` must increment the process-global
+    /// `FS_WATCHER_OVERFLOWS` counter and deliver the
+    /// `FsEventKind::Overflow` marker to the channel. This guards
+    /// the telemetry contract regardless of whether the recovery
+    /// rescan downstream is exercised end-to-end.
+    ///
+    /// Lock the test against parallel-test contamination by
+    /// resetting the counter at the top — every other test in this
+    /// module that calls `emit_overflow_event` (current count: 0)
+    /// would otherwise race with this test's assertion.
+    #[test]
+    fn overflow_counter_increments_and_delivers_marker() {
+        reset_overflow_count_for_test();
+        assert_eq!(overflow_count(), 0, "counter is reset before the test");
+
+        let (tx, rx) = std::sync::mpsc::sync_channel::<FsEvent>(4);
+        let sync_id = SyncId::new(1);
+
+        emit_overflow_event(&tx, sync_id);
+        assert_eq!(
+            overflow_count(),
+            1,
+            "single emit_overflow_event call increments the counter exactly once"
+        );
+
+        let event = rx
+            .try_recv()
+            .expect("overflow marker must be delivered to the channel");
+        assert_eq!(event.kind, FsEventKind::Overflow);
+        assert_eq!(event.sync_id, sync_id);
+        assert_eq!(event.entry_kind, EntryKind::Folder);
+        assert_eq!(event.path, ".");
+
+        // Bump twice more — counter must reflect the cumulative total.
+        emit_overflow_event(&tx, sync_id);
+        emit_overflow_event(&tx, sync_id);
+        assert_eq!(overflow_count(), 3);
+    }
+
     #[test]
     fn should_filter_rejects_temp_and_internal_files() {
         assert!(should_filter("file.swp"));
@@ -493,6 +739,27 @@ mod tests {
         assert_eq!(entries[0].path, "docs/file.txt");
         assert!(entries[1].deleted);
         assert_eq!(entries[1].path, "docs/old.txt");
+    }
+
+    #[test]
+    fn fs_events_to_local_scan_entries_skips_overflow_markers() {
+        let entries = fs_events_to_local_scan_entries(&[
+            FsEvent {
+                sync_id: SyncId::new(1),
+                path: ".".to_owned(),
+                entry_kind: EntryKind::Folder,
+                kind: FsEventKind::Overflow,
+            },
+            FsEvent {
+                sync_id: SyncId::new(1),
+                path: "docs/file.txt".to_owned(),
+                entry_kind: EntryKind::File,
+                kind: FsEventKind::Write,
+            },
+        ]);
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].path, "docs/file.txt");
     }
 
     #[test]

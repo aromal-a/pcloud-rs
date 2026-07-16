@@ -192,6 +192,7 @@ pub struct ShmSegment {
 // stores via atomic ops. Callers are still responsible for their own
 // synchronization beyond the SEQ_CST flag store. We intentionally do
 // *not* implement `Sync`.
+// SAFETY: see block above.
 unsafe impl Send for ShmSegment {}
 
 impl ShmSegment {

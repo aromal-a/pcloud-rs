@@ -1,7 +1,7 @@
 # Adding a Command — Tutorial
 
 > **Status honesty:** this project is **pre-alpha**. No release tag has been
-> cut; `bd-1du.10` (final parity proof) is still open. Treat the steps below
+> cut, and native/package qualification is incomplete. Treat the steps below
 > as the standing engineering contract, not as a stable public surface — the
 > IPC enum is `#[non_exhaustive]` precisely so we can evolve it under you.
 
@@ -44,9 +44,9 @@ you know, before you push, what the review will find if you skip it.
 
 ### Toolchain pin
 
-- `rust-toolchain.toml` sets `channel = "stable"` with `clippy` and `rustfmt`
+- `rust-toolchain.toml` pins `channel = "1.91.0"` with `clippy` and `rustfmt`
   components.
-- `Cargo.toml` declares `rust-version = "1.85"` and `edition = "2024"` on the
+- `Cargo.toml` declares `rust-version = "1.89"` and `edition = "2024"` on the
   workspace.
 - Do **not** `rustup override` to a different channel without updating
   `rust-toolchain.toml` in the same PR.

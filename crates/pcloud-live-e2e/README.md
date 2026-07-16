@@ -69,14 +69,13 @@ remote scratch folder.
 |                       | asserts mismatches=0, monotone counters, audit_drops=0                       |
 | `field_selectors`     | bare-field and dotted-path probes on userinfo, session-status, sync-list,    |
 |                       | list-public-links (covers both JSON and legacy `key=value` response shapes)  |
-| `shares`              | ShareFolder invite + list outgoing + cancel + modify/remove probes;          |
-|                       | requires `PCLOUD_TEST_PEER_USER` (single-account flow, no cross-account      |
-|                       | handshake yet)                                                               |
+| `shares`              | Single-account invite/list/cancel/modify/remove probes with peer email       |
+| `shares_a_to_b`       | Two-account invite, accept, bilateral visibility, revoke, and cleanup        |
 | `crypto`              | crypto setup/unlock/status/mkdir/lock/re-unlock lifecycle; requires          |
 |                       | `PCLOUD_TEST_CRYPTO_PASSWORD`                                                |
 | `snapshot_prune`      | seed 10 fake snapshots spanning ~8 weeks, dispatch GFS prune with            |
 |                       | retention_days=7, assert keep/drop set matches GFS bucketing semantics       |
-| `mount_linux`         | mount via IPC + readdir + cat first file + unmount (Linux only); requires    |
+| `mount_linux`         | upload fixture + mount via IPC + exact mounted read + unmount + cleanup       |
 |                       | `PCLOUD_FUSE_TEST=1` + `/dev/fuse` + credentials                            |
 | `rate_limit`          | burst 10 Expensive requests, assert rate-limiter returns Conflict with       |
 |                       | category label + retry-after hint                                            |
@@ -119,61 +118,26 @@ All new binaries honour the same gate (`PCLOUD_LIVE_E2E=1`) and secret-
 leak rules as `transfers`; every asserted response is scanned for the
 live credential values before any equality check runs.
 
-## What this harness does NOT cover yet
+Additional binaries cover backup lifecycle, live sync-loop reconciliation,
+tree public links, `upload_writefromfile`, TFA, team-share verbs, two-account
+share acceptance/revocation, Windows liveness, fleet mTLS, and guarded account
+or crypto-password mutations. The source under `tests/` is the authoritative
+inventory.
 
-- Two-account cross-account share acceptance (requires a second complete
-  credential triplet). The `shares` binary covers single-account invite +
-  cancel today.
-- Backup create/delete, device stop/delete. Blocked on `bd-1du.8`.
-- FUSE write-path end-to-end (write + remount + readback). The
-  `mount_linux` binary covers mount + readdir + cat + unmount; full
-  write-path proof lives in `pcloud-fs/tests/`.
-- Crypto password rotation (`change_crypto_pass`). Requires email
-  confirmation code delivery which is not programmatically addressable.
+## CI and release gates
 
-These rows must remain `Partial` in
-`C_FEATURE_PARITY_MATRIX.csv` until the corresponding harness
-binary is added here.
+The default workspace test run compiles these binaries but does not execute
+their ignored tests. `.github/workflows/ci.yml` runs the credentialed suite on
+weekly/manual triggers. `.github/workflows/release.yml` hard-gates a release on
+dedicated-account transfer/public-link and two-account share round trips, plus
+a credentialed Linux mount fixture read on the native FUSE runner.
 
-## CI guidance (not yet wired)
+Release-selected tests receive `PCLOUD_RELEASE_GATE=1`. In that mode missing
+credentials, authentication/TFA failures, unavailable share acceptance,
+mount refusal, read failure, and fixture-cleanup failure are test failures;
+they cannot be converted to advisory skips.
 
-**Do not** wire this crate into the default `cargo test` CI matrix.
-
-Recommended nightly job:
-
-```yaml
-# .github/workflows/live-e2e-nightly.yml (template — NOT committed yet)
-name: live-e2e-nightly
-on:
-  schedule:
-    - cron: '0 3 * * *'   # 03:00 UTC daily
-  workflow_dispatch: {}
-
-jobs:
-  live:
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    concurrency:
-      group: live-e2e-singleton
-      cancel-in-progress: false
-    environment: live-e2e           # GitHub environment holding the secrets
-    env:
-      PCLOUD_LIVE_E2E: '1'
-      PCLOUD_TEST_TOKEN:            ${{ secrets.PCLOUD_TEST_TOKEN }}
-      PCLOUD_TEST_SCRATCH:          ${{ vars.PCLOUD_TEST_SCRATCH }}
-      PCLOUD_TEST_CRYPTO_PASSWORD:  ${{ secrets.PCLOUD_TEST_CRYPTO_PASSWORD }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Build workspace
-        working-directory: 
-        run: cargo check --workspace
-      - name: Run live-e2e
-        working-directory: 
-        run: cargo test -p pcloud-live-e2e -- --ignored --test-threads=1
-```
-
-Hard requirements before turning this on:
+Operational requirements:
 
 1. Credentials belong to a **dedicated test account** whose only purpose
    is this harness. Never use a developer's personal account.
@@ -186,7 +150,8 @@ Hard requirements before turning this on:
 5. Token rotation: configure `PCLOUD_TEST_TOKEN` with the narrowest
    scope the backend allows, and rotate on a documented cadence.
 
-Until all five are satisfied the harness runs locally only.
+The current repository cannot prove those secrets/environments are configured;
+only a retained successful release-commit run is qualification evidence.
 
 ---
 

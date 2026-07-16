@@ -27,7 +27,16 @@
   - [0008 — Streaming Download Buffer Size](./adr/0008.md)
   - [0009 — Parity Matrix Truth Source](./adr/0009.md)
   - [0010 — FUSE Write-Path Daemon Wiring Pending](./adr/0010.md)
+  - [0011 — Daemon vs Library-Only](./adr/0011.md)
+  - [0012 — Traceparent Envelope Wrapper](./adr/0012.md)
+  - [0013 — OPA Rego via Regorus](./adr/0013.md)
+  - [0014 — Hand-Rolled OIDC Broker](./adr/0014.md)
+  - [0015 — Vault 0600 Permission Enforcement](./adr/0015.md)
+  - [0016 — Secret-Wrapping Discipline](./adr/0016.md)
+  - [0017 — JSON in Message Response Shape](./adr/0017.md)
+  - [0018 — Native Field-Selector Syntax](./adr/0018.md)
   - [0019 — IPC Serve Loop Is Single-Threaded](./adr/0019.md)
+  - [0020 — FUSE Write Durability and Bounded Staging](./adr/0020.md)
 
 # Security
 
@@ -39,6 +48,7 @@
 # Operations
 
 - [Deployment](./operations/deployment.md)
+- [Deployment Guide (End-to-End Install)](./operations/deployment-guide.md)
 - [Runbook](./operations/runbook.md)
 - [Upgrade](./operations/upgrade.md)
 - [RC Soak (30-day)](./operations/rc-soak.md)
@@ -46,14 +56,17 @@
 - [Web UI](./operations/web-ui.md)
 - [Integrity Sweeper](./parity/integrity-sweeper.md)
 - [Backup Snapshots](./operations/backup-snapshots.md)
+- [Memory Profiling](./operations/memory-profiling.md)
 - [Packaging Matrix](./operations/packaging-matrix.md)
-- [Platforms]()
+- [Platform Operations](./operations/platforms/index.md)
   - [Linux](./operations/platforms/linux.md)
   - [macOS](./operations/platforms/macos.md)
   - [Windows](./operations/platforms/windows.md)
   - [FreeBSD](./operations/platforms/freebsd.md)
   - [OpenBSD](./operations/platforms/openbsd.md)
   - [NetBSD](./operations/platforms/netbsd.md)
+  - [DragonFly BSD](./operations/platforms/dragonfly.md)
+  - [illumos and Solaris](./operations/platforms/solarish.md)
 
 # Development
 
@@ -67,6 +80,8 @@
 # Reference
 
 - [CLI](./reference/cli.md)
+- [Rust SDK](./reference/sdk.md)
+- [Metrics and Health](./reference/metrics.md)
 - [Configuration](./reference/config.md)
 - [IPC Protocol](./reference/ipc-protocol.md)
 - [Exit Codes](./reference/exit-codes.md)

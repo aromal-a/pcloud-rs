@@ -1,0 +1,114 @@
+name: Publish Rust SDK
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Exact release tag or commit to publish
+        required: true
+      execute:
+        description: Publish to crates.io after the dry-run checks
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish-sdk:
+    name: Stage and publish pcloud-sdk dependency chain
+    runs-on: ubuntu-latest
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@1.96.1
+
+      - name: Validate immutable source and focused SDK contract
+        run: |
+          set -euo pipefail
+          test -z "$(git status --porcelain)"
+          test "$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "pcloud-sdk") | .version' \
+            | awk -F. '{print $1}')" -ge 1
+          cargo fmt --all --check
+          cargo test -p pcloud-model -p pcloud-ipc -p pcloud-sdk --locked
+          RUSTDOCFLAGS="-D warnings" \
+            cargo doc -p pcloud-model -p pcloud-ipc -p pcloud-sdk \
+              --locked --no-deps
+
+      - name: Dry-run source package contents
+        run: |
+          set -euo pipefail
+          cargo package -p pcloud-model --locked
+          cargo package -p pcloud-ipc --locked --list
+          cargo package -p pcloud-sdk --locked --list
+
+      - name: Require crates.io token
+        if: ${{ inputs.execute }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN}" ]; then
+            echo "ERROR: CARGO_REGISTRY_TOKEN is required" >&2
+            exit 1
+          fi
+
+      - name: Publish model, IPC, and focused SDK in dependency order
+        if: ${{ inputs.execute }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          wait_for_crate() {
+            crate="$1"
+            version="$2"
+            for _ in $(seq 1 36); do
+              if curl -fsS \
+                "https://crates.io/api/v1/crates/${crate}/${version}" \
+                >/dev/null; then
+                return 0
+              fi
+              sleep 10
+            done
+            echo "ERROR: ${crate} ${version} was not indexed within 6 minutes" >&2
+            return 1
+          }
+
+          model_version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "pcloud-model") | .version')"
+          ipc_version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "pcloud-ipc") | .version')"
+          sdk_version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "pcloud-sdk") | .version')"
+
+          cargo publish -p pcloud-model --locked
+          wait_for_crate pcloud-model "${model_version}"
+
+          cargo package -p pcloud-ipc --locked
+          cargo publish -p pcloud-ipc --locked
+          wait_for_crate pcloud-ipc "${ipc_version}"
+
+          cargo package -p pcloud-sdk --locked
+          cargo publish -p pcloud-sdk --locked
+          wait_for_crate pcloud-sdk "${sdk_version}"
+
+      - name: Verify registry installation
+        if: ${{ inputs.execute }}
+        run: |
+          set -euo pipefail
+          sdk_version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "pcloud-sdk") | .version')"
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "${tmp}"' EXIT
+          cargo init --lib --name pcloud_sdk_registry_smoke "${tmp}"
+          (
+            cd "${tmp}"
+            cargo add "pcloud-sdk@=${sdk_version}"
+            cargo check --locked
+          )

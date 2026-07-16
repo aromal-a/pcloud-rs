@@ -63,9 +63,9 @@
 //!
 //! # Security
 //!
-//! - [`open_sector`] recomputes the HMAC tag and compares in constant
+//! - `open_sector` recomputes the HMAC tag and compares in constant
 //!   time via `subtle::ConstantTimeEq`.
-//! - Any mismatch returns [`SectorError::AuthFailed`]; the intermediate
+//! - Any mismatch returns `SectorError::AuthFailed`; the intermediate
 //!   plaintext buffer is held in a `Zeroizing<Vec<u8>>` and is zeroed on
 //!   the error return path.
 //! - `tweak`, `tag_plain`, `hmac16`, `rnd_recovered`, and the HMAC
@@ -173,7 +173,13 @@ fn hmac_sha512(key: &[u8], parts: &[&[u8]]) -> Zeroizing<[u8; 64]> {
 
 /// Encrypt 32 bytes as two consecutive AES-256-ECB blocks in place.
 /// Mirrors `psync_aes256_encode_2blocks_consec` (C helper).
-fn ecb_encrypt_two_blocks(cipher: &Aes256, blocks: &mut [u8; 32]) {
+///
+/// `pub(crate)` so `pclsync_auth_tree::build_auth_tree_with_aes` can
+/// apply the AES step in `pcrypto_sign_sec` without duplicating the
+/// AES wrapper. CLAUDEREV iter-1 CRYPTO-H-3 / fire 17 (2026-04-30):
+/// promoting visibility from private `fn` to `pub(crate)` so the
+/// auth-tree primitive can complete the byte-exact C tag shape.
+pub(crate) fn ecb_encrypt_two_blocks(cipher: &Aes256, blocks: &mut [u8; 32]) {
     let (b0, b1) = blocks.split_at_mut(BLOCK);
     cipher.encrypt_block(aes::Block::from_mut_slice(b0));
     cipher.encrypt_block(aes::Block::from_mut_slice(b1));
@@ -419,7 +425,7 @@ pub fn seal_sector_with_rnd(
 
 /// Decrypt one sector and verify the 32-byte detached auth tag.
 ///
-/// Returns [`SectorError::AuthFailed`] on any mismatch. The plaintext
+/// Returns `SectorError::AuthFailed` on any mismatch. The plaintext
 /// scratch buffer is held in a `Zeroizing<Vec<u8>>` and is zeroed on
 /// the error return path.
 pub fn open_sector(

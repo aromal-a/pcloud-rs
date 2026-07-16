@@ -13,6 +13,7 @@
 // **PLATFORM:** Unix (Linux, BSD, macOS)
 // **GATING:** #[cfg(unix)].
 
+#[cfg(unix)]
 use tempfile::tempdir;
 
 #[derive(Debug, thiserror::Error)]
@@ -36,7 +37,6 @@ fn chaos_disk_full_journal() {
     #[cfg(not(unix))]
     {
         let _ = pcloud_chaos::skip("chaos_disk_full_journal", "RLIMIT_FSIZE requires unix");
-        return;
     }
     #[cfg(unix)]
     unix_impl::run();

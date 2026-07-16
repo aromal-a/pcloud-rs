@@ -1,0 +1,615 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Fleet Management Agent - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/../../enterprise/fleet.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <blockquote>
+<p><strong>Pre-alpha scaffold — not live / not production-verified.</strong> This document
+describes design and unit-tested code that has not been validated against a
+real production deployment. Do not treat it as a shippable capability.
+See <code>CLAUDE.md</code> and <code>docs/enterprise/README.md</code> for the honesty rules.</p>
+</blockquote>
+<h1 id="fleet-management-agent--landed"><a class="header" href="#fleet-management-agent--landed">Fleet Management Agent — Landed</a></h1>
+<p>Status: <strong>Landed (in-process reference server, end-to-end tested over
+real TLS).</strong> Implementation ships in <code>crates/pcloud-fleet/</code>. The
+<code>FleetAgent</code> trait is object-safe and held behind <code>Arc&lt;dyn FleetAgent&gt;</code>
+in the daemon runtime. An in-process reference fleet server now lives
+under <code>crates/pcloud-fleet/tests/reference_server.rs</code>; it serves HTTPS
+on <code>127.0.0.1:&lt;auto_port&gt;</code>, presents a CA-signed leaf cert from
+<code>tests/fixtures/</code>, and validates the agent’s <code>X-PCloud-Body-Signature</code>
+header against a configured device-SID trust set. The
+<code>tests/live_mtls.rs</code> integration test drives a real <code>MtlsFleetAgent</code>
+through that server (happy path, tampered-body rejection, untrusted-SID
+rejection). Live-in-prod interop against a third-party fleet controller
+is <strong>still not tested</strong> and is <strong>still not claimed</strong> — the reference
+server is a protocol spec in code form, not a substitute for a real
+controller behind a production load balancer.</p>
+<h2 id="0-what-actually-landed"><a class="header" href="#0-what-actually-landed">0. What actually landed</a></h2>
+<ul>
+<li><code>MtlsFleetAgent</code> in <code>crates/pcloud-fleet/src/agent.rs</code> is the
+concrete enterprise implementor. It drives heartbeat, command intake,
+and response emission over mTLS WebSocket using the protocol
+specified below.</li>
+<li><strong>Device identity is an ed25519 keypair</strong> generated on first run.
+The private key is held in <code>pcloud_secret::SecretBytes</code> in memory
+(zeroized on <code>Drop</code>) and persisted to a dedicated identity file with
+owner-only permissions (<code>0600</code>, parent directory <code>0700</code>) — the same
+posture as the auth vault. The on-disk format is validated for
+ownership and mode on every load; a tampered file is refused with an
+audit record.</li>
+<li><strong>rustls uses an explicit fleet root store.</strong> The TLS client is
+constructed with a <code>RootCertStore</code> built <strong>only</strong> from the
+operator-supplied <code>ca_bundle</code>. System trust roots are not consulted.
+A certificate chain that would validate against system CAs but not
+against the operator bundle is rejected — this matches §4 of this
+document and is enforced in code, not by policy.</li>
+<li><strong>Body signatures use an <code>X-PCloud-Body-Signature</code> header</strong> over a
+deterministic canonical JSON serialisation of the frame payload
+(sorted keys, no insignificant whitespace, UTF-8). Every
+<code>FleetCommand</code> is verified against the server’s
+<strong>trusted command-signing key</strong> loaded from operator config — the
+verification runs <strong>before</strong> the frame is matched on variant, and a
+verification failure never reaches command dispatch.</li>
+<li><strong>Rate limit: 1 command per second</strong> (token bucket, burst 5).
+Excess commands are rejected with <code>FleetError::RateLimited</code> and
+audited.</li>
+<li><strong>Offline + in-process end-to-end test coverage.</strong> The unit test
+suite exercises: heartbeat frame construction, canonical-JSON
+stability, signature verification pass/fail, identity file permission
+guard, rustls trust-root restriction (system-CA chain is rejected),
+rate-limit token-bucket behaviour, and each <code>FleetCommand</code> handler’s
+happy and error paths. In addition, <code>tests/live_mtls.rs</code> spins up the
+<code>reference_server.rs</code> helper (real TLS listener, fixture CA chain)
+and drives a real <code>MtlsFleetAgent</code> through it:
+<ul>
+<li><code>heartbeat_is_accepted_end_to_end</code> — pinned-CA TLS handshake +
+valid body signature -&gt; 200 OK, zero rejections on the server side.</li>
+<li><code>tampered_body_signature_is_rejected</code> — handcrafted request whose
+signature header covers a different payload than is posted -&gt; 401
+at the server, zero verified requests.</li>
+<li><code>untrusted_device_sid_is_rejected</code> — agent whose SID is not in the
+server’s allow-list gets 401 even with a mathematically valid
+signature, surfaced to the caller as <code>FleetError::Transport</code>.
+No external network is touched, and no live production fleet
+controller is contacted. The reference server is an in-repo spec, not
+a real controller.</li>
+</ul>
+</li>
+</ul>
+<h2 id="1-problem-statement"><a class="header" href="#1-problem-statement">1. Problem Statement</a></h2>
+<p>In the legacy C pcloud-rs, each installation is an island. A corporate IT
+team running pcloud-rs across hundreds of laptops has <strong>no supported way</strong> to:</p>
+<ul>
+<li>see which devices are online, at what version, and in what sync state,</li>
+<li>push a config change (e.g. new API server, new sync roots, new policy)
+without touching every endpoint by hand,</li>
+<li>roll out an upgrade on a schedule and verify it landed,</li>
+<li>collect a diagnostic (<code>doctor</code>) bundle from a misbehaving device,</li>
+<li>quarantine a compromised device (stop syncing, force re-auth) without
+waiting for the user to click something,</li>
+<li>detect <strong>configuration drift</strong> — a device whose effective config no longer
+matches the policy baseline.</li>
+</ul>
+<p>Every one of these tasks is a real enterprise requirement that competitors
+(Dropbox Business, Box Shield, OneDrive for Business) already ship. Shipping
+pcloud-rs into a regulated enterprise without a fleet surface means shipping
+it into an environment where it cannot be audited, cannot be steered, and
+cannot be safely retired. The Rust rewrite is the right place to fix that
+because adding it to the C path would mean duplicating auth, IPC, and
+transport hardening that only exist on the Rust side.</p>
+<p>This design specifies the <strong>client-side agent</strong> and the <strong>wire protocol</strong>.
+The fleet server itself is out of scope for this repository; any server that
+speaks this protocol correctly is a valid peer.</p>
+<h2 id="2-architecture"><a class="header" href="#2-architecture">2. Architecture</a></h2>
+<pre><code>┌──────────────────────────┐        mTLS + WebSocket         ┌──────────────────┐
+│  pcloud-rs daemon         │ ◀──────────────────────────────▶ │  Fleet server    │
+│  ┌────────────────────┐  │     JSON frames, ed25519-signed  │  (out of repo)   │
+│  │ FleetAgent trait   │  │                                  │  - CA            │
+│  │  - NullFleetAgent  │  │                                  │  - policy store  │
+│  │  - MtlsFleetAgent  │  │                                  │  - audit log     │
+│  └────────────────────┘  │                                  │                  │
+│  ↑ heartbeat tick        │                                  │                  │
+│  ↓ command dispatch      │                                  │                  │
+└──────────────────────────┘                                  └──────────────────┘
+</code></pre>
+<p>The agent lives inside the daemon process (not a sidecar) so that it shares
+the daemon’s supervision, logging, and crash semantics. It exposes the
+[<code>FleetAgent</code>] trait, which the daemon runtime drives from two places:</p>
+<ul>
+<li>A periodic <strong>heartbeat tick</strong> (interval is operator-configurable).</li>
+<li>An <strong>inbound command channel</strong> whose only producer is the verified WSS
+connection; every other source is rejected at the type level.</li>
+</ul>
+<p>The default build ships <code>NullFleetAgent</code> so that a daemon started without a
+fleet configuration is a no-op. Enterprise builds enable the <code>mtls</code> feature
+and wire in <code>MtlsFleetAgent</code>, which speaks the protocol below over <code>rustls</code></p>
+<ul>
+<li><code>tokio-tungstenite</code>.</li>
+</ul>
+<h2 id="3-wire-protocol"><a class="header" href="#3-wire-protocol">3. Wire Protocol</a></h2>
+<p>All frames are JSON, UTF-8. One frame per WebSocket message. Unknown fields
+are ignored on receive; unknown variants cause a hard reject.</p>
+<h3 id="31-heartbeat-agent--server"><a class="header" href="#31-heartbeat-agent--server">3.1 Heartbeat (agent → server)</a></h3>
+<pre><code class="language-json">{
+  "device_id": "&lt;hex-sha256-of-pubkey&gt;",
+  "version": "0.1.0+sha-abc123",
+  "os": "linux",
+  "last_sync_state": "active",
+  "slo": {
+    "ip95_ms": 12,
+    "upload_retry_ratio": 0.01,
+    "crash_free_fraction": 0.999
+  },
+  "config_hash": "&lt;hex-sha256-of-config.toml&gt;"
+}
+</code></pre>
+<p><code>last_sync_state</code> is one of <code>idle | active | stalled | paused | quarantined</code>.</p>
+<h3 id="32-fleetcommand-server--agent"><a class="header" href="#32-fleetcommand-server--agent">3.2 FleetCommand (server → agent)</a></h3>
+<pre><code class="language-json">{ "kind": "reconfigure", "0": { "heartbeat_interval": 60 } }
+{ "kind": "upgrade",     "target_version": "0.2.0", "signature": [/* bytes */] }
+{ "kind": "run_doctor" }
+{ "kind": "quarantine" }
+{ "kind": "unregister" }
+</code></pre>
+<h3 id="33-fleetresponse-agent--server"><a class="header" href="#33-fleetresponse-agent--server">3.3 FleetResponse (agent → server)</a></h3>
+<pre><code class="language-json">{ "kind": "applied" }
+{ "kind": "scheduled", "token": "sch_abc" }
+{ "kind": "doctor_report", "report_hash": "&lt;hex-sha256&gt;" }
+</code></pre>
+<h2 id="4-device-identity-and-mtls"><a class="header" href="#4-device-identity-and-mtls">4. Device Identity and mTLS</a></h2>
+<p>On first contact the agent:</p>
+<ol>
+<li>Generates an ed25519 keypair locally. The private key is stored in the
+platform keystore (Linux: secret-service; macOS: Keychain; Windows: DPAPI)
+— <strong>never</strong> on disk in the clear.</li>
+<li>Sends an enrollment request with the public key and a one-time
+enrollment token supplied by IT out-of-band.</li>
+<li>Receives an mTLS client certificate signed by the fleet CA, valid for
+90 days and auto-renewed at 60-day age.</li>
+<li>Presents that certificate on every subsequent WSS handshake.</li>
+</ol>
+<p>The daemon treats the fleet CA bundle as operator-supplied config; it is
+<strong>not</strong> derived from system trust roots.</p>
+<h2 id="5-config-drift-detection"><a class="header" href="#5-config-drift-detection">5. Config Drift Detection</a></h2>
+<p>On each heartbeat the agent computes <code>sha256(config.toml)</code> over the
+effective, post-expansion config and emits the hex digest as <code>config_hash</code>.</p>
+<p>The server maintains an expected hash per device group. A mismatch can
+trigger any server-side policy — most commonly a <code>Reconfigure</code> command that
+pushes the canonical blob back, or an operator alert.</p>
+<p>No config <strong>content</strong> is transmitted with the heartbeat. Only the hash.</p>
+<h2 id="6-command-execution"><a class="header" href="#6-command-execution">6. Command Execution</a></h2>
+<ul>
+<li><code>Reconfigure(blob)</code>: the agent serializes the JSON blob into TOML, writes
+it to a tempfile in the same directory as <code>config.toml</code>, <code>fsync</code>s, and
+<code>rename(2)</code>s it into place (atomic replace). Then it signals the daemon
+runtime to reload. If validation fails, the agent reverts and reports
+the failure on the next heartbeat.</li>
+<li><code>Upgrade { target_version, signature }</code>: the agent downloads the signed
+installer (MSI on Windows, pkg on macOS, tarball on Linux), verifies the
+detached <code>signature</code> against the fleet CA’s distribution key, and
+schedules the self-replace for the next idle window.</li>
+<li><code>RunDoctor</code>: the agent collects a standard doctor bundle (see
+<code>pcloud-observability</code>), uploads it, and returns <code>DoctorReport</code>.</li>
+<li><code>Quarantine</code>: the agent locks every sync root, clears the auth vault’s
+live-session cache, and requires interactive re-auth before resuming.</li>
+<li><code>Unregister</code>: the agent revokes its own certificate locally, wipes the
+enrollment record, and shuts down the fleet subsystem. The daemon
+continues to run as a standalone client.</li>
+</ul>
+<h2 id="7-security"><a class="header" href="#7-security">7. Security</a></h2>
+<ul>
+<li>Every <code>FleetCommand</code> is signed by the server’s ed25519 command-signing
+key (separate from the CA). The agent verifies the signature <strong>before</strong>
+matching on the variant.</li>
+<li>A token-bucket rate limiter caps command execution at <strong>1/s</strong>, with a
+burst of 5. Excess commands are rejected with <code>FleetError::RateLimited</code>.</li>
+<li>Signature verification failures are logged with the frame’s SHA-256 but
+never with the raw bytes.</li>
+<li>The heartbeat carries only opaque hashes and numeric SLOs. File names,
+paths, account ids, and user-controlled strings are <strong>forbidden</strong> in the
+protocol; see the doc comment on <code>Heartbeat</code> for the invariant.</li>
+</ul>
+<h2 id="8-operator-configuration"><a class="header" href="#8-operator-configuration">8. Operator Configuration</a></h2>
+<pre><code class="language-toml">[fleet]
+server_url        = "wss://fleet.corp.example/v1"
+ca_bundle         = "/etc/pcloud-rs/fleet-ca.pem"
+device_group      = "finance-laptops"
+heartbeat_interval = "60s"
+</code></pre>
+<p>Absent or empty <code>[fleet]</code> keeps the daemon on <code>NullFleetAgent</code>. This is
+the correct default for individual users.</p>
+<h2 id="9-cli-surface"><a class="header" href="#9-cli-surface">9. CLI Surface</a></h2>
+<ul>
+<li><code>pcloudc fleet status</code>: prints enrollment state, server URL, last
+heartbeat, last command, drift state.</li>
+<li><code>pcloudc fleet disenroll</code>: runs the <code>Unregister</code> path locally (requires
+operator confirmation).</li>
+<li><code>pcloudc fleet force-checkin</code>: skips the timer and emits a heartbeat
+immediately; useful for IT validation.</li>
+</ul>
+<h2 id="10-privacy"><a class="header" href="#10-privacy">10. Privacy</a></h2>
+<p>The heartbeat schema is the privacy contract. Any change that would add a
+path, a filename, an account identifier, or a user-controlled string to the
+frame MUST be reviewed as a privacy-impacting change and documented in the
+release notes. The rustdoc on <code>Heartbeat</code> enforces this as a written
+invariant; reviewers are expected to hold new fields to it.</p>
+<h2 id="11-interface--trait-shape"><a class="header" href="#11-interface--trait-shape">11. Interface / trait shape</a></h2>
+<p>Authoritative declarations:</p>
+<ul>
+<li><code>FleetAgent</code> trait — <code>crates/pcloud-fleet/src/lib.rs:238</code></li>
+<li><code>FleetError</code> — <code>crates/pcloud-fleet/src/lib.rs:115</code></li>
+<li><code>Heartbeat</code> (privacy contract) — <code>crates/pcloud-fleet/src/lib.rs:183</code></li>
+<li><code>FleetCommand</code> — <code>crates/pcloud-fleet/src/lib.rs:201</code></li>
+<li><code>FleetResponse</code> — <code>crates/pcloud-fleet/src/lib.rs:222</code></li>
+<li><code>FleetIdentity</code> (ed25519, <code>SecretBytes</code>, <code>0600</code> file) —
+<code>crates/pcloud-fleet/src/lib.rs:293</code>
+<ul>
+<li><code>::new_or_load(path)</code> at <code>:313</code></li>
+<li><code>::sign(body)</code> at <code>:380</code></li>
+</ul>
+</li>
+<li><code>MtlsFleetAgent</code> — <code>crates/pcloud-fleet/src/lib.rs:500</code>
+<ul>
+<li><code>::new(config)</code> at <code>:511</code></li>
+<li>Explicit root store (<code>tls_built_in_root_certs(false)</code>) at <code>:522</code></li>
+<li><code>::send_heartbeat(&amp;hb)</code> at <code>:574</code> (emits
+<code>X-PCloud-Body-Signature</code> header at <code>:586</code>)</li>
+</ul>
+</li>
+<li><code>RateLimiter</code> (1/s floor, mutex-poisoned-panic on contention bug) —
+<code>crates/pcloud-fleet/src/lib.rs:467</code></li>
+<li><code>NullFleetAgent</code> (default when <code>[fleet]</code> is absent) —
+<code>crates/pcloud-fleet/src/lib.rs:250</code></li>
+</ul>
+<pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>// Simplified; see crates/pcloud-fleet/src/lib.rs:238.
+pub trait FleetAgent: Send + Sync {
+    fn send_heartbeat(&amp;self, hb: &amp;Heartbeat) -&gt; Result&lt;Option&lt;FleetCommand&gt;, FleetError&gt;;
+    fn execute(&amp;self, cmd: FleetCommand) -&gt; Result&lt;FleetResponse, FleetError&gt;;
+    fn identity(&amp;self) -&gt; &amp;FleetIdentity;
+}
+<span class="boring">}</span></code></pre>
+<h2 id="12-configuration-reference--every-key"><a class="header" href="#12-configuration-reference--every-key">12. Configuration reference — every key</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Key</th><th>Type</th><th>Default</th><th>Purpose</th><th>Example</th></tr>
+</thead>
+<tbody>
+<tr><td><code>server_url</code></td><td>string</td><td>—</td><td>HTTPS URL of the fleet server. Scheme must be <code>https</code>.</td><td><code>"https://fleet.corp.example/v1"</code></td></tr>
+<tr><td><code>ca_bundle</code></td><td>string</td><td>—</td><td>PEM CA bundle. Replaces the system trust store — we call <code>tls_built_in_root_certs(false)</code>.</td><td><code>"/etc/pcloud-rs/fleet-ca.pem"</code></td></tr>
+<tr><td><code>identity_path</code></td><td>string</td><td><code>$XDG_STATE_HOME/pcloud-rs/fleet.key</code></td><td>ed25519 private key file, <code>0600</code>, created on first call.</td><td><code>"/var/lib/pcloud-rs/fleet.key"</code></td></tr>
+<tr><td><code>device_group</code></td><td>string</td><td><code>"default"</code></td><td>Logical group label emitted on heartbeat. No PII allowed.</td><td><code>"finance-laptops"</code></td></tr>
+<tr><td><code>heartbeat_interval</code></td><td>duration</td><td><code>60s</code></td><td>Interval between heartbeats. Server may overrule via <code>SetInterval</code>.</td><td><code>"60s"</code></td></tr>
+<tr><td><code>trusted_server_keys</code></td><td><code>[string]</code></td><td>—</td><td>Base64 ed25519 public keys authorised to sign commands.</td><td><code>["MCowBQYDK2VwAyEA..."]</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Absent or empty <code>[fleet]</code> keeps the daemon on <code>NullFleetAgent</code>.</p>
+<h2 id="13-onboarding-recipe"><a class="header" href="#13-onboarding-recipe">13. Onboarding recipe</a></h2>
+<h3 id="beginner--deploy-in-5-steps"><a class="header" href="#beginner--deploy-in-5-steps">Beginner — deploy in 5 steps</a></h3>
+<ol>
+<li>On the fleet server: generate an ed25519 command-signing key. Keep
+the private key in your fleet server’s secrets store; publish the
+public key base64 to operators.</li>
+<li>Distribute the <code>ca_bundle</code> PEM to every client (MDM profile,
+Ansible, Jamf, Intune — anything that writes to
+<code>/etc/pcloud-rs/fleet-ca.pem</code>).</li>
+<li>Append <code>[fleet]</code> to <code>pcloud-rs.toml</code> with <code>server_url</code>, <code>ca_bundle</code>,
+<code>trusted_server_keys</code>, and <code>device_group</code>.</li>
+<li><code>sudo systemctl restart pcloudcd</code>. The agent autogenerates its
+ed25519 device identity at <code>identity_path</code> on first boot (<code>0600</code>,
+owner-only, see <code>crates/pcloud-fleet/src/lib.rs:313</code>).</li>
+<li><code>pcloudc fleet status</code> — verify <code>enrolled=true</code>, non-zero
+<code>last_heartbeat_age</code>.</li>
+</ol>
+<h3 id="expert--ansible-with-mdm-profile"><a class="header" href="#expert--ansible-with-mdm-profile">Expert — Ansible with MDM profile</a></h3>
+<pre><code class="language-yaml">- name: configure pcloud-rs fleet enrolment
+  hosts: corp_laptops
+  vars:
+    fleet_server: "https://fleet.corp.example/v1"
+    trusted_keys: "{{ lookup('hashi_vault', 'secret/pcloud-rs:trusted_keys') }}"
+  tasks:
+    - copy:
+        dest: /etc/pcloud-rs/fleet-ca.pem
+        content: "{{ fleet_ca_pem }}"
+        mode: '0644'
+    - template:
+        src: pcloud-rs.toml.j2
+        dest: /etc/pcloud-rs/pcloud-rs.toml
+        mode: '0644'
+    - service: { name: pcloudcd, state: restarted }
+</code></pre>
+<h2 id="14-verification"><a class="header" href="#14-verification">14. Verification</a></h2>
+<ol>
+<li><strong>Signed heartbeat on the wire</strong> — tcpdump/pcap on the fleet server
+ingress. Every request must carry <code>X-PCloud-Body-Signature</code> (see
+<code>crates/pcloud-fleet/src/lib.rs:586</code>) and verify under the
+advertised public key.</li>
+<li><strong>Rate limit</strong> — script 10 commands/second at the server; 9 must
+return <code>RateLimited</code> (<code>crates/pcloud-fleet/src/lib.rs:126</code>,
+limiter at <code>:467</code>).</li>
+<li><strong>Identity file perms</strong> — <code>stat -c '%a %U' $identity_path</code> → <code>600 root</code>.</li>
+<li><strong>Forged command rejected</strong> — <code>cargo test -p pcloud-fleet rejects_bad_signature</code>.</li>
+<li><strong>In-process end-to-end</strong> — <code>cargo test -p pcloud-fleet --test live_mtls</code> stands up the in-repo reference server
+(<code>tests/reference_server.rs</code>, real TLS, real ed25519 verification)
+and drives the agent through happy-path + tamper + untrusted-SID
+flows. There is still no external reference-server <strong>binary</strong> and
+no live-prod interop claim; see §10.</li>
+</ol>
+<h2 id="15-failure-modes--remediation"><a class="header" href="#15-failure-modes--remediation">15. Failure modes + remediation</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Symptom / <code>FleetError</code></th><th>Root cause</th><th>Remediation</th></tr>
+</thead>
+<tbody>
+<tr><td><code>InvalidSignature</code></td><td>Command signed by a key not in <code>trusted_server_keys</code></td><td>Confirm key rotation was published; re-roll config. Never loosen the allow-list.</td></tr>
+<tr><td><code>RateLimited</code></td><td>Server is spamming commands, or a retry storm</td><td>Server-side fix; client limiter is intentional.</td></tr>
+<tr><td><code>Transport</code></td><td>TLS handshake failure — wrong CA bundle, expired cert, proxy MITM</td><td>Verify <code>openssl s_client</code>; remember the client disables system roots.</td></tr>
+<tr><td>Identity file wrong mode</td><td>Someone ran <code>chmod 644</code> on <code>fleet.key</code></td><td>Restore <code>chmod 600</code>, <code>chown root:root</code>. Rotate the key if exposure is possible.</td></tr>
+<tr><td>Heartbeat carries PII</td><td>A contributor added a free-form string field</td><td>Revert the field; the <code>Heartbeat</code> rustdoc invariant is blocking.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="16-extension-points"><a class="header" href="#16-extension-points">16. Extension points</a></h2>
+<ul>
+<li><strong>Alternate transports.</strong> Implement <code>FleetAgent</code> for a WebSocket or
+gRPC transport; keep the ed25519 signature envelope identical so
+replay defences transfer. See <code>crates/pcloud-fleet/src/lib.rs:238</code>.</li>
+<li><strong>New command variants.</strong> Extend <code>FleetCommand</code>
+(<code>crates/pcloud-fleet/src/lib.rs:201</code>). Every new variant must:
+(a) carry an explicit signature field,
+(b) be verified <em>before</em> the <code>match</code> dispatch,
+(c) pass the “no PII” review bar.</li>
+<li><strong>Alternate identity backing</strong> (TPM / Secure Enclave). Replace
+<code>FleetIdentity::new_or_load</code> with a hardware-backed signer but keep
+the trait contract; <code>sign(body)</code> must still return a detached ed25519
+<code>[u8; 64]</code> (<code>crates/pcloud-fleet/src/lib.rs:380</code>).</li>
+</ul>
+<h2 id="17-cross-refs"><a class="header" href="#17-cross-refs">17. Cross-refs</a></h2>
+<ul>
+<li>CLI: <code>docs/book/src/cli/fleet.md</code></li>
+<li>Runbook — fleet server outage: <code>docs/runbooks/fleet-outage.md</code></li>
+<li>Secret wrapper: <code>crates/pcloud-secret/src/secret_bytes.rs</code></li>
+<li>Observability: <code>docs/enterprise/tracing.md</code> (companion; owned by
+another agent)</li>
+<li>Parity row: <code>C_FEATURE_PARITY_MATRIX.csv</code>
+(<code>fleet.*</code> rows — <code>Rejected</code> on legacy C, net-new in Rust)</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../../../enterprise/policy.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../../../enterprise/data-residency.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../../../enterprise/policy.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../../../enterprise/data-residency.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

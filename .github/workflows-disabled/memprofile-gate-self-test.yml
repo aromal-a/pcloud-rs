@@ -1,0 +1,60 @@
+name: Memory profiling gate self-test
+
+# T3.6 — Memory profiling gate-logic self-test.
+#
+# Validates the `compare_against_baseline` function in
+# `tools/memprofile/run.sh` against synthetic inputs. The test does NOT
+# install or invoke heaptrack; it depends only on bash + jq. The four
+# property classes pinned are:
+#
+#   - boundary at exactly +10%      → PASS  (gate uses strict `>`)
+#   - one byte over the +10% bound  → FAIL  (regression)
+#   - peak below baseline           → PASS  (improvement)
+#   - no baseline file present      → PASS  (cold-start initialises)
+#
+# This workflow is informational. It does NOT replace the live cold-start
+# baseline that `tools/memprofile/baseline.json` receives the first time
+# the real `Memory profiling (heaptrack)` workflow runs. It catches
+# silent regressions to the gate logic itself — for example a future
+# refactor that changes `>` into `>=` or swaps the integer-math
+# threshold formula — without needing a Linux runner that has heaptrack
+# installed.
+
+on:
+  push:
+    branches:
+      - development
+      - main
+    paths:
+      - "tools/memprofile/run.sh"
+      - "tests/memprofile/gate_self_test.sh"
+      - ".github/workflows/memprofile-gate-self-test.yml"
+  pull_request:
+    branches:
+      - development
+      - main
+    paths:
+      - "tools/memprofile/run.sh"
+      - "tests/memprofile/gate_self_test.sh"
+      - ".github/workflows/memprofile-gate-self-test.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  gate-self-test:
+    name: gate self-test (bash + jq)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Run gate self-test
+        run: bash tests/memprofile/gate_self_test.sh

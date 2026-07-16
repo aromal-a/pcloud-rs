@@ -295,9 +295,9 @@ impl MetadataCache {
     /// audit-06 P3 / pcloud-rs-ncx.45: this call drops the entry from the
     /// authoritative `entries` HashMap in O(1) and leaves the LRU `order`
     /// deque holding a stale reference. The stale reference is treated
-    /// as a tombstone by [`Inner::evict_if_over_capacity`] and
-    /// [`Inner::evict_expired`] — the next eviction pass silently skips
-    /// it.
+    /// as a tombstone by `Inner::evict_if_over_capacity` and
+    /// `Inner::evict_expired` (private; intra-doc links disabled per
+    /// CLAUDEREV P1.3) — the next eviction pass silently skips it.
     ///
     /// Tombstones can accumulate at most up to `order.len() - entries.len()`
     /// entries, bounded by `DEFAULT_CAPACITY` (4096) because `put`'s

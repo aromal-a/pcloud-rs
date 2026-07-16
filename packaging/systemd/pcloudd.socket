@@ -3,9 +3,14 @@ Description=pCloud Console Client daemon IPC socket
 Documentation=https://github.com/ezechiel203/pcloud-rs
 
 [Socket]
-# Owner-only local IPC. Matches pcloud-daemon auth_vault / IPC policy:
-# the socket path must be owner-readable, mode 0600, under a 0700 dir.
-ListenStream=%t/pcloud-rs/daemon.sock
+# Owner-only local IPC. This unit is kept as a future socket-activation
+# template only: the current daemon does not consume LISTEN_FDS and the
+# service binds its own socket. Do not enable this unit until that support
+# lands, or systemd will create a listener the daemon never accepts from.
+#
+# Path matches pcloudd.service's PCLOUD_ROOT=%S/pcloud-rs default:
+# ConfigProfile::secure_defaults(root).paths.ipc_socket_path().
+ListenStream=%S/pcloud-rs/runtime/pcloud.sock
 SocketMode=0600
 DirectoryMode=0700
 # Do not set SocketUser/SocketGroup to a shared group — owner-only by design.
@@ -22,5 +27,4 @@ MaxConnectionsPerSource=8
 # No world/group access anywhere, at any time.
 # (Intentionally NO SmackLabelIPIn/Out to avoid accidental relaxation.)
 
-[Install]
-WantedBy=sockets.target
+# No [Install] section intentionally: socket activation is not wired yet.

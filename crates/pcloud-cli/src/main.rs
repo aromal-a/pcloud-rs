@@ -32,6 +32,7 @@ mod exit_code;
 mod field_selector;
 #[allow(unsafe_code)]
 mod globals;
+mod i18n;
 mod json_output;
 #[cfg(unix)]
 mod migrate;
@@ -127,6 +128,10 @@ fn is_non_tty_stdin_unavailable(err: &crate::prompt::PromptError) -> bool {
 /// Drive the CLI end-to-end. Factored out of `main` so every path is
 /// exercised by unit tests (and so exit codes are deterministic).
 fn run(argv: &[String]) -> ExitCode {
+    run_with_socket(argv, None)
+}
+
+fn run_with_socket(argv: &[String], socket_override: Option<&std::path::Path>) -> ExitCode {
     // 1. Extract global flags (-q/-v/--json/--output) before any legacy parsing.
     let (mut flags, reduced) = match GlobalFlags::extract(argv) {
         Ok(pair) => pair,
@@ -268,47 +273,6 @@ fn run(argv: &[String]) -> ExitCode {
         return verify::run(&flags, &reduced);
     }
 
-    // `diff` / `restore` are CLI-side stubs for the R9 #9 revision
-    // follow-up. Parsing still runs so usage errors surface with
-    // ExitCode::Usage. The command itself emits the same structured
-    // "not_configured" JSON envelope as `pcloudc log` so tooling keys
-    // on a single `status` field across all three revision operations.
-    // Exit code stays `6 Unavailable`.
-    if matches!(
-        command,
-        commands::Command::FileDiff | commands::Command::FileRestore
-    ) {
-        // Touch the inputs to surface positional-arg errors first.
-        if let Err(err) = app::parse_inputs_for_command(&command, &reduced) {
-            return report_error(
-                Some(label_for(&command)),
-                flags.output,
-                flags.quiet,
-                ExitCode::Usage,
-                &format!("cli input resolution failed: {err}"),
-            );
-        }
-        // Keep this string in sync with
-        // `pcloud_proto::revision_provider::NULL_PROVIDER_MESSAGE`; the
-        // `null_provider_payload_matches_cli_stub` test in the proto
-        // crate asserts both surfaces emit the same message verbatim.
-        let detail = concat!(
-            "{\"status\":\"not_configured\",",
-            "\"message\":\"pCloud listrevisions API not yet public; ",
-            "configure [file_history].revision_url to point at a custom endpoint\",",
-            "\"next\":\"configure [file_history].revision_url ",
-            "or wait for pCloud public API\"}",
-        )
-        .to_owned();
-        return report_error(
-            Some(label_for(&command)),
-            flags.output,
-            flags.quiet,
-            ExitCode::Unavailable,
-            &detail,
-        );
-    }
-
     // `login` is a CLI-side REPL that chains username → password →
     // (on TwoFactorChallengeIssued) TFA code, all via interactive
     // prompts. This matches the legacy C `pcloud-rs` readline experience
@@ -426,17 +390,20 @@ fn run(argv: &[String]) -> ExitCode {
     // **PLATFORM:** all. Matches daemon default: XDG-canonical via
     // `PcloudDirs::discover()` on Linux/BSD/macOS/Windows; overridable
     // via `PCLOUD_ROOT` for multi-instance and tests.
-    let socket_path = match socket_path_for_defaults() {
-        Ok(p) => p,
-        Err(err) => {
-            return report_error(
-                Some(label_for(&command)),
-                flags.output,
-                flags.quiet,
-                ExitCode::Internal,
-                &format!("resolve socket path: {err}"),
-            );
-        }
+    let socket_path = match socket_override {
+        Some(path) => path.to_path_buf(),
+        None => match socket_path_for_defaults() {
+            Ok(p) => p,
+            Err(err) => {
+                return report_error(
+                    Some(label_for(&command)),
+                    flags.output,
+                    flags.quiet,
+                    ExitCode::Internal,
+                    &format!("resolve socket path: {err}"),
+                );
+            }
+        },
     };
 
     // When a W3C `traceparent` is active for this invocation, echo
@@ -447,6 +414,10 @@ fn run(argv: &[String]) -> ExitCode {
         if !flags.quiet {
             eprintln!("[trace: {tp}]");
         }
+    }
+
+    if matches!(command, commands::Command::RemoteCat) {
+        return run_remote_cat(&client, &socket_path, &inputs.remote_fs_source, &flags);
     }
 
     // Attach the resolved traceparent (if any) to the outgoing
@@ -478,17 +449,58 @@ fn run(argv: &[String]) -> ExitCode {
     match send_result {
         Ok(response) => {
             let code = ExitCode::from_response_status(&response.status);
+            if matches!(command, commands::Command::RemoteLs)
+                && matches!(flags.output, OutputFormat::Text)
+                && code == ExitCode::Ok
+                && flags.fields.is_empty()
+            {
+                if !flags.quiet {
+                    match render_remote_ls(&response.message) {
+                        Ok(rendered) => print!("{rendered}"),
+                        Err(error) => {
+                            return report_error(
+                                Some("ls".to_owned()),
+                                flags.output,
+                                flags.quiet,
+                                ExitCode::Internal,
+                                &error,
+                            );
+                        }
+                    }
+                }
+                return code;
+            }
+            if matches!(
+                command,
+                commands::Command::RemoteGet | commands::Command::RemotePut
+            ) && matches!(flags.output, OutputFormat::Text)
+                && code == ExitCode::Ok
+                && flags.fields.is_empty()
+            {
+                if !flags.quiet {
+                    let rendered = match command {
+                        commands::Command::RemoteGet => render_remote_get(&response.message),
+                        commands::Command::RemotePut => render_remote_put(&response.message),
+                        _ => unreachable!("remote receipt branch narrowed above"),
+                    };
+                    match rendered {
+                        Ok(line) => println!("{line}"),
+                        Err(error) => {
+                            return report_error(
+                                Some(label_for(&command)),
+                                flags.output,
+                                flags.quiet,
+                                ExitCode::Internal,
+                                &error,
+                            );
+                        }
+                    }
+                }
+                return code;
+            }
             // `log` command: when the daemon delivers an Ok payload, the
             // `message` carries a JSON array of revisions. Render it as
             // git-log-style text, or pass through as JSON. Unavailable/
-            // error statuses fall through to the standard envelope so
-            // the honest-scope "not yet supported" message surfaces.
-            if matches!(command, commands::Command::FileHistory)
-                && response.status == pcloud_ipc::ResponseStatus::Ok
-                && !flags.quiet
-            {
-                return render_file_history(&command, &response, &flags, code);
-            }
             // Field-selector projection: when the user supplied one or
             // more `--field`/`-f`/`--select` paths (or bare trailing
             // positionals on a whitelisted command), route through the
@@ -583,82 +595,194 @@ fn run(argv: &[String]) -> ExitCode {
     }
 }
 
-/// Render the `pcloudc log` output for an Ok daemon response.
-///
-/// The daemon carries the revision list as a JSON array in
-/// [`pcloud_ipc::Response::message`]. In JSON mode we preserve the
-/// raw array inside the standard success envelope so downstream
-/// tooling sees a structured payload; in text mode we format each
-/// revision in a git-log-style block:
-///
-/// ```text
-/// rev <hex>
-/// Author: <user>
-/// Date:   <rfc3339-ish>
-///
-///     <optional comment>
-/// ```
-///
-/// Malformed payloads fall back to the standard success envelope so
-/// the operator still sees *something* rather than a silent exit.
-fn render_file_history(
-    command: &commands::Command,
-    response: &pcloud_ipc::Response,
+fn render_remote_ls(message: &str) -> Result<String, String> {
+    let entries: Vec<pcloud_ipc::ListFolderEntry> = serde_json::from_str(message)
+        .map_err(|error| format!("ls received malformed listing: {error}"))?;
+    let mut rendered = String::new();
+    for entry in entries {
+        let kind = if entry.is_folder { 'd' } else { '-' };
+        rendered.push_str(&format!("{kind}\t{}\t{}\n", entry.size, entry.name));
+    }
+    Ok(rendered)
+}
+
+fn render_remote_get(message: &str) -> Result<String, String> {
+    let receipt: pcloud_ipc::RemoteDownloadPayload = serde_json::from_str(message)
+        .map_err(|error| format!("get received malformed download receipt: {error}"))?;
+    let resumed = if receipt.resumed_from == 0 {
+        String::new()
+    } else {
+        format!(" resumed_from={}", receipt.resumed_from)
+    };
+    Ok(format!(
+        "downloaded {} bytes to {} sha256={}{}",
+        receipt.bytes,
+        receipt.path.display(),
+        receipt.sha256_hex,
+        resumed
+    ))
+}
+
+fn render_remote_put(message: &str) -> Result<String, String> {
+    let receipt: pcloud_ipc::RemoteUploadPayload = serde_json::from_str(message)
+        .map_err(|error| format!("put received malformed upload receipt: {error}"))?;
+    let file_id = receipt
+        .file_id
+        .map_or_else(|| "unknown".to_owned(), |id| id.to_string());
+    let resumed = if receipt.resumed_from == 0 {
+        String::new()
+    } else {
+        format!(" resumed_from={}", receipt.resumed_from)
+    };
+    Ok(format!(
+        "uploaded {} bytes upload_id={} file_id={} sha1={}{}",
+        receipt.bytes, receipt.upload_id, file_id, receipt.sha1_hex, resumed
+    ))
+}
+
+/// Stream `cat` through consecutive bounded range requests. At no point does
+/// the CLI or daemon hold the complete remote file in memory.
+fn run_remote_cat(
+    client: &IpcClient,
+    socket_path: &std::path::Path,
+    remote_path: &str,
     flags: &GlobalFlags,
-    code: ExitCode,
 ) -> ExitCode {
-    #[derive(serde::Deserialize)]
-    struct Revision {
-        #[serde(default)]
-        rev_id: String,
-        #[serde(default)]
-        mtime: u64,
-        #[serde(default)]
-        size: u64,
-        #[serde(default)]
-        user: String,
-        #[serde(default)]
-        comment: String,
+    use base64::Engine as _;
+    use std::io::Write as _;
+
+    if matches!(flags.output, OutputFormat::Json) {
+        return report_error(
+            Some("cat".to_owned()),
+            flags.output,
+            flags.quiet,
+            ExitCode::Usage,
+            "cat emits raw file bytes and cannot be combined with --json",
+        );
     }
 
-    match flags.output {
-        OutputFormat::Json => {
-            // Preserve the array payload verbatim inside the success
-            // envelope so callers parse one stable schema.
-            let env = JsonEnvelope::from_response(label_for(command), response);
-            print!("{}", env.render());
+    const CHUNK: u64 = 8 * 1024 * 1024;
+    let mut offset = 0_u64;
+    let mut first = true;
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    loop {
+        let request = pcloud_ipc::Request::ReadFileRange {
+            path: remote_path.to_owned(),
+            offset,
+            length: CHUNK,
+        };
+        let send = || match flags.traceparent.as_deref() {
+            Some(traceparent) => client.send_envelope(
+                socket_path,
+                &pcloud_ipc::RequestEnvelope::new(request.clone())
+                    .with_traceparent(traceparent.to_owned()),
+            ),
+            None => client.send(socket_path, &request),
+        };
+        let mut response = send();
+        if first {
+            if let Err(pcloud_ipc::IpcTransportError::Io(ref error)) = response {
+                if error.kind() == std::io::ErrorKind::NotFound
+                    && try_autostart_daemon(socket_path, flags).is_ok()
+                {
+                    response = send();
+                }
+            }
+            first = false;
         }
-        OutputFormat::Text => {
-            let revisions: Vec<Revision> =
-                serde_json::from_str(&response.message).unwrap_or_default();
-            if revisions.is_empty() {
-                // Either an empty history or a malformed payload; a
-                // single-line note is less surprising than silence.
-                println!("(no revisions)");
-                return code;
+        let response = match response {
+            Ok(response) => response,
+            Err(error) => {
+                return report_error(
+                    Some("cat".to_owned()),
+                    flags.output,
+                    flags.quiet,
+                    ExitCode::classify_transport_error(&error.to_string()),
+                    &format!("cat request failed: {error}"),
+                );
             }
-            for (idx, rev) in revisions.iter().enumerate() {
-                if idx > 0 {
-                    println!();
-                }
-                println!("rev {}", rev.rev_id);
-                if !rev.user.is_empty() {
-                    println!("Author: {}", rev.user);
-                }
-                // RFC3339-ish rendering without pulling in chrono: emit
-                // the raw UNIX seconds with the token a human reader can
-                // post-process. Keeps the dependency surface minimal.
-                println!("Date:   {} (size={})", rev.mtime, rev.size);
-                if !rev.comment.is_empty() {
-                    println!();
-                    for line in rev.comment.lines() {
-                        println!("    {line}");
-                    }
-                }
+        };
+        let code = ExitCode::from_response_status(&response.status);
+        if code != ExitCode::Ok {
+            return report_error(
+                Some("cat".to_owned()),
+                flags.output,
+                flags.quiet,
+                code,
+                &response.message,
+            );
+        }
+        let payload: pcloud_ipc::ReadRangePayload = match serde_json::from_str(&response.message) {
+            Ok(payload) => payload,
+            Err(error) => {
+                return report_error(
+                    Some("cat".to_owned()),
+                    flags.output,
+                    flags.quiet,
+                    ExitCode::Internal,
+                    &format!("cat received malformed range metadata: {error}"),
+                );
             }
+        };
+        let bytes = match base64::engine::general_purpose::STANDARD.decode(&payload.data_b64) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return report_error(
+                    Some("cat".to_owned()),
+                    flags.output,
+                    flags.quiet,
+                    ExitCode::Internal,
+                    &format!("cat received malformed base64 data: {error}"),
+                );
+            }
+        };
+        if bytes.len() as u64 != payload.bytes_returned {
+            return report_error(
+                Some("cat".to_owned()),
+                flags.output,
+                flags.quiet,
+                ExitCode::Internal,
+                "cat range length does not match decoded body",
+            );
+        }
+        if !flags.quiet {
+            if let Err(error) = output.write_all(&bytes) {
+                return report_error(
+                    Some("cat".to_owned()),
+                    flags.output,
+                    flags.quiet,
+                    ExitCode::Internal,
+                    &format!("cat stdout write failed: {error}"),
+                );
+            }
+        }
+        offset = offset.saturating_add(payload.bytes_returned);
+        if payload.eof {
+            break;
+        }
+        if payload.bytes_returned == 0 {
+            return report_error(
+                Some("cat".to_owned()),
+                flags.output,
+                flags.quiet,
+                ExitCode::Internal,
+                "cat made no progress before EOF",
+            );
         }
     }
-    code
+    if !flags.quiet {
+        if let Err(error) = output.flush() {
+            return report_error(
+                Some("cat".to_owned()),
+                flags.output,
+                flags.quiet,
+                ExitCode::Internal,
+                &format!("cat stdout flush failed: {error}"),
+            );
+        }
+    }
+    ExitCode::Ok
 }
 
 /// Emit an error on the appropriate stream and return the chosen exit code.
@@ -884,10 +1008,10 @@ fn command_accepts_bare_fields(command: &commands::Command) -> bool {
 /// Rules:
 /// - Only applies when the command is [`command_accepts_bare_fields`].
 /// - Tokens starting with `-` are left in place (flags).
-/// - The very next token after the program/command is preserved for
-///   commands that already have exactly one required positional
-///   (none of the whitelisted ones do today, but the guard is kept).
-/// - Collection starts at offset 2 (argv\[0\]=program, argv\[1\]=command).
+/// - Tokens consumed by a two-token command form (for example
+///   `integrity status`) are preserved.
+/// - [`commands::Command::FilesystemStatus`] also preserves its required
+///   local-path positional before collecting selectors.
 fn extract_bare_field_positionals(
     command: &commands::Command,
     argv: Vec<String>,
@@ -895,10 +1019,45 @@ fn extract_bare_field_positionals(
     if !command_accepts_bare_fields(command) {
         return (argv, Vec::new());
     }
+    let selector_start = match command {
+        commands::Command::SyncList
+            if matches!(argv.get(1).map(String::as_str), Some("sync" | "s")) =>
+        {
+            3
+        }
+        commands::Command::ListNotifications
+            if matches!(
+                argv.get(1).map(String::as_str),
+                Some("notifications" | "notif")
+            ) =>
+        {
+            3
+        }
+        commands::Command::SessionStatus if argv.get(1).map(String::as_str) == Some("session") => 3,
+        commands::Command::IntegrityStatus
+            if argv.get(1).map(String::as_str) == Some("integrity") && argv.get(2).is_some() =>
+        {
+            3
+        }
+        commands::Command::HaStatus if argv.get(1).map(String::as_str) == Some("ha") => 3,
+        commands::Command::AuditVerifierStatus
+            if argv.get(1).map(String::as_str) == Some("audit-verifier") =>
+        {
+            3
+        }
+        commands::Command::CryptoStatus
+            if matches!(argv.get(1).map(String::as_str), Some("crypto" | "c")) =>
+        {
+            3
+        }
+        commands::Command::FilesystemStatus if argv.get(1).map(String::as_str) == Some("fs") => 4,
+        commands::Command::FilesystemStatus => 3,
+        _ => 2,
+    };
     let mut kept = Vec::with_capacity(argv.len());
     let mut fields = Vec::new();
     for (idx, tok) in argv.iter().enumerate() {
-        if idx < 2 || tok.starts_with('-') || tok == "-" {
+        if idx < selector_start || tok.starts_with('-') || tok == "-" {
             kept.push(tok.clone());
             continue;
         }
@@ -986,17 +1145,20 @@ fn render_with_field_selection(
 /// - The daemon log file is created 0600.
 /// - No privileges are acquired or dropped; we run as the caller.
 fn run_daemon_start(flags: &GlobalFlags) -> ExitCode {
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        run_daemon_start_windows(flags)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = flags;
-        return report_error(
+        report_error(
             Some("Start".into()),
             flags.output,
             flags.quiet,
             ExitCode::GenericError,
-            "`pcloudc start` daemon-detach path is Unix-only; Windows service \
-             start is tracked under bd-xplat-windows.",
-        );
+            "`pcloudc start` is not implemented for this target.",
+        )
     }
     #[cfg(unix)]
     {
@@ -1200,6 +1362,185 @@ fn run_daemon_start(flags: &GlobalFlags) -> ExitCode {
     }
 }
 
+/// Windows per-user equivalent of [`run_daemon_start`].
+///
+/// The daemon must run under the interactive user because the named-pipe DACL,
+/// peer SID check, DPAPI vault, and WinFSP mount all use that user's security
+/// context. A machine service account would create a different pipe and DPAPI
+/// scope, making the installed CLI unable to authenticate. The child is
+/// placed in a new process group with no console window and its output is
+/// redirected to the user's data directory.
+#[cfg(windows)]
+fn run_daemon_start_windows(flags: &GlobalFlags) -> ExitCode {
+    use pcloud_ipc::{IpcClient, Method, Request};
+    use std::os::windows::process::CommandExt as _;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let socket_path = match socket_path_for_defaults() {
+        Ok(path) => path,
+        Err(err) => {
+            return report_error(
+                Some("Start".into()),
+                flags.output,
+                flags.quiet,
+                ExitCode::GenericError,
+                &format!("IPC endpoint resolution failed: {err}"),
+            );
+        }
+    };
+    let client = IpcClient;
+    let probe = Request::Plain {
+        method: Method::GetHealth,
+    };
+    if client.send(&socket_path, &probe).is_ok() {
+        if !flags.quiet {
+            println!("pcloudd already running for the current Windows user");
+        }
+        return ExitCode::Ok;
+    }
+
+    let daemon_path = match locate_daemon_binary() {
+        Ok(path) => path,
+        Err(err) => {
+            return report_error(
+                Some("Start".into()),
+                flags.output,
+                flags.quiet,
+                ExitCode::Unavailable,
+                &err,
+            );
+        }
+    };
+    let dirs = match pcloud_config::paths::PcloudDirs::discover() {
+        Ok(dirs) => dirs,
+        Err(err) => {
+            return report_error(
+                Some("Start".into()),
+                flags.output,
+                flags.quiet,
+                ExitCode::GenericError,
+                &format!("Windows data-directory resolution failed: {err}"),
+            );
+        }
+    };
+    if let Err(err) = std::fs::create_dir_all(&dirs.data) {
+        return report_error(
+            Some("Start".into()),
+            flags.output,
+            flags.quiet,
+            ExitCode::GenericError,
+            &format!("daemon log directory create failed: {err}"),
+        );
+    }
+    let log_path = dirs.data.join("daemon.log");
+    let log_file = match std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        Ok(file) => file,
+        Err(err) => {
+            return report_error(
+                Some("Start".into()),
+                flags.output,
+                flags.quiet,
+                ExitCode::GenericError,
+                &format!("daemon log open failed ({}): {err}", log_path.display()),
+            );
+        }
+    };
+    let log_stderr = match log_file.try_clone() {
+        Ok(file) => file,
+        Err(err) => {
+            return report_error(
+                Some("Start".into()),
+                flags.output,
+                flags.quiet,
+                ExitCode::GenericError,
+                &format!("daemon log handle clone failed: {err}"),
+            );
+        }
+    };
+
+    let cfg =
+        config::CliConfig::load_or_init(&config::CliConfig::default_path(None)).unwrap_or_default();
+    let mut command = Command::new(&daemon_path);
+    command
+        .arg("serve")
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_stderr))
+        .creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    if let Some(gb) = cfg.cache_size_gb {
+        command.env("PCLOUD_CACHE_SIZE_GB", gb.to_string());
+    }
+    if let Some(path) = cfg.mountpoint.as_ref() {
+        command.env("PCLOUD_DEFAULT_MOUNTPOINT", path);
+    }
+    if let Some(path) = cfg.log_path.as_ref() {
+        command.env("PCLOUD_LOG_PATH", path);
+    }
+    if let Some(path) = cfg.fs_event_log.as_ref() {
+        command.env("PCLOUD_FS_EVENT_LOG", path);
+    }
+    if let Some(level) = cfg.log_level.as_deref() {
+        command.env("PCLOUD_LOG_LEVEL", level);
+    }
+    if let Some(options) = cfg.fuse_opts.as_deref() {
+        command.env("PCLOUD_FUSE_OPTS", options);
+    }
+
+    let child = match command.spawn() {
+        Ok(child) => child,
+        Err(err) => {
+            return report_error(
+                Some("Start".into()),
+                flags.output,
+                flags.quiet,
+                ExitCode::Unavailable,
+                &format!("failed to spawn {}: {err}", daemon_path.display()),
+            );
+        }
+    };
+    let pid = child.id();
+    drop(child);
+
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let mut last_error = "named pipe not ready".to_owned();
+    while Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+        match client.send(&socket_path, &probe) {
+            Ok(_) => {
+                if !flags.quiet {
+                    println!(
+                        "pcloudd started for the current Windows user \
+                         (pid={pid}, log={})",
+                        log_path.display()
+                    );
+                }
+                return ExitCode::Ok;
+            }
+            Err(err) => last_error = err.to_string(),
+        }
+    }
+
+    report_error(
+        Some("Start".into()),
+        flags.output,
+        flags.quiet,
+        ExitCode::Unavailable,
+        &format!(
+            "pcloudd was spawned (pid={pid}) but its named pipe did not become \
+             reachable within 10s: {last_error}. Check {}",
+            log_path.display()
+        ),
+    )
+}
+
 /// Drive the CLI-side `pcloudc drain` command.
 ///
 /// 1. Resolves `<state_dir>/daemon.pid` from the active config profile.
@@ -1249,6 +1590,9 @@ fn run_daemon_drain(flags: &GlobalFlags) -> ExitCode {
 
     // Send SIGTERM. A missing process (ESRCH) is treated as "already
     // stopped" — idempotent.
+    // SAFETY: `pid` is a numeric daemon pid read from the pidfile and
+    // `SIGTERM` is a valid signal constant. `kill(2)` does not dereference
+    // Rust pointers; semantic pid validity is reported through errno below.
     let send_rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
     if send_rc != 0 {
         let err = std::io::Error::last_os_error();
@@ -1392,6 +1736,9 @@ fn run_daemon_reload(flags: &GlobalFlags) -> ExitCode {
     };
 
     // Send SIGHUP.
+    // SAFETY: `pid` is a numeric daemon pid read from the pidfile and
+    // `SIGHUP` is a valid signal constant. `kill(2)` has no Rust memory
+    // safety preconditions; nonexistent or unauthorized pids return errno.
     let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGHUP) };
     if rc != 0 {
         let err = std::io::Error::last_os_error();
@@ -1428,8 +1775,8 @@ fn run_daemon_drain(flags: &GlobalFlags) -> ExitCode {
         flags.output,
         flags.quiet,
         ExitCode::Unavailable,
-        "`pcloudc drain` (SIGTERM + pidfile poll) is Unix-only; \
-         Windows service-controlled stop is tracked under bd-xplat-windows.",
+        "`pcloudc drain` (SIGTERM + pidfile poll) is Unix-only; use \
+         `pcloudc stop` for authenticated graceful shutdown on Windows.",
     )
 }
 
@@ -1731,10 +2078,7 @@ fn socket_path_for_defaults() -> Result<std::path::PathBuf, String> {
 ///
 /// The spawned child detaches from the controlling terminal so the
 /// CLI can exit cleanly while the daemon keeps running.
-fn try_autostart_daemon(
-    socket_path: &std::path::Path,
-    flags: &GlobalFlags,
-) -> Result<(), String> {
+fn try_autostart_daemon(socket_path: &std::path::Path, flags: &GlobalFlags) -> Result<(), String> {
     use std::io::{IsTerminal, Write};
 
     if flags.quiet {
@@ -1766,6 +2110,10 @@ fn try_autostart_daemon(
         // Detach from the controlling terminal so a Ctrl-C in the CLI
         // does not also kill the freshly spawned daemon.
         use std::os::unix::process::CommandExt;
+        // SAFETY: `pre_exec` runs after fork and before exec, where only
+        // async-signal-safe operations are allowed. The closure calls only
+        // `setsid(2)` and returns `Ok(())`; it does not allocate, lock, or
+        // touch shared Rust state.
         unsafe {
             cmd.pre_exec(|| {
                 // Best-effort setsid; ignore EPERM (already a session
@@ -1777,26 +2125,26 @@ fn try_autostart_daemon(
             });
         }
     }
-    cmd.spawn()
-        .map_err(|e| format!("spawn pcloudd: {e}"))?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
+    }
+    cmd.spawn().map_err(|e| format!("spawn pcloudd: {e}"))?;
 
-    // Wait for the socket to appear and the daemon to start accepting
-    // connections. Connect-and-disconnect probes are the only honest
-    // signal: existence of the socket file alone does not mean
-    // `accept()` is armed.
+    // Wait for the authenticated protocol endpoint to answer. Filesystem
+    // existence is insufficient on Unix and meaningless for Windows named
+    // pipes, so the readiness probe is a real health request everywhere.
+    let client = pcloud_ipc::IpcClient;
+    let probe = pcloud_ipc::Request::Plain {
+        method: pcloud_ipc::Method::GetHealth,
+    };
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::time::Instant::now() < deadline {
-        if socket_path.exists() {
-            #[cfg(unix)]
-            {
-                if std::os::unix::net::UnixStream::connect(socket_path).is_ok() {
-                    return Ok(());
-                }
-            }
-            #[cfg(not(unix))]
-            {
-                return Ok(());
-            }
+        if client.send(socket_path, &probe).is_ok() {
+            return Ok(());
         }
         std::thread::sleep(std::time::Duration::from_millis(150));
     }
@@ -1817,16 +2165,17 @@ fn is_affirmative(answer: &str) -> bool {
 /// Locate the `pcloudd` binary for autostart. Order: `$PCLOUDD`,
 /// sibling of `current_exe()`, then `$PATH`.
 fn locate_daemon_binary() -> Result<std::path::PathBuf, String> {
-    let bin_name = if cfg!(windows) { "pcloudd.exe" } else { "pcloudd" };
+    let bin_name = if cfg!(windows) {
+        "pcloudd.exe"
+    } else {
+        "pcloudd"
+    };
     if let Some(env_path) = std::env::var_os("PCLOUDD") {
         let p = std::path::PathBuf::from(env_path);
         if p.exists() {
             return Ok(p);
         }
-        return Err(format!(
-            "$PCLOUDD={} does not exist",
-            p.display()
-        ));
+        return Err(format!("$PCLOUDD={} does not exist", p.display()));
     }
     if let Ok(self_path) = std::env::current_exe() {
         if let Some(dir) = self_path.parent() {
@@ -2663,6 +3012,31 @@ mod tests {
         v.iter().map(|s| (*s).to_owned()).collect()
     }
 
+    #[cfg(unix)]
+    fn run_against_response(args: &[&str], response: pcloud_ipc::Response) -> ExitCode {
+        let mut full_argv = vec!["pcloudc".to_owned()];
+        full_argv.extend(args.iter().map(|arg| (*arg).to_owned()));
+        let (_, reduced) = GlobalFlags::extract(&full_argv).expect("valid test globals");
+        let command = app::parse_command(&reduced).expect("valid daemon-backed test command");
+        app::parse_inputs_for_command(&command, &reduced).unwrap_or_else(|error| {
+            panic!("complete daemon-backed test inputs for {args:?}: {error}")
+        });
+
+        let temp = tempfile::tempdir().expect("temporary IPC root");
+        let socket = temp.path().join("pcloudc-test.sock");
+        let server = pcloud_ipc::IpcServer::new(pcloud_ipc::current_effective_uid());
+        let bound = server.bind(&socket).expect("bind fake CLI daemon");
+        let server_thread = std::thread::spawn(move || {
+            bound
+                .serve_once(move |_| response)
+                .expect("serve fake CLI response");
+        });
+
+        let code = run_with_socket(&full_argv, Some(&socket));
+        server_thread.join().expect("fake CLI daemon thread");
+        code
+    }
+
     #[test]
     fn completion_unknown_shell_is_usage_error() {
         let code = run(&argv(&["pcloud-rs", "completion", "nu"]));
@@ -2785,5 +3159,380 @@ mod tests {
         // tokens inside the parenthesised suffix).
         assert!(b.contains('(') && b.contains(')'), "banner: {b}");
         assert!(b.contains(','), "banner: {b}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_backed_command_matrix_reaches_ipc_and_maps_success() {
+        let commands: &[&[&str]] = &[
+            &["status"],
+            &["health"],
+            &["pending"],
+            &["slo"],
+            &["list-links"],
+            &["list-upload-links"],
+            &["list-notifications"],
+            &["crypto-status"],
+            &["sync-list"],
+            &["sync-status"],
+            &["userinfo"],
+            &["pause"],
+            &["resume"],
+            &["logout"],
+            &["lock-crypto"],
+            &["list-incoming-shares"],
+            &["list-outgoing-shares"],
+            &["list-incoming-share-requests"],
+            &["list-outgoing-share-requests"],
+            &["list-contacts"],
+            &["list-myteams"],
+            &["audit-verify"],
+            &["session-status"],
+            &["sync-localscan"],
+            &["integrity", "status"],
+            &["integrity", "run-once"],
+            &["ha-status"],
+            &["audit-verifier-status"],
+            &["upload-list"],
+            &["conflict-list"],
+            &["crypto-reset"],
+            &["crypto-priv-key-flags"],
+            &["crypto-send-change-private"],
+            &["crypto-hint"],
+            &["account-verify-email"],
+            &["account-api-servers"],
+            &["account-promo"],
+            &["backup-delete-device"],
+            &["show-link", "abc123"],
+            &["delete-link", "7"],
+            &["create-file-link", "/Documents/report.pdf"],
+            &["create-folder-link", "/Documents"],
+            &["change-link-expire", "7", "1700000000"],
+            &[
+                "change-link-password",
+                "7",
+                "link-secret",
+                "--allow-argv-password",
+            ],
+            &["change-link-upload", "7", "everyone"],
+            &[
+                "create-upload-link",
+                "/Uploads",
+                "fixture",
+                "1700000000",
+                "4096",
+                "8",
+            ],
+            &["delete-upload-link", "8"],
+            &[
+                "create-tree-link",
+                "bundle",
+                "0",
+                "10,11",
+                "20,21",
+                "1700000000",
+                "5",
+                "1048576",
+            ],
+            &["list-link-access", "7"],
+            &["add-link-access", "7", "reader@example.com"],
+            &["remove-link-access", "7", "9"],
+            &["list-bookmarks"],
+            &["remove-bookmark", "abc123", "1"],
+            &["change-bookmark", "abc123", "1", "docs", "fixture"],
+            &[
+                "sync-add",
+                "/tmp/pcloud-sync",
+                "/Documents",
+                "--type",
+                "full",
+            ],
+            &["sync-remove", "1"],
+            &["sync-change-type", "1", "download-only"],
+            &["sync-exclude-add", "1", "*.tmp"],
+            &["sync-exclude-remove", "1", "*.tmp"],
+            &["sync-exclude-list", "1"],
+            &["send-tfa-sms"],
+            &["send-tfa-notification"],
+            &[
+                "submit-password",
+                "alice@example.com",
+                "account-secret",
+                "--allow-argv-password",
+            ],
+            &["submit-auth", "token-fixture", "--allow-argv-password"],
+            &["submit-tfa", "123456", "--allow-argv-password"],
+            &[
+                "submit-recovery",
+                "recovery-fixture",
+                "--allow-argv-password",
+            ],
+            &["unlock-crypto", "crypto-secret", "--allow-argv-password"],
+            &["authsave", "on"],
+            &[
+                "share-folder",
+                "10",
+                "Documents",
+                "reader@example.com",
+                "hello",
+                "7",
+                "hint",
+            ],
+            &["cancel-share-request", "11"],
+            &["decline-share-request", "11"],
+            &["accept-share-request", "11", "0", "Accepted"],
+            &["remove-share", "12"],
+            &["modify-share", "12", "7"],
+            &["account-stopshare", "10", "11", "12"],
+            &["account-modifyshare", "10:7", "11:3"],
+            &["account-teamshare", "10", "Documents", "11", "hello", "7"],
+            &["notifications", "mark-read", "42"],
+            &["mount", "/tmp/pcloud-mount"],
+            &["mount", "--force-umount", "/tmp/pcloud-mount"],
+            &["unmount"],
+            &[
+                "publink-send",
+                "abc123",
+                "--to",
+                "reader@example.com",
+                "--message",
+                "hello",
+            ],
+            &["folder-create", "/Documents/New"],
+            &["folder-id", "/Documents"],
+            &["folder-flags", "/Documents"],
+            &["folder-owner", "/Documents"],
+            &["fs-status", "/tmp/pcloud-sync"],
+            &["stat", "/Documents/report.pdf"],
+            &["cp", "/Documents/a", "/Documents/b"],
+            &["mv", "/Documents/b", "/Archive/b"],
+            &["rm", "/Archive/b", "--recursive"],
+            &["mkdir", "/Documents/New"],
+            &["snapshot-create", "/tmp/backup.tar.zst"],
+            &["snapshot-restore", "/tmp/backup.tar.zst", "--yes"],
+            &["snapshot-verify", "/tmp/backup.tar.zst"],
+            &["snapshot-prune", "/tmp", "--retention-days", "30", "--yes"],
+            &["integrity", "skip", "/tmp/pcloud-sync/cache"],
+            &[
+                "upload-create",
+                "/tmp/source.bin",
+                "source.bin",
+                "--parent",
+                "10",
+                "--size",
+                "128",
+                "--conflict-mode",
+                "replace",
+            ],
+            &["upload-pause", "1"],
+            &["upload-resume", "1"],
+            &["upload-cancel", "1"],
+            &["upload-write-from-file", "1", "20", "30", "0", "0", "128"],
+            &["conflict-resolve", "/Documents/a", "--keep-local"],
+            &[
+                "crypto-change-password",
+                "old-secret",
+                "new-secret",
+                "hint",
+                "123456",
+                "0",
+                "--allow-argv-password",
+            ],
+            &[
+                "crypto-change-password-unlocked",
+                "new-secret",
+                "hint",
+                "123456",
+                "0",
+                "--allow-argv-password",
+            ],
+            &["crypto-get-folder-key", "10"],
+            &["crypto-get-file-key", "20"],
+            &["sync-suggest", "/tmp", "--max", "5"],
+            &["sync-is-syncable", "/tmp"],
+            &["account-verify-email-restricted", "verify-token"],
+            &["account-lost-password", "alice@example.com"],
+            &[
+                "account-register",
+                "alice@example.com",
+                "new-secret",
+                "--accept-terms",
+                "--allow-argv-password",
+            ],
+            &["account-set-api-server", "1", "api.pcloud.com"],
+            &["account-set-language", "en"],
+            &["download-link", "20"],
+            &["download-file", "20", "/tmp/report.pdf"],
+            &["backup-delete", "1"],
+            &["backup-create", "fixture", "0", "/tmp/pcloud-sync"],
+            &["backup-stop-device", "10"],
+            &[
+                "create-tree-link-from-paths",
+                "bundle",
+                "--root",
+                "/Documents",
+                "--folder",
+                "/Documents/reports",
+                "--file",
+                "/Documents/report.pdf",
+            ],
+        ];
+
+        for command in commands {
+            let mut args = vec!["--quiet"];
+            args.extend_from_slice(command);
+            let code = run_against_response(
+                &args,
+                pcloud_ipc::Response {
+                    status: pcloud_ipc::ResponseStatus::Ok,
+                    message: r#"{"ready":true,"backend":"pclsync-compat"}"#.to_owned(),
+                },
+            );
+            assert_eq!(code, ExitCode::Ok, "command: {command:?}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_response_renderers_cover_remote_and_field_safe_paths() {
+        let listing = vec![pcloud_ipc::ListFolderEntry {
+            file_id: 7,
+            name: "hello.txt".to_owned(),
+            size: 5,
+            hash: "abc".to_owned(),
+            modified: 1,
+            created: 1,
+            is_folder: false,
+            is_mine: true,
+            is_shared: false,
+            encrypted: false,
+            permissions: Some(7),
+        }];
+        assert_eq!(
+            run_against_response(
+                &["ls", "/"],
+                pcloud_ipc::Response {
+                    status: pcloud_ipc::ResponseStatus::Ok,
+                    message: serde_json::to_string(&listing).unwrap(),
+                },
+            ),
+            ExitCode::Ok
+        );
+
+        let download = pcloud_ipc::RemoteDownloadPayload {
+            path: std::path::PathBuf::from("/tmp/hello.txt"),
+            bytes: 5,
+            sha256_hex: "def".to_owned(),
+            resumed_from: 2,
+        };
+        assert_eq!(
+            run_against_response(
+                &["get", "/hello.txt", "/tmp/hello.txt"],
+                pcloud_ipc::Response {
+                    status: pcloud_ipc::ResponseStatus::Ok,
+                    message: serde_json::to_string(&download).unwrap(),
+                },
+            ),
+            ExitCode::Ok
+        );
+
+        let local = tempfile::NamedTempFile::new().unwrap();
+        let local_arg = local.path().to_str().unwrap();
+        let upload = pcloud_ipc::RemoteUploadPayload {
+            upload_id: 9,
+            file_id: Some(11),
+            bytes: 0,
+            sha1_hex: "123".to_owned(),
+            resumed_from: 0,
+        };
+        assert_eq!(
+            run_against_response(
+                &["put", local_arg, "/hello.txt"],
+                pcloud_ipc::Response {
+                    status: pcloud_ipc::ResponseStatus::Ok,
+                    message: serde_json::to_string(&upload).unwrap(),
+                },
+            ),
+            ExitCode::Ok
+        );
+
+        assert_eq!(
+            run_against_response(
+                &["status", "quota"],
+                pcloud_ipc::Response {
+                    status: pcloud_ipc::ResponseStatus::Ok,
+                    message: "status: quota=42, usedquota=7".to_owned(),
+                },
+            ),
+            ExitCode::Ok
+        );
+        assert_eq!(
+            run_against_response(
+                &["--json", "status"],
+                pcloud_ipc::Response {
+                    status: pcloud_ipc::ResponseStatus::Ok,
+                    message: r#"{"ready":true}"#.to_owned(),
+                },
+            ),
+            ExitCode::Ok
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn daemon_response_statuses_map_to_stable_cli_exit_codes() {
+        let cases = [
+            (pcloud_ipc::ResponseStatus::InvalidRequest, ExitCode::Usage),
+            (pcloud_ipc::ResponseStatus::Unauthorized, ExitCode::Auth),
+            (pcloud_ipc::ResponseStatus::Conflict, ExitCode::Conflict),
+            (
+                pcloud_ipc::ResponseStatus::Unavailable,
+                ExitCode::Unavailable,
+            ),
+            (
+                pcloud_ipc::ResponseStatus::InternalError,
+                ExitCode::Internal,
+            ),
+            (
+                pcloud_ipc::ResponseStatus::PolicyViolation {
+                    kind: "test".to_owned(),
+                },
+                ExitCode::Conflict,
+            ),
+        ];
+        for (status, expected) in cases {
+            let code = run_against_response(
+                &["--quiet", "status"],
+                pcloud_ipc::Response {
+                    status,
+                    message: "fixture".to_owned(),
+                },
+            );
+            assert_eq!(code, expected);
+        }
+    }
+
+    #[test]
+    fn implicit_fields_preserve_subcommands_and_required_path() {
+        let (kept, fields) = extract_bare_field_positionals(
+            &commands::Command::IntegrityStatus,
+            argv(&["pcloudc", "integrity", "status", "enabled"]),
+        );
+        assert_eq!(kept, argv(&["pcloudc", "integrity", "status"]));
+        assert_eq!(fields, vec!["enabled"]);
+
+        let (kept, fields) = extract_bare_field_positionals(
+            &commands::Command::FilesystemStatus,
+            argv(&["pcloudc", "fs", "status", "/srv/data", "state"]),
+        );
+        assert_eq!(kept, argv(&["pcloudc", "fs", "status", "/srv/data"]));
+        assert_eq!(fields, vec!["state"]);
+
+        let (kept, fields) = extract_bare_field_positionals(
+            &commands::Command::FilesystemStatus,
+            argv(&["pcloudc", "fs-status", "/srv/data", "state"]),
+        );
+        assert_eq!(kept, argv(&["pcloudc", "fs-status", "/srv/data"]));
+        assert_eq!(fields, vec!["state"]);
     }
 }

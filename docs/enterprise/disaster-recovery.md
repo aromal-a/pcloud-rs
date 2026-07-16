@@ -271,8 +271,10 @@ Persistent=true
 ### 7.3 Windows Task Scheduler
 
 Sample XML shipped under `docs/enterprise/examples/`. The daemon
-runs as a Windows Service (`pcloud-daemon-win`); the task invokes
-`pcloudc.exe backup snapshot-create`.
+runs per-user as `pcloudd.exe`, normally started by `pcloudc start`; the task
+invokes `pcloudc.exe backup snapshot-create`. The public package deliberately
+does not install the experimental `pcloud-daemon-win` SCM host because the
+named-pipe, DPAPI, and WinFSP security boundary is the interactive user SID.
 
 ## 8. Verification
 

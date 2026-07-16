@@ -1,0 +1,39 @@
+[package]
+name = "pcloud-plugin-wasmtime"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+# Wasmtime 43 fixed the sandbox advisories cited below and requires Rust 1.91.
+# Keep this higher MSRV isolated from the portable core/SDK, which remains on
+# the workspace 1.89 contract.
+rust-version = "1.91"
+description = "T2.5.b — wasmtime-backed `PluginBackend` impl for `pcloud-plugin-host`. Kept in a separate crate so the host core stays dep-light."
+
+[dependencies]
+pcloud-plugin-host = { path = "../pcloud-plugin-host" }
+# wasmtime 26 is the workspace's preferred stable release at the time of
+# T2.5.b landing. The runtime is heavy (cranelift codegen + wasmparser +
+# the WASI implementations) — this is the single reason the wasmtime
+# backend is split out of `pcloud-plugin-host` so the host core stays
+# usable with the `NoopBackend` (and any future native backend) without
+# pulling cranelift.
+#
+# We disable default features and re-enable only what we need:
+#   - `cranelift`: required for `Module::new` to actually compile the
+#     wasm bytes (without it `Engine::new` returns a runtime error).
+# Notably absent:
+#   - `wasi`: this crate is **deliberately** built without WASI imports
+#     so that any `wasi_snapshot_preview1.fd_write` import fails to
+#     resolve at instantiate time. That is the deny-path acceptance
+#     test (`wasmtime_module_with_fs_import_fails_to_load`).
+# Pinned to 43.x per RUSTSEC-2026-0094/-0095/-0096 advisory: the prior
+# 26.x line is affected by sandbox-escape vulnerabilities. The
+# advisory's accepted fix versions are >=36.0.7,<37 / >=42.0.2,<43 /
+# >=43.0.1; we pick the latest fixed line.
+wasmtime = { version = "43", default-features = false, features = ["cranelift", "runtime"] }
+thiserror = { workspace = true }
+log = { workspace = true }
+
+[lints]
+workspace = true

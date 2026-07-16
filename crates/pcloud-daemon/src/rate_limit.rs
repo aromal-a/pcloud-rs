@@ -305,7 +305,8 @@ pub fn categorize(request: &Request) -> RateCategory {
         // Sibling path-based variant performs N sequential path->id
         // resolutions before the tree-link create, so it is at least as
         // expensive as the id-based form.
-        Request::CreateTreePublicLinkFromPaths { .. } => RateCategory::Expensive,
+        Request::CreateTreePublicLinkFromPaths { .. }
+        | Request::CreateTreePublicLinkFromPathTargets { .. } => RateCategory::Expensive,
         // Backup mutations: backend-touching lifecycle calls
         // (CreateBackup/StopDevice) and local-only device registration
         // cleanup (DeleteBackupDevice). All three are classified

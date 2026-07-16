@@ -145,10 +145,20 @@ fn read_small_file_via_real_mount() {
     if !fuse_gate_enabled() {
         return;
     }
-    let folder = Arc::new(MockFolderBackend::new());
-    folder.insert_dir("/", 1, vec![("hello.txt", false, None, Some(42))]);
-    let files = Arc::new(MockFileBackend::new());
     let expected = b"hello via fuse";
+    let folder = Arc::new(MockFolderBackend::new());
+    folder.insert_dir_with_sizes(
+        "/",
+        1,
+        vec![(
+            "hello.txt",
+            false,
+            None,
+            Some(42),
+            Some(expected.len() as u64),
+        )],
+    );
+    let files = Arc::new(MockFileBackend::new());
     files.insert_file(42, expected.to_vec());
 
     let adapter = ProtoFuseAdapter::with_file_backend(folder, files, AdapterOptions::default());
@@ -172,6 +182,17 @@ fn read_small_file_via_real_mount() {
     if !mount_appears_active(tmp.path()) {
         return;
     }
+
+    // The kernel will not issue read requests beyond the size advertised by
+    // lookup/getattr. Keep this assertion at the native boundary so a fixture
+    // or metadata regression cannot silently turn every read into EOF.
+    assert_eq!(
+        std::fs::metadata(tmp.path().join("hello.txt"))
+            .expect("stat hello.txt")
+            .len(),
+        expected.len() as u64,
+        "FUSE must advertise the authoritative remote file size"
+    );
 
     let got = match std::fs::read(tmp.path().join("hello.txt")) {
         Ok(bytes) => bytes,
@@ -236,20 +257,36 @@ fn full_mount_readdir_read_write_fsync_unmount_cycle() {
     }
 
     // --- arrange backends ------------------------------------------------
+    let expected_hello = b"hello via fuse e2e";
+    let expected_readme = b"readme body";
     let folder = Arc::new(MockFolderBackend::new());
-    folder.insert_dir(
+    folder.insert_dir_with_sizes(
         "/",
         1,
         vec![
-            ("docs", true, Some(2), None),
-            ("hello.txt", false, None, Some(42)),
+            ("docs", true, Some(2), None, None),
+            (
+                "hello.txt",
+                false,
+                None,
+                Some(42),
+                Some(expected_hello.len() as u64),
+            ),
         ],
     );
-    folder.insert_dir("/docs", 2, vec![("readme.md", false, None, Some(43))]);
+    folder.insert_dir_with_sizes(
+        "/docs",
+        2,
+        vec![(
+            "readme.md",
+            false,
+            None,
+            Some(43),
+            Some(expected_readme.len() as u64),
+        )],
+    );
 
     let files = Arc::new(MockFileBackend::new());
-    let expected_hello = b"hello via fuse e2e";
-    let expected_readme = b"readme body";
     files.insert_file(42, expected_hello.to_vec());
     files.insert_file(43, expected_readme.to_vec());
 

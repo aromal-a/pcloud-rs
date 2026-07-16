@@ -1,0 +1,11 @@
+{
+  "defaults": {
+    "run-as": "package"
+  },
+  "username": "pcloud-rs",
+  "groupname": "pcloud-rs",
+  "executable": [
+    { "relpath": "bin/pcloudd", "run-as": "package" },
+    { "relpath": "bin/pcloudc", "run-as": "package" }
+  ]
+}

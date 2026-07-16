@@ -47,9 +47,9 @@
 //! * `#[cfg(target_os = "windows")]` — the FFI module only compiles on
 //!   Windows.
 //! * `#[ignore]` by default — opt-in via `PCLOUD_WINFSP_TEST=1` or
-//!   `PCLOUD_LIVE_E2E=1`. CI must NOT run this unattended because a
-//!   crashed WinFSP dispatcher can leave a stale drive letter the
-//!   operator has to clean up manually.
+//!   `PCLOUD_LIVE_E2E=1`. Once enabled, missing WinFSP, privilege
+//!   failures, and drive-letter exhaustion are hard failures: a live
+//!   qualification gate must never silently turn into a skipped test.
 //!
 //! # How to run
 //!
@@ -466,10 +466,8 @@ fn winfsp_mount_readdir_read_write_unmount() {
     }
 
     // --- Pick a free drive letter --------------------------------------
-    let Some(drive) = pick_free_drive_letter() else {
-        eprintln!("[winfsp_mount_live] skip: no free drive letter between D: and Z:");
-        return;
-    };
+    let drive = pick_free_drive_letter()
+        .expect("live WinFSP gate requires a free drive letter between D: and Z:");
     let drive_root_display = format!("{}\\", drive); // e.g. "Z:\\"
     eprintln!("[winfsp_mount_live] using drive letter {drive}");
 
@@ -568,24 +566,8 @@ fn winfsp_mount_readdir_read_write_unmount() {
         max_readahead: 128 * 1024,
     };
 
-    let handle: MountHandle = match mount_with_winfsp(&drive_path, mount_adapter, opts) {
-        Ok(h) => h,
-        Err(err) => {
-            let msg = err.to_string();
-            // Skip rather than fail on environment issues: WinFSP not
-            // installed, lacking SeCreateSymbolicLinkPrivilege, no free
-            // drive letter despite our probe (race).
-            if msg.contains("WinFSP not installed")
-                || msg.contains("requires elevation")
-                || msg.contains("Access is denied")
-                || msg.contains("STATUS_ACCESS_DENIED")
-            {
-                eprintln!("[winfsp_mount_live] skip (environment): {msg}");
-                return;
-            }
-            panic!("mount_with_winfsp failed: {msg}");
-        }
-    };
+    let handle: MountHandle = mount_with_winfsp(&drive_path, mount_adapter, opts)
+        .unwrap_or_else(|err| panic!("mount_with_winfsp failed: {err}"));
 
     // Give WinFSP a moment to publish the drive letter to the Object Manager
     // before Win32 APIs can open it. The dispatcher's first `GetVolumeInfo`

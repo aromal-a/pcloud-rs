@@ -4,20 +4,20 @@
 //! Stall detection for the sync engine loop.
 //!
 //! A "stall" is defined as: no sync-loop progress has been recorded
-//! within a configurable [`Duration`] window. Two classes of progress
+//! within a configurable `Duration` window. Two classes of progress
 //! event are tracked, and either class resets the stall clock:
 //!
-//! 1. **Wall-clock progress** via [`StallDetector::mark_progress`] — a
+//! 1. **Wall-clock progress** via `StallDetector::mark_progress` — a
 //!    coarse "the loop ran a cycle and did something" signal emitted by
 //!    the sync loop after scheduling or after a completion.
 //! 2. **Byte-level transfer progress** via
-//!    [`StallDetector::observe_bytes`] — fine-grained, per-transfer
+//!    `StallDetector::observe_bytes` — fine-grained, per-transfer
 //!    byte counters. A long-running upload or download that is steadily
 //!    transferring bytes MUST NOT be reported as stalled even if
 //!    `mark_progress` happens to not be called during the transfer.
 //!
 //! Audit-06 §4-opus HIGH regression fix: the audit-05 claim that
-//! [`StallDetector`] tracked byte-level progress was not actually
+//! `StallDetector` tracked byte-level progress was not actually
 //! realised in source. The `observe_bytes` entry point below is the
 //! canonical byte-progress hook; callers on the transfer hot path
 //! (see `pcloud-backends::transfer_backend`) must invoke it on every
@@ -94,7 +94,7 @@ impl Clone for StallDetector {
 }
 
 impl StallDetector {
-    /// Create a new [`StallDetector`] with a custom timeout. The
+    /// Create a new `StallDetector` with a custom timeout. The
     /// detector starts with `last_progress = Instant::now()` so it
     /// does not immediately fire on construction.
     ///
@@ -217,7 +217,7 @@ impl Default for StallDetector {
 }
 
 impl StallDetector {
-    /// Create a [`StallDetector`] whose clock is pre-offset by `already_elapsed`.
+    /// Create a `StallDetector` whose clock is pre-offset by `already_elapsed`.
     ///
     /// Use this when the caller knows that some time has already passed since
     /// the last recorded progress event — for example when restoring a daemon

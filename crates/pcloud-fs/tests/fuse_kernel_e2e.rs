@@ -49,11 +49,14 @@
 // **PLATFORM:** Linux
 // **GATING:** #[cfg(target_os = "linux")].
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
-use pcloud_fs::backend::mock::{MockFileBackend, MockFolderBackend};
+use pcloud_fs::backend::{FileBackend, FileHandle, FolderBackend};
+use pcloud_fs::errors::FsError;
 use pcloud_fs::fuse_adapter::{AdapterOptions, ProtoFuseAdapter};
 use pcloud_fs::fuser_shim::PcloudFsShim;
 use pcloud_fs::mount_service::{MountHandle, MountOptions, MountService};
@@ -147,18 +150,105 @@ impl Drop for MountGuard {
     }
 }
 
-/// Minimal in-memory upload backend. Successful uploads are recorded so the
-/// test can assert that kernel-side fsync actually produced an upload. It
-/// also services the `unlink_remote` / `rename_remote` calls the writer
-/// emits on VFS unlink/rename.
-#[derive(Default)]
-struct RecordingUploadBackend {
+/// Mutable in-memory remote used as folder, file, and upload backend.
+/// Successful uploads are immediately visible to subsequent list/open/read
+/// calls, matching the publication contract of a completed pCloud upload.
+struct MutableRemoteBackend {
+    next_file_id: AtomicU64,
+    paths: std::sync::Mutex<HashMap<String, u64>>,
+    files: std::sync::Mutex<HashMap<u64, Vec<u8>>>,
     uploads: std::sync::Mutex<Vec<(String, String, Vec<u8>)>>,
     unlinks: std::sync::Mutex<Vec<String>>,
     renames: std::sync::Mutex<Vec<(String, String)>>,
 }
 
-impl FileUploadBackend for RecordingUploadBackend {
+impl Default for MutableRemoteBackend {
+    fn default() -> Self {
+        Self {
+            next_file_id: AtomicU64::new(100),
+            paths: std::sync::Mutex::new(HashMap::new()),
+            files: std::sync::Mutex::new(HashMap::new()),
+            uploads: std::sync::Mutex::new(Vec::new()),
+            unlinks: std::sync::Mutex::new(Vec::new()),
+            renames: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl FolderBackend for MutableRemoteBackend {
+    fn list_contents(
+        &self,
+        path: &str,
+    ) -> Result<pcloud_proto::folder_api::RemoteFolderListing, FsError> {
+        if path != "/" {
+            return Err(FsError::NotFound);
+        }
+        let paths = self.paths.lock().unwrap();
+        let files = self.files.lock().unwrap();
+        let mut entries: Vec<_> = paths
+            .iter()
+            .filter_map(|(full_path, file_id)| {
+                let name = full_path.strip_prefix('/')?;
+                if name.contains('/') {
+                    return None;
+                }
+                Some(pcloud_proto::folder_api::RemoteFolderEntry {
+                    name: name.to_owned(),
+                    is_folder: false,
+                    folder_id: None,
+                    file_id: Some(*file_id),
+                    owner_user_id: None,
+                    is_mine: true,
+                    encrypted: false,
+                    is_shared: false,
+                    permissions: None,
+                    size: files.get(file_id).map(|bytes| bytes.len() as u64),
+                    modified: None,
+                })
+            })
+            .collect();
+        entries.sort_by(|left, right| left.name.cmp(&right.name));
+        Ok(pcloud_proto::folder_api::RemoteFolderListing {
+            folder_id: 1,
+            path: "/".to_owned(),
+            name: "/".to_owned(),
+            entries,
+            api_server: None,
+            owner_user_id: None,
+            is_mine: true,
+            encrypted: false,
+            is_shared: false,
+            permissions: None,
+        })
+    }
+}
+
+impl FileBackend for MutableRemoteBackend {
+    fn open(&self, file_id: u64) -> Result<FileHandle, FsError> {
+        let files = self.files.lock().unwrap();
+        let size = files.get(&file_id).ok_or(FsError::NotFound)?.len() as u64;
+        Ok(FileHandle {
+            file_id,
+            size,
+            host: "mock".to_owned(),
+            path: format!("/{file_id}"),
+            dwltag: None,
+        })
+    }
+
+    fn read(&self, handle: &FileHandle, offset: u64, len: usize) -> Result<Vec<u8>, FsError> {
+        let files = self.files.lock().unwrap();
+        let bytes = files.get(&handle.file_id).ok_or(FsError::NotFound)?;
+        let start = usize::try_from(offset).map_err(|_| FsError::Invalid)?;
+        if start >= bytes.len() {
+            return Ok(Vec::new());
+        }
+        let end = start.saturating_add(len).min(bytes.len());
+        Ok(bytes[start..end].to_vec())
+    }
+}
+
+impl FileUploadBackend for MutableRemoteBackend {
     fn upload_file(
         &self,
         parent_path: &str,
@@ -167,6 +257,18 @@ impl FileUploadBackend for RecordingUploadBackend {
     ) -> Result<(), WritePathError> {
         let bytes =
             std::fs::read(staging_file).map_err(|e| WritePathError::Upload(e.to_string()))?;
+        let full_path = if parent_path == "/" {
+            format!("/{name}")
+        } else {
+            format!("{parent_path}/{name}")
+        };
+        let file_id = {
+            let mut paths = self.paths.lock().unwrap();
+            *paths
+                .entry(full_path)
+                .or_insert_with(|| self.next_file_id.fetch_add(1, Ordering::Relaxed))
+        };
+        self.files.lock().unwrap().insert(file_id, bytes.clone());
         self.uploads
             .lock()
             .unwrap()
@@ -174,10 +276,20 @@ impl FileUploadBackend for RecordingUploadBackend {
         Ok(())
     }
     fn unlink_remote(&self, path: &str) -> Result<(), WritePathError> {
+        if let Some(file_id) = self.paths.lock().unwrap().remove(path) {
+            self.files.lock().unwrap().remove(&file_id);
+        }
         self.unlinks.lock().unwrap().push(path.to_owned());
         Ok(())
     }
     fn rename_remote(&self, from: &str, to: &str) -> Result<(), WritePathError> {
+        let file_id = self
+            .paths
+            .lock()
+            .unwrap()
+            .remove(from)
+            .ok_or_else(|| WritePathError::Upload(format!("missing rename source {from}")))?;
+        self.paths.lock().unwrap().insert(to.to_owned(), file_id);
         self.renames
             .lock()
             .unwrap()
@@ -215,11 +327,7 @@ fn large_file_kernel_roundtrip_rename_unlink() {
     }
 
     // --- arrange backends ------------------------------------------------
-    let folder = Arc::new(MockFolderBackend::new());
-    folder.insert_dir("/", 1, vec![]);
-    let files = Arc::new(MockFileBackend::new());
-
-    let upload_backend = Arc::new(RecordingUploadBackend::default());
+    let remote = Arc::new(MutableRemoteBackend::default());
 
     let stage_tmp = tempfile::tempdir().expect("stage tempdir");
     let stage = StagingDir::open(stage_tmp.path().join("stage")).expect("staging");
@@ -227,7 +335,7 @@ fn large_file_kernel_roundtrip_rename_unlink() {
     let writer = Arc::new(WritePathService::new(
         stage,
         journal,
-        Arc::clone(&upload_backend),
+        Arc::clone(&remote),
         WritePathOptions {
             // Only flush on explicit fsync so the test controls when uploads happen.
             flush_threshold_bytes: u64::MAX,
@@ -238,8 +346,8 @@ fn large_file_kernel_roundtrip_rename_unlink() {
 
     let adapter = Arc::new(
         ProtoFuseAdapter::with_file_backend(
-            Arc::clone(&folder),
-            Arc::clone(&files),
+            Arc::clone(&remote),
+            Arc::clone(&remote),
             AdapterOptions::default(),
         )
         .with_write_path(Arc::clone(&writer)),
@@ -307,7 +415,7 @@ fn large_file_kernel_roundtrip_rename_unlink() {
 
     // Assert fsync actually produced an upload of the full payload.
     {
-        let uploads = upload_backend.uploads.lock().unwrap();
+        let uploads = remote.uploads.lock().unwrap();
         let matched = uploads
             .iter()
             .find(|(_, n, b)| n == "big.bin" && b.len() == payload.len() && b == &payload);
@@ -324,72 +432,43 @@ fn large_file_kernel_roundtrip_rename_unlink() {
 
     // --- step 3: read back via kernel and byte-compare --------------------
     //
-    // Note: the mock folder/file backend does not (yet) auto-publish a file
-    // that was created through the write path, so a raw `std::fs::read` of
-    // `big.bin` post-fsync may not observe the content through the *read*
-    // side of the adapter. What we can reliably verify end-to-end through
-    // the kernel VFS is the *upload* byte-equality above, which is the
-    // regression target of P0.5 (large write path not corrupting bytes).
-    //
-    // We still attempt a readback to exercise any open/getattr plumbing
-    // that is wired post-create; failures here are tolerated as a
-    // not-yet-implemented gap rather than a test failure.
-    if let Ok(got) = std::fs::read(&big_path) {
-        if got.len() == payload.len() {
-            assert_eq!(got, payload, "readback mismatch for 64 MiB file");
-        } else {
-            eprintln!(
-                "[fuse_kernel_e2e] note: readback returned {} bytes (expected {}); \
-                 post-create read path is not fully wired — upload byte-equality \
-                 is the authoritative check here",
-                got.len(),
-                payload.len()
-            );
-        }
-    }
+    let got = std::fs::read(&big_path).expect("read committed 64 MiB file through kernel VFS");
+    assert_eq!(got, payload, "readback mismatch for 64 MiB file");
 
     // --- step 4: rename via kernel VFS -----------------------------------
     //
-    // The mock folder backend does not auto-publish post-create entries into
-    // its readdir/lookup surface, so the kernel may return ENOENT here. That
-    // is a mock-backend gap (already noted in `fuse_mount_integration.rs`),
-    // not a kernel integration regression. We treat ENOENT as a tolerated
-    // skip and still exercise the rename/unlink code paths opportunistically.
     let renamed = mnt.path().join("big-renamed.bin");
-    let rename_observed = match std::fs::rename(&big_path, &renamed) {
-        Ok(()) => {
-            let renames = upload_backend.renames.lock().unwrap();
-            assert!(
-                renames
-                    .iter()
-                    .any(|(_, to)| to.ends_with("big-renamed.bin")),
-                "rename_remote should have been invoked, got {:?}",
-                renames
-            );
-            true
-        }
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!(
-                "[fuse_kernel_e2e] note: rename saw ENOENT — mock backend does not \
-                 publish post-create entries in readdir; upload byte-equality \
-                 already verified above"
-            );
-            false
-        }
-        Err(err) if should_skip_io_error(&err) => return,
-        Err(err) => panic!("kernel rename: {err}"),
-    };
+    std::fs::rename(&big_path, &renamed).expect("kernel rename");
+    let renames = remote.renames.lock().unwrap();
+    assert!(
+        renames
+            .iter()
+            .any(|(_, to)| to.ends_with("big-renamed.bin")),
+        "rename_remote should have been invoked, got {:?}",
+        renames
+    );
+    drop(renames);
+    assert_eq!(
+        std::fs::read(&renamed).expect("read renamed file"),
+        payload,
+        "rename must preserve contents"
+    );
 
     // --- step 5: unlink via kernel VFS -----------------------------------
-    let target = if rename_observed { &renamed } else { &big_path };
-    match std::fs::remove_file(target) {
-        Ok(()) => {}
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            eprintln!("[fuse_kernel_e2e] note: unlink saw ENOENT (mock readdir gap)");
-        }
-        Err(err) if should_skip_io_error(&err) => return,
-        Err(err) => panic!("kernel unlink: {err}"),
-    }
+    std::fs::remove_file(&renamed).expect("kernel unlink");
+    assert!(
+        remote
+            .unlinks
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|path| path.ends_with("big-renamed.bin")),
+        "unlink_remote must receive the renamed path"
+    );
+    assert!(
+        matches!(std::fs::metadata(&renamed), Err(error) if error.kind() == std::io::ErrorKind::NotFound),
+        "unlinked file must disappear from the kernel VFS"
+    );
 
     // --- step 6: unmount cleanly (also drops guard harmlessly) -----------
     guard.unmount().expect("clean unmount");

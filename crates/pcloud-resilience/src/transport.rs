@@ -550,7 +550,8 @@ pub(crate) const TYPED_ERR_PREFIX: &str = "pcloud-resilience:typed:";
 /// New callers should map their concrete error into [`TransportError`] and
 /// use [`classify_transport_error`] directly, or build the response with
 /// [`TransportResponse::typed_error`]. When a response carries a typed tag
-/// (see [`TYPED_ERR_PREFIX`]) this function decodes it and delegates to
+/// (see `TYPED_ERR_PREFIX` — private; intra-doc link disabled per
+/// CLAUDEREV iter-3 fix) this function decodes it and delegates to
 /// [`classify_transport_error`].
 ///
 /// When the message has no typed tag, the conservative default is

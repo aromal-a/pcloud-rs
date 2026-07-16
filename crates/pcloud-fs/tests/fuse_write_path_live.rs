@@ -8,8 +8,8 @@
 //!   1. Mount a writable [`PcloudFsShim`] composed over a mocked
 //!      folder/file backend and a recording upload backend.
 //!   2. Create a non-trivial file through the kernel VFS
-//!      (`std::fs::write`), spanning multiple kernel write ops, and
-//!      fsync it via `File::sync_all`.
+//!      (`File::write_all`), spanning multiple kernel write ops, and
+//!      fsync the same writable handle via `File::sync_all`.
 //!   3. Unmount cleanly. The captured upload bytes are the
 //!      canonical "what the server now holds".
 //!   4. Seed the mocked backends with those captured bytes (simulating
@@ -24,11 +24,9 @@
 //! # Scope (honesty statement)
 //!
 //! * This test exercises the `MountService::mount_fuser` → `PcloudFsShim`
-//!   → `WritePathService` path. The `BoxedFuserShim` / `FuserShim<A>`
-//!   dyn-trait shim on `platform/linux.rs` is **still read-only** by
-//!   design; carrying the concrete `WritePathService<U>` through an
-//!   object-safe trait is deferred follow-up. See
-//!   [`crate::platform::linux::BoxedFuserShim`] type docs.
+//!   → `WritePathService` path. The separate
+//!   `fuse_dyn_shim_write` test exercises the object-safe `FuserShim<A>`
+//!   composition with the same writer contract.
 //! * The remount step rebuilds the shim with a **fresh** staging dir and
 //!   journal on purpose. This makes the readback assertion independent
 //!   of any in-process caches: the only path from write → read is
@@ -53,6 +51,7 @@
 // **PLATFORM:** Linux
 // **GATING:** #[cfg(target_os = "linux")].
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -133,10 +132,23 @@ fn build_payload(len: usize) -> Vec<u8> {
 /// vec. After the first mount's unmount, the captured bytes are fed
 /// back into the mocked folder/file listings to simulate "the server
 /// has accepted the upload and is now the authoritative source".
-#[derive(Default)]
 struct RecordingUploadBackend {
     /// Entries: `(parent_path, name, bytes)`.
     uploads: Mutex<Vec<(String, String, Vec<u8>)>>,
+    /// Mutable remote metadata published after a successful upload.
+    folder: Arc<MockFolderBackend>,
+    /// Mutable remote bytes published after a successful upload.
+    files: Arc<MockFileBackend>,
+}
+
+impl RecordingUploadBackend {
+    fn new(folder: Arc<MockFolderBackend>, files: Arc<MockFileBackend>) -> Self {
+        Self {
+            uploads: Mutex::new(Vec::new()),
+            folder,
+            files,
+        }
+    }
 }
 
 impl FileUploadBackend for RecordingUploadBackend {
@@ -148,6 +160,19 @@ impl FileUploadBackend for RecordingUploadBackend {
     ) -> Result<(), WritePathError> {
         let bytes =
             std::fs::read(staging_file).map_err(|e| WritePathError::Upload(e.to_string()))?;
+        const COMMITTED_FILE_ID: u64 = 424242;
+        self.folder.insert_dir_with_sizes(
+            parent_path,
+            1,
+            vec![(
+                name,
+                false,
+                None,
+                Some(COMMITTED_FILE_ID),
+                Some(bytes.len() as u64),
+            )],
+        );
+        self.files.insert_file(COMMITTED_FILE_ID, bytes.clone());
         self.uploads
             .lock()
             .unwrap()
@@ -253,7 +278,10 @@ fn write_unmount_remount_readback_byte_identical() {
     let folder = Arc::new(MockFolderBackend::new());
     folder.insert_dir("/", 1, vec![]);
     let files = Arc::new(MockFileBackend::new());
-    let upload_backend = Arc::new(RecordingUploadBackend::default());
+    let upload_backend = Arc::new(RecordingUploadBackend::new(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+    ));
 
     let mnt = tempfile::tempdir().expect("mount tempdir");
     let payload = build_payload(PAYLOAD_BYTES);
@@ -296,58 +324,36 @@ fn write_unmount_remount_readback_byte_identical() {
             return;
         }
 
-        // Write via std::fs::write — single convenience call that does
-        // open(O_WRONLY|O_CREAT|O_TRUNC) + write + close under the hood.
-        // `close` drives the kernel's `flush` + `release`, which in turn
-        // drives `WritePathService::flush` and `release` → `upload_file`.
-        if let Err(err) = std::fs::write(&file_path, &payload) {
+        // Keep the writable handle open through fsync so the test proves the
+        // actual kernel write → fsync contract rather than syncing a later
+        // read-only handle.
+        let mut file = match std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .read(true)
+            .write(true)
+            .open(&file_path)
+        {
+            Ok(file) => file,
+            Err(err) if should_skip_io_error(&err) => return,
+            Err(err) => panic!("open writable file: {err}"),
+        };
+        if let Err(err) = file.write_all(&payload) {
             if should_skip_io_error(&err) {
                 return;
             }
-            panic!("std::fs::write: {err}");
+            panic!("write_all: {err}");
         }
-
-        // Belt-and-suspenders: open + sync_all so the kernel definitely
-        // issued fsync before unmount. std::fs::write alone does not
-        // guarantee fsync; on some kernels `release` is enough to
-        // finalize, but fsync makes the assertion below deterministic.
-        {
-            let f = match std::fs::OpenOptions::new().read(true).open(&file_path) {
-                Ok(f) => f,
-                Err(err) if should_skip_io_error(&err) => return,
-                Err(err) => {
-                    // Pre-remount readback is best-effort — the mock
-                    // backend does not auto-publish post-create entries
-                    // into readdir/lookup. A miss here is not a failure;
-                    // the authoritative check is post-remount.
-                    eprintln!(
-                        "[fuse_write_path_live] note: pre-remount open miss (mock readdir \
-                         publication gap): {err}"
-                    );
-                    // Drop guard → clean unmount before we proceed to
-                    // the remount step.
-                    guard.unmount().expect("clean unmount (mount1, early)");
-                    assert_upload_captured(&upload_backend, file_name, &payload);
-                    return proceed_remount_readback(
-                        &folder,
-                        &files,
-                        upload_backend,
-                        mnt.path(),
-                        file_name,
-                        &file_path,
-                        &payload,
-                    );
-                }
-            };
-            if let Err(err) = f.sync_all() {
-                if should_skip_io_error(&err) {
-                    return;
-                }
-                // sync_all on a read fh may be a no-op on some kernels;
-                // tolerate but do not fail the test.
-                eprintln!("[fuse_write_path_live] note: read-fh sync_all: {err}");
+        if let Err(err) = file.sync_all() {
+            if should_skip_io_error(&err) {
+                return;
             }
+            panic!("sync_all writable file: {err}");
         }
+        drop(file);
+
+        let immediate = std::fs::read(&file_path).expect("readback before first unmount");
+        assert_eq!(immediate, payload, "pre-unmount VFS readback must be exact");
 
         // Clean unmount of mount #1.
         guard.unmount().expect("clean unmount (mount1)");

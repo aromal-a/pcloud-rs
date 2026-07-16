@@ -10,3 +10,10 @@
 # absent.
 [target.'cfg(target_os = "macos")']
 rustflags = ["-C", "link-arg=-Wl,-undefined,dynamic_lookup"]
+
+# Local CI/CD aliases. `cargo coverage` deliberately delegates to `xtask`
+# so contributors cannot accidentally run a weaker coverage invocation than
+# the authoritative FUSE/chaos-augmented greater-than-90% policy.
+[alias]
+coverage = "run --package xtask -- coverage"
+xtask = "run --package xtask --"

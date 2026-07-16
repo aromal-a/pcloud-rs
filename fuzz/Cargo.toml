@@ -1,0 +1,54 @@
+[package]
+name = "pcloud-rs-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# CLAUDEREV T3.4 (workspace-root fuzz package). This package is its own
+# subordinate workspace so the parent workspace-default `cargo build` /
+# `cargo test --workspace` continues to work without nightly cargo-fuzz.
+# (The parent Cargo.toml does NOT need to add `fuzz/` to its
+# `[workspace] exclude` list — declaring `[workspace]` here is sufficient
+# for cargo to treat this as an independent workspace.)
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = { version = "1", features = ["derive"] }
+pcloud-proto = { path = "../crates/pcloud-proto" }
+pcloud-ipc = { path = "../crates/pcloud-ipc" }
+
+# CLAUDEREV T3.4 — three new fuzz targets:
+#
+#   * transport_frame      — binary protocol header + body parser
+#                            (parse_response_frame_len -> parse_response_frame)
+#   * ipc_request          — pcloud_ipc::Request codec roundtrip
+#   * public_link_uri      — code/path/URL string handling routed through
+#                            the binary-protocol request encoder
+
+[[bin]]
+name = "transport_frame"
+path = "fuzz_targets/transport_frame.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ipc_request"
+path = "fuzz_targets/ipc_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "public_link_uri"
+path = "fuzz_targets/public_link_uri.rs"
+test = false
+doc = false
+bench = false
+
+[profile.release]
+debug = 1

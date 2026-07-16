@@ -1,0 +1,1614 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>CLI - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/reference/cli.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="cli-reference"><a class="header" href="#cli-reference">CLI Reference</a></h1>
+<blockquote>
+<p><strong>Status: pre-alpha.</strong> Every command, flag, JSON shape, and exit code on
+this page is derived directly from the Rust source
+(<code>crates/pcloud-cli/src/{app.rs, commands.rs, globals.rs, exit_code.rs, field_selector.rs, json_output.rs}</code>). Surfaces marked <strong>Unavailable</strong>
+parse but the daemon answers <code>6 Unavailable</code> until backend gating
+clears. Cross-reference every claim against the code before relying on
+it in automation.</p>
+</blockquote>
+<p>This is the canonical, browser-oriented reference for the <code>pcloudc</code>
+binary. For the concise manpage form, see <code>pcloudc(1)</code>. For the wire
+format, see <a href="./ipc-protocol.html">IPC Protocol</a>. For configuration, see
+<a href="./config.html">Configuration</a>. For exit-code semantics in isolation, see
+<a href="./exit-codes.html">Exit Codes</a>.</p>
+<h2 id="contents"><a class="header" href="#contents">Contents</a></h2>
+<ul>
+<li><a href="#1-overview">1. Overview</a></li>
+<li><a href="#2-invocation">2. Invocation</a></li>
+<li><a href="#3-global-options">3. Global Options</a>
+<ul>
+<li><a href="#31---json-----output">3.1 <code>--json</code> / <code>--output</code></a></li>
+<li><a href="#32--q-----quiet">3.2 <code>-q</code> / <code>--quiet</code></a></li>
+<li><a href="#33--v--vv--vvv---verbose---debug">3.3 <code>-v</code> / <code>-vv</code> / <code>-vvv</code> / <code>--verbose</code> / <code>--debug</code></a></li>
+<li><a href="#34---help---h">3.4 <code>--help</code> / <code>-h</code></a></li>
+<li><a href="#35---version---v">3.5 <code>--version</code> / <code>-V</code></a></li>
+<li><a href="#36---trace-id-hex---traceparent">3.6 <code>--trace-id &lt;HEX&gt;</code> (+ <code>TRACEPARENT</code>)</a></li>
+<li><a href="#37---field---f---select">3.7 <code>--field</code> / <code>-f</code> / <code>--select</code></a></li>
+</ul>
+</li>
+<li><a href="#4-command-reference">4. Command Reference</a>
+<ul>
+<li><a href="#41-authentication">4.1 Authentication</a></li>
+<li><a href="#42-session--diagnostics">4.2 Session &amp; Diagnostics</a></li>
+<li><a href="#43-user-info">4.3 User Info</a></li>
+<li><a href="#44-sync-roots">4.4 Sync Roots</a></li>
+<li><a href="#45-mount-fuse">4.5 Mount (FUSE)</a></li>
+<li><a href="#46-filesystem-status">4.6 Filesystem Status</a></li>
+<li><a href="#47-public-links">4.7 Public Links</a></li>
+<li><a href="#48-upload-links">4.8 Upload Links</a></li>
+<li><a href="#49-shares-contacts-teams">4.9 Shares, Contacts, Teams</a></li>
+<li><a href="#410-backup-snapshots">4.10 Backup Snapshots</a></li>
+<li><a href="#411-crypto">4.11 Crypto</a></li>
+<li><a href="#412-integrity-sweeper">4.12 Integrity Sweeper</a></li>
+<li><a href="#413-verify">4.13 <code>verify</code></a></li>
+<li><a href="#415-folders">4.15 Folders</a></li>
+<li><a href="#416-notifications">4.16 Notifications</a></li>
+<li><a href="#417-audit">4.17 Audit</a></li>
+<li><a href="#418-daemon-lifecycle">4.18 Daemon Lifecycle</a></li>
+<li><a href="#419-doctor">4.19 <code>doctor</code></a></li>
+<li><a href="#420-migrate-from-c">4.20 <code>migrate-from-c</code></a></li>
+<li><a href="#421-completion">4.21 <code>completion</code></a></li>
+<li><a href="#422-upload-sessions">4.22 Upload Sessions</a></li>
+<li><a href="#423-help">4.23 <code>help</code></a></li>
+<li><a href="#424-account-management">4.24 Account Management</a></li>
+<li><a href="#425-downloads">4.25 Downloads</a></li>
+</ul>
+</li>
+<li><a href="#5-field-selection">5. Field Selection</a></li>
+<li><a href="#6-exit-codes">6. Exit Codes</a></li>
+<li><a href="#7-environment-variables">7. Environment Variables</a></li>
+<li><a href="#8-configuration-integration">8. Configuration Integration</a></li>
+<li><a href="#9-observability--tracing">9. Observability &amp; Tracing</a></li>
+<li><a href="#10-scripting-patterns">10. Scripting Patterns</a></li>
+<li><a href="#11-versioning-policy">11. Versioning Policy</a></li>
+<li><a href="#12-see-also">12. See Also</a></li>
+</ul>
+<hr>
+<h2 id="1-overview"><a class="header" href="#1-overview">1. Overview</a></h2>
+<h3 id="beginner-intro"><a class="header" href="#beginner-intro">Beginner intro</a></h3>
+<p><code>pcloudc</code> is the command-line front door to the pCloud client. It talks
+to a long-running process, <code>pcloudd</code>, over a local-only IPC socket
+(UNIX socket on POSIX, named pipe on Windows). You run short commands —
+“log in”, “show status”, “create this public link” — and the daemon does
+the heavy lifting (authenticated HTTP, sync engine, FUSE mount, crypto
+state, audit chain).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>You want to…</th><th>Use</th></tr>
+</thead>
+<tbody>
+<tr><td>Run a one-shot operation, script it, or wire it into CI</td><td><code>pcloudc</code></td></tr>
+<tr><td>Keep a persistent session, sync, and mount running</td><td><code>pcloudd serve</code> (or <code>pcloudc start</code>)</td></tr>
+<tr><td>Embed pCloud calls inside your own Rust program</td><td>the <code>pcloud-sdk</code> crate</td></tr>
+<tr><td>Drive the daemon directly from another language</td><td>the IPC protocol (<a href="./ipc-protocol.html">ipc-protocol.md</a>)</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="under-the-hood"><a class="header" href="#under-the-hood">Under the hood</a></h3>
+<ul>
+<li>Every subcommand maps to exactly one <code>pcloud_ipc::methods::Request</code>
+variant in <code>commands.rs</code>.</li>
+<li>The daemon returns a <code>Response { status, message }</code> pair, and
+<code>ExitCode::from_response_status</code> (<code>exit_code.rs</code>) translates the
+status into a numeric process exit.</li>
+<li><code>--json</code> never serialises request-side secrets; the envelope it
+produces is defined in <code>json_output.rs</code> and is part of the semver
+surface.</li>
+<li>The only tokens the parser accepts are the ones listed in
+<code>canonical_token_for</code> + the <code>normalize_args</code> two-word forms. If it
+is not documented here, it does not exist.</li>
+</ul>
+<hr>
+<h2 id="2-invocation"><a class="header" href="#2-invocation">2. Invocation</a></h2>
+<pre><code>pcloudc [GLOBAL OPTIONS] &lt;COMMAND&gt; [SUBCOMMAND] [ARGS...]
+</code></pre>
+<ul>
+<li>Global options are extracted first, by <code>GlobalFlags::extract</code>
+(<code>globals.rs</code>). They may appear in <strong>any</strong> position before or after
+the subcommand; however, they are <strong>stripped</strong> from the argv before
+the subcommand parser runs, so their position does not affect how
+positional arguments are counted.</li>
+<li>When <code>pcloudc</code> is invoked with <strong>no arguments</strong>, it runs as
+<code>status</code> (default route, see <code>normalize_args</code>).</li>
+<li>Unknown <code>--flag</code> / <code>-flag</code> tokens cause <code>GlobalFlagError::UnknownFlag</code>
+and exit <code>2 Usage</code>. A typo such as <code>--qiet</code> never silently falls
+through.</li>
+<li>A bare <code>-</code> on the command line is treated as a positional token
+(stdin marker in many tools) and is passed through untouched.</li>
+</ul>
+<hr>
+<h2 id="3-global-options"><a class="header" href="#3-global-options">3. Global Options</a></h2>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>One-line summary</th></tr>
+</thead>
+<tbody>
+<tr><td><a href="#31---json-----output"><code>--json</code></a></td><td>Emit a stable JSON envelope on stdout.</td></tr>
+<tr><td><a href="#31---json-----output"><code>--output text|json</code></a></td><td>Same as above; also accepts <code>text</code> / <code>human</code> for the default.</td></tr>
+<tr><td><a href="#32--q-----quiet"><code>-q</code>, <code>--quiet</code></a></td><td>Suppress stdout. Exit codes survive.</td></tr>
+<tr><td><a href="#33--v--vv--vvv---verbose---debug"><code>-v</code> / <code>-vv</code> / <code>-vvv</code> / <code>--verbose</code></a></td><td>Additive tracing verbosity, capped at 3.</td></tr>
+<tr><td><a href="#33--v--vv--vvv---verbose---debug"><code>--debug</code>, <code>--dbg</code></a></td><td>Convenience alias for <code>-vvv</code>.</td></tr>
+<tr><td><a href="#34---help---h"><code>--help</code>, <code>-h</code></a></td><td>Print help text.</td></tr>
+<tr><td><a href="#35---version---v"><code>--version</code>, <code>-V</code></a></td><td>Print version.</td></tr>
+<tr><td><a href="#36---trace-id-hex---traceparent"><code>--trace-id &lt;HEX&gt;</code></a></td><td>Inject a W3C trace id and force-sample this invocation.</td></tr>
+<tr><td><a href="#37---field---f---select"><code>--field &lt;PATH&gt;</code> / <code>-f</code> / <code>--select</code></a></td><td>Project one or more dotted paths out of the response.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="31---json----output"><a class="header" href="#31---json----output">3.1 <code>--json</code> / <code>--output</code></a></h3>
+<p><strong>Syntax.</strong> <code>--json</code>, <code>--output json</code>, <code>--output=json</code>, <code>--output text</code>,
+<code>--output human</code>.</p>
+<p><strong>Purpose.</strong> Switches the renderer from free-form human text to a
+machine-readable envelope. <code>--json</code> is shorthand for <code>--output json</code>.
+The Rust source of truth is <code>JsonEnvelope</code> in <code>json_output.rs</code>.</p>
+<p><strong>Envelope shapes (exactly three):</strong></p>
+<pre><code class="language-json">{"kind":"success","command":"status","status":"ok","message":"daemon is healthy","exit_code":0}
+</code></pre>
+<pre><code class="language-json">{"kind":"error","command":"sync-add","exit_code":7,"error":{"category":"conflict","detail":"duplicate sync root"}}
+</code></pre>
+<pre><code class="language-json">{"kind":"filtered","command":"userinfo","status":"ok","fields":{"quota":10737418240,"premium":false},"exit_code":0}
+</code></pre>
+<p><strong>Examples.</strong></p>
+<p>Beginner:</p>
+<pre><code class="language-bash">pcloudc --json status
+</code></pre>
+<p>FAANG-ops (CI gate, fails any non-zero):</p>
+<pre><code class="language-bash">if ! out="$(pcloudc --json status)"; then
+  echo "daemon down" &gt;&amp;2; exit 1
+fi
+printf '%s\n' "$out"
+</code></pre>
+<p><strong>Interactions.</strong> Implied by any use of <code>--field</code> / <code>-f</code> / <code>--select</code>
+at the render stage. Suppressed by <code>--quiet</code> (envelope still built, not
+printed; exit code preserved).</p>
+<p><strong>Honest limitations.</strong> The <code>message</code> field of a <code>success</code> envelope is
+the verbatim daemon payload. For surfaces still emitting
+<code>Debug</code>-derived strings (userinfo legacy shape, a handful of sync
+commands), the message is a flat <code>key=value, key=value</code> string —
+parseable with <code>field_selector::parse_message_to_json</code> but not a real
+JSON object. Adding a third output format (<code>yaml</code>, <code>tsv</code>) would be a
+breaking change and is deliberately deferred.</p>
+<h3 id="32--q----quiet"><a class="header" href="#32--q----quiet">3.2 <code>-q</code> / <code>--quiet</code></a></h3>
+<p><strong>Syntax.</strong> <code>-q</code> or <code>--quiet</code>.</p>
+<p><strong>Purpose.</strong> Silences stdout. Stderr is still used for the trace-id
+echo (see §3.6) and for argv-password deprecation warnings. Exit codes
+are <strong>not</strong> touched.</p>
+<p><strong>Examples.</strong></p>
+<pre><code class="language-bash"># Cron-safe liveness probe — prints nothing on success, non-zero on failure.
+pcloudc -q status || notify-ops "pcloud down"
+</code></pre>
+<pre><code class="language-bash"># Idempotent unmount.
+pcloudc --quiet unmount || true
+</code></pre>
+<p><strong>Interactions.</strong> With <code>--json</code>, stdout stays empty but the envelope is
+still constructed and the exit code is set. Do not use <code>--quiet</code> when
+you depend on <code>--json</code> output downstream.</p>
+<p><strong>Honest limitations.</strong> There is no “quiet stderr” switch. Warnings
+about insecure argv passwords are always emitted.</p>
+<h3 id="33--v---vv---vvv----verbose----debug"><a class="header" href="#33--v---vv---vvv----verbose----debug">3.3 <code>-v</code> / <code>-vv</code> / <code>-vvv</code> / <code>--verbose</code> / <code>--debug</code></a></h3>
+<p><strong>Syntax.</strong> <code>-v</code> (stackable), <code>-vv</code>, <code>-vvv</code>, <code>--verbose</code> (stacks with
+<code>-v</code>), <code>--debug</code>, <code>--dbg</code>.</p>
+<p><strong>Purpose.</strong> Additive hint for the tracing subscriber. <code>GlobalFlags:: tracing_level</code> maps verbosity 0-3 to <code>warn</code> / <code>info</code> / <code>debug</code> /
+<code>trace</code>. <code>--debug</code> and <code>--dbg</code> jump straight to level 3. Counts above
+3 are clamped.</p>
+<p><strong>Examples.</strong></p>
+<p>Beginner:</p>
+<pre><code class="language-bash">pcloudc -v status                # info-level traces
+</code></pre>
+<p>FAANG-ops:</p>
+<pre><code class="language-bash">PCLOUD_LOG_LEVEL=trace pcloudc --debug --trace-id 4bf92f3577b34da6a3ce929d0e0e4736 sync-add /mnt/data 7777777
+</code></pre>
+<p><strong>Interactions.</strong> The flag only sets the <em>hint</em>; the actual subscriber
+is wired in <code>main.rs</code> and honours <code>PCLOUD_LOG_LEVEL</code> as well. Both
+knobs compose (the CLI takes the max).</p>
+<h3 id="34---help---h"><a class="header" href="#34---help---h">3.4 <code>--help</code> / <code>-h</code></a></h3>
+<p><strong>Syntax.</strong> <code>--help</code>, <code>-h</code>, <code>help</code>, <code>?</code>. All four route to the same
+help renderer.</p>
+<p><strong>Purpose.</strong> Print the top-level help screen. <code>--json help</code> emits a
+structured success envelope instead of text, so <code>pcloudc --json --help</code>
+does not choke parsers.</p>
+<h3 id="35---version---v"><a class="header" href="#35---version---v">3.5 <code>--version</code> / <code>-V</code></a></h3>
+<p>Prints the semver-tagged crate version and exits <code>0</code>. No daemon round
+trip.</p>
+<h3 id="36---trace-id-hex--traceparent"><a class="header" href="#36---trace-id-hex--traceparent">3.6 <code>--trace-id &lt;HEX&gt;</code> (+ <code>TRACEPARENT</code>)</a></h3>
+<p><strong>Syntax.</strong> <code>--trace-id &lt;32-lowercase-hex&gt;</code>, <code>--trace-id=&lt;HEX&gt;</code>.</p>
+<p><strong>Purpose.</strong> Inject a W3C Trace Context root trace id and
+<strong>force-sample</strong> this invocation regardless of the daemon’s head
+sampling rate. The CLI synthesises a fresh 16-byte span id and sets
+the sampled flags byte (<code>01</code>), producing a canonical <code>traceparent</code>
+of shape <code>00-&lt;trace&gt;-&lt;span&gt;-01</code>.</p>
+<p><strong>Precedence</strong> (see <code>GlobalFlags::traceparent</code>):</p>
+<ol>
+<li><code>--trace-id</code> on the CLI (force-samples, always wins).</li>
+<li><code>TRACEPARENT</code> environment variable, adopted <strong>verbatim</strong> when it
+matches <code>00-&lt;32hex&gt;-&lt;16hex&gt;-&lt;2hex&gt;</code> and has non-zero trace+span.</li>
+<li>Otherwise <code>None</code> — the daemon owns the sampling decision.</li>
+</ol>
+<p>The chosen traceparent is echoed <strong>once to stderr</strong>:</p>
+<pre><code>[trace: 00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01]
+</code></pre>
+<p><strong>Examples.</strong></p>
+<p>Beginner:</p>
+<pre><code class="language-bash">pcloudc --trace-id 4bf92f3577b34da6a3ce929d0e0e4736 status
+</code></pre>
+<p>FAANG-ops (correlate a customer ticket across CLI and daemon logs):</p>
+<pre><code class="language-bash">TP=$(uuidgen | tr -d - | tr A-F a-f)
+pcloudc --trace-id "$TP" sync-list
+journalctl -u pcloudd --since "5m ago" | grep "$TP"
+</code></pre>
+<p><strong>Honest limitations.</strong> Span id is <strong>not</strong> cryptographic — a
+nanosecond clock XOR’d with a stack pointer is enough for trace
+correlation but not for anything else. Malformed <code>TRACEPARENT</code> envvar
+values are dropped silently by design so a stray export in the user’s
+shell does not break every invocation.</p>
+<h3 id="37---field---f----select"><a class="header" href="#37---field---f----select">3.7 <code>--field</code> / <code>-f</code> / <code>--select</code></a></h3>
+<p><strong>Syntax.</strong></p>
+<pre><code>--field &lt;DOTTED_PATH&gt;       (repeatable, order preserved)
+-f &lt;DOTTED_PATH&gt;
+--select &lt;DOTTED_PATH&gt;
+--field=&lt;DOTTED_PATH&gt;       (equals form)
+</code></pre>
+<p><strong>Purpose.</strong> Project one or more whitelisted dotted paths out of the
+daemon’s response <code>message</code>, so shell scripts do not need <code>jq</code>. The
+parser understands the three message shapes covered in
+<code>field_selector::parse_message_to_json</code>:</p>
+<ol>
+<li>real JSON objects/arrays,</li>
+<li>legacy flat <code>key=value, key=value</code> debug strings,</li>
+<li>everything else — returned as a bare string, so the empty selector
+still works.</li>
+</ol>
+<p>See <a href="#5-field-selection">§5 Field Selection</a> for the full selector
+grammar and error semantics.</p>
+<p><strong>Examples.</strong></p>
+<pre><code class="language-bash"># Get just the quota from userinfo.
+pcloudc --field quota userinfo
+
+# Stack multiple selectors; order is preserved in text output.
+pcloudc -f quota -f usedquota --select premium userinfo
+
+# Project an array element.
+pcloudc --field links.0.code list-public-links
+</code></pre>
+<p><strong>Interactions.</strong> When <em>any</em> <code>--field</code> is supplied, the JSON renderer
+emits a <code>Filtered</code> envelope (see §3.1) regardless of whether <code>--json</code>
+was passed; the text renderer prints one value per line in selector
+order. A selector that does not match returns exit <code>2 Usage</code> and lists
+the available sibling keys.</p>
+<hr>
+<h2 id="4-command-reference"><a class="header" href="#4-command-reference">4. Command Reference</a></h2>
+<p>Every token listed below is present in <code>canonical_token_for</code> or is an
+explicit alias resolved by <code>parse_single_token</code> / <code>normalize_args</code>. If
+a verb is not in this section, it does not parse.</p>
+<p>Conventions used for each entry:</p>
+<ul>
+<li><strong>Synopsis</strong> — argument shape.</li>
+<li><strong>Purpose / Why</strong> — one-line and short paragraph.</li>
+<li><strong>Positionals / Flags</strong> — exact layout, adjacency rules.</li>
+<li><strong>Preconditions</strong> — daemon state, auth, crypto, mount.</li>
+<li><strong>Output shape</strong> — literal example payloads from tests / runtime.</li>
+<li><strong>Field-selector tips</strong> — what’s safe to project.</li>
+<li><strong>Examples</strong> — beginner and ops-facing.</li>
+<li><strong>Failure modes</strong> — common non-zero exits.</li>
+<li><strong>Related</strong> — cross-links.</li>
+</ul>
+<h3 id="41-authentication"><a class="header" href="#41-authentication">4.1 Authentication</a></h3>
+<p>Canonical tokens: <code>login</code>, <code>logout</code>, <code>submit-password</code> (alias <code>auth</code>),
+<code>submit-auth</code>, <code>submit-tfa</code> (alias <code>tfa</code>), <code>submit-recovery</code>,
+<code>send-tfa-sms</code>, <code>send-tfa-notification</code>, <code>authsave</code>.</p>
+<h4 id="login"><a class="header" href="#login"><code>login</code></a></h4>
+<p><strong>Synopsis.</strong></p>
+<pre><code>pcloudc login [-u USER] [--password-stdin] [--password-env VAR]
+              [--crypto] [-m MOUNT] [--tfa-channel auto|sms|notification]
+              [--trust-device] [--save-password]
+</code></pre>
+<p><strong>Purpose.</strong> Begin (or resume) the login REPL driven by the daemon.
+Password resolution order, most-secure first:
+<code>--password-stdin</code> → <code>--password-env VAR</code> → argv (deprecated, warns) →
+interactive <code>rpassword</code> prompt. Argv passwords are zeroised in place.
+<code>--password-env</code> calls <code>unsetenv(VAR)</code> after reading.</p>
+<p><strong>Flags.</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>-u</code>, <code>--user</code>, <code>--username &lt;EMAIL&gt;</code></td><td>Account email. Defaults to the config’s saved username.</td></tr>
+<tr><td><code>--password-stdin</code></td><td>Read one newline-terminated line from stdin.</td></tr>
+<tr><td><code>--password-env &lt;VAR&gt;</code></td><td>Read from a named envvar, then <code>unsetenv</code>.</td></tr>
+<tr><td><code>--crypto</code>, <code>-c</code></td><td>After login, prompt for the crypto folder passphrase.</td></tr>
+<tr><td><code>-y</code>, <code>--passascrypto</code>, <code>--pass-as-crypto</code></td><td>Re-use the account password as the crypto passphrase.</td></tr>
+<tr><td><code>-m</code>, <code>--mountpoint &lt;PATH&gt;</code></td><td>Mount after login.</td></tr>
+<tr><td><code>--tfa-channel &lt;auto|sms|notification&gt;</code> (<code>-T</code>, <code>--channel</code>)</td><td>Default <code>auto</code>.</td></tr>
+<tr><td><code>-r</code>, <code>--trust-device</code>, <code>--trusted-device</code></td><td>Skip future TFA on this device.</td></tr>
+<tr><td><code>-s</code>, <code>--save-password</code></td><td><strong>Intentionally does not save passwords</strong> (see auth-vault docs); rejected at runtime with a warning.</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Output shape.</strong> Text: interactive REPL prompts; JSON: a success
+envelope with <code>command: "login"</code> on each round-trip.</p>
+<p><strong>Examples.</strong></p>
+<pre><code class="language-bash"># Beginner: interactive.
+pcloudc login -u alice@example.com
+
+# Credential helper supplies the password on stdin.
+pass show pcloud/alice | pcloudc login -u alice@example.com --password-stdin
+
+# From cron / CI with an ephemeral envvar.
+PCLOUD_PWD="$(vault kv get -field=pwd secret/pcloud/alice)" \
+  pcloudc login -u alice@example.com --password-env PCLOUD_PWD
+</code></pre>
+<p><strong>Failure modes.</strong> <code>2</code> usage, <code>3</code> auth (<code>Unauthorized</code>), <code>4</code> network,
+<code>5</code> crypto still locked after <code>--crypto</code>, <code>6</code> feature unavailable.</p>
+<p><strong>Related.</strong> <a href="#submit-tfa"><code>submit-tfa</code></a>, <a href="#submit-recovery"><code>submit-recovery</code></a>,
+<a href="#411-crypto">Crypto</a>.</p>
+<h4 id="logout"><a class="header" href="#logout"><code>logout</code></a></h4>
+<p>Terminates the current session and drops the cached auth token from
+the in-memory session state. Durably persisted tokens (vault) are
+removed only when <code>features.durable_auth_tokens_enabled</code> is <code>true</code>.</p>
+<h4 id="submit-password-alias-auth"><a class="header" href="#submit-password-alias-auth"><code>submit-password</code> (alias <code>auth</code>)</a></h4>
+<p>Re-submits the password for the in-flight login REPL state machine.
+Argv form prints a stderr warning and zeroises the password in place.</p>
+<h4 id="submit-auth"><a class="header" href="#submit-auth"><code>submit-auth</code></a></h4>
+<p>Submits an already-obtained pCloud auth token to the daemon
+(alternative to password-based login). Paired with a credential
+helper or a short-lived <code>PCLOUD_AUTH_TOKEN</code> envvar.</p>
+<h4 id="submit-tfa-alias-tfa"><a class="header" href="#submit-tfa-alias-tfa"><code>submit-tfa</code> (alias <code>tfa</code>)</a></h4>
+<p>Submits a TFA code for the in-flight login. <code>tfa &lt;code&gt;</code> is the
+legacy single-token alias.</p>
+<h4 id="submit-recovery"><a class="header" href="#submit-recovery"><code>submit-recovery</code></a></h4>
+<p>Submits a recovery (breakglass) code.</p>
+<h4 id="send-tfa-sms--send-tfa-notification"><a class="header" href="#send-tfa-sms--send-tfa-notification"><code>send-tfa-sms</code> / <code>send-tfa-notification</code></a></h4>
+<p>Re-requests TFA delivery via the named channel. No positional
+arguments.</p>
+<h4 id="authsave"><a class="header" href="#authsave"><code>authsave</code></a></h4>
+<p>Toggles durable auth-token persistence to the owner-only vault at
+<code>$state_dir/auth.vault</code> (file mode <code>0600</code>, parent dir mode <code>0700</code>).
+Passwords are <strong>never</strong> written — that C behaviour is intentionally
+not carried forward.</p>
+<h3 id="42-session--diagnostics"><a class="header" href="#42-session--diagnostics">4.2 Session &amp; Diagnostics</a></h3>
+<h4 id="status-alias-st-default-route"><a class="header" href="#status-alias-st-default-route"><code>status</code> (alias <code>st</code>, default route)</a></h4>
+<p><strong>Purpose.</strong> Daemon-wide health snapshot: uptime, engine counters,
+mount state, last-seen transfer activity.</p>
+<p><strong>Output shape (JSON).</strong></p>
+<pre><code class="language-json">{"kind":"success","command":"status","status":"ok","message":"daemon is healthy; uptime=0h03m; mounts=1; pending=0","exit_code":0}
+</code></pre>
+<p><strong>Field-selector tips.</strong> The status message is a flat descriptive
+string today; <code>--field</code> will not project fields. Use <code>--json</code> and
+split on the message text when scripting.</p>
+<h4 id="health"><a class="header" href="#health"><code>health</code></a></h4>
+<p>Lightweight probe. When the daemon is built with the <code>metrics</code>
+feature flag, returns the Prometheus text-format metric-family
+snapshot; otherwise returns a small JSON-ish string.</p>
+<h4 id="pending-alias-p"><a class="header" href="#pending-alias-p"><code>pending</code> (alias <code>p</code>)</a></h4>
+<p>Lists in-flight transfer work. Useful for nightly drain loops before
+<code>stop</code>.</p>
+<h4 id="session-status-two-token-alias-session-status-session-st"><a class="header" href="#session-status-two-token-alias-session-status-session-st"><code>session-status</code> (two-token alias: <code>session status</code>, <code>session st</code>)</a></h4>
+<p>JSON snapshot: <code>{expires_at, last_used_at, refresh_in_flight}</code>. Safe
+to project with <code>-f</code>.</p>
+<h4 id="fs-status-two-token-alias-fs-status-local-path-also-filesystem-status"><a class="header" href="#fs-status-two-token-alias-fs-status-local-path-also-filesystem-status"><code>fs-status</code> (two-token alias: <code>fs status &lt;LOCAL-PATH&gt;</code>, also <code>filesystem-status</code>)</a></h4>
+<p>Classifies <code>&lt;LOCAL-PATH&gt;</code> against the sync engine’s view as one of
+<code>INSYNC</code>, <code>INPROG</code>, <code>NOSYNC</code>, or <code>INVSYNC</code>. Mirrors the C
+<code>psync_filesystem_status</code> surface.</p>
+<h3 id="43-user-info"><a class="header" href="#43-user-info">4.3 User Info</a></h3>
+<h4 id="userinfo"><a class="header" href="#userinfo"><code>userinfo</code></a></h4>
+<p><strong>Purpose.</strong> Account summary for the active session.</p>
+<p><strong>Output shape.</strong> Legacy flat form (parseable by the built-in field
+selector):</p>
+<pre><code>userinfo: quota=10737418240, usedquota=3824711, premium=false, email="alice@example.com", cryptosetup=None
+</code></pre>
+<p><strong>Field-selector tips.</strong></p>
+<pre><code class="language-bash">pcloudc --field quota --field usedquota userinfo
+pcloudc --json -f email userinfo
+</code></pre>
+<h3 id="44-sync-roots"><a class="header" href="#44-sync-roots">4.4 Sync Roots</a></h3>
+<p>Canonical tokens: <code>sync-list</code>, <code>sync-add</code>, <code>sync-remove</code>,
+<code>sync-change-type</code>, <code>sync-localscan</code>, <code>sync-suggest</code>, <code>sync-is-syncable</code>,
+<code>pause</code>, <code>resume</code>. Accepted two-token aliases (resolved by
+<code>normalize_args</code>): <code>sync list|ls</code>, <code>sync add</code>, <code>sync remove|rm</code>,
+<code>sync change-type|set-type|retype</code>, <code>sync pause</code>, <code>sync resume</code>,
+<code>sync localscan</code>, <code>sync suggest</code>, <code>sync is-syncable|syncable</code>, and the
+short alias <code>s ...</code> for each.</p>
+<h4 id="sync-flavors-directions"><a class="header" href="#sync-flavors-directions">Sync flavors (directions)</a></h4>
+<p>Every sync root has a direction flavor. The CLI accepts nine
+case-insensitive aliases across three families (mirrors legacy C
+<code>psync_synctype_t</code>):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Alias set</th><th>Variant</th><th>What it does</th></tr>
+</thead>
+<tbody>
+<tr><td><code>bilateral</code>, <code>full</code>, <code>both</code></td><td><code>SyncType::Full</code></td><td>Two-way. Both sides’ deletions propagate. Default for <code>sync add</code> when <code>--type</code> is not supplied.</td></tr>
+<tr><td><code>mirror</code>, <code>download-only</code>, <code>down</code>, <code>remote-to-local</code></td><td><code>SyncType::DownloadOnly</code></td><td>Remote → local only. Local edits are never uploaded; remote deletions remove the local copy.</td></tr>
+<tr><td><code>upload-only</code>, <code>up</code>, <code>local-to-remote</code></td><td><code>SyncType::UploadOnly</code></td><td>Local → remote only. Remote edits are never downloaded. A local deletion <strong>does</strong> propagate to the remote (destructive mirror).</td></tr>
+<tr><td><code>backup</code>, <code>backup-archive</code>, <code>archive</code>, <code>keep-remote</code></td><td><code>SyncType::BackupArchive</code></td><td>Deletion-safe archival. Uploads new/changed local files like <code>upload-only</code>, but a local deletion <strong>does not</strong> delete the remote copy. Rust-only flavor; no legacy C counterpart.</td></tr>
+</tbody>
+</table>
+</div>
+<blockquote>
+<p><strong>Semantics note.</strong> <code>backup</code> is the deletion-safe archival flavor
+(bd-1du.5): uploads new/changed local files but keeps the remote
+copy when the local file is removed. <code>upload-only</code> retains the
+legacy destructive-mirror behaviour — use it only when you
+explicitly want a local delete to propagate to the remote. If you
+need a one-shot point-in-time archive (zstd-compressed,
+SHA3-256-stamped tarball) rather than a continuously-replicated
+tree, use <code>pcloudc backup snapshot-create</code> instead of a sync root.</p>
+</blockquote>
+<p>Direction can be changed on an existing root without re-adding — see
+<code>sync-change-type</code> below. A direction change invalidates already-queued
+upload/download work because the plan may no longer be valid; the next
+scan cycle rebuilds the queue.</p>
+<h4 id="sync-list"><a class="header" href="#sync-list"><code>sync-list</code></a></h4>
+<p>Lists persisted sync roots — id, local path, remote path, kind, and
+current direction flavor.</p>
+<h4 id="sync-add-local-remote---type-flavor"><a class="header" href="#sync-add-local-remote---type-flavor"><code>sync-add &lt;LOCAL&gt; &lt;REMOTE&gt; [--type FLAVOR]</code></a></h4>
+<p>Registers a sync root. Local path is canonicalised. Duplicate and
+nested local roots are rejected with exit <code>7 Conflict</code>. The remote
+folder is validated against the backend before the row is persisted.
+<code>--type</code> selects the direction flavor; unknown aliases exit <code>2 Usage</code>
+with the full 9-alias list. Default (no <code>--type</code>) is bilateral.</p>
+<p>Response payload is structured JSON in <code>message</code> (ADR-0017):</p>
+<pre><code class="language-json">{"sync_id":7,"local_path":"/home/you/work","remote_path":"/Work","remote_folder_id":1234,"sync_type":"Full"}
+</code></pre>
+<p><strong>Field-selector recipes.</strong></p>
+<pre><code class="language-bash">pcloudc sync add /l /r --type mirror --field sync_id --field sync_type
+# sync_id=7
+# sync_type=DownloadOnly
+
+pcloudc --json sync add /l /r --type backup \
+  | jq '{id:.result.sync_id, kind:.result.sync_type}'
+# {"id":8,"kind":"UploadOnly"}
+</code></pre>
+<h4 id="sync-remove-id"><a class="header" href="#sync-remove-id"><code>sync-remove &lt;ID&gt;</code></a></h4>
+<p>Removes the sync root identified by <code>&lt;ID&gt;</code>. Queued work for the root
+is drained from the engine.</p>
+<h4 id="sync-change-type-id-flavor"><a class="header" href="#sync-change-type-id-flavor"><code>sync-change-type &lt;ID&gt; &lt;FLAVOR&gt;</code></a></h4>
+<p>Flips the direction of an existing sync root in-place. Accepts the
+same 9 <code>FLAVOR</code> aliases as <code>sync add --type</code>. Mirrors C
+<code>psync_change_synctype</code>. Preserves the <code>sync_id</code>, remote-folder
+binding, and staging context; only queued work that no longer matches
+the new direction is evicted.</p>
+<pre><code class="language-bash">pcloudc sync change-type 7 mirror          # bilateral -&gt; download-only
+pcloudc sync-change-type 7 bilateral       # flip back (canonical token)
+</code></pre>
+<p>Failure modes: <code>InvalidRequest</code> (non-numeric id or unknown flavor),
+<code>Conflict</code> (sync id not found), <code>InternalError</code> (persistence failure,
+rolled back in memory), <code>Unavailable</code> (daemon down).</p>
+<h4 id="sync-localscan-aliases-localscan-run-localscan"><a class="header" href="#sync-localscan-aliases-localscan-run-localscan"><code>sync-localscan</code> (aliases <code>localscan</code>, <code>run-localscan</code>)</a></h4>
+<p>Triggers an immediate local-rescan wakeup across all registered
+roots. Useful after out-of-band file manipulation.</p>
+<h4 id="sync-suggest-path---max-n-two-token-sync-suggest"><a class="header" href="#sync-suggest-path---max-n-two-token-sync-suggest"><code>sync-suggest [&lt;PATH&gt;] [--max N]</code> (two-token: <code>sync suggest</code>)</a></h4>
+<p><strong>Purpose.</strong> Scan the local filesystem under <code>&lt;PATH&gt;</code> (default: home
+directory) and return a list of candidate folders that could be added
+as sync roots. Mirrors C <code>psync_get_sync_suggestions</code>. Useful for
+onboarding scripts that want to propose sync roots without hard-coding
+paths.</p>
+<p><strong>Flags.</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>&lt;PATH&gt;</code></td><td>Positional base path. Defaults to the user’s home directory when absent.</td></tr>
+<tr><td><code>--max N</code></td><td>Hard cap on the number of suggestions returned. No cap by default.</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Output.</strong> JSON array of suggestion objects in <code>message</code>. Each entry
+contains at minimum <code>path</code> and a classification label.</p>
+<pre><code class="language-bash">pcloudc sync suggest ~/work --max 5
+pcloudc --json sync suggest | jq '.[].path'
+</code></pre>
+<p><strong>Related.</strong> <code>sync-add</code>, <code>sync-is-syncable</code>.</p>
+<h4 id="sync-is-syncable-path-two-token-sync-is-syncable"><a class="header" href="#sync-is-syncable-path-two-token-sync-is-syncable"><code>sync-is-syncable &lt;PATH&gt;</code> (two-token: <code>sync is-syncable</code>)</a></h4>
+<p><strong>Purpose.</strong> Classify whether <code>&lt;PATH&gt;</code> can be added as a sync root
+without conflicting with already-registered roots. Returns <code>Ok</code> if the
+path is clean, <code>Conflict</code> if it duplicates or nests inside an existing
+root. Mirrors C <code>psync_is_folder_syncable</code>.</p>
+<pre><code class="language-bash">pcloudc sync is-syncable ~/Documents
+# exit 0 → safe to add
+# exit 7 → already covered by another root
+</code></pre>
+<p><strong>Related.</strong> <code>sync-suggest</code>, <code>sync-add</code>.</p>
+<h4 id="pause--resume"><a class="header" href="#pause--resume"><code>pause</code> / <code>resume</code></a></h4>
+<p>Daemon-wide gate for <strong>all</strong> sync workers. Matches legacy C
+<code>SYNCPAUSE</code> / <code>SYNCRESUME</code>.</p>
+<h3 id="45-mount-fuse"><a class="header" href="#45-mount-fuse">4.5 Mount (FUSE)</a></h3>
+<p>Canonical token: <code>mount</code>. <code>unmount</code> (alias <code>umount</code>). Special form:
+<code>mount --force-umount &lt;PATH&gt;</code> resolves to <code>MountForceUnmount</code>.</p>
+<h4 id="mount-path"><a class="header" href="#mount-path"><code>mount &lt;PATH&gt;</code></a></h4>
+<p>Mounts pCloud Drive at <code>&lt;PATH&gt;</code> (must exist, be an empty directory,
+owned by the current uid, not world-writable). The following FUSE
+flags are always applied: <code>rw,nosuid,nodev,default_permissions</code>.
+<code>allow_other</code> / <code>allow_root</code> in any custom <code>--fuse-opts</code> string are
+silently rejected for safety.</p>
+<p><strong>Honest limitations.</strong> Full FUSE runtime parity is tracked under
+<code>bd-1du.4</code>; behaviour grows until that bead closes.</p>
+<h4 id="unmount-alias-umount"><a class="header" href="#unmount-alias-umount"><code>unmount</code> (alias <code>umount</code>)</a></h4>
+<p>Drains pending writes, flushes the journal, releases the kernel
+session, and removes stale entries.</p>
+<h4 id="mount---force-umount-path"><a class="header" href="#mount---force-umount-path"><code>mount --force-umount &lt;PATH&gt;</code></a></h4>
+<p>Escalation path for a daemon-orphaned FUSE session: falls back to
+<code>fusermount -uz</code> / <code>umount -f</code>. Honours <code>PCLOUD_FORCE_UMOUNT=0</code> to
+refuse the escalation.</p>
+<h3 id="46-filesystem-status"><a class="header" href="#46-filesystem-status">4.6 Filesystem Status</a></h3>
+<p>See <a href="#fs-status-two-token-alias-fs-status-local-path-also-filesystem-status"><code>fs-status</code></a>.</p>
+<h3 id="47-public-links"><a class="header" href="#47-public-links">4.7 Public Links</a></h3>
+<p>All one-token canonical forms:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Token</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>list-links</code> (alias <code>list-public-links</code>)</td><td>List all public links.</td></tr>
+<tr><td><code>show-link &lt;CODE&gt;</code></td><td>Inspect one link.</td></tr>
+<tr><td><code>delete-link &lt;ID&gt;</code></td><td>Remove one link.</td></tr>
+<tr><td><code>create-file-link &lt;FILEID&gt;</code></td><td>Create a file link.</td></tr>
+<tr><td><code>create-folder-link &lt;FOLDERID&gt;</code></td><td>Create a folder link.</td></tr>
+<tr><td><code>change-link-expire &lt;ID&gt; [--expire YYYY-MM-DD]</code></td><td>Set / clear expiry.</td></tr>
+<tr><td><code>change-link-password &lt;ID&gt;</code> (stdin)</td><td>Set / clear link password.</td></tr>
+<tr><td><code>change-link-upload &lt;ID&gt; &lt;disabled|any|registered&gt;</code></td><td>Change upload policy.</td></tr>
+<tr><td><code>create-tree-link &lt;FOLDERID&gt; [paths...]</code></td><td>Folder-tree link.</td></tr>
+<tr><td><code>list-link-access &lt;ID&gt;</code>, <code>add-link-access &lt;ID&gt; &lt;CONTACT&gt;</code>, <code>remove-link-access &lt;ID&gt; &lt;CONTACT&gt;</code></td><td>Upload-access helpers.</td></tr>
+<tr><td><code>list-bookmarks</code>, <code>remove-bookmark &lt;ID&gt;</code>, <code>change-bookmark &lt;...&gt;</code></td><td>Bookmark / pin management.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Two-token form (supported by <code>normalize_args</code>):</p>
+<pre><code>publink send &lt;CODE&gt; --to &lt;ADDR&gt; [--message &lt;TEXT&gt;] [--from &lt;NAME&gt;]
+</code></pre>
+<p>Policy values for <code>change-link-upload</code>: <code>disabled</code>, <code>any</code>, <code>registered</code>.</p>
+<h3 id="48-upload-links"><a class="header" href="#48-upload-links">4.8 Upload Links</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Token</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>create-upload-link &lt;FOLDERID&gt;</code></td><td>Create a receive-only link.</td></tr>
+<tr><td><code>list-upload-links</code></td><td>List receive-only links.</td></tr>
+<tr><td><code>delete-upload-link &lt;ID&gt;</code></td><td>Remove one.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="49-shares-contacts-teams"><a class="header" href="#49-shares-contacts-teams">4.9 Shares, Contacts, Teams</a></h3>
+<p>Canonical one-token tokens:</p>
+<ul>
+<li><code>list-incoming-shares</code>, <code>list-outgoing-shares</code></li>
+<li><code>list-incoming-share-requests</code>, <code>list-outgoing-share-requests</code></li>
+<li><code>list-contacts</code>, <code>list-myteams</code></li>
+<li><code>share-folder &lt;FOLDERID&gt; &lt;EMAIL&gt; &lt;PERMS&gt;</code></li>
+<li><code>accept-share-request &lt;ID&gt;</code>, <code>decline-share-request &lt;ID&gt;</code>,
+<code>cancel-share-request &lt;ID&gt;</code></li>
+<li><code>remove-share &lt;ID&gt;</code>, <code>modify-share &lt;ID&gt; &lt;PERMS&gt;</code></li>
+<li><code>account-stopshare</code>, <code>account-modifyshare</code>, <code>account-teamshare</code>
+(business-account share operations)</li>
+</ul>
+<p>Crypto-aware variants re-use the <code>share_temppass</code> flow transparently.</p>
+<h3 id="410-backup-snapshots-and-backup-management"><a class="header" href="#410-backup-snapshots-and-backup-management">4.10 Backup Snapshots and Backup Management</a></h3>
+<h4 id="backup-delete-backup_id-two-token-backup-delete"><a class="header" href="#backup-delete-backup_id-two-token-backup-delete"><code>backup delete &lt;BACKUP_ID&gt;</code> (two-token: <code>backup delete</code>)</a></h4>
+<p><strong>Purpose.</strong> Delete a backup by its remote folder id. Calls
+<code>backup/stopbackup</code> on the server and removes the matching local sync
+root if one is registered. Mirrors C <code>psync_delete_backup</code>. Requires
+an authenticated session.</p>
+<p><strong>Synopsis.</strong></p>
+<pre><code>pcloudc backup delete &lt;BACKUP_ID&gt;
+</code></pre>
+<p><code>&lt;BACKUP_ID&gt;</code> is the numeric remote folder id of the backup. If
+omitted, the CLI prompts interactively.</p>
+<p><strong>Failure modes.</strong> <code>3 Unauthorized</code> (no session), <code>7 Conflict</code> (backup
+id not found), <code>6 Unavailable</code> (network error).</p>
+<pre><code class="language-bash">pcloudc backup delete 9876543
+</code></pre>
+<h4 id="backup-snapshots"><a class="header" href="#backup-snapshots">Backup snapshots</a></h4>
+<p>Two-word form (preferred for scripts that already call <code>backup</code>):</p>
+<pre><code>pcloudc backup snapshot-create  [--gpg-recipient EMAIL] [--label STRING]
+pcloudc backup snapshot-verify  &lt;PATH_TO_TAR_GPG&gt;
+pcloudc backup snapshot-restore &lt;PATH_TO_TAR_GPG&gt; [--yes]
+pcloudc backup snapshot-prune   [--retention-days N]
+</code></pre>
+<p>Single-token canonical equivalents:
+<code>backup-snapshot-create</code>, <code>backup-snapshot-verify</code>,
+<code>backup-snapshot-restore</code>, <code>backup-snapshot-prune</code>.</p>
+<p><strong>Purpose.</strong> GPG-encrypted, point-in-time snapshot of daemon state
+(auth vault + SQLite store via online-backup + audit chain + redacted
+config + plugin registry) with verify / restore / prune lifecycle.
+The tarball <strong>contains the auth vault</strong> — treat it as equivalent to
+the vault itself.</p>
+<p><strong>Preconditions.</strong> Host <code>gpg(1)</code> binary MUST be installed; the
+recipient key MUST exist in the invoking user’s keyring; resolution
+failure aborts with exit <code>7 Conflict</code>.</p>
+<p><strong><code>--yes</code> on <code>snapshot-restore</code></strong> is required for non-interactive
+scripts; without it, stdin must be a TTY or the command aborts with
+exit <code>2 Usage</code>.</p>
+<p><strong>Recipe: nightly create → verify → prune.</strong> See
+<a href="#10-scripting-patterns">§10 Scripting Patterns</a>.</p>
+<p><strong>Related.</strong> <a href="../operations/backup-snapshots.html">Operations: Backup Snapshots</a>.</p>
+<h3 id="411-crypto"><a class="header" href="#411-crypto">4.11 Crypto</a></h3>
+<p>Two-token forms: <code>crypto &lt;subcommand&gt;</code> or the short alias <code>c &lt;subcommand&gt;</code>.
+Single-token canonical forms follow the pattern <code>crypto-&lt;subcommand&gt;</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Two-token form</th><th>Single-token canonical</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>crypto status</code> / <code>c st</code></td><td><code>crypto-status</code></td><td>Lock state, folder id, fingerprint.</td></tr>
+<tr><td><code>crypto start</code></td><td><code>unlock-crypto</code></td><td>Unlock the crypto folder. Reads passphrase via stdin / <code>--password-env</code> / interactive prompt.</td></tr>
+<tr><td><code>crypto stop</code></td><td><code>lock-crypto</code></td><td>Lock and zero active key material.</td></tr>
+<tr><td><code>crypto reset</code></td><td><code>crypto-reset</code></td><td>Wipe local crypto fingerprint and folder registry. Destructive — requires re-setup.</td></tr>
+<tr><td><code>crypto hint</code></td><td><code>crypto-hint</code></td><td>Fetch the passphrase hint stored at first-time setup.</td></tr>
+<tr><td><code>crypto priv-key-flags</code></td><td><code>crypto-priv-key-flags</code></td><td>Return current crypto private-key flags as a decimal integer.</td></tr>
+<tr><td><code>crypto send-change-private</code></td><td><code>crypto-send-change-private</code></td><td>Request a server-side confirmation code authorising a subsequent passphrase rotation.</td></tr>
+<tr><td><code>crypto change-password</code></td><td><code>crypto-change-password</code></td><td>Rotate the crypto passphrase. Requires the old passphrase, a new passphrase, a hint, and the code from <code>send-change-private</code>.</td></tr>
+<tr><td><code>crypto change-password-unlocked</code></td><td><code>crypto-change-password-unlocked</code></td><td>Rotate the crypto passphrase when the shell is already unlocked (no old passphrase needed).</td></tr>
+</tbody>
+</table>
+</div>
+<h4 id="crypto-start--unlock-crypto"><a class="header" href="#crypto-start--unlock-crypto"><code>crypto start</code> / <code>unlock-crypto</code></a></h4>
+<p>Unlock the crypto folder for this session. Passphrase resolution order:
+<code>--password-stdin</code> → <code>--password-env VAR</code> → argv (deprecated, warns) →
+interactive <code>rpassword</code> prompt.</p>
+<h4 id="crypto-stop--lock-crypto"><a class="header" href="#crypto-stop--lock-crypto"><code>crypto stop</code> / <code>lock-crypto</code></a></h4>
+<p>Re-lock the crypto folder and zero in-memory key material immediately.</p>
+<h4 id="crypto-status--crypto-status"><a class="header" href="#crypto-status--crypto-status"><code>crypto status</code> / <code>crypto-status</code></a></h4>
+<p>Report whether crypto is locked, unlocked, or uninitialized.</p>
+<h4 id="crypto-reset--crypto-reset"><a class="header" href="#crypto-reset--crypto-reset"><code>crypto reset</code> / <code>crypto-reset</code></a></h4>
+<p><strong>Purpose.</strong> Wipe the local crypto fingerprint and folder registry. This
+is a recovery operation used when the crypto state has drifted from the
+server. After a reset the daemon acts as if crypto was never set up
+locally; a full <code>crypto start</code> / <code>unlock-crypto</code> will re-download and
+re-verify the fingerprint from the server.</p>
+<blockquote>
+<p><strong>Warning.</strong> This does <strong>not</strong> delete any encrypted data from the
+server. It only clears local bookkeeping. It is still a potentially
+confusing operation — use it only when advised.</p>
+</blockquote>
+<h4 id="crypto-hint--crypto-hint"><a class="header" href="#crypto-hint--crypto-hint"><code>crypto hint</code> / <code>crypto-hint</code></a></h4>
+<p><strong>Purpose.</strong> Fetch the passphrase hint string that was stored when crypto
+was first set up. The hint is never the passphrase itself; it is a free-
+text reminder chosen by the user at setup time. Requires crypto to be set
+up (but does not require it to be unlocked).</p>
+<pre><code class="language-bash">pcloudc crypto hint
+</code></pre>
+<h4 id="crypto-priv-key-flags--crypto-priv-key-flags"><a class="header" href="#crypto-priv-key-flags--crypto-priv-key-flags"><code>crypto priv-key-flags</code> / <code>crypto-priv-key-flags</code></a></h4>
+<p><strong>Purpose.</strong> Return the current value of the <code>crypto_private_flags</code> row as
+a decimal integer. Mirrors C <code>psync_crypto_priv_key_flags</code>. The flags
+field encodes metadata such as whether a temporary password is set
+(<code>PSYNC_CRYPTO_FLAG_TEMP_PASS</code>).</p>
+<h4 id="crypto-send-change-private--crypto-send-change-private"><a class="header" href="#crypto-send-change-private--crypto-send-change-private"><code>crypto send-change-private</code> / <code>crypto-send-change-private</code></a></h4>
+<p><strong>Purpose.</strong> Request a server-side one-time confirmation code that
+authorises a subsequent <code>crypto change-password</code> call. Mirrors C
+<code>psync_crypto_crypto_send_change_user_private</code>. The code is delivered
+out-of-band (e.g. email). Run this first, then run <code>crypto change-password</code>
+once you have the code.</p>
+<pre><code class="language-bash">pcloudc crypto send-change-private
+# (server emails you a code)
+pcloudc crypto change-password
+# prompts: old passphrase, new passphrase, hint, code
+</code></pre>
+<h4 id="crypto-change-password--crypto-change-password"><a class="header" href="#crypto-change-password--crypto-change-password"><code>crypto change-password</code> / <code>crypto-change-password</code></a></h4>
+<p><strong>Synopsis.</strong></p>
+<pre><code>pcloudc crypto change-password [OLD_PASS [NEW_PASS [HINT [CODE]]]]
+</code></pre>
+<p><strong>Purpose.</strong> Rotate the crypto passphrase. The shell may be locked — the
+old password is verified before any change is applied. Requires four
+inputs (can be given positionally or prompted interactively):</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Positional</th><th>Prompted as</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>OLD_PASS</code></td><td>“Current crypto passphrase”</td><td>Current passphrase (validated server-side).</td></tr>
+<tr><td><code>NEW_PASS</code></td><td>“New crypto passphrase”</td><td>Replacement passphrase.</td></tr>
+<tr><td><code>HINT</code></td><td>(positional arg 3)</td><td>Free-text hint stored with the new passphrase.</td></tr>
+<tr><td><code>CODE</code></td><td>(positional arg 4)</td><td>Server-side confirmation code from <code>send-change-private</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Mirrors C <code>psync_crypto_change_crypto_pass</code>. Transit-only secrets; the
+old and new passphrases are never written to disk.</p>
+<h4 id="crypto-change-password-unlocked--crypto-change-password-unlocked"><a class="header" href="#crypto-change-password-unlocked--crypto-change-password-unlocked"><code>crypto change-password-unlocked</code> / <code>crypto-change-password-unlocked</code></a></h4>
+<p><strong>Synopsis.</strong></p>
+<pre><code>pcloudc crypto change-password-unlocked [NEW_PASS [HINT [CODE]]]
+</code></pre>
+<p><strong>Purpose.</strong> Same as <code>crypto change-password</code> but valid only when the
+crypto shell is already unlocked. The old passphrase is not required.
+Mirrors C <code>psync_crypto_change_crypto_pass_unlocked</code>.</p>
+<p><strong>Honest scope.</strong> <code>crypto setup</code> and <code>crypto setup-folder</code> remain
+intentionally absent from the public CLI and focused <code>pcloud-sdk</code> 1.x path.
+The internal <code>pcloud-embedded-sdk</code> compatibility API retains those flows;
+there is no supported third-party first-time-setup API yet.</p>
+<h3 id="412-integrity-sweeper"><a class="header" href="#412-integrity-sweeper">4.12 Integrity Sweeper</a></h3>
+<p>Two-token form (single-token canonical: <code>integrity-status</code>,
+<code>integrity-run-once</code>, <code>integrity-skip</code>):</p>
+<pre><code>pcloudc integrity              # defaults to `status`
+pcloudc integrity status
+pcloudc integrity run-once
+pcloudc integrity skip &lt;PATH&gt;
+</code></pre>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Subcommand</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>status</code></td><td>Print the enabled flag, last-run timestamp, per-result-kind counters (<code>Ok</code>, <code>Mismatch</code>, <code>LocalMissing</code>, <code>RemoteMissing</code>, <code>Throttled</code>, <code>FetchFailed</code>), the <code>audit_drops</code> counter (audit invariant M1), and the resolved skip-list path.</td></tr>
+<tr><td><code>run-once</code></td><td>Drive exactly one sweep; honours configured rate limit and skip list. Wired end-to-end today; scheduled automatic runs are still stubbed behind PR2/PR3 walker work.</td></tr>
+<tr><td><code>skip &lt;PATH&gt;</code></td><td>Append <code>&lt;PATH&gt;</code> to the on-disk skip list and hot-reload it in-process.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Divergence result kinds are mirrored into the <code>integrity.mismatch</code>
+audit category with a path-HMAC (never cleartext path).</p>
+<p>Tracked by <code>bd-1du.4.6.1</code>. See
+<code>docs/parity/integrity-sweeper.md</code>.</p>
+<h3 id="413-verify"><a class="header" href="#413-verify">4.13 <code>verify</code></a></h3>
+<p><strong>Synopsis.</strong></p>
+<pre><code>pcloudc verify &lt;PATH&gt; [--recursive] [--fix] [--yes]
+</code></pre>
+<p><strong>Purpose.</strong> Walks the store under <code>&lt;PATH&gt;</code>, hashes each local
+object, and compares against the server-side hash.</p>
+<p><strong>Output shape (text).</strong> One record per line:</p>
+<pre><code>[OK]                                 /Documents/plan.md
+[MISMATCH local=&lt;hex&gt; server=&lt;hex&gt;]  /Documents/plan.md
+[MISSING_LOCAL]                      /Documents/plan.md
+[MISSING_REMOTE]                     /Documents/plan.md
+</code></pre>
+<p><strong>Output shape (JSON).</strong> NDJSON — one object per line, not an
+enclosing array:</p>
+<pre><code class="language-json">{"kind":"ok","path":"/Documents/plan.md"}
+{"kind":"mismatch","path":"/Documents/plan.md","local":"ab…","server":"cd…"}
+</code></pre>
+<p><strong>Flags.</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--recursive</code></td><td>Descend into every subfolder.</td></tr>
+<tr><td><code>--fix</code></td><td>Ask the daemon to re-download <code>MISMATCH</code> / <code>MISSING_LOCAL</code> and re-upload <code>MISSING_REMOTE</code>. Destructive; requires <code>--yes</code> or an interactive confirmation.</td></tr>
+<tr><td><code>--yes</code></td><td>Non-interactive confirmation, pairs with <code>--fix</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Exit codes.</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Situation</th><th>Code</th></tr>
+</thead>
+<tbody>
+<tr><td>Every record <code>[OK]</code></td><td><code>0 Ok</code></td></tr>
+<tr><td>Any <code>[MISMATCH]</code> seen (even after <code>--fix</code>)</td><td><code>7 Conflict</code></td></tr>
+<tr><td>Only missing records, no <code>--fix</code></td><td><code>6 Unavailable</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Examples.</strong></p>
+<pre><code class="language-bash"># Read-only sweep.
+pcloudc verify ~/Documents --recursive
+
+# NDJSON for alerting.
+pcloudc --json verify ~/Documents --recursive | \
+  while IFS= read -r line; do
+    case "$line" in *\"kind\":\"mismatch\"*) alert "$line";; esac
+  done
+
+# Scripted reconcile (destructive).
+pcloudc verify ~/Photos --recursive --fix --yes
+</code></pre>
+<h3 id="415-folders"><a class="header" href="#415-folders">4.15 Folders</a></h3>
+<p>Two-token form (preferred) and single-token aliases:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Two-word</th><th>Single-token aliases</th></tr>
+</thead>
+<tbody>
+<tr><td><code>folder create &lt;PATH&gt;</code></td><td><code>folder-create</code>, <code>create-folder</code></td></tr>
+<tr><td><code>folder id &lt;PATH&gt;</code></td><td><code>folder-id</code>, <code>get-folder-id</code></td></tr>
+<tr><td><code>folder flags &lt;PATH&gt;</code></td><td><code>folder-flags</code>, <code>get-folder-flags</code></td></tr>
+<tr><td><code>folder owner &lt;PATH&gt;</code></td><td><code>folder-owner</code>, <code>get-folder-owner</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Mirrors C <code>psync_create_remote_folder_by_path</code> and siblings. Useful
+for driving the pCloud namespace from shell without invoking the
+public-link machinery.</p>
+<h3 id="416-notifications"><a class="header" href="#416-notifications">4.16 Notifications</a></h3>
+<p>Canonical: <code>list-notifications</code>. Two-token form:</p>
+<pre><code>pcloudc notifications list              # alias: notif list, notif ls
+pcloudc notifications mark-read &lt;UPTO_ID&gt;
+</code></pre>
+<h3 id="417-audit"><a class="header" href="#417-audit">4.17 Audit</a></h3>
+<pre><code>pcloudc audit verify
+</code></pre>
+<p>Verifies the tamper-evident audit chain. Exit <code>7 Conflict</code> on chain
+break.</p>
+<h3 id="418-daemon-lifecycle"><a class="header" href="#418-daemon-lifecycle">4.18 Daemon Lifecycle</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Token</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>start</code> (alias <code>daemon-start</code>)</td><td>Launch sibling/<code>PATH</code> binary <code>pcloudd serve</code> with stdout/stderr redirected to <code>$state_dir/daemon.log</code> (mode <code>0600</code>), detach it, and poll the IPC endpoint. Idempotent: responds “already running” and exits <code>0</code> if the endpoint already answers.</td></tr>
+<tr><td><code>finalize</code> (aliases <code>shutdown</code>, <code>f</code>, <code>stop</code>)</td><td>Dispatches <code>Method::Shutdown</code>.</td></tr>
+<tr><td>(implicit) <code>restart</code></td><td>Run <code>stop</code> then <code>start</code> in a script. No single-token <code>restart</code> exists.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="419-doctor"><a class="header" href="#419-doctor">4.19 <code>doctor</code></a></h3>
+<p>Read-only, cross-platform preflight check (<code>crates/pcloud-cli/src/ doctor.rs</code>). Returns <code>0</code> on all-green, <code>6 Unavailable</code> otherwise. With
+<code>--strict</code>, any non-fatal warning is upgraded to a failure.</p>
+<p><strong>Probe matrix (G6).</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Probe</th><th>POSIX</th><th>Windows</th></tr>
+</thead>
+<tbody>
+<tr><td><code>vault-perms</code></td><td>file mode <code>0600</code>, parent dir <code>0700</code>, owner == UID</td><td>NTFS-ACL stub: DACL owner-only, no world ACE</td></tr>
+<tr><td><code>disk-free</code></td><td><code>statvfs(cache_dir)</code></td><td><code>GetDiskFreeSpaceExW(cache_dir)</code></td></tr>
+<tr><td><code>clock-drift</code></td><td>NTP/chrony offset, fail if `</td><td>drift</td></tr>
+<tr><td><code>config-dir-mode</code></td><td>POSIX bits</td><td>NTFS-ACL stub</td></tr>
+<tr><td><code>runtime-dir-mode</code></td><td>POSIX bits</td><td>NTFS-ACL stub</td></tr>
+<tr><td><code>ipc-endpoint</code></td><td>canonical runtime-dir <code>pcloud.sock</code> reachable</td><td>owner-SID named pipe reachable</td></tr>
+<tr><td><code>daemon-binary</code></td><td>sibling <code>pcloudd</code> or <code>pcloudd</code> on <code>PATH</code></td><td>sibling <code>pcloudd.exe</code> or <code>%PATH%</code></td></tr>
+</tbody>
+</table>
+</div>
+<p><code>vault-perms</code> refuses to pass on any platform if another user could
+read the vault. Windows ACL validation is currently a stub
+(owner-SID check only), tracked under the G6 work stream.</p>
+<p>Aliases: <code>doctor</code>, <code>self-check</code>, <code>selfcheck</code>.</p>
+<h3 id="420-migrate-from-c"><a class="header" href="#420-migrate-from-c">4.20 <code>migrate-from-c</code></a></h3>
+<pre><code>pcloudc migrate-from-c [--dry-run] [--force-overwrite] [--from &lt;PATH&gt;]
+</code></pre>
+<p>Rehydrates legacy <code>~/.pcloud/data.db</code> (C <code>syncfolder</code> rows + auth
+token blob) into the Rust config/state layout. Dry-run by default;
+pass <code>--apply</code> (shim for <code>--force-overwrite</code>) to commit. Planner and
+executor errors are <code>MigrateError</code> variants — none carry the legacy
+token, which is wrapped in <code>SecretString</code> on the happy path. Alias:
+<code>migrate</code>.</p>
+<h3 id="421-completion"><a class="header" href="#421-completion">4.21 <code>completion</code></a></h3>
+<pre><code>pcloudc completion &lt;bash|zsh|fish|powershell|elvish&gt;
+</code></pre>
+<p>Generates shell completion via the <code>clap</code> command tree built in
+<code>completion.rs</code>.</p>
+<pre><code class="language-bash">pcloudc completion bash &gt; /etc/bash_completion.d/pcloud-rs
+pcloudc completion zsh  &gt; "${fpath[1]}/_pcloud-rs"
+</code></pre>
+<h3 id="422-upload-sessions"><a class="header" href="#422-upload-sessions">4.22 Upload Sessions</a></h3>
+<p>Operator-visible upload lifecycle: create, pause, resume, cancel, list.
+Sessions live in the daemon’s in-memory <code>SessionRegistry</code> and are not
+persisted across restarts (the crash-safe resume is handled separately
+by the upload sidecar journal – see
+<a href="../operations/partial-transfers.html">Partial Transfers</a>).</p>
+<h4 id="upload-create"><a class="header" href="#upload-create"><code>upload create</code></a></h4>
+<pre><code class="language-bash">pcloudc upload create &lt;LOCAL_PATH&gt; &lt;REMOTE_NAME&gt; [--parent &lt;FOLDER_ID&gt;] \
+        [--size &lt;BYTES&gt;] [--conflict-mode &lt;MODE&gt;]
+</code></pre>
+<p>Registers a new upload session and returns <code>{"session_id": &lt;u64&gt;, "remote_name": "&lt;name&gt;", "conflict_mode": "&lt;mode&gt;"}</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Default</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--parent</code></td><td>none</td><td>Remote parent folder id.</td></tr>
+<tr><td><code>--size</code></td><td>0</td><td>Total byte size the upload will stream.</td></tr>
+<tr><td><code>--conflict-mode</code></td><td><code>error</code></td><td>One of <code>error</code>, <code>overwrite</code>, <code>skip</code>, <code>rename</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p><strong>Conflict modes:</strong></p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mode</th><th>Behaviour</th></tr>
+</thead>
+<tbody>
+<tr><td><code>error</code></td><td>Refuse if the remote path exists (default, strictest).</td></tr>
+<tr><td><code>overwrite</code></td><td>Replace the existing remote file.</td></tr>
+<tr><td><code>skip</code></td><td>Treat existing file as success (no bytes transferred).</td></tr>
+<tr><td><code>rename</code></td><td>Pick a unique sibling name, e.g. <code>report (2).pdf</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>When <code>rename</code> is selected the daemon resolves conflicts against the
+in-memory registry (sessions under the same <code>parent_folder_id</code>).</p>
+<h4 id="upload-pause"><a class="header" href="#upload-pause"><code>upload pause</code></a></h4>
+<pre><code class="language-bash">pcloudc upload pause &lt;SESSION_ID&gt;
+</code></pre>
+<p>Pauses a <code>Pending</code> or <code>InProgress</code> session. Idempotent against already-paused
+sessions. Terminal sessions (<code>Completed</code>, <code>Failed</code>, <code>Cancelled</code>) are rejected
+with <code>Conflict</code>.</p>
+<h4 id="upload-resume"><a class="header" href="#upload-resume"><code>upload resume</code></a></h4>
+<pre><code class="language-bash">pcloudc upload resume &lt;SESSION_ID&gt;
+</code></pre>
+<p>Resumes a <code>Paused</code> session back to <code>InProgress</code>. Rejects sessions that are
+not currently paused.</p>
+<h4 id="upload-cancel"><a class="header" href="#upload-cancel"><code>upload cancel</code></a></h4>
+<pre><code class="language-bash">pcloudc upload cancel &lt;SESSION_ID&gt;
+</code></pre>
+<p>Cancels any non-terminal session. Idempotent against already-cancelled
+sessions. Terminal <code>Completed</code> and <code>Failed</code> sessions are rejected.</p>
+<h4 id="upload-list"><a class="header" href="#upload-list"><code>upload list</code></a></h4>
+<pre><code class="language-bash">pcloudc upload list
+pcloudc upload ls
+pcloudc upload              # bare 'upload' defaults to list
+</code></pre>
+<p>Returns a JSON array of all upload sessions known to the running daemon.
+Each entry includes <code>id</code>, <code>path</code>, <code>remote_name</code>, <code>state</code>, <code>conflict_mode</code>,
+<code>offset</code>, <code>total_bytes</code>, <code>created_at</code>, <code>updated_at</code>, and <code>history</code>.</p>
+<h3 id="423-help"><a class="header" href="#423-help">4.23 <code>help</code></a></h3>
+<p><code>help</code>, <code>--help</code>, <code>-h</code>, <code>?</code> all route to the help command. In <code>--json</code>
+mode prints a structured success envelope so pipelines never choke on
+help text.</p>
+<h3 id="424-account-management"><a class="header" href="#424-account-management">4.24 Account Management</a></h3>
+<p>All account-management commands use the two-token form <code>account &lt;subcommand&gt;</code> or the single-token canonical alias <code>account-&lt;subcommand&gt;</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Two-token form</th><th>Single-token alias</th><th>Auth required</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>account verify-email</code></td><td><code>account-verify-email</code></td><td>Yes</td><td>Trigger a server-side verification email for the active session.</td></tr>
+<tr><td><code>account verify-email-restricted &lt;TOKEN&gt;</code></td><td><code>account-verify-email-restricted</code></td><td>No</td><td>Verify email via an out-of-band verify token (no session needed).</td></tr>
+<tr><td><code>account lost-password &lt;EMAIL&gt;</code></td><td><code>account-lost-password</code></td><td>No</td><td>Send a password-reset email to the given address. Aliases: <code>account reset-password</code>, <code>account forgot-password</code>.</td></tr>
+<tr><td><code>account change-password</code></td><td><code>account-change-password</code></td><td>Yes</td><td>Change the account password. Prompts for old and new password.</td></tr>
+<tr><td><code>account register &lt;EMAIL&gt;</code></td><td><code>account-register</code></td><td>No</td><td>Register a new pCloud account. Requires <code>--accept-terms</code>.</td></tr>
+<tr><td><code>account api-servers</code></td><td><code>account-api-servers</code></td><td>No</td><td>List available pCloud API server regions.</td></tr>
+<tr><td><code>account set-api-server &lt;LOCATION_ID&gt; &lt;BINAPI&gt;</code></td><td><code>account-set-api-server</code></td><td>No</td><td>Pin the daemon to a specific API server region.</td></tr>
+<tr><td><code>account set-language &lt;LANG&gt;</code></td><td><code>account-set-language</code></td><td>Yes</td><td>Set the account language preference (IETF tag, e.g. <code>en</code>, <code>de</code>).</td></tr>
+<tr><td><code>account promo</code></td><td><code>account-promo</code></td><td>Yes</td><td>Fetch the promotional URL for this platform/locale.</td></tr>
+</tbody>
+</table>
+</div>
+<h4 id="account-verify-email"><a class="header" href="#account-verify-email"><code>account verify-email</code></a></h4>
+<p><strong>Purpose.</strong> Ask the pCloud server to send a fresh email-verification
+message to the address on file for the active session. Use this when a
+new account’s verification email was lost or expired. Mirrors C
+<code>psync_verify_email</code>.</p>
+<pre><code class="language-bash">pcloudc account verify-email
+</code></pre>
+<h4 id="account-verify-email-restricted-token"><a class="header" href="#account-verify-email-restricted-token"><code>account verify-email-restricted &lt;TOKEN&gt;</code></a></h4>
+<p><strong>Purpose.</strong> Verify the account email address using a <code>verify_token</code>
+(a short-lived token delivered in the verification email link, not the
+session auth token). This variant does not require an active authenticated
+session — it can be used from any context that has the token. Mirrors C
+<code>psync_verify_email_restricted</code>.</p>
+<pre><code class="language-bash">pcloudc account verify-email-restricted eyJhbGciOiJSUzI1NiIs...
+</code></pre>
+<h4 id="account-lost-password-email"><a class="header" href="#account-lost-password-email"><code>account lost-password &lt;EMAIL&gt;</code></a></h4>
+<p><strong>Purpose.</strong> Send a password-reset email to the specified pCloud account
+address. No authentication required — this is a pre-login recovery flow.
+Mirrors C <code>psync_lost_password</code>.</p>
+<pre><code class="language-bash">pcloudc account lost-password alice@example.com
+# Server sends a password-reset link to alice@example.com.
+</code></pre>
+<p><strong>Failure modes.</strong> <code>7 Conflict</code> (address not found on pCloud),
+<code>4 Network</code> (API unreachable), <code>2 Usage</code> (missing email argument).</p>
+<h4 id="account-change-password"><a class="header" href="#account-change-password"><code>account change-password</code></a></h4>
+<p><strong>Synopsis.</strong></p>
+<pre><code>pcloudc account change-password [--password-stdin] [--password-env VAR]
+</code></pre>
+<p><strong>Purpose.</strong> Change the pCloud account login password. The daemon prompts
+for the current password and a new password, then calls the pCloud API.
+A new auth token is returned by the server and installed in the running
+session automatically. Mirrors C <code>psync_change_password</code>.</p>
+<p>Password input follows the same secure-source priority as <code>login</code>:
+<code>--password-stdin</code> → <code>--password-env VAR</code> → interactive <code>rpassword</code>
+prompt. The current password is never written to disk.</p>
+<pre><code class="language-bash"># Fully interactive:
+pcloudc account change-password
+
+# Pipe old password from a secret manager:
+pass show pcloud/current | pcloudc account change-password --password-stdin
+</code></pre>
+<p><strong>Failure modes.</strong> <code>3 Unauthorized</code> (wrong current password),
+<code>7 Conflict</code> (new password rejected by server policy),
+<code>4 Network</code>, <code>2 Usage</code>.</p>
+<h4 id="account-register-email"><a class="header" href="#account-register-email"><code>account register &lt;EMAIL&gt;</code></a></h4>
+<p><strong>Synopsis.</strong></p>
+<pre><code>pcloudc account register &lt;EMAIL&gt; [--accept-terms]
+</code></pre>
+<p><strong>Purpose.</strong> Register a new pCloud account. No existing session required.
+The new account’s password is read via the same secure-source priority as
+<code>login</code>. Terms of Service acceptance is required — pass <code>--accept-terms</code>
+for non-interactive scripts. Mirrors C <code>psync_register</code>.</p>
+<pre><code class="language-bash">pcloudc account register newuser@example.com --accept-terms
+</code></pre>
+<p><strong>Failure modes.</strong> <code>7 Conflict</code> (email already registered),
+<code>2 Usage</code> (terms not accepted), <code>4 Network</code>.</p>
+<h4 id="account-api-servers"><a class="header" href="#account-api-servers"><code>account api-servers</code></a></h4>
+<p><strong>Purpose.</strong> List the available pCloud API server regions. Returns a JSON
+array of <code>{label, api, binapi, location_id}</code> objects. No authentication
+required. Useful for locating the right <code>location_id</code> to pass to
+<code>account set-api-server</code>.</p>
+<pre><code class="language-bash">pcloudc --json account api-servers | jq '.[] | {id: .location_id, label}'
+</code></pre>
+<h4 id="account-set-api-server-location_id-binapi"><a class="header" href="#account-set-api-server-location_id-binapi"><code>account set-api-server &lt;LOCATION_ID&gt; &lt;BINAPI&gt;</code></a></h4>
+<p><strong>Purpose.</strong> Pin the daemon to a specific pCloud API server region. The
+<code>location_id</code> and <code>binapi</code> hostname come from <code>account api-servers</code>.
+Persists to the store and updates all live protocol transports. Silently
+rejected (<code>InvalidRequest</code>) when the daemon’s <code>data_residency</code> policy
+does not allow the target region. Mirrors C <code>psync_set_api_server</code>.</p>
+<pre><code class="language-bash"># Pin to the US region (find LOCATION_ID from api-servers output):
+pcloudc account set-api-server 1 binapi.pcloud.com
+</code></pre>
+<p><strong>Failure modes.</strong> <code>7 Conflict</code> (policy rejection), <code>2 Usage</code> (invalid
+args), <code>4 Network</code>.</p>
+<h4 id="account-set-language-lang"><a class="header" href="#account-set-language-lang"><code>account set-language &lt;LANG&gt;</code></a></h4>
+<p><strong>Purpose.</strong> Set the account language preference on the server. <code>&lt;LANG&gt;</code>
+is an IETF language tag (e.g. <code>en</code>, <code>de</code>, <code>fr</code>, <code>es</code>). Requires an
+authenticated session. Mirrors C <code>psync_set_language</code>.</p>
+<pre><code class="language-bash">pcloudc account set-language de
+</code></pre>
+<h4 id="account-promo"><a class="header" href="#account-promo"><code>account promo</code></a></h4>
+<p><strong>Purpose.</strong> Fetch the promotional banner URL for the current
+platform/locale. Returns a JSON object <code>{url, width, height}</code> in
+<code>message</code>, or the string <code>"no promo"</code> when the server has no active
+promotion. Requires an authenticated session. Mirrors C <code>psync_get_promo</code>.</p>
+<pre><code class="language-bash">pcloudc --json account promo | jq '.message | fromjson | .url'
+</code></pre>
+<h3 id="425-downloads"><a class="header" href="#425-downloads">4.25 Downloads</a></h3>
+<p>Two-token form: <code>download &lt;subcommand&gt;</code>. Short alias <code>dl</code>. Single-token
+canonical forms: <code>download-link</code>, <code>download-file</code>.</p>
+<h4 id="download-link-file_id-two-token-download-link"><a class="header" href="#download-link-file_id-two-token-download-link"><code>download link &lt;FILE_ID&gt;</code> (two-token: <code>download link</code>)</a></h4>
+<p><strong>Synopsis.</strong></p>
+<pre><code>pcloudc download link &lt;FILE_ID&gt;
+</code></pre>
+<p><strong>Purpose.</strong> Resolve the download URL for a remote file by its numeric id.
+Returns a JSON object with <code>hosts</code>, <code>path</code>, and <code>download_tag</code> fields.
+Requires an authenticated session. Mirrors C <code>psync_get_file_link</code> /
+the pCloud <code>getfilelink</code> API call.</p>
+<p>The resolved URL is time-limited and account-specific. It can be passed
+to <code>curl</code> or <code>wget</code> for immediate download.</p>
+<pre><code class="language-bash"># Get the download link for file 987654321:
+pcloudc --json download link 987654321 | jq '.message | fromjson | .hosts[0] + .path'
+</code></pre>
+<p><strong>Field-selector recipe.</strong></p>
+<pre><code class="language-bash">pcloudc --field path download link 987654321
+</code></pre>
+<p><strong>Failure modes.</strong> <code>3 Unauthorized</code> (no session), <code>7 Conflict</code> (file id
+not found), <code>4 Network</code>.</p>
+<h4 id="download-file-file_id-local_path-two-token-download-file"><a class="header" href="#download-file-file_id-local_path-two-token-download-file"><code>download file &lt;FILE_ID&gt; &lt;LOCAL_PATH&gt;</code> (two-token: <code>download file</code>)</a></h4>
+<p><strong>Synopsis.</strong></p>
+<pre><code>pcloudc download file &lt;FILE_ID&gt; &lt;LOCAL_PATH&gt;
+</code></pre>
+<p><strong>Purpose.</strong> Download a remote file by its numeric id to a local absolute
+path. Internally resolves the download URL via <code>getfilelink</code>, then
+performs an HTTPS fetch and writes the bytes to <code>&lt;LOCAL_PATH&gt;</code>. Requires
+an authenticated session.</p>
+<p><code>&lt;LOCAL_PATH&gt;</code> must be an absolute path. The file is written atomically
+(staged to a temp path in the same directory, then renamed). If the
+destination exists, it is overwritten.</p>
+<pre><code class="language-bash">pcloudc download file 987654321 /tmp/downloaded.pdf
+</code></pre>
+<p><strong>Failure modes.</strong> <code>3 Unauthorized</code> (no session), <code>7 Conflict</code> (file id
+not found), <code>4 Network</code> (download failed mid-transfer), <code>2 Usage</code> (missing
+path argument).</p>
+<hr>
+<h2 id="5-field-selection"><a class="header" href="#5-field-selection">5. Field Selection</a></h2>
+<h3 id="beginner-intro-1"><a class="header" href="#beginner-intro-1">Beginner intro</a></h3>
+<p><code>--field quota userinfo</code> is “run <code>userinfo</code> and print only the
+<code>quota</code> key”. Multiple <code>--field</code> flags stack in the order you pass
+them. The selector works on any command; commands whose message is
+not parseable into an object just return the empty selector’s value.</p>
+<h3 id="grammar"><a class="header" href="#grammar">Grammar</a></h3>
+<pre><code>selector    := "." | "" | path
+path        := segment ("." segment)*
+segment     := key | index
+key         := &lt;any run of non-"." characters&gt;
+index       := &lt;0-9&gt;+
+</code></pre>
+<ul>
+<li><code>"."</code> and <code>""</code> select the whole parsed value.</li>
+<li>A leading <code>.</code> is tolerated (<code>.quota</code> ≡ <code>quota</code>) for jq muscle
+memory.</li>
+<li>A segment is treated as an <strong>array index</strong> only if it parses as
+<code>usize</code> end-to-end — <code>quota.0</code> picks element <code>0</code> of <code>quota</code> when
+<code>quota</code> is an array, and picks the key <code>"0"</code> otherwise.</li>
+</ul>
+<h3 id="accepted-message-shapes"><a class="header" href="#accepted-message-shapes">Accepted message shapes</a></h3>
+<p>The selector runs against
+<code>field_selector::parse_message_to_json(&amp;response.message)</code>:</p>
+<ol>
+<li><strong>Real JSON.</strong> <code>{"quota":10737418240,"premium":false}</code> — parsed
+directly.</li>
+<li><strong>Legacy flat <code>key=value, key=value</code>.</strong> Optionally prefixed with
+<code>ident: </code>. Values are inferred as number / bool / string. Useful
+for <code>userinfo</code>, <code>crypto-status</code>, several sync responses.</li>
+<li><strong>Plain text.</strong> Returned as <code>Value::String</code>. Only the empty
+selector matches.</li>
+</ol>
+<h3 id="error-semantics"><a class="header" href="#error-semantics">Error semantics</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Error</th><th>Exit</th><th>Example message</th></tr>
+</thead>
+<tbody>
+<tr><td>Key not found on an object</td><td><code>2 Usage</code></td><td><code>field not found: 'quota.bogus'. available: premium, quota, usedquota</code></td></tr>
+<tr><td>Index out of range</td><td><code>2 Usage</code></td><td><code>field not found: 'links.99.code'. available: [0..5]</code></td></tr>
+<tr><td>Type mismatch (key on array, index on scalar)</td><td><code>2 Usage</code></td><td><code>type mismatch at 'quota': expected object, got number</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Error messages <strong>never echo user-supplied values</strong>; they print field
+names and sibling keys only.</p>
+<h3 id="security-invariant"><a class="header" href="#security-invariant">Security invariant</a></h3>
+<p>The selector only touches <code>Response::message</code>. The daemon already
+stripped every secret-bearing field upstream, and the secret wrappers
+(<code>SecretString</code>, <code>SecretBytes</code>) do not implement <code>Serialize</code> for
+their protected payload, so a selector cannot reach into them. This
+is pinned by <code>assert_no_secret_in_value</code> in <code>field_selector.rs</code>.</p>
+<h3 id="json-vs-text-rendering"><a class="header" href="#json-vs-text-rendering">JSON vs text rendering</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Mode</th><th>Output</th></tr>
+</thead>
+<tbody>
+<tr><td>Text, one <code>--field</code></td><td>Bare value, no prefix.</td></tr>
+<tr><td>Text, multiple <code>--field</code></td><td>One value per line, in selector order.</td></tr>
+<tr><td><code>--json</code></td><td><code>JsonEnvelope::Filtered { command, status, fields, exit_code }</code>; <code>fields</code> is keyed by the original dotted path. Map ordering is alphabetical — use text mode if you need selector order in JSON.</td></tr>
+</tbody>
+</table>
+</div>
+<hr>
+<h2 id="6-exit-codes"><a class="header" href="#6-exit-codes">6. Exit Codes</a></h2>
+<p>Stable ABI (see <code>EXIT_CODE_HELP</code> in <code>exit_code.rs</code>).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Code</th><th>Variant</th><th>When you will see it</th></tr>
+</thead>
+<tbody>
+<tr><td><code>0</code></td><td><code>Ok</code></td><td>Command completed successfully.</td></tr>
+<tr><td><code>1</code></td><td><code>GenericError</code></td><td>Fallback bucket — classifier couldn’t do better. Usually indicates a CLI-internal bug; file a ticket.</td></tr>
+<tr><td><code>2</code></td><td><code>Usage</code></td><td>Unknown flag / missing arg / selector not found / IPC <code>InvalidRequest</code>. First line of triage: re-read <code>pcloudc --help</code>.</td></tr>
+<tr><td><code>3</code></td><td><code>Auth</code></td><td>Bad credentials, expired token, TFA cancel, daemon <code>Unauthorized</code>, or transport errors that match <code>auth*fail*</code> / <code>unauthorized</code>.</td></tr>
+<tr><td><code>4</code></td><td><code>Network</code></td><td>Socket refused, connect timeout, broken pipe, “no such file” (socket missing), generic transport words. If <code>doctor</code> cannot reach the IPC endpoint, you’ll get <code>4</code> from every downstream command.</td></tr>
+<tr><td><code>5</code></td><td><code>CryptoLocked</code></td><td>Crypto path locked or unavailable. Common when a sync root lives inside a crypto folder and the user hasn’t run <code>unlock-crypto</code>.</td></tr>
+<tr><td><code>6</code></td><td><code>Unavailable</code></td><td>Daemon unreachable, feature disabled, or an endpoint that’s wired but gated. Also the canonical <code>doctor</code> failure code.</td></tr>
+<tr><td><code>7</code></td><td><code>Conflict</code></td><td>Duplicate sync root, already-mounted path, GPG key missing, audit chain break, <code>verify</code> mismatch, <code>PolicyViolation</code>.</td></tr>
+<tr><td><code>8</code></td><td><code>Internal</code></td><td>Daemon reported <code>InternalError</code>. Treat as a bug — collect <code>daemon.log</code>, trace id, and <code>audit verify</code> output; file a ticket.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Forward-compat: patch/minor releases MAY add new codes <strong>at the end</strong>
+of the enum but MUST NOT change or reuse existing values; removing or
+renumbering a code requires a major release.</p>
+<hr>
+<h2 id="7-environment-variables"><a class="header" href="#7-environment-variables">7. Environment Variables</a></h2>
+<h3 id="read-by-the-cli"><a class="header" href="#read-by-the-cli">Read by the CLI</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Variable</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>PCLOUD_ROOT</code></td><td>Override the base runtime/state/config root (used for multi-instance setups; all derived paths fan out from here).</td></tr>
+<tr><td><code>PCLOUD_ENV</code></td><td>Named environment profile (<code>dev</code>, <code>prod</code>, etc.) — selects a config overlay.</td></tr>
+<tr><td><code>PCLOUD_API_MODE</code></td><td>Transport policy. Production rejects any plaintext downgrade.</td></tr>
+<tr><td><code>PCLOUD_API_HOST</code>, <code>PCLOUD_API_PORT</code></td><td>API host / port override. Validated; production TLS policy is not relaxed.</td></tr>
+<tr><td><code>PCLOUD_API_SERVER_NAME</code></td><td>Named API server (friendly alias for host/port pair).</td></tr>
+<tr><td><code>PCLOUD_DURABLE_AUTH_TOKENS</code></td><td><code>1</code> to opt-in to vault persistence. Defaults off.</td></tr>
+<tr><td><code>PCLOUD_CACHE_SIZE_GB</code></td><td>FUSE cache budget, in GiB. Takes precedence over <code>[mount].cache_size_mb</code>.</td></tr>
+<tr><td><code>PCLOUD_MOUNT_CACHE_SIZE_MB</code></td><td>Page-cache memory budget in MiB (default 256).</td></tr>
+<tr><td><code>PCLOUD_MOUNT_PAGE_CACHE_ENTRIES</code></td><td>Max metadata-cache entries (default 4096).</td></tr>
+<tr><td><code>PCLOUD_MOUNT_METADATA_TTL_SECS</code></td><td>Metadata-cache TTL in seconds (default 60).</td></tr>
+<tr><td><code>PCLOUD_DEFAULT_MOUNTPOINT</code></td><td>Default <code>-m</code> target for <code>login</code> / <code>mount</code>.</td></tr>
+<tr><td><code>PCLOUD_LOG_PATH</code></td><td>Daemon log destination (owner-only <code>0600</code>).</td></tr>
+<tr><td><code>PCLOUD_FS_EVENT_LOG</code></td><td>Separate fs-event log path.</td></tr>
+<tr><td><code>PCLOUD_LOG_LEVEL</code></td><td>Fallback when no <code>-v</code> flag is passed (<code>warn</code>, <code>info</code>, <code>debug</code>, <code>trace</code>).</td></tr>
+<tr><td><code>PCLOUD_FUSE_OPTS</code></td><td>Comma-separated FUSE opts; <code>allow_other</code> / <code>allow_root</code> are silently stripped.</td></tr>
+<tr><td><code>PCLOUD_CONFIG</code></td><td>Path to <code>config.toml</code> when <code>--config</code> is not given.</td></tr>
+<tr><td><code>PCLOUD_FORCE_UMOUNT</code></td><td>Set to <code>0</code> to refuse <code>mount --force-umount</code> escalation.</td></tr>
+<tr><td><code>TRACEPARENT</code></td><td>W3C trace context, adopted verbatim when well-formed. Malformed values are silently dropped. See <a href="#36---trace-id-hex---traceparent">§3.6</a>.</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="rationale"><a class="header" href="#rationale">Rationale</a></h3>
+<ul>
+<li>Every variable is read <strong>once</strong> at startup; <code>pcloudc</code> does not
+re-read them between commands (nothing to race).</li>
+<li><code>--password-env VAR</code> calls <code>unsetenv(VAR)</code> immediately after reading,
+so the password is invisible to <code>/proc/self/environ</code> afterwards.</li>
+<li>Any envvar that contains a path is validated the same way a config
+value is — mode bits, ownership, world-access checks.</li>
+<li>See <a href="./config.html">Configuration</a> for the full list with default
+values and per-key security notes.</li>
+</ul>
+<hr>
+<h2 id="8-configuration-integration"><a class="header" href="#8-configuration-integration">8. Configuration Integration</a></h2>
+<p>Precedence order (highest wins):</p>
+<ol>
+<li>Flags on the command line (e.g. <code>--config</code>, <code>--log-level</code>,
+<code>--cache-size</code>).</li>
+<li>Environment variables (see §7).</li>
+<li><code>~/.pcloud/config.toml</code> (or <code>$PCLOUD_CONFIG</code> / <code>--config &lt;PATH&gt;</code>).</li>
+<li>Compiled-in defaults.</li>
+</ol>
+<p><code>pcloudc</code> never rewrites <code>config.toml</code> automatically — there is no
+<code>config set</code> surface on the CLI; edit the file and restart the daemon
+(or let <code>authsave</code> do its scoped write to the auth vault). This is an
+intentional divergence from the legacy C client, chosen so a typo in
+a live environment cannot persist itself.</p>
+<hr>
+<h2 id="9-observability--tracing"><a class="header" href="#9-observability--tracing">9. Observability &amp; Tracing</a></h2>
+<ul>
+<li><strong>Single invocation.</strong> Use <code>--trace-id &lt;HEX&gt;</code> to force-sample one
+call and correlate across CLI, daemon, and downstream HTTP calls.</li>
+<li><strong>Distributed context.</strong> Export <code>TRACEPARENT=...</code> before running
+<code>pcloudc</code> from a traced parent job (most CI runners do this
+automatically).</li>
+<li><strong>Echo on stderr.</strong> The chosen traceparent is printed once to
+stderr as <code>[trace: 00-&lt;trace&gt;-&lt;span&gt;-01]</code> before the result. Copy
+that line into support tickets; it’s enough to locate every log
+message for the call.</li>
+<li><strong>Log correlation.</strong> The daemon includes the same trace id in every
+structured log line, so <code>journalctl -u pcloudd | grep &lt;id&gt;</code>
+gives you the full server-side picture.</li>
+</ul>
+<p>See the enterprise tracing doc (<code>docs/enterprise/tracing.md</code>)
+for exporter configuration and retention.</p>
+<hr>
+<h2 id="10-scripting-patterns"><a class="header" href="#10-scripting-patterns">10. Scripting Patterns</a></h2>
+<p>Ten recipes. All shell-only; no <code>jq</code>.</p>
+<h3 id="101-liveness-probe"><a class="header" href="#101-liveness-probe">10.1 Liveness probe</a></h3>
+<pre><code class="language-bash">pcloudc -q status || systemctl restart pcloudd
+</code></pre>
+<h3 id="102-token-health-for-ci"><a class="header" href="#102-token-health-for-ci">10.2 Token health for CI</a></h3>
+<pre><code class="language-bash">STATUS=$(pcloudc --json --field status session-status)
+case "$STATUS" in
+  *"\"ok\""*) ;;
+  *) echo "session unhealthy"; exit 3;;
+esac
+</code></pre>
+<h3 id="103-bulk-link-cleanup"><a class="header" href="#103-bulk-link-cleanup">10.3 Bulk link cleanup</a></h3>
+<pre><code class="language-bash"># Delete every public link older than 90 days.
+NINETY=$(date -u -d "90 days ago" +%s)
+pcloudc --json list-links \
+  | while IFS= read -r line; do
+      id=$(printf '%s' "$line" | pcloudc --field id --json show-link)
+      created=$(printf '%s' "$line" | pcloudc --field created --json show-link)
+      [ "$created" -lt "$NINETY" ] &amp;&amp; pcloudc delete-link "$id"
+    done
+</code></pre>
+<h3 id="104-nightly-backup-via-cron"><a class="header" href="#104-nightly-backup-via-cron">10.4 Nightly backup via cron</a></h3>
+<pre><code class="language-cron">15 2 * * *  pcloud-rs  ( \
+  pcloudc backup snapshot-create \
+      --gpg-recipient dr-team@example.com \
+      --label "nightly-$(date -u +\%F)" \
+ &amp;&amp; LATEST=$(ls -t /var/backups/pcloud-rs/*.tar.gpg | head -1) \
+ &amp;&amp; pcloudc backup snapshot-verify "$LATEST" \
+ &amp;&amp; pcloudc backup snapshot-prune --retention-days 14 \
+ ) &gt;&gt; /var/log/pcloud-rs/backup.log 2&gt;&amp;1
+</code></pre>
+<h3 id="105-integrity-sweeper-scheduler"><a class="header" href="#105-integrity-sweeper-scheduler">10.5 Integrity sweeper scheduler</a></h3>
+<pre><code class="language-bash"># /etc/systemd/system/pcloud-integrity.timer → OnCalendar=*-*-* 03:30:00
+pcloudc integrity run-once
+EXIT=$?
+if [ "$EXIT" -eq 7 ]; then
+  alert "pcloud integrity mismatch"
+fi
+</code></pre>
+<h3 id="106-scripted-sync-reconcile"><a class="header" href="#106-scripted-sync-reconcile">10.6 Scripted sync reconcile</a></h3>
+<pre><code class="language-bash">pcloudc verify "$SYNC_ROOT" --recursive &gt; /tmp/verify.log
+if grep -q '^\[MISMATCH' /tmp/verify.log; then
+  pcloudc verify "$SYNC_ROOT" --recursive --fix --yes
+fi
+</code></pre>
+<h3 id="107-audit-chain-watchdog"><a class="header" href="#107-audit-chain-watchdog">10.7 Audit chain watchdog</a></h3>
+<pre><code class="language-bash">pcloudc --quiet audit verify
+[ $? -eq 7 ] &amp;&amp; page-oncall "pcloud audit chain break"
+</code></pre>
+<h3 id="108-quota-headroom-alert"><a class="header" href="#108-quota-headroom-alert">10.8 Quota headroom alert</a></h3>
+<pre><code class="language-bash">Q=$(pcloudc --field quota userinfo)
+U=$(pcloudc --field usedquota userinfo)
+HEADROOM=$(( (Q - U) * 100 / Q ))
+[ "$HEADROOM" -lt 10 ] &amp;&amp; alert "pcloud &lt;10% free"
+</code></pre>
+<h3 id="109-force-umount-stuck-mount"><a class="header" href="#109-force-umount-stuck-mount">10.9 Force-umount stuck mount</a></h3>
+<pre><code class="language-bash">if ! mountpoint -q /mnt/pcloud; then
+  PCLOUD_FORCE_UMOUNT=1 pcloudc mount --force-umount /mnt/pcloud
+fi
+</code></pre>
+<h3 id="1010-correlation-id-fanout"><a class="header" href="#1010-correlation-id-fanout">10.10 Correlation-id fanout</a></h3>
+<pre><code class="language-bash">TID=$(python3 -c 'import secrets; print(secrets.token_hex(16))')
+pcloudc --trace-id "$TID" sync-add "$L" "$R"
+pcloudc --trace-id "$TID" sync-list
+journalctl -u pcloudd --since "-5m" | grep "$TID"
+</code></pre>
+<hr>
+<h2 id="11-versioning-policy"><a class="header" href="#11-versioning-policy">11. Versioning Policy</a></h2>
+<ul>
+<li><strong>Flag names</strong> (§3 and <code>known_flag_names</code>) are additive under
+semver. Removing or renaming any global flag requires a major
+release with a changelog migration note.</li>
+<li><strong>Command tokens</strong> (<code>canonical_token_for</code>) are additive. Legacy
+aliases resolved by <code>normalize_args</code> are preserved as long as they
+have shipped in a stable release.</li>
+<li><strong>Exit codes</strong> (§6) follow the stable-ABI guarantee in
+<code>ExitCode</code>: values may be added at the end; existing values never
+change or get reused.</li>
+<li><strong>JSON envelope</strong> (<code>JsonEnvelope</code>) is stable; new fields may be
+added, existing fields never change shape.</li>
+<li><strong><code>--json</code> output format</strong> is the only machine-readable contract;
+text output is stable for readability but <strong>not</strong> parse-stable.
+Scripts should always pass <code>--json</code> (and optionally <code>--field</code>).</li>
+</ul>
+<p><strong>Pre-alpha caveat.</strong> Until <code>bd-1du.10</code> closes and the project
+declares beta, any of the above may tighten <strong>only</strong> in the
+restricting direction (more validation, stricter rejection). No
+silent relaxations.</p>
+<hr>
+<h2 id="12-see-also"><a class="header" href="#12-see-also">12. See Also</a></h2>
+<ul>
+<li><a href="./config.html">Configuration</a> — <code>config.toml</code> schema, all <code>PCLOUD_*</code>
+variables, mode-bit and ownership invariants.</li>
+<li><a href="./ipc-protocol.html">IPC Protocol</a> — wire format for the request the
+CLI actually sends.</li>
+<li><a href="./exit-codes.html">Exit Codes</a> — standalone exit-code reference.</li>
+<li><a href="../operations/backup-snapshots.html">Operations: Backup Snapshots</a> —
+GPG key management, offsite destinations.</li>
+<li><a href="../../../enterprise/tracing.html">Enterprise: Tracing</a> — trace-id
+propagation, exporter configuration.</li>
+<li><code>pcloudc(1)</code> — manpage (<code>docs/man/pcloudc.1</code>).</li>
+<li>C-to-Rust parity matrix: <code>C_FEATURE_PARITY_MATRIX.csv</code>.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../development/adding-a-plugin.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../reference/sdk.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../development/adding-a-plugin.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../reference/sdk.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

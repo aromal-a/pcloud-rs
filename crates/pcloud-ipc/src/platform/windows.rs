@@ -125,7 +125,7 @@ const PIPE_DEFAULT_TIMEOUT_MS: u32 = 0;
 
 /// Windows backend for [`PlatformIpc`]. Uses named pipes + per-user DACL
 /// + `GetNamedPipeClientProcessId` SID comparison to provide the same
-/// "owner-only local IPC" guarantee the Unix backends offer.
+///   "owner-only local IPC" guarantee the Unix backends offer.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct WindowsIpc;
 
@@ -170,6 +170,7 @@ impl CancelEvent {
         // thread-safe. Failure here is diagnostic-only — the worst
         // case is a missed wake-up, which the outer loop recovers from
         // on its next iteration.
+        // SAFETY: see paragraph above.
         unsafe {
             let _ = SetEvent(self.handle);
         }
@@ -198,7 +199,9 @@ impl Drop for CancelEvent {
 // We never mutate the HANDLE field through a shared reference; the
 // only operation on shared `&CancelEvent` is `SetEvent`, which is
 // inherently thread-safe.
+// SAFETY: see block above.
 unsafe impl Send for CancelEvent {}
+// SAFETY: see block above.
 unsafe impl Sync for CancelEvent {}
 
 /// Owned, bound named-pipe listener.
@@ -275,6 +278,7 @@ impl Drop for WindowsStream {
 // serializes access to a single overlapped-IO structure; we never share
 // the handle across threads concurrently (the serve loop owns it for
 // the lifetime of one request/response).
+// SAFETY: see block above.
 unsafe impl Send for WindowsStream {}
 
 impl PlatformIpc for WindowsIpc {
@@ -363,8 +367,10 @@ impl WindowsListener {
             }
         };
 
-        let mut overlapped: OVERLAPPED = OVERLAPPED::default();
-        overlapped.hEvent = connect_event.raw();
+        let mut overlapped = OVERLAPPED {
+            hEvent: connect_event.raw(),
+            ..OVERLAPPED::default()
+        };
 
         // SAFETY: `handle` is a live overlapped-mode pipe, `overlapped`
         // is a stack-allocated OVERLAPPED that outlives the call, and
@@ -459,6 +465,13 @@ impl WindowsListener {
                 // Abandoned/timeout on INFINITE wait: shouldn't
                 // happen, but stay safe.
                 cancel_pending_connect(handle, &overlapped);
+                // SAFETY: `handle` was returned by `CreateNamedPipeW`
+                // earlier in this function, has not been moved into a
+                // wrapper, and we are on the only path that owns it
+                // here. `CloseHandle` accepts a HANDLE this thread
+                // owns; the result is intentionally discarded because
+                // we are already on an error path.
+                // SAFETY: see paragraph above.
                 unsafe {
                     let _ = CloseHandle(handle);
                 }
@@ -559,6 +572,8 @@ fn cancel_pending_connect(handle: HANDLE, overlapped: &OVERLAPPED) {
     // ERROR_OPERATION_ABORTED (or ERROR_BROKEN_PIPE if the pipe got
     // torn down concurrently). Either is acceptable — we only need
     // the drain.
+    // SAFETY: see paragraph above; `handle` and `overlapped` are
+    // both still owned by the caller for the duration of this drain.
     unsafe {
         let _ = GetOverlappedResult(handle, overlapped, &mut _transferred, true);
         // Swallow GetLastError: expected values are
@@ -737,7 +752,7 @@ pub fn connect_client() -> Result<WindowsStream, IpcTransportError> {
                     continue;
                 }
                 return Err(IpcTransportError::Io(std::io::Error::from_raw_os_error(
-                    code.0 as i32,
+                    code.0,
                 )));
             }
         }
@@ -760,7 +775,7 @@ fn create_pipe_instance(pipe_path: &str, owner_sid: &str) -> Result<HANDLE, IpcT
     let sddl = format!("D:(A;;GRGW;;;{})", owner_sid);
     let sd = SecurityDescriptor::from_sddl(&sddl)?;
 
-    let mut sa = SECURITY_ATTRIBUTES {
+    let sa = SECURITY_ATTRIBUTES {
         nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
         lpSecurityDescriptor: sd.as_ptr(),
         bInheritHandle: BOOL(0),
@@ -781,7 +796,7 @@ fn create_pipe_instance(pipe_path: &str, owner_sid: &str) -> Result<HANDLE, IpcT
             PIPE_BUFFER_BYTES,
             PIPE_BUFFER_BYTES,
             PIPE_DEFAULT_TIMEOUT_MS,
-            Some(&mut sa),
+            Some(&sa),
         )
     };
 

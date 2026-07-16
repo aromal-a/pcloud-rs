@@ -60,11 +60,6 @@ fn main() {
                 out_path.display()
             )
         });
-        println!(
-            "cargo:warning=pcloud-crypto: using vendored password dictionary ({}) — legacy C header {} not present",
-            vendored.display(),
-            header.display()
-        );
         return;
     }
 

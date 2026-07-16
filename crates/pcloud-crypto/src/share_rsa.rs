@@ -44,7 +44,7 @@
 //! * The ciphertext length is asserted to be exactly `PCLSYNC_RSA_BYTES`
 //!   (= 512), matching `prsa_encrypt_data` in `pssl.c`.
 //! * All error variants collapse to a single opaque
-//!   [`ShareRsaError::Oaep`] at the public API so a caller cannot
+//!   `ShareRsaError::Oaep` at the public API so a caller cannot
 //!   distinguish bad-pubkey from bad-keyslot (no padding-oracle leak).
 //!
 //! # Not in scope here
@@ -177,7 +177,7 @@ pub fn parse_recipient_pubkey(pub_blob: &[u8]) -> Result<RsaPublicKey, ShareRsaE
 ///   defaults used by the C client (`pssl.c:485-486`, `pssl.c:727-729`).
 /// * Ciphertext length is asserted inside [`pclsync_rsa::oaep_wrap`]
 ///   to be exactly 512 bytes.
-/// * All failure modes collapse to [`ShareRsaError::Oaep`] or
+/// * All failure modes collapse to `ShareRsaError::Oaep` or
 ///   [`ShareRsaError::MalformedPubkey`] — no padding-oracle leaks.
 ///
 /// # Errors
@@ -188,7 +188,7 @@ pub fn parse_recipient_pubkey(pub_blob: &[u8]) -> Result<RsaPublicKey, ShareRsaE
 ///   first via `crypto_getfolderkey` or equivalent).
 /// - [`ShareRsaError::MalformedPubkey`] if the recipient pubkey blob
 ///   is malformed.
-/// - [`ShareRsaError::Oaep`] if the wrap itself fails (bad modulus,
+/// - `ShareRsaError::Oaep` if the wrap itself fails (bad modulus,
 ///   RNG error, etc.).
 pub fn wrap_share_invitation_b64(
     state: &PclsyncCompatState,

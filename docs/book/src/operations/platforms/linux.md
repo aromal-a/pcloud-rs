@@ -1,37 +1,38 @@
 # Linux
 
-Platform notes for running `pcloud-daemon` and `pcloud-cli` on Linux.
+Platform notes for running `pcloudd` and `pcloudc` on Linux.
 Linux is the reference platform for the Rust rewrite and has the most
 complete parity coverage.
 
 ## Support status
 
-- **Tier 1, live-tested.** Linux is the only platform where the mount
-  path is end-to-end verified on real hardware. See the authoritative
+- **Tier 1 target, locally kernel-tested.** Linux is the only platform where
+  the current worktree's mount path has been exercised against a real kernel
+  device. That run used an in-process deterministic backend, not live pCloud
+  credentials or an installed release package. See the authoritative
   support matrix in
   [`architecture/platform-support.md`](../../architecture/platform-support.md).
-- Status legend used on this page: **Live-tested** means a human has
-  booted, mounted, authenticated, and exercised the CLI against a live
-  pCloud account on the stated OS version.
+- Status legend used on this page: **Local kernel-tested** means the ignored
+  real-`/dev/fuse` suite passed on the stated host. **Release-qualified** would
+  additionally require a clean release-commit job, installed-package lifecycle,
+  and credentialed pCloud smoke test; no row currently has that status.
 
-> **Landing status (2026-04-15):** Tier 1. P0–P5 of the cross-platform
-> plan (see [`PLAN_CROSSPLATFORM.md`](../../../../../PLAN_CROSSPLATFORM.md))
-> are landed and live-verified on Linux: `fuser` mount adapter, all FUSE
-> callbacks (read + write path), systemd unit, and nfpm/AUR/Nix/Flatpak/
-> Snap/Docker/AppImage packaging. See
-> [Packaging reference](../../reference/packaging.md) for the full channel
-> matrix.
+> **Landing status (2026-07-16):** Linux is the reference platform, but the
+> published channel set is empty. Tag workflows are defined to build raw Linux
+> x86_64 `pcloudd` / `pcloudc` binaries plus `.deb` and `.rpm` packages, but no
+> public release exists. AppImage, Flatpak, Snap, Docker, AUR, and distro
+> repositories are scaffolds unless the packaging matrix says otherwise.
 
 ## OS version matrix
 
 | Distribution          | Version                 | Kernel      | Status         |
 |-----------------------|-------------------------|-------------|----------------|
-| Ubuntu                | 22.04 LTS, 24.04 LTS    | 5.15 / 6.8  | Live-tested    |
-| Debian                | 12 (bookworm)           | 6.1         | Live-tested    |
-| Fedora                | 39, 40                  | 6.6 / 6.8   | Live-tested    |
-| RHEL / Rocky / Alma   | 9.x                     | 5.14        | Live-tested    |
-| Arch Linux            | rolling                 | >= 6.6      | Live-tested    |
-| openSUSE Leap         | 15.5                    | 5.14        | Live-tested    |
+| Ubuntu                | 22.04 LTS, 24.04 LTS    | 5.15 / 6.8  | Target; no current release-commit evidence |
+| Debian                | 12 (bookworm)           | 6.1         | Target; package smoke pending |
+| Fedora                | 39, 40                  | 6.6 / 6.8   | Target; package smoke pending |
+| RHEL / Rocky / Alma   | 9.x                     | 5.14        | Target; no current release-commit evidence |
+| Arch Linux            | rolling                 | 6.19.11     | Local kernel-tested on 2026-07-16 |
+| openSUSE Leap         | 15.5                    | 5.14        | Target; no current release-commit evidence |
 | Alpine                | 3.19 (glibc only)       | 6.6         | Scaffolded, musl build not gated |
 | RHEL 7 / CentOS 7     | 3.10                    | 3.10        | **Not supported** — FUSE3 missing |
 | Kernel < 5.4          | any                     | <5.4        | **Not supported** — see known gaps |
@@ -41,36 +42,15 @@ Anything not listed is best-effort. File a bead with the exact
 
 ## Install
 
-### Package managers
+### Current availability
 
-Pick the channel matching your distribution:
-
-```bash
-# Debian / Ubuntu (project APT repo)
-curl -fsSL https://apt.pcloud-rs.example/pubkey.asc | \
-  sudo tee /etc/apt/keyrings/pcloud-rs.asc >/dev/null
-echo "deb [signed-by=/etc/apt/keyrings/pcloud-rs.asc] \
-  https://apt.pcloud-rs.example stable main" | \
-  sudo tee /etc/apt/sources.list.d/pcloud-rs.list
-sudo apt update && sudo apt install pcloud-rs
-
-# Fedora / RHEL / Rocky / Alma
-sudo dnf install pcloud-rs
-
-# openSUSE Leap / Tumbleweed
-sudo zypper install pcloud-rs
-
-# Arch (AUR)
-yay -S pcloud-rs
-# or pacman once in community
-sudo pacman -S pcloud-rs
-
-# Nix / NixOS
-nix profile install github:pcloud-rs/pcloud-rs#pcloud-rs
-
-# Alpine (edge testing)
-doas apk add pcloud-rs
-```
+There are no current release artifacts. Nix users can build the checked-out
+source with `nix build .#pcloud-rs`; everyone else should use the source-build
+instructions below. No project APT/YUM/zypper repository, AUR package, Alpine
+package, GHCR image, Flatpak, Snap, AppImage, `.deb`, or `.rpm` is published
+today. See
+[Packaging matrix](../packaging-matrix.md) for the authoritative channel
+status.
 
 ### From source
 
@@ -87,13 +67,13 @@ curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
 . "$HOME/.cargo/env"
 
 # Build
-git clone https://github.com/pcloud-rs/pcloud-rs
+git clone https://github.com/ezechiel203/pcloud-rs
 cd pcloud-rs/
-cargo build --release -p pcloud-daemon -p pcloud-cli
+cargo build --release --locked -p pcloud-daemon -p pcloud-cli
 
-install -Dm0755 target/release/pcloud-daemon \
-  ~/.local/bin/pcloud-daemon
-install -Dm0755 target/release/pcloud-cli \
+install -Dm0755 target/release/pcloudd \
+  ~/.local/bin/pcloudd
+install -Dm0755 target/release/pcloudc \
   ~/.local/bin/pcloudc
 ```
 
@@ -105,7 +85,7 @@ execution:
 ```bash
 sha256sum -c SHA256SUMS.txt
 cosign verify-blob --key release.pub \
-  --signature pcloud-daemon.sig pcloud-daemon
+  --signature pcloudd.sig pcloudd
 ```
 
 ## Config paths (XDG)
@@ -116,13 +96,12 @@ or `$HOME` for secret material.
 
 | Role               | Path                                                     | Mode  |
 |--------------------|----------------------------------------------------------|-------|
-| Config             | `$XDG_CONFIG_HOME/pcloud-rs/config.toml` (`~/.config/pcloud-rs/config.toml`) | 0600  |
-| State (store)      | `$XDG_DATA_HOME/pcloud-rs/store.sqlite` (+`-wal`,`-shm`) (`~/.local/share/pcloud-rs/`) | 0600  |
-| Vault              | `$XDG_DATA_HOME/pcloud-rs/vault.dat`                       | 0600  |
-| Journal            | `$XDG_DATA_HOME/pcloud-rs/journal/`                        | 0700  |
-| Cache (disposable) | `$XDG_CACHE_HOME/pcloud-rs/`                               | 0700  |
-| IPC socket         | `$XDG_RUNTIME_DIR/pcloud-rs/daemon.sock`                   | 0600  |
-| Log (if file)      | `$XDG_STATE_HOME/pcloud-rs/daemon.log`                     | 0600  |
+| Config file candidate | `$HOME/.config/pcloud/config.json`, then `$HOME/.pcloud/config.json` | 0600 |
+| Config directory | `$XDG_CONFIG_HOME/pcloud/pcloud-rs` | 0700 |
+| State directory | `$XDG_DATA_HOME/pcloud/pcloud-rs` | 0700 |
+| Cache directory | `$XDG_CACHE_HOME/pcloud/pcloud-rs` | 0700 |
+| Runtime directory | `$XDG_RUNTIME_DIR/pcloud/pcloud-rs` (fallback: `<cache>/pcloud-rs-runtime`) | 0700 |
+| IPC socket | `<runtime_dir>/pcloud.sock` | 0600 |
 
 Parent directories for secret-bearing files are `0700` and owned by
 the running UID. The daemon refuses to start against a vault whose
@@ -132,30 +111,33 @@ Create the state directories once with correct permissions:
 
 ```bash
 install -d -m 0700 \
-  ~/.config/pcloud-rs \
-  ~/.local/share/pcloud-rs \
-  ~/.local/share/pcloud-rs/journal \
-  ~/.cache/pcloud-rs
+  ~/.config/pcloud/pcloud-rs \
+  ~/.local/share/pcloud/pcloud-rs \
+  ~/.cache/pcloud/pcloud-rs
 ```
 
 ## Service management (systemd)
 
-The distribution packages ship a **user** unit by default:
-`pcloud-rs-daemon.service` at `~/.config/systemd/user/` or
-`/usr/lib/systemd/user/`. Running as a user service is the
-recommended mode because the daemon handles per-user secrets.
+The `.deb` / `.rpm` packages install a **system** unit:
+`/lib/systemd/system/pcloudd.service`. It uses `DynamicUser=yes` and is
+appropriate for headless/service-account deployments. For an interactive
+per-user daemon, install `packaging/systemd/pcloudd-user.service` as
+`~/.config/systemd/user/pcloudd.service`.
 
 ```bash
-# Enable and start on login
-systemctl --user enable --now pcloud-rs-daemon
+# Per-user install from the source tree
+install -Dm0644 packaging/systemd/pcloudd-user.service \
+  ~/.config/systemd/user/pcloudd.service
+systemctl --user daemon-reload
+systemctl --user enable --now pcloudd.service
 
 # Inspect
-systemctl --user status pcloud-rs-daemon
-journalctl --user -u pcloud-rs-daemon -f
+systemctl --user status pcloudd.service
+journalctl --user -u pcloudd.service -f
 
 # Stop and disable
-systemctl --user stop pcloud-rs-daemon
-systemctl --user disable pcloud-rs-daemon
+systemctl --user stop pcloudd.service
+systemctl --user disable pcloudd.service
 ```
 
 For multi-user workstations, enable lingering so the daemon survives
@@ -165,18 +147,20 @@ logout:
 sudo loginctl enable-linger "$USER"
 ```
 
-The unit sets sane hardening:
+The system unit sets strict hardening:
 
 ```ini
 [Service]
-Type=notify
-ExecStart=/usr/bin/pcloud-daemon --log-format json --log-level info
+Type=simple
+ExecStart=/usr/bin/pcloudd serve
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=yes
 ProtectSystem=strict
-ProtectHome=read-only
-ReadWritePaths=%h/.config/pcloud-rs %h/.local/share/pcloud-rs %h/.cache/pcloud-rs
+ProtectHome=tmpfs
+DynamicUser=yes
+StateDirectory=pcloud-rs
+RuntimeDirectory=pcloud-rs
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
@@ -190,9 +174,7 @@ SystemCallArchitectures=native
 Do not relax these without a bead justifying it — they are part of the
 secure-by-default posture.
 
-A system-scoped unit (`pcloud-rs-daemon@<user>.service`) exists for
-managed fleets; it still runs the daemon as the target user, never
-as root.
+No templated `pcloudd@<user>.service` ships today.
 
 ## Mount setup (FUSE3)
 
@@ -218,18 +200,21 @@ this by default). If your distro still uses `/etc/fuse.conf`,
 `user_allow_other` is **not** required for per-user mounts in the
 default Rust policy.
 
-Enable the mount in `config.toml`:
+Enable mount policy in the JSON config envelope (`config.json`) if you need
+non-default access policy or cache sizing. Excerpt:
 
-```toml
-[mount]
-enabled = true
-path    = "/home/alice/pCloudDrive"
-policy  = "default"
-
-# Cache tuning (optional — all have sane defaults)
-cache_size_mb       = 256   # page-cache memory budget in MiB
-page_cache_entries  = 4096  # max metadata-cache entries (LRU)
-metadata_ttl_secs   = 60    # metadata-cache TTL; 0 disables caching
+```json
+{
+  "profile": {
+    "mount": {
+      "allow_other": false,
+      "owner_only_by_default": true,
+      "cache_size_mb": 256,
+      "page_cache_entries": 4096,
+      "metadata_ttl_secs": 60
+    }
+  }
+}
 ```
 
 Or via CLI:
@@ -245,10 +230,29 @@ Wedged mount recovery — see
 
 ```bash
 fusermount3 -u -z ~/pCloudDrive
-PCLOUD_FORCE_UMOUNT=1 systemctl --user restart pcloud-rs-daemon
+PCLOUD_FORCE_UMOUNT=1 systemctl --user restart pcloudd.service
 ```
 
-### FUSE status (2026-04-16)
+### FUSE status (2026-07-16)
+
+The current practical Linux aggregate is:
+
+```bash
+PCLOUD_FUSE_TEST=1 PCLOUD_STRICT_FUSE_TEST=1 \
+  cargo test -p pcloud-fs --locked -- --ignored \
+    --skip chunked_flush_sustains_2gib_write_with_transient_retry \
+    --nocapture --test-threads=1
+```
+
+On Arch Linux x86_64, kernel 6.19.11 and FUSE 3.18.2, all 16 selected
+mount/probe tests passed and `findmnt` reported no remaining FUSE mount. The
+suite includes the 64 MiB create/write/fsync/read/rename/unlink test,
+write-unmount-remount byte identity, concurrent mounts, forced-detach cleanup,
+metadata-size publication, and clean journal checkpointing. The skipped 2 GiB
+case is a resource-intensive upload stress test, not a kernel-mount lifecycle
+test. It was run separately on the same date and passed in 22.23 seconds,
+including the injected transient failure, exact offset replay, and full 2 GiB
+byte accounting. Release candidates must repeat both commands.
 
 - **Live read + write** through both mount paths:
   - **`FuserShim<A>` / `BoxedFuserShim`** (dyn-trait path in
@@ -267,18 +271,15 @@ PCLOUD_FORCE_UMOUNT=1 systemctl --user restart pcloud-rs-daemon
     write journal and upload pipeline. Exercised by
     `crates/pcloud-fs/tests/fuse_kernel_e2e.rs` (64 MiB kernel
     round-trip, same gate).
-- **Performance follow-up:** chunked `upload_write` pipelining for
-  sustained multi-GiB writes (`TODO(bd-1du.4.6)` in `write_path.rs`).
-
-Mounted-drive parity remains tracked under `bd-1du.4`; the read path
-has landed and is live-verified, the write path (via
-`PcloudFsShim`) has landed at the code level but the final parity
-proof / release gate remains `bd-1du.10`.
+- **Remaining qualification:** run the aggregate on the clean release commit,
+  repeat the separate 2 GiB stress gate, install and remove the produced
+  packages, and execute credentialed remote transfer/share/mount smoke tests.
 
 ## Vault backend
 
 The Linux vault backend is a file-backed vault at
-`~/.local/share/pcloud-rs/vault.dat`, mode `0600`, parent dir `0700`,
+the auth-token vault under the managed config directory, mode `0600`,
+parent dir `0700`,
 UID-bound, ownership and mode validated on every open. There is **no**
 Secret Service / GNOME Keyring / kwallet integration on Linux at this
 time — adding one is tracked as a future bead. Secret material is
@@ -296,9 +297,9 @@ rolling upgrade. Quick path:
 
 ```bash
 pcloudc --json status > /tmp/pre.json
-systemctl --user stop pcloud-rs-daemon
+systemctl --user stop pcloudd.service
 sudo apt install --only-upgrade pcloud-rs
-systemctl --user start pcloud-rs-daemon
+systemctl --user start pcloudd.service
 pcloudc doctor --json
 pcloudc status              # auth=Authenticated, healthy engine summary
 ```
@@ -307,8 +308,8 @@ pcloudc status              # auth=Authenticated, healthy engine summary
 
 ```bash
 # 1. Stop and disable the service
-systemctl --user stop pcloud-rs-daemon
-systemctl --user disable pcloud-rs-daemon
+systemctl --user stop pcloudd.service
+systemctl --user disable pcloudd.service
 
 # 2. Remove the package
 sudo apt remove pcloud-rs         # Debian/Ubuntu
@@ -325,11 +326,11 @@ rm -rf \
 rm -rf "$XDG_RUNTIME_DIR/pcloud-rs"
 ```
 
-A clean uninstall leaves no `pcloud-daemon` processes, no FUSE mounts,
+A clean uninstall leaves no `pcloudd` processes, no FUSE mounts,
 no systemd units, no state directories. Verify:
 
 ```bash
-pgrep -a pcloud-daemon || echo "clean"
+pgrep -a pcloudd || echo "clean"
 mount | grep -i pcloud || echo "clean"
 ```
 
@@ -350,13 +351,15 @@ sudo gpasswd -a "$USER" fuse
 
 # 2. Create state dirs with the correct permissions (idempotent):
 install -d -m 0700 \
-  ~/.config/pcloud-rs \
-  ~/.local/share/pcloud-rs \
-  ~/.local/share/pcloud-rs/journal \
-  ~/.cache/pcloud-rs
+  ~/.config/pcloud/pcloud-rs \
+  ~/.local/share/pcloud/pcloud-rs \
+  ~/.cache/pcloud/pcloud-rs
 
 # 3. Enable the user service
-systemctl --user enable --now pcloud-rs-daemon
+install -Dm0644 packaging/systemd/pcloudd-user.service \
+  ~/.config/systemd/user/pcloudd.service
+systemctl --user daemon-reload
+systemctl --user enable --now pcloudd.service
 
 # 4. Sanity check
 pcloudc doctor --json | jq '.checks[] | {name, status}'
@@ -379,15 +382,15 @@ FAANG-ops tuning callouts:
 
 | Action              | Command                                                     |
 |---------------------|-------------------------------------------------------------|
-| Start               | `systemctl --user start pcloud-rs-daemon`                    |
-| Stop                | `systemctl --user stop pcloud-rs-daemon`                     |
-| Enable at login     | `systemctl --user enable pcloud-rs-daemon`                   |
-| Disable             | `systemctl --user disable pcloud-rs-daemon`                  |
-| Restart             | `systemctl --user restart pcloud-rs-daemon`                  |
-| Status              | `systemctl --user status pcloud-rs-daemon`                   |
-| Follow logs         | `journalctl --user -u pcloud-rs-daemon -f`                   |
-| Last 24h errors     | `journalctl --user -u pcloud-rs-daemon --since '24h ago' -p err` |
-| Core-dump inspect   | `coredumpctl list pcloud-daemon` then `coredumpctl gdb <PID>` |
+| Start               | `systemctl --user start pcloudd.service`                    |
+| Stop                | `systemctl --user stop pcloudd.service`                     |
+| Enable at login     | `systemctl --user enable pcloudd.service`                   |
+| Disable             | `systemctl --user disable pcloudd.service`                  |
+| Restart             | `systemctl --user restart pcloudd.service`                  |
+| Status              | `systemctl --user status pcloudd.service`                   |
+| Follow logs         | `journalctl --user -u pcloudd.service -f`                   |
+| Last 24h errors     | `journalctl --user -u pcloudd.service --since '24h ago' -p err` |
+| Core-dump inspect   | `coredumpctl list pcloudd` then `coredumpctl gdb <PID>` |
 
 Enable core dumps (once, system-wide):
 
@@ -399,7 +402,7 @@ sudo sysctl -w kernel.core_pattern='|/lib/systemd/systemd-coredump %P %u %g %s %
 Core-dump capture for the user service:
 
 ```bash
-systemctl --user edit pcloud-rs-daemon
+systemctl --user edit pcloudd.service
 # add:
 # [Service]
 # LimitCORE=infinity
@@ -409,14 +412,14 @@ systemctl --user daemon-reload
 ## Peer-cred and IPC
 
 - Transport: `AF_UNIX` stream socket at
-  `$XDG_RUNTIME_DIR/pcloud-rs/daemon.sock`, mode `0600`, parent dir
+  `<runtime_dir>/pcloud.sock`, mode `0600`, parent dir
   `0700`, both UID-checked on every connection.
 - Peer identity: the daemon calls `getsockopt(SO_PEERCRED)` on Linux
   and **rejects** any peer whose UID does not match the daemon's own
   UID. There is no password fallback on the local channel; trust is
   derived entirely from the kernel-reported `ucred`.
-- CLI discovery: `pcloudc` honours `$PCLOUD_SOCKET` first, then falls
-  back to `$XDG_RUNTIME_DIR/pcloud-rs/daemon.sock`.
+- CLI discovery: `pcloudc` uses the managed runtime directory derived from
+  the same XDG / `PCLOUD_ROOT` rules as the daemon.
 - Relevant crates: `pcloud-ipc/src/transport.rs`,
   `pcloud-ipc/src/server.rs` (see `tests/peer_and_protocol.rs` for
   the enforced contract).
@@ -430,7 +433,7 @@ same UID (preferred) or run a separate `pcloudc`-based sidecar.
 - In-memory: `SecretString` / `SecretBytes` from `pcloud-secret`
   (zeroize-on-drop, redacted `Debug`).
 - On-disk: file-backed vault at
-  `~/.local/share/pcloud-rs/vault.dat`, mode `0600`, parent `0700`,
+  the managed auth-token vault, mode `0600`, parent `0700`,
   ownership + mode re-validated on every open.
 - **Secret Service (GNOME Keyring / KWallet) is _not_ wired.** This is
   intentional at the moment — tracked as a future bead. Adding it
@@ -445,17 +448,16 @@ Never persist plaintext passwords. The legacy C client's
 
 - Default log sink: **stderr in JSON** when the daemon is a child of
   systemd, which journald captures natively.
-- `journalctl --user -u pcloud-rs-daemon --output=json | \
+- `journalctl --user -u pcloudd.service --output=json | \
     jq 'select(.PRIORITY<="3")'` surfaces warnings and errors.
 - Structured log keys the fleet tooling can rely on:
   `event`, `component`, `corr_id`, `auth_state`, `mount_state`,
   `engine_state`, `bytes_in`, `bytes_out`, `duration_ms`.
-- Metrics endpoint: off by default. Flip on with
-  `[telemetry] metrics_addr = "127.0.0.1:9131"` in `config.toml`.
-  The Prometheus text-format scrape emits counters and histograms for
-  auth, FS, transfers, and engine.
+- Metrics endpoint: off by default. See `reference/config.md` for the
+  current `profile.observability.metrics_enabled` status before enabling a
+  metrics-feature build.
 - Audit trail: when durable audit is enabled, the audit log lives
-  under `$XDG_STATE_HOME/pcloud-rs/audit.log` with the same mode
+  under the managed state directory with the same mode
   enforcement as the vault.
 
 ## Firewall, SELinux, AppArmor, sandboxing
@@ -467,7 +469,7 @@ The daemon makes **outbound-only** HTTPS connections (443) to
 firewalls should allow:
 
 ```
-TCP/443 → api.pcloud.com
+TCP/443 → bineapi.pcloud.com
 TCP/443 → eapi.pcloud.com
 TCP/443 → binapi.pcloud.com
 TCP/443 → <regional upload/download hosts returned by getfilelink>
@@ -489,20 +491,22 @@ sudo semanage permissive -a pcloud_daemon_t
 sudo setsebool -P use_fusefs_home_dirs on
 ```
 
-If audit2allow flags violations under `~/.local/share/pcloud-rs`,
+If audit2allow flags violations under the managed state directory,
 prefer a user-type transition over relaxing the global policy.
 
 ### AppArmor (Debian / Ubuntu)
 
-No profile ships by default. If you author one, grant:
+An in-tree starting profile exists at
+`packaging/apparmor/usr.local.bin.pcloudd`. If you author or adapt one,
+grant the current managed paths:
 
 ```
-owner @{HOME}/.config/pcloud-rs/** rw,
-owner @{HOME}/.local/share/pcloud-rs/** rw,
-owner @{HOME}/.cache/pcloud-rs/** rw,
+owner @{HOME}/.config/pcloud/pcloud-rs/** rw,
+owner @{HOME}/.local/share/pcloud/pcloud-rs/** rw,
+owner @{HOME}/.cache/pcloud/pcloud-rs/** rw,
 /dev/fuse rw,
 @{PROC}/@{pid}/mountinfo r,
-@{run}/user/@{uid}/pcloud-rs/** rw,
+@{run}/user/@{uid}/pcloud/pcloud-rs/** rw,
 network inet stream,
 ```
 
@@ -516,41 +520,42 @@ the optional Prometheus metrics port, restrict it to `127.0.0.1`.
 
 1. **`Connection refused` on `pcloudc`** — daemon not running.
    ```bash
-   systemctl --user status pcloud-rs-daemon
-   journalctl --user -u pcloud-rs-daemon -n 200 --no-pager
+   systemctl --user status pcloudd.service
+   journalctl --user -u pcloudd.service -n 200 --no-pager
    ```
 2. **`EACCES` on socket** — wrong UID or relaxed perms.
    ```bash
-   ls -la "$XDG_RUNTIME_DIR/pcloud-rs/"
-   stat -c '%U:%G %a' "$XDG_RUNTIME_DIR/pcloud-rs/daemon.sock"
+   ls -la "$XDG_RUNTIME_DIR/pcloud/pcloud-rs/"
+   stat -c '%U:%G %a' "$XDG_RUNTIME_DIR/pcloud/pcloud-rs/pcloud.sock"
    ```
    Expected `0600`, owned by the invoking UID. Fix by restarting.
 3. **`Vault rejected (mode 0644)`** — someone chmod'd the vault.
    ```bash
-   chmod 0600 ~/.local/share/pcloud-rs/vault.dat
-   chmod 0700 ~/.local/share/pcloud-rs
+   chmod 0600 ~/.config/pcloud/pcloud-rs/auth_token
+   chmod 0700 ~/.config/pcloud/pcloud-rs
    ```
 4. **Mount hangs, `ls ~/pCloudDrive` blocks** — stale FUSE.
    ```bash
    fusermount3 -u -z ~/pCloudDrive
-   PCLOUD_FORCE_UMOUNT=1 systemctl --user restart pcloud-rs-daemon
+   PCLOUD_FORCE_UMOUNT=1 systemctl --user restart pcloudd.service
    ```
 5. **`SQLITE_BUSY`** — state on NFS/CIFS. Move `XDG_DATA_HOME` to a
    local disk and restart.
-6. **TLS errors to `api.pcloud.com`** — missing CA bundle or MITM
+6. **TLS errors to `bineapi.pcloud.com`** — missing CA bundle or MITM
    proxy. Verify:
    ```bash
-   curl -fsSI https://api.pcloud.com/getip
+   echo | openssl s_client -servername bineapi.pcloud.com \
+     -connect bineapi.pcloud.com:443 >/dev/null
    ```
 7. **`auth=NeedsTFA` on every start** — vault missing or not
    persisted.
    ```bash
    pcloudc auth status
-   pcloudc auth login --persist --keyfile ~/.config/pcloud-rs/auth.key
+   pcloudc login
    ```
 8. **Daemon OOM-killed** — cap the unit.
    ```bash
-   systemctl --user edit pcloud-rs-daemon
+   systemctl --user edit pcloudd.service
    # [Service]
    # MemoryHigh=1.5G
    # MemoryMax=2G
@@ -569,11 +574,10 @@ the optional Prometheus metrics port, restrict it to `127.0.0.1`.
 
 - In-place package upgrades within a minor series are safe; the
   daemon applies SQLite migrations on first start. Always snapshot
-  `~/.local/share/pcloud-rs/store.sqlite` before a major-version bump.
+  the managed state directory before a major-version bump.
 - Two-wave rolling strategy for managed fleets is documented in
   [Upgrade](../upgrade.md); the platform-specific hook here is that
-  `systemctl --user daemon-reload` must run after swapping the unit
-  file in `/usr/lib/systemd/user/`.
+  `systemctl --user daemon-reload` must run after swapping the user unit.
 
 ## Uninstalling
 
@@ -581,6 +585,10 @@ See the **Uninstall** section below for the step-by-step removal.
 
 ## Known gaps (Linux)
 
+- No clean release-commit Linux qualification run or credentialed live-pCloud
+  mount/transfer smoke result exists for the current tree.
+- Produced `.deb` and `.rpm` candidates still need install, upgrade, service,
+  mount, and uninstall verification on their target distributions.
 - No Secret Service / Keyring integration yet.
 - No Wayland-native credential prompt.
 - No native containerised (rootless) mount profile — runs under

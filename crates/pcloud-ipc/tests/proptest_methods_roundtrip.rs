@@ -103,7 +103,6 @@ fn must_match_every_method_variant(m: Method) -> u8 {
         | Method::ListNotifications
         | Method::SessionStatus
         // Argumentless methods added after initial list — all must appear here.
-        | Method::FileHistory
         | Method::IntegrityStatus
         | Method::HaStatus
         | Method::DrainStatus
@@ -222,6 +221,36 @@ fn arb_request() -> impl Strategy<Value = Request> {
         any::<u64>().prop_map(|id| Request::DeletePublicLink { link_id: id }),
         ".{0,64}".prop_map(|p| Request::CreateFilePublicLink { path: p }),
         ".{0,64}".prop_map(|p| Request::CreateFolderPublicLink { path: p }),
+        (
+            ".{0,64}",
+            proptest::option::of(any::<u64>()),
+            proptest::option::of(any::<u64>()),
+            proptest::option::of(any::<u64>()),
+            proptest::option::of(".{0,32}"),
+        )
+            .prop_map(
+                |(p, e, d, t, pw)| Request::CreateFolderPublicLinkWithOptions {
+                    path: p,
+                    expire: e,
+                    maxdownloads: d,
+                    maxtraffic: t,
+                    password: pw.map(Into::into),
+                }
+            ),
+        (any::<u64>(), "[a-z]{1,16}@[a-z]{1,16}", any::<bool>()).prop_map(|(fid, mail, up)| {
+            Request::CreateFolderUpDownLink {
+                folder_id: fid,
+                mail,
+                can_upload: up,
+            }
+        }),
+        (".{0,64}", any::<bool>(), any::<u64>()).prop_map(|(p, has, secs)| {
+            Request::CreateScreenshotPublicLink {
+                path: p,
+                has_delay: has,
+                delay_seconds: secs,
+            }
+        }),
         (any::<u64>(), proptest::option::of(any::<u64>())).prop_map(|(id, exp)| {
             Request::ChangePublicLinkExpire {
                 link_id: id,
@@ -391,6 +420,27 @@ fn arb_request() -> impl Strategy<Value = Request> {
                 permissions_bits: perms,
                 hint,
             }),
+        // CryptoShareFolder — same shape as ShareFolder + a temppass
+        (
+            any::<u64>(),
+            "[a-z]{1,20}",
+            "[a-z]{1,16}@[a-z]{1,16}",
+            "[a-z ]{0,64}",
+            any::<u32>(),
+            "[a-zA-Z0-9]{1,32}",
+            proptest::option::of("[a-z]{0,32}"),
+        )
+            .prop_map(|(fid, name, mail, msg, perms, tp, hint)| {
+                Request::CryptoShareFolder {
+                    folder_id: fid,
+                    name,
+                    mail,
+                    message: msg,
+                    permissions_bits: perms,
+                    temppass: tp.into(),
+                    hint,
+                }
+            },),
         // RemoveShare
         any::<u64>().prop_map(|id| Request::RemoveShare { share_id: id }),
         // ModifyShare
@@ -460,9 +510,6 @@ fn arb_request() -> impl Strategy<Value = Request> {
         "[a-zA-Z0-9/._-]{1,64}".prop_map(|p| Request::GetFolderOwnerId { path: p }),
         // FilesystemStatus
         "[a-zA-Z0-9/._-]{1,64}".prop_map(|p| Request::FilesystemStatus { path: p }),
-        // FileHistory (carries path+limit; dispatches via Method::FileHistory)
-        ("[a-zA-Z0-9/._-]{1,64}", proptest::option::of(1u32..1000u32))
-            .prop_map(|(path, limit)| Request::FileHistory { path, limit },),
         // VerifyPath
         ("[a-zA-Z0-9/._-]{1,64}", any::<bool>())
             .prop_map(|(path, recursive)| { Request::VerifyPath { path, recursive } }),
@@ -471,7 +518,9 @@ fn arb_request() -> impl Strategy<Value = Request> {
         // LostPassword
         "[a-z]{1,16}@[a-z]{1,16}".prop_map(|email| Request::LostPassword { email }),
         // VerifyEmailRestricted
-        "[a-zA-Z0-9]{8,32}".prop_map(|t| Request::VerifyEmailRestricted { verify_token: t }),
+        "[a-zA-Z0-9]{8,32}".prop_map(|t| Request::VerifyEmailRestricted {
+            verify_token: t.into()
+        }),
         // MarkNotificationsRead
         any::<u64>().prop_map(|id| Request::MarkNotificationsRead { upto_id: id }),
         // SendPublink
@@ -621,24 +670,29 @@ fn arb_request() -> impl Strategy<Value = Request> {
                 range: pcloud_ipc::methods::AuditVerifyRange { from, to },
             }),
         // UploadWriteFromFile (bd-1du row 93) — C primitive shape:
-        // upload_session_id / source_fileid / source_hash / offset / count
+        // upload_session_id / source_fileid / source_hash / upload offset /
+        // source offset / count
         // (matches pclsync/pupload.c:843-859 field set).
         (
             any::<u64>(),
             any::<u64>(),
             any::<u64>(),
             any::<u64>(),
+            any::<u64>(),
             any::<u64>()
         )
-            .prop_map(|(session_id, source_fileid, source_hash, offset, count)| {
-                Request::UploadWriteFromFile {
-                    upload_session_id: session_id,
-                    source_fileid,
-                    source_hash,
-                    offset,
-                    count,
-                }
-            },),
+            .prop_map(
+                |(session_id, source_fileid, source_hash, offset, source_offset, count)| {
+                    Request::UploadWriteFromFile {
+                        upload_session_id: session_id,
+                        source_fileid,
+                        source_hash,
+                        offset,
+                        source_offset: Some(source_offset),
+                        count,
+                    }
+                },
+            ),
         // CreateTreePublicLinkFromPaths (bd-1du row 149)
         (
             "[a-z]{1,20}",
@@ -652,6 +706,23 @@ fn arb_request() -> impl Strategy<Value = Request> {
                     expires,
                 }
             ),
+        // CreateTreePublicLinkFromPathTargets (bd-1du row 149)
+        (
+            "[a-z]{1,20}",
+            proptest::option::of("[a-zA-Z0-9/._-]{1,32}"),
+            proptest::collection::vec("[a-zA-Z0-9/._-]{1,32}", 0..4),
+            proptest::collection::vec("[a-zA-Z0-9/._-]{1,32}", 0..4),
+            proptest::option::of(any::<u64>()),
+        )
+            .prop_map(|(name, root, folders, files, expires)| {
+                Request::CreateTreePublicLinkFromPathTargets {
+                    name,
+                    root,
+                    folders,
+                    files,
+                    expires,
+                }
+            }),
         // CryptoSetupV2 (Stage 4b — dual-crypto-backend IPC surface).
         (
             prop_oneof![

@@ -36,8 +36,9 @@ clients** architecture:
    `pcloud-sdk`, first-party plugins) talks to the daemon over the
    owner-only local IPC described in ADR 0002.
 3. `pcloud-sdk` is an **ergonomic wrapper over the IPC client**, not a
-   reimplementation of the engine. Embedders can optionally spawn an
-   in-process daemon, but the wire contract is the same.
+   reimplementation of the engine. Its 1.x contract exposes only SDK-owned
+   remote-drive types. The historical in-process path is isolated as the
+   unpublished, evolving `pcloud-embedded-sdk` compatibility crate.
 4. Enterprise concerns (`pcloud-idp`, `pcloud-policy`, `pcloud-fleet`,
    `pcloud-kms`, `pcloud-session`) attach at the daemon boundary, not
    per-client.
@@ -61,8 +62,10 @@ Good:
 Bad:
 
 - Two processes to reason about; operators must understand daemon
-  lifecycle. Mitigated by `pcloudc doctor`, systemd/launchd units, and
-  the Windows Service wrapper.
+  lifecycle. Mitigated by `pcloudc doctor`, systemd/launchd units, and the
+  per-user Windows launcher. The public Windows package deliberately installs
+  no SCM service because named-pipe, DPAPI, and WinFSP ownership must share the
+  interactive user's SID.
 - IPC adds latency vs in-process calls (sub-millisecond on loopback,
   acceptable for every retained workload).
 - Cross-platform IPC surface (AF_UNIX on Unix, named pipe on Windows)

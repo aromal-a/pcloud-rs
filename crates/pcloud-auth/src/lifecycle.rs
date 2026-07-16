@@ -19,6 +19,7 @@
 // **GATING:** none (portable).
 
 use core::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -232,7 +233,7 @@ pub enum LifecycleError {
 /// one attempt.
 #[derive(Debug, Default)]
 pub struct RefreshGuard {
-    in_flight: Mutex<bool>,
+    in_flight: AtomicBool,
 }
 
 impl RefreshGuard {
@@ -240,30 +241,29 @@ impl RefreshGuard {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            in_flight: Mutex::new(false),
+            in_flight: AtomicBool::new(false),
         }
     }
 
     /// Attempt to acquire the refresh slot. Returns `Some(ticket)` if
     /// acquired, `None` if another refresh is already in flight.
+    /// Uses an atomic flag instead of a mutex so panic poison can never
+    /// make the guard look permanently busy.
     ///
     /// The ticket releases the slot on `Drop`.
     pub fn try_begin(self: &Arc<Self>) -> Option<RefreshTicket> {
-        let mut guard = self.in_flight.lock().ok()?;
-        if *guard {
-            None
-        } else {
-            *guard = true;
-            Some(RefreshTicket {
+        self.in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| RefreshTicket {
                 owner: Arc::clone(self),
             })
-        }
     }
 
     /// Returns `true` when a refresh ticket is currently held. For
     /// tests and observability only.
     pub fn is_in_flight(&self) -> bool {
-        self.in_flight.lock().map(|g| *g).unwrap_or(false)
+        self.in_flight.load(Ordering::Acquire)
     }
 }
 
@@ -280,9 +280,7 @@ impl std::fmt::Debug for RefreshTicket {
 
 impl Drop for RefreshTicket {
     fn drop(&mut self) {
-        if let Ok(mut guard) = self.owner.in_flight.lock() {
-            *guard = false;
-        }
+        self.owner.in_flight.store(false, Ordering::Release);
     }
 }
 
@@ -366,6 +364,25 @@ mod tests {
         drop(t1);
         let t3 = guard.try_begin();
         assert!(t3.is_some(), "slot released after ticket drop");
+    }
+
+    #[test]
+    fn refresh_guard_releases_slot_during_unwind() {
+        let guard = Arc::new(RefreshGuard::new());
+        let result = std::panic::catch_unwind({
+            let guard = Arc::clone(&guard);
+            move || {
+                let _ticket = guard.try_begin().expect("slot available");
+                assert!(guard.is_in_flight());
+                panic!("simulate panic while refresh ticket is held");
+            }
+        });
+
+        assert!(result.is_err());
+        let ticket = guard
+            .try_begin()
+            .expect("slot must not remain stuck after ticket drop during unwind");
+        drop(ticket);
     }
 
     #[test]

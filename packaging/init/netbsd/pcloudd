@@ -1,29 +1,42 @@
 #!/bin/sh
-#
 # PROVIDE: pcloudd
-# REQUIRE: DAEMON network
+# REQUIRE: DAEMON LOGIN
 # KEYWORD: shutdown
-#
 
-. /etc/rc.subr
+$_rc_subr_loaded . /etc/rc.subr
 
 name="pcloudd"
 rcvar=$name
-command="/usr/pkg/bin/daemon"
-command_args="-p /var/run/${name}.pid /usr/local/libexec/pcloudd-wrapper.sh"
-pidfile="/var/run/${name}.pid"
-required_files="/usr/local/libexec/pcloudd-wrapper.sh"
+load_rc_config "$name"
 
+: "${pcloudd_user:=pcloudd}"
+: "${pcloudd_group:=pcloudd}"
+: "${pcloudd_root:=/var/lib/pcloud-rs}"
+: "${pcloudd_env_file:=/usr/pkg/etc/pcloud-rs/pcloudd.env}"
+: "${pcloudd_wrapper:=/usr/pkg/libexec/pcloudd-wrapper.sh}"
+: "${pcloudd_logfile:=/var/log/pcloudd.log}"
+: "${pcloudd_rundir:=/var/run/pcloudd}"
+
+command="/usr/bin/env"
+procname="/usr/pkg/bin/pcloudd"
+pidfile="${pcloudd_rundir}/pcloudd.pid"
+required_files="${pcloudd_wrapper} ${pcloudd_env_file}"
 start_precmd="pcloudd_precmd"
 
 pcloudd_precmd()
 {
-    [ -r /usr/pkg/etc/pcloudd.env ] && . /usr/pkg/etc/pcloudd.env
-    export PCLOUD_ROOT PCLOUD_ENV PCLOUD_API_MODE PCLOUD_DURABLE_AUTH_TOKENS
-    export PCLOUDRS_TOKEN_FILE PCLOUDRS_USERNAME_FILE PCLOUDRS_PASSWORD_FILE
-    export PCLOUDRS_TFA_CODE_FILE PCLOUDRS_RECOVERY_CODE_FILE PCLOUDRS_TRUST_DEVICE
-    export PCLOUDRS_DAEMON_BIN
+    id "${pcloudd_user}" >/dev/null 2>&1 || {
+        echo "pcloudd: service user does not exist: ${pcloudd_user}" >&2
+        return 1
+    }
+    install -d -o "${pcloudd_user}" -g "${pcloudd_group}" -m 0700 \
+        "${pcloudd_root}" "${pcloudd_rundir}"
+    if [ ! -e "${pcloudd_logfile}" ]; then
+        install -o "${pcloudd_user}" -g "${pcloudd_group}" -m 0600 \
+            /dev/null "${pcloudd_logfile}"
+    fi
 }
 
-load_rc_config $name
+command_args="PCLOUDRS_DAEMON_BIN=/usr/pkg/bin/pcloudd PCLOUDRS_ENV_FILE=${pcloudd_env_file} ${pcloudd_wrapper} </dev/null >>${pcloudd_logfile} 2>&1 & echo \$! >${pidfile}"
+
 run_rc_command "$1"

@@ -25,13 +25,14 @@
 //! **Stability:** T1 internal — schema versioned via `ProtocolVersion`;
 //! not semver-stable across workspace revisions.
 //!
-//! **MSRV:** Rust 1.82 (workspace-pinned; edition 2024).
+//! **MSRV:** Rust 1.89 for the portable crate; full workspace and release
+//! validation use the repository-pinned Rust 1.96.1 toolchain.
 //!
 //! **Features:** none.
 //!
 //! **Platform:** portable façade over `platform/{unix,linux,windows}`.
-//! Production deployments use the Unix-socket path; the Windows path is
-//! scaffolding (named-pipe parity is deferred).
+//! Production deployments use owner-only Unix sockets on Unix-family
+//! systems and an owner-SID named pipe on Windows.
 //!
 //! # Examples
 //!
@@ -80,9 +81,10 @@ pub use auth::{PeerIdentity, current_effective_uid};
 pub use client::IpcClient;
 pub use methods::{
     AuditVerifierStatusPayload, AuditVerifyRange, ConflictEntry, DrainStatusPayload,
-    IntegrityStatusPayload, ListFolderEntry, Method, ReadRangePayload, Request, RequestEnvelope,
-    Response, ResponseStatus, SessionStatusPayload, SloReportEntry, SloReportPayload,
-    SnapshotAction, StatPathPayload, UploadConflictMode, ValueKvKind, ValueKvPayload,
+    IntegrityStatusPayload, ListFolderEntry, Method, ReadRangePayload, RemoteCopyPayload,
+    RemoteDownloadPayload, RemoteUploadPayload, Request, RequestEnvelope, Response, ResponseStatus,
+    SessionStatusPayload, SloReportEntry, SloReportPayload, SnapshotAction, StatPathPayload,
+    UploadConflictMode, ValueKvKind, ValueKvPayload,
 };
 pub use protocol::{
     Frame, FrameHeader, MessageKind, decode_request, decode_response, encode_request,

@@ -198,6 +198,11 @@ impl WriteJournal {
             fsync_on_commit: true,
         };
         journal.seek_end()?;
+        if let Ok(records) = replay_path(&journal.path) {
+            if let Some(max_seq) = records.iter().map(|record| record.seq).max() {
+                journal.next_seq = max_seq.saturating_add(1);
+            }
+        }
         Ok(journal)
     }
 
@@ -275,6 +280,21 @@ impl WriteJournal {
         self.commit()
     }
 
+    /// Remove records that affect `path`, preserving all unrelated dirty
+    /// records in the shared journal.
+    ///
+    /// This is the path-scoped checkpoint used after a successful flush.
+    /// A whole-journal reset is only safe when no other dirty inode has
+    /// outstanding records.
+    pub fn checkpoint_path(&mut self, path: &str) -> Result<(), WriteJournalError> {
+        let records = self.replay()?;
+        let retained: Vec<JournalRecord> = records
+            .into_iter()
+            .filter(|record| !record_targets_path(record, path))
+            .collect();
+        self.rewrite_records(&retained)
+    }
+
     /// Re-open for read-only replay and return all well-formed records up
     /// to the first torn/garbage tail. The file handle held by `self` is
     /// unaffected.
@@ -285,6 +305,58 @@ impl WriteJournal {
     fn seek_end(&mut self) -> Result<(), WriteJournalError> {
         self.file.seek(SeekFrom::End(0))?;
         Ok(())
+    }
+
+    fn rewrite_records(&mut self, records: &[JournalRecord]) -> Result<(), WriteJournalError> {
+        self.file.set_len(0)?;
+        self.file.seek(SeekFrom::Start(0))?;
+        for record in records {
+            write_record_frame(&mut self.file, record)?;
+        }
+        if let Some(max_seq) = records.iter().map(|record| record.seq).max() {
+            self.next_seq = self.next_seq.max(max_seq.saturating_add(1));
+        }
+        self.commit()
+    }
+}
+
+fn write_record_frame(file: &mut File, record: &JournalRecord) -> Result<(), WriteJournalError> {
+    let payload = serde_json::to_vec(record)?;
+    if payload.len() as u64 > u64::from(MAX_RECORD_BYTES) {
+        return Err(WriteJournalError::RecordTooLarge(
+            u32::try_from(payload.len()).unwrap_or(u32::MAX),
+        ));
+    }
+    let payload_len =
+        u32::try_from(payload.len()).map_err(|_| WriteJournalError::RecordTooLarge(u32::MAX))?;
+    let crc = crc32_ieee(&payload);
+
+    let mut header = [0u8; 12];
+    header[..4].copy_from_slice(&MAGIC.to_le_bytes());
+    header[4..8].copy_from_slice(&payload_len.to_le_bytes());
+    header[8..12].copy_from_slice(&crc.to_le_bytes());
+    file.write_all(&header)?;
+    file.write_all(&payload)?;
+    Ok(())
+}
+
+fn record_targets_path(record: &JournalRecord, path: &str) -> bool {
+    match &record.op {
+        JournalOp::Create { parent_path, name } => join_path(parent_path, name) == path,
+        JournalOp::Write { path: p, .. }
+        | JournalOp::Truncate { path: p, .. }
+        | JournalOp::Unlink { path: p }
+        | JournalOp::FlushBarrier { path: p }
+        | JournalOp::ChunkAck { path: p, .. } => p == path,
+        JournalOp::Rename { from, to } => from == path || to == path,
+    }
+}
+
+fn join_path(parent: &str, name: &str) -> String {
+    if parent == "/" {
+        format!("/{name}")
+    } else {
+        format!("{parent}/{name}")
     }
 }
 
@@ -559,7 +631,7 @@ mod tests {
                     path: "/gone".to_owned(),
                 })
                 .unwrap();
-            assert_eq!(seq, 1, "new handle starts seq counter from 1 by design");
+            assert_eq!(seq, 2, "reopened journal continues the seq counter");
         }
         let records = replay_path(&path).unwrap();
         assert_eq!(records.len(), 2);

@@ -10,23 +10,19 @@ and the [Parity Status](./parity/status.md) chapter.
 
 ### 1. Is the Rust rewrite production-ready?
 
-**No.** `bd-1du.10` is still open and three of six `Partial` matrix
-rows block the final parity gate — mounted-drive wiring, chunked upload
-state machine, and the `UploadSession` pause/resume semantics. Until
-those close, do not describe the build as "full parity", "production
-ready", "enterprise ready", or "drop-in replacement". The retained
-surface is strong and live-verified for auth, shares, crypto,
-public links, and backup — but the FUSE write path has not had a
-live host run. See [Parity Status](./parity/status.md).
+**No.** The retained capability matrix has no Partial or Missing rows, but the
+working tree is not a clean release candidate, no public release or published SDK crate
+exists, credentialed account smoke tests are pending, and native platform,
+signed-package, BSD/Unix, and NAS hardware gates remain. Feature reachability
+alone is not production readiness. See [Parity Status](./parity/status.md).
 
 ### 2. Can I use it as a drop-in replacement for the C client?
 
-Not yet. The daemon, CLI, auth, crypto, shares, and public-link paths
-are usable, but the mounted-drive runtime is a shell pending
-`bd-1du.4.6` wiring, and `pcloud-sdk`'s FS helpers follow from that.
-Users who only need API-level upload/download/sync-root lifecycle can
-evaluate the Rust path today; users who rely on the pCloud Drive
-mount point should stay on the C client. Tracked under epic `bd-1du`.
+Not yet. The daemon, CLI, auth, crypto lifecycle, shares, and public-link
+paths are usable from source, but native platform qualification must pass per release. Users who only need API-level
+upload/download/sync-root lifecycle can evaluate the Rust path today; users
+who need a fully supported pCloud Drive replacement should wait for the
+parity gate to close.
 
 ### 3. What does "T1 vs T3" mean in the reviews?
 
@@ -40,13 +36,12 @@ or polish item — welcome, not blocking. Parity work that closes a
 
 ### 4. What counts as "Implemented" in the parity matrix?
 
-"Implemented" means a C equivalent exists and is exercised on an
-identified retained Rust code path with a test or live-run cite. It
-**does not** mean "end-to-end on a live mount". The FUSE write path
-is the canonical example — `FuseAdapter` methods are implemented, but
-the daemon mount lifecycle wiring is still pending. See footnote
-`fuse-wiring` on [Parity Status](./parity/status.md) and ADR
-[0010](./adr/0010.md).
+"Implemented" means a C equivalent exists and is exercised on an identified
+retained Rust code path with a test or live-run cite. It **does not** mean
+all adjacent release evidence is complete. Row 85 is implemented for Linux
+FUSE, but macOS/Windows live-host proof is still release-gating. Row 149 is
+implemented with root/folder/file path targets; other specialty public-link
+rows remain Partial. See [Parity Status](./parity/status.md).
 
 ## Security
 
@@ -67,9 +62,9 @@ The crypto password is kept in a `SecretString` in memory only and
 zeroized on drop. Unlike the legacy C client, it is not written to any
 on-disk cache. Reviewer 02 and R7 flagged the C persistence behavior
 as a residual risk; we intentionally do not carry it forward. See ADR
-[0007](./adr/0007.md). Crypto folder metadata filenames are
-deterministically encoded and sector payloads use AES-256-GCM. `change_crypto_pass`
-remains tracked work.
+[0007](./adr/0007.md). Crypto folder metadata filenames are deterministically
+encoded, sector payloads use AES-256-GCM, and password-rotation helpers are
+implemented on the retained Rust path.
 
 ### 7. Is the local IPC socket secure?
 
@@ -110,33 +105,32 @@ differently and the Rust vault format is documented in ADR
 
 ### 11. Will my mounted drive keep working during migration?
 
-If you rely on the pCloud Drive mount, stay on the C client until
-`bd-1du.4.6` lands. The Rust `pcloud-fs` scaffold and `FuseAdapter`
-work in isolation, but the daemon does not drive a real mount
-lifecycle yet. You can run both binaries on the same host as long as
-you do not mount the same path from both — the Rust daemon uses a
-different control socket and runtime dir.
+If you rely on the pCloud Drive mount as a supported replacement, stay on the
+C client until release-specific native platform proof closes. The parity CSV
+currently has no Partial or Missing rows, but that is feature reachability
+evidence, not macOS/Windows/BSD mount or package qualification. You can run
+both binaries on the same host as long as you do not mount the same path from
+both.
 
 ### 12. What happens to in-flight uploads on restart?
 
-Partial uploads are tracked in an NDJSON journal with `fsync` on
-boundary commits (`.archive/reviews/UPLOAD-SPEC-14042026.md`). On
-daemon restart the single-shot path resumes from the last durable
-offset. The chunked multi-write resume story is still Partial until
-the state machine behind matrix row 92 lands — see the
-[closure checklist](https://github.com/ezechiel203/pcloud-rs/blob/main/docs/parity/bd-1du-10-closure-checklist.md).
+Canonical uploads persist their session id, acknowledged offset, conflict
+policy, and checksum state. Restart replay reconciles the durable journal with
+the local store and resumes from the last server-verified offset; publication
+only occurs after the final checksum/save step. Downloads use a durable sibling
+staging file and atomically publish the destination after verification. The
+same paths are exercised through `RemoteFs` and the focused SDK facade.
 
 ## Testing
 
 ### 13. How do I run the full test suite?
 
-From ``: `cargo test`. For focused subsets used during
+From the repository root: `cargo test --workspace --locked`. For focused subsets used during
 parity review, `cargo test -p pcloud-proto -p pcloud-daemon -p
 pcloud-cli`. Live-network tests are gated behind environment flags
 (`PCLOUD_LIVE_AUTH=1`, `PCLOUD_FUSE_LIVE=1`) and will skip without a
-real account. Coverage CI runs weekly mutants and nightly fuzz —
-see `PLAN_A_PLUS_P2_REPORT.md`. The C tree still builds with `make
--j4` from the repo root.
+real account. Coverage and scheduled fuzz workflows are defined in
+`.github/workflows/`; the removed C tree does not build from this fork.
 
 ### 14. How do I run a live-auth verification?
 
@@ -160,13 +154,11 @@ failures land in `/proc/self/mountinfo` and `pcloudc mount
 
 ### 16. How does the Rust client compare to the C client on throughput?
 
-The streaming download path uses a 64 KiB buffer (ADR
-[0008](./adr/0008.md)) chosen to balance syscall count, memory
-footprint, and TLS record size. On the same hardware the Rust path
-matches C throughput on large downloads and improves on small-file
-workloads due to the `Arc<Vec<u8>>` page cache and O(1) LRU
-eviction. Upload throughput is currently bounded by the single-shot
-daemon path; see matrix row 92. See R5 and `PERF-BASELINE-14042026.md`.
+The streaming download path uses bounded buffers and the page cache uses O(1)
+LRU bookkeeping, but this repository does not currently carry a release-grade,
+same-host C-versus-Rust benchmark result that supports a comparative marketing
+claim. Treat the microbenchmarks in [Performance](./architecture/performance.md)
+as regression tools, not proof that one client is faster.
 
 ### 17. How much memory should the daemon use at rest?
 
@@ -190,12 +182,11 @@ report for wiring details.
 
 ### 19. What's the platform support roadmap?
 
-Linux is the primary target and the only platform where live-verified
-flows run today. The codebase compiles on macOS and FreeBSD; a
-Windows port is scoped but not yet delivered. Mounted-drive parity
-(`bd-1du.4`) is Linux-first via FUSE; macOS will follow through
-`macfuse`, Windows through `winfsp`, once the Linux path is proven.
-See the Platforms subtree under Operations and R10.
+Linux, macOS, Windows, FreeBSD, NetBSD, OpenBSD, and DragonFly BSD have explicit
+native mount gates. illumos/OmniOS and Solaris have API/CLI gates and an
+explicit unsupported kernel mount. Treat successful release-commit runs, not
+workflow source alone, as support evidence. NAS hardware qualification remains
+Tier 2.
 
 ### 20. Does the Rust client auto-update?
 
@@ -219,9 +210,11 @@ enhancements in `.reviews/20-enhancements-brainstorm.md` and epic
 
 ### 22. How do I add a new IPC command?
 
-1. Extend the enum in `pcloud-proto` and round-trip via the binary
-   framing. 2. Add a backend handler under `pcloud-daemon/src/*_backend.rs`.
-3. Expose it on the SDK (`pcloud-sdk`) and CLI (`pcloud-cli`).
+1. Extend the IPC request enum and its round-trip tests. 2. Add the canonical
+backend operation and a thin daemon dispatch arm. 3. Expose it on the CLI and,
+only when it belongs in the focused remote-drive contract, `pcloud-sdk` with
+SDK-owned types. Broad first-party compatibility helpers belong in
+`pcloud-embedded-sdk`.
 4. Add tests — unit, proptest where framing is non-trivial, and a
 gated live test if it hits the network. 5. Update the parity matrix
 and `C_FEATURE_PARITY_REVIEW.md` if it maps to a C function. See
@@ -229,9 +222,8 @@ Development → Adding a Command.
 
 ### 23. What's the license?
 
-See the repo root `LICENSE` file. The legacy C tree inherits
-pCloud's upstream licensing; the Rust rewrite sits under the same
-terms unless a crate's Cargo.toml says otherwise. Do not add a
+See the repo root `LICENSE` files and each crate's Cargo manifest. The removed
+legacy C tree is not licensed or shipped by this fork. Do not add a
 dependency under a copyleft license without a `cargo deny` exception
 and an ADR entry. Contributor sign-off follows the CONTRIBUTING
 guide.
@@ -241,18 +233,16 @@ guide.
 Single source of truth: `C_FEATURE_PARITY_MATRIX.csv`. `STATUS.md`
 reproduces the aggregate (ADR [0009](./adr/0009.md)). Reviewer 19
 (`19-parity-honesty.md`) re-runs on each wave and grades; current
-grade is B+, targeting A at `bd-1du.10` close. Every `Partial` row
-has a tracked bead, an exit criterion with a named test, and a
-justification in the [closure checklist](https://github.com/ezechiel203/pcloud-rs/blob/main/docs/parity/bd-1du-10-closure-checklist.md).
+grade is B+, targeting A at final parity-gate close. Every `Partial` row must
+have a blocker and exit criterion; as of 2026-04-30 the historical bead labels
+are provenance only and replacement live tracker IDs still need to be opened.
 Rejected rows live in `REJECTED-RATIONALES-14042026.md`.
 
 ### 25. Where do I start if I want to contribute?
 
-Read [Contributing](./development/contributing.md), pick an open
-bead (`bd list --status=open`), and confirm scope in the bead
-comment before coding. Small wins: close a Partial matrix row with
-a test, harden an edge in the mounted-drive scaffold, or extend
-platform coverage in `operations/platforms/`. Large wins:
-`bd-1du.4.6` (FUSE mount lifecycle wiring) or matrix row 92
-(chunked upload state machine). Parity claims are not moved
-without evidence.
+Read [Contributing](./development/contributing.md), choose a scoped issue or
+open one with a reproducible acceptance test, and confirm ownership before
+coding. High-value work is release evidence: native mount/package
+qualification, live-account transfer/share recovery tests, clean baseline
+integration, and NAS hardware matrices. Parity claims never move without
+evidence.

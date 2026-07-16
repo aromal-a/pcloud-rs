@@ -1,0 +1,20 @@
+[package]
+name = "pcloud-webdav"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+description = "Experimental local HTTP/WebDAV subset; no production daemon backend or RFC 4918 compliance claim."
+
+[dependencies]
+log = { workspace = true }
+pcloud-ipc = { path = "../pcloud-ipc" }
+serde_json = { workspace = true }
+tempfile = "3"
+thiserror = { workspace = true }
+
+[dev-dependencies]
+
+[lints]
+workspace = true

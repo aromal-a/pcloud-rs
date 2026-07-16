@@ -44,7 +44,10 @@
 //!
 //! Portable; no platform gating.
 
+use std::{fmt, ops::Deref};
+
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 /// Hard upper bound on the encoded length of a single request frame.
 ///
@@ -110,7 +113,7 @@ pub struct RequestFrame {
 /// applied: the protocol does not admit new scalar types without a
 /// wire-format bump, and consumers benefit from compile-time
 /// coverage when that hypothetical bump happens.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum BinaryParamValue {
     /// UTF-8 string value, encoded as a `u32` little-endian length
     /// followed by the bytes.
@@ -131,6 +134,19 @@ pub enum BinaryParamValue {
     Bool(bool),
 }
 
+impl fmt::Debug for BinaryParamValue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::String(value) => f
+                .debug_tuple("String")
+                .field(&RedactedStringDebug(value.len()))
+                .finish(),
+            Self::Number(value) => f.debug_tuple("Number").field(value).finish(),
+            Self::Bool(value) => f.debug_tuple("Bool").field(value).finish(),
+        }
+    }
+}
+
 /// Named parameter, ready to be encoded into a request frame.
 ///
 /// Pair of a name (ASCII, ≤ [`MAX_PARAM_NAME_LEN`]) and a typed
@@ -145,12 +161,21 @@ pub enum BinaryParamValue {
 /// (`methods::*`) whose borrow graph is easier to manage with
 /// owned data, and because the resulting `Vec<BinaryParam>` is
 /// often logged / cloned for retry by the resilient transport.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct BinaryParam {
     /// Parameter name. ASCII, max [`MAX_PARAM_NAME_LEN`] bytes.
     pub name: String,
     /// Typed parameter value.
     pub value: BinaryParamValue,
+}
+
+impl fmt::Debug for BinaryParam {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BinaryParam")
+            .field("name", &self.name)
+            .field("value", &self.value)
+            .finish()
+    }
 }
 
 impl BinaryParam {
@@ -198,22 +223,96 @@ impl BinaryParam {
 /// 4. The transport writes [`Self::bytes`] verbatim and then reads
 ///    the response frame.
 ///
-/// The owned [`Self::frame`] and [`Self::params`] copies are retained
-/// alongside the serialized [`Self::bytes`] so logs, tests, and retry
-/// paths can introspect the request without re-parsing the wire
-/// buffer. The modest duplication is worth the debuggability win.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The owned [`Self::frame`] is retained in all builds. [`Self::params`] is
+/// retained only in debug builds so development transports and normal test
+/// runs can introspect the request without re-parsing the wire buffer; release builds
+/// keep it empty to avoid extending plaintext credential lifetimes. Debug
+/// output redacts every string value and reports the serialized frame only by
+/// length; the serialized byte buffer is zeroized on drop.
+#[derive(Clone, PartialEq, Eq)]
 pub struct EncodedRequest {
     /// Decoded view of the command name and parameter count.
     pub frame: RequestFrame,
     /// Parameters that were encoded into [`Self::bytes`], retained
-    /// verbatim so callers can log or replay without reparsing.
+    /// verbatim only in debug builds. Release builds leave this empty;
+    /// transports must use [`Self::bytes`] for production execution.
     pub params: Vec<BinaryParam>,
     /// Fully serialized wire frame (length prefix + header + body).
     ///
     /// Hand this directly to the transport; do not append or
     /// prepend anything — the length prefix is already populated.
-    pub bytes: Vec<u8>,
+    pub bytes: EncodedRequestBytes,
+}
+
+/// Serialized binary request bytes that zeroize on drop and redact `Debug`.
+#[derive(Clone, PartialEq, Eq)]
+pub struct EncodedRequestBytes(Zeroizing<Vec<u8>>);
+
+impl EncodedRequestBytes {
+    /// Wrap serialized request bytes in zeroizing storage.
+    #[must_use]
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self(Zeroizing::new(bytes))
+    }
+
+    /// Borrow the serialized request frame.
+    #[must_use]
+    pub fn as_slice(&self) -> &[u8] {
+        self.0.as_slice()
+    }
+
+    /// Length of the serialized request frame.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// `true` when the serialized request frame is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+impl fmt::Debug for EncodedRequestBytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EncodedRequestBytes")
+            .field("len", &self.len())
+            .field("bytes", &"<redacted>")
+            .finish()
+    }
+}
+
+impl AsRef<[u8]> for EncodedRequestBytes {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl Deref for EncodedRequestBytes {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
+
+impl fmt::Debug for EncodedRequest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("EncodedRequest")
+            .field("frame", &self.frame)
+            .field("params", &self.params)
+            .field("bytes_len", &self.bytes.len())
+            .finish()
+    }
+}
+
+struct RedactedStringDebug(usize);
+
+impl fmt::Debug for RedactedStringDebug {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "<redacted {} bytes>", self.0)
+    }
 }
 
 /// Error produced by [`encode_request`] or
@@ -371,9 +470,21 @@ pub fn encode_request(
             command: command.to_owned(),
             parameter_count: params.len(),
         },
-        params: params.to_vec(),
-        bytes,
+        params: retained_params(params),
+        bytes: EncodedRequestBytes::new(bytes),
     })
+}
+
+fn retained_params(params: &[BinaryParam]) -> Vec<BinaryParam> {
+    #[cfg(debug_assertions)]
+    {
+        params.to_vec()
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        let _ = params;
+        Vec::new()
+    }
 }
 
 /// Decode the four-byte little-endian length prefix of a response
@@ -439,6 +550,66 @@ mod tests {
         assert_eq!(encoded.frame.command, "login");
         assert_eq!(encoded.frame.parameter_count, 2);
         assert!(encoded.bytes.len() >= 2);
+    }
+
+    #[test]
+    fn debug_redacts_string_params_and_frame_bytes() {
+        let encoded = encode_request(
+            "login",
+            &[
+                BinaryParam::string("auth", "secret-auth-token"),
+                BinaryParam::string("password", "correct-horse-battery-staple"),
+                BinaryParam::number("userid", 42),
+            ],
+            None,
+        )
+        .expect("request should encode");
+
+        let rendered = format!("{encoded:?}");
+        assert!(!rendered.contains("secret-auth-token"));
+        assert!(!rendered.contains("correct-horse-battery-staple"));
+        assert!(rendered.contains("bytes_len"));
+        assert!(rendered.contains("redacted"));
+    }
+
+    #[test]
+    fn encoded_bytes_debug_redacts_serialized_frame() {
+        let encoded = encode_request(
+            "login",
+            &[BinaryParam::string("auth", "secret-auth-token")],
+            None,
+        )
+        .expect("request should encode");
+
+        let rendered = format!("{:?}", encoded.bytes);
+        assert!(!rendered.contains("secret-auth-token"));
+        assert!(rendered.contains("redacted"));
+    }
+
+    #[test]
+    fn plaintext_param_retention_is_not_enabled_for_release_builds() {
+        let encoded = encode_request(
+            "login",
+            &[BinaryParam::string("auth", "secret-auth-token")],
+            None,
+        )
+        .expect("request should encode");
+
+        if cfg!(debug_assertions) {
+            assert_eq!(encoded.params.len(), 1);
+        } else {
+            assert!(
+                encoded.params.is_empty(),
+                "release builds must not retain plaintext params"
+            );
+        }
+    }
+
+    #[test]
+    fn param_debug_redacts_string_values() {
+        let rendered = format!("{:?}", BinaryParam::string("path", "/not/secret"));
+        assert!(!rendered.contains("/not/secret"));
+        assert!(rendered.contains("redacted"));
     }
 
     #[test]

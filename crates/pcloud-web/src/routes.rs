@@ -16,10 +16,18 @@
 //! - `GET  /metrics`       — 404 (metrics feature not compiled in).
 //!
 //! CSRF uses the **double-submit cookie** pattern: `GET /` sets a
-//! random, opaque `pcw_csrf` cookie; every mutating handler requires a
-//! matching `X-CSRF-Token` request header. Because the cookie is
-//! `HttpOnly; SameSite=Strict` only the same-origin (loopback-only)
-//! caller can read it and submit it back.
+//! random, opaque `pcw_csrf` cookie and renders the same value into
+//! hidden form fields. Mutating handlers accept either a matching
+//! `X-CSRF-Token` header or the hidden form value.
+//!
+//! Every daemon-backed route also requires either `X-PCloud-Web-Token` or
+//! the HttpOnly `pcw_session` cookie issued after a token-authenticated
+//! HTML GET. Liveness and readiness probes are intentionally unauthenticated
+//! because they reveal no daemon/user state.
+//!
+//! All routes reject hostile `Host` headers. Mutating routes additionally
+//! require a same-origin `Origin` or `Referer`, closing the DNS-rebinding and
+//! cross-origin form-post gaps without requiring client-side JavaScript.
 //!
 //! All responses intended for browsers carry a restrictive CSP and
 //! `X-Content-Type-Options: nosniff`. Any daemon-sourced field is
@@ -34,8 +42,9 @@ use std::sync::atomic::Ordering;
 
 use axum::{
     Form, Router,
-    extract::{Path as AxumPath, State},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    extract::{Path as AxumPath, Request as AxumRequest, State},
+    http::{HeaderMap, HeaderValue, StatusCode, Uri, header},
+    middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get},
 };
@@ -62,6 +71,8 @@ const CSP: &str = "default-src 'self'; script-src 'none'; style-src 'self' 'unsa
 
 /// Cookie name for the double-submit CSRF token.
 const CSRF_COOKIE: &str = "pcw_csrf";
+/// Cookie name for the browser session copy of the web token.
+const WEB_SESSION_COOKIE: &str = "pcw_session";
 /// Request header the caller must echo the cookie value into.
 const CSRF_HEADER: &str = "x-csrf-token";
 /// Request header that mutating routes require for session authentication.
@@ -70,6 +81,7 @@ const WEB_TOKEN_HEADER: &str = "x-pcloud-web-token";
 
 /// Build the Axum router with the provided shared [`AppState`].
 pub(crate) fn router(state: AppState) -> Router {
+    let host_state = state.clone();
     Router::new()
         .route("/", get(index))
         .route("/api/status", get(api_status))
@@ -84,6 +96,21 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/settings", get(settings))
         .route("/metrics", get(metrics))
         .with_state(state)
+        .layer(middleware::from_fn_with_state(
+            host_state,
+            enforce_allowed_host,
+        ))
+}
+
+async fn enforce_allowed_host(
+    State(state): State<AppState>,
+    req: AxumRequest,
+    next: Next,
+) -> Response {
+    if let Err(resp) = require_allowed_host(req.headers(), &state) {
+        return resp;
+    }
+    next.run(req).await
 }
 
 // -------------------------------------------------------------------
@@ -131,10 +158,13 @@ async fn readyz(State(state): State<AppState>) -> impl IntoResponse {
 
 /// `GET /` — HTML landing page + CSRF cookie issuance.
 async fn index(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
+        return resp;
+    }
     let status = fetch_status(&state.socket_path).await;
     let token = existing_or_new_csrf(&headers);
     let body = templates::render_index(&status);
-    html_response_with_csrf(body, &token)
+    html_response_with_csrf(body, &token, state.web_token.expose_secret())
 }
 
 /// `GET /api/status` — JSON mirror of the landing page.
@@ -164,6 +194,9 @@ async fn api_status(State(state): State<AppState>, headers: HeaderMap) -> Respon
 
 /// `GET /sync` — list sync roots + add form.
 async fn sync_list(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
+        return resp;
+    }
     let token = existing_or_new_csrf(&headers);
     let ipc = call_ipc(
         &state.socket_path,
@@ -184,7 +217,7 @@ async fn sync_list(State(state): State<AppState>, headers: HeaderMap) -> Respons
     let (pending_raw, _) = raw_and_online(&pending);
 
     let body = render_sync_page(online, &raw, &pending_raw, &token);
-    html_response_with_csrf(body, &token)
+    html_response_with_csrf(body, &token, state.web_token.expose_secret())
 }
 
 /// Form payload for `POST /sync`.
@@ -195,6 +228,9 @@ struct SyncAddForm {
     /// Optional: "full" (default), "download", "upload".
     #[serde(default)]
     sync_type: String,
+    /// Hidden CSRF token rendered into server-side forms.
+    #[serde(default)]
+    csrf_token: String,
 }
 
 /// `POST /sync` — add a sync root. Session token and CSRF required.
@@ -206,7 +242,10 @@ async fn sync_add(
     if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
         return resp;
     }
-    if let Err(resp) = require_csrf(&headers) {
+    if let Err(resp) = require_same_origin(&headers, &state) {
+        return resp;
+    }
+    if let Err(resp) = require_csrf(&headers, Some(&form.csrf_token)) {
         return resp;
     }
     // Map the optional form sync_type token to the typed enum. Anything
@@ -238,7 +277,10 @@ async fn sync_remove(
     if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
         return resp;
     }
-    if let Err(resp) = require_csrf(&headers) {
+    if let Err(resp) = require_same_origin(&headers, &state) {
+        return resp;
+    }
+    if let Err(resp) = require_csrf(&headers, None) {
         return resp;
     }
     let ipc = call_ipc(&state.socket_path, Request::SyncRootRemove { sync_id: id }).await;
@@ -251,6 +293,9 @@ async fn sync_remove(
 
 /// `GET /publinks` — list active public links + create form.
 async fn publinks_list(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
+        return resp;
+    }
     let token = existing_or_new_csrf(&headers);
     let ipc = call_ipc(
         &state.socket_path,
@@ -261,11 +306,11 @@ async fn publinks_list(State(state): State<AppState>, headers: HeaderMap) -> Res
     .await;
     let (raw, online) = raw_and_online(&ipc);
     let body = render_publinks_page(online, &raw, &token);
-    html_response_with_csrf(body, &token)
+    html_response_with_csrf(body, &token, state.web_token.expose_secret())
 }
 
 /// Form payload for `POST /publinks`.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct PublinkCreateForm {
     path: String,
     /// Optional UNIX-seconds expiry. Empty/omitted means no expiry.
@@ -277,6 +322,9 @@ struct PublinkCreateForm {
     /// heap memory after the request handler completes.
     #[serde(default)]
     password: String,
+    /// Hidden CSRF token rendered into server-side forms.
+    #[serde(default)]
+    csrf_token: String,
 }
 
 impl Drop for PublinkCreateForm {
@@ -295,7 +343,10 @@ async fn publinks_create(
     if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
         return resp;
     }
-    if let Err(resp) = require_csrf(&headers) {
+    if let Err(resp) = require_same_origin(&headers, &state) {
+        return resp;
+    }
+    if let Err(resp) = require_csrf(&headers, Some(&form.csrf_token)) {
         return resp;
     }
 
@@ -358,7 +409,10 @@ async fn publinks_revoke(
     if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
         return resp;
     }
-    if let Err(resp) = require_csrf(&headers) {
+    if let Err(resp) = require_same_origin(&headers, &state) {
+        return resp;
+    }
+    if let Err(resp) = require_csrf(&headers, None) {
         return resp;
     }
 
@@ -402,6 +456,9 @@ async fn publinks_revoke(
 /// `Accept: application/json` (or `application/x-ndjson`) returns the
 /// raw JSON payload; otherwise HTML.
 async fn activity(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
+        return resp;
+    }
     let token = existing_or_new_csrf(&headers);
     let ipc = call_ipc(
         &state.socket_path,
@@ -430,15 +487,18 @@ async fn activity(State(state): State<AppState>, headers: HeaderMap) -> Response
     }
 
     let body = render_activity_page(online, &raw, &token);
-    html_response_with_csrf(body, &token)
+    html_response_with_csrf(body, &token, state.web_token.expose_secret())
 }
 
 /// `GET /settings` — redacted config view.
 async fn settings(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    if let Err(resp) = require_web_token(&headers, state.web_token.expose_secret()) {
+        return resp;
+    }
     let token = existing_or_new_csrf(&headers);
     let socket = state.socket_path.display().to_string();
     let body = render_settings_page(&socket, &token);
-    html_response_with_csrf(body, &token)
+    html_response_with_csrf(body, &token, state.web_token.expose_secret())
 }
 
 /// `GET /metrics` — placeholder. The `metrics` feature is not
@@ -614,13 +674,203 @@ fn ipc_plain_response(ipc: Result<IpcResponse, String>) -> Response {
 }
 
 // -------------------------------------------------------------------
+// Host / Origin enforcement
+// -------------------------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HostAuthority {
+    host: String,
+    port: Option<u16>,
+}
+
+#[allow(clippy::result_large_err)]
+fn require_allowed_host(headers: &HeaderMap, state: &AppState) -> Result<(), Response> {
+    let Some(authority) = request_host(headers) else {
+        return Err(host_reject("missing or malformed Host header"));
+    };
+    if authority_is_allowed(&authority, state) {
+        return Ok(());
+    }
+    Err(host_reject("Host header is not allowed"))
+}
+
+#[allow(clippy::result_large_err)]
+fn require_same_origin(headers: &HeaderMap, state: &AppState) -> Result<(), Response> {
+    let Some(host) = request_host(headers) else {
+        return Err(origin_reject("missing or malformed Host header"));
+    };
+    if !authority_is_allowed(&host, state) {
+        return Err(origin_reject("Host header is not allowed"));
+    }
+
+    if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
+        return if origin_matches_host(origin, &host) {
+            Ok(())
+        } else {
+            Err(origin_reject("cross-origin mutation rejected"))
+        };
+    }
+
+    if let Some(referer) = headers.get(header::REFERER).and_then(|v| v.to_str().ok()) {
+        return if origin_matches_host(referer, &host) {
+            Ok(())
+        } else {
+            Err(origin_reject("cross-origin mutation rejected"))
+        };
+    }
+
+    Err(origin_reject("missing Origin or Referer"))
+}
+
+fn request_host(headers: &HeaderMap) -> Option<HostAuthority> {
+    headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .and_then(parse_host_authority)
+}
+
+fn parse_host_authority(raw: &str) -> Option<HostAuthority> {
+    let raw = raw.trim();
+    if raw.is_empty()
+        || raw
+            .bytes()
+            .any(|b| b.is_ascii_whitespace() || matches!(b, b'/' | b'\\' | b'@'))
+    {
+        return None;
+    }
+
+    if let Some(rest) = raw.strip_prefix('[') {
+        let end = rest.find(']')?;
+        let host = normalize_host(&rest[..end]);
+        if host.is_empty() {
+            return None;
+        }
+        let suffix = &rest[end + 1..];
+        let port = if suffix.is_empty() {
+            None
+        } else {
+            Some(suffix.strip_prefix(':')?.parse::<u16>().ok()?)
+        };
+        return Some(HostAuthority { host, port });
+    }
+
+    let colon_count = raw.as_bytes().iter().filter(|&&b| b == b':').count();
+    let (host_part, port) = match colon_count {
+        0 => (raw, None),
+        1 => {
+            let idx = raw.rfind(':')?;
+            let (host, port) = raw.split_at(idx);
+            let port = port.strip_prefix(':')?;
+            if port.is_empty() {
+                return None;
+            }
+            (host, Some(port.parse::<u16>().ok()?))
+        }
+        _ => return None,
+    };
+    let host = normalize_host(host_part);
+    if host.is_empty() {
+        return None;
+    }
+    Some(HostAuthority { host, port })
+}
+
+fn normalize_host(host: &str) -> String {
+    host.trim_end_matches('.').to_ascii_lowercase()
+}
+
+fn authority_is_allowed(authority: &HostAuthority, state: &AppState) -> bool {
+    if is_loopback_host(&authority.host)
+        && port_matches_bind(authority.port, state.bind_addr.port())
+    {
+        return true;
+    }
+
+    state.allowed_hosts.iter().any(|allowed| {
+        parse_host_authority(allowed).is_some_and(|allowed| {
+            authority.host == allowed.host
+                && (allowed.port.is_none() || authority.port == allowed.port)
+        })
+    })
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host == "localhost"
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|ip| ip.is_loopback())
+}
+
+fn port_matches_bind(port: Option<u16>, bind_port: u16) -> bool {
+    port.is_none() || bind_port == 0 || port == Some(bind_port)
+}
+
+fn origin_matches_host(value: &str, host: &HostAuthority) -> bool {
+    let Some((scheme, origin)) = origin_authority(value) else {
+        return false;
+    };
+    if origin.host != host.host {
+        return false;
+    }
+    effective_port(origin.port, &scheme) == effective_port(host.port, &scheme)
+}
+
+fn origin_authority(value: &str) -> Option<(String, HostAuthority)> {
+    if value.bytes().any(|b| b.is_ascii_whitespace()) {
+        return None;
+    }
+    let uri = value.parse::<Uri>().ok()?;
+    let scheme = uri.scheme_str()?;
+    if !matches!(scheme, "http" | "https") {
+        return None;
+    }
+    let authority = uri.authority()?;
+    Some((
+        scheme.to_string(),
+        parse_host_authority(authority.as_str())?,
+    ))
+}
+
+fn effective_port(port: Option<u16>, scheme: &str) -> Option<u16> {
+    port.or(match scheme {
+        "http" => Some(80),
+        "https" => Some(443),
+        _ => None,
+    })
+}
+
+fn host_reject(msg: &'static str) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/plain; charset=utf-8"),
+        )],
+        msg,
+    )
+        .into_response()
+}
+
+fn origin_reject(msg: &'static str) -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        [(
+            header::CONTENT_TYPE,
+            HeaderValue::from_static("text/plain; charset=utf-8"),
+        )],
+        msg,
+    )
+        .into_response()
+}
+
+// -------------------------------------------------------------------
 // CSRF
 // -------------------------------------------------------------------
 
 /// Read the caller's existing CSRF cookie (if valid) or mint a fresh
 /// one. Tokens are 128 bits of OS randomness hex-encoded.
 fn existing_or_new_csrf(headers: &HeaderMap) -> String {
-    if let Some(t) = read_csrf_cookie(headers) {
+    if let Some(t) = read_cookie(headers, CSRF_COOKIE) {
         if is_valid_token(&t) {
             return t;
         }
@@ -633,8 +883,7 @@ fn mint_csrf_token() -> String {
     // SAFETY: `getrandom` only fails if the kernel CSPRNG is unavailable
     // (EIO / /dev/urandom missing). A host in that state cannot serve
     // a web UI securely anyway, so panic is the correct failure mode
-    // for this MVP loopback-only surface. If this call ever moves
-    // behind a public bind it must be converted to a typed error.
+    // for this MVP management surface.
     getrandom::getrandom(&mut buf)
         .expect("getrandom: kernel RNG unavailable — cannot mint CSRF token");
     let mut s = String::with_capacity(32);
@@ -649,33 +898,40 @@ fn is_valid_token(t: &str) -> bool {
     t.len() == 32 && t.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn read_csrf_cookie(headers: &HeaderMap) -> Option<String> {
+fn read_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     let cookie = headers.get(header::COOKIE)?.to_str().ok()?;
     for part in cookie.split(';') {
         let part = part.trim();
-        if let Some(rest) = part.strip_prefix(&format!("{CSRF_COOKIE}=")) {
+        if let Some(rest) = part.strip_prefix(&format!("{name}=")) {
             return Some(rest.to_string());
         }
     }
     None
 }
 
-/// Double-submit check: the `X-CSRF-Token` header MUST match the
-/// `pcw_csrf` cookie and MUST be well-formed.
+/// Double-submit check: the `X-CSRF-Token` header or hidden form token
+/// MUST match the `pcw_csrf` cookie and MUST be well-formed.
 ///
 /// The `Err` variant carries a pre-built 403 [`Response`]. It is
 /// intentionally large (axum bodies are boxed internally); the lint
 /// is silenced because boxing a one-shot error path adds noise
 /// without saving meaningful memory on the happy path.
 #[allow(clippy::result_large_err)]
-fn require_csrf(headers: &HeaderMap) -> Result<(), Response> {
-    let cookie = read_csrf_cookie(headers);
-    let header_tok = headers
+fn require_csrf(headers: &HeaderMap, form_token: Option<&str>) -> Result<(), Response> {
+    let cookie = read_cookie(headers, CSRF_COOKIE);
+    let submitted = headers
         .get(CSRF_HEADER)
         .and_then(|v| v.to_str().ok())
-        .map(str::to_string);
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            form_token
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(str::to_string)
+        });
 
-    let (Some(c), Some(h)) = (cookie, header_tok) else {
+    let (Some(c), Some(h)) = (cookie, submitted) else {
         return Err(csrf_reject("missing CSRF token"));
     };
     if !is_valid_token(&c) || !is_valid_token(&h) {
@@ -708,19 +964,22 @@ fn csrf_reject(msg: &'static str) -> Response {
         .into_response()
 }
 
-/// Session-token gate for mutating routes.
+/// Session-token gate for daemon-backed routes.
 ///
-/// Compares the `X-PCloud-Web-Token` header value against the daemon's
-/// startup token using a constant-time byte comparison to prevent
-/// timing side-channels. Returns `Err(401 Unauthorized)` when the header
-/// is absent, malformed, or does not match. Read-only routes (`GET /`,
-/// `GET /health`, etc.) do not call this.
+/// Compares either the `X-PCloud-Web-Token` header value or the
+/// `pcw_session` cookie against the daemon's startup token using a
+/// constant-time byte comparison to prevent timing side-channels. Returns
+/// `Err(401 Unauthorized)` when both credentials are absent, malformed, or
+/// do not match. Minimal probes (`GET /health`, `GET /livez`, and
+/// `GET /readyz`) do not call this.
 #[allow(clippy::result_large_err)]
 fn require_web_token(headers: &HeaderMap, expected: &str) -> Result<(), Response> {
     let provided = headers
         .get(WEB_TOKEN_HEADER)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or("");
+        .map(str::to_string)
+        .or_else(|| read_cookie(headers, WEB_SESSION_COOKIE))
+        .unwrap_or_default();
 
     // Constant-time compare via `subtle::ConstantTimeEq` to prevent
     // timing side-channels on web-token validation.
@@ -743,7 +1002,7 @@ fn require_web_token(headers: &HeaderMap, expected: &str) -> Result<(), Response
 // Response builders
 // -------------------------------------------------------------------
 
-fn html_response_with_csrf(body: String, csrf: &str) -> Response {
+fn html_response_with_csrf(body: String, csrf: &str, session_token: &str) -> Response {
     let mut resp = Response::new(axum::body::Body::from(body));
     let headers = resp.headers_mut();
     headers.insert(
@@ -758,11 +1017,21 @@ fn html_response_with_csrf(body: String, csrf: &str) -> Response {
         header::X_CONTENT_TYPE_OPTIONS,
         HeaderValue::from_static("nosniff"),
     );
-    let cookie = format!("{CSRF_COOKIE}={csrf}; HttpOnly; SameSite=Strict; Path=/");
-    if let Ok(val) = HeaderValue::from_str(&cookie) {
-        headers.insert(header::SET_COOKIE, val);
-    }
+    append_set_cookie(
+        headers,
+        &format!("{CSRF_COOKIE}={csrf}; HttpOnly; SameSite=Strict; Path=/"),
+    );
+    append_set_cookie(
+        headers,
+        &format!("{WEB_SESSION_COOKIE}={session_token}; HttpOnly; SameSite=Strict; Path=/"),
+    );
     resp
+}
+
+fn append_set_cookie(headers: &mut HeaderMap, cookie: &str) {
+    if let Ok(val) = HeaderValue::from_str(cookie) {
+        headers.append(header::SET_COOKIE, val);
+    }
 }
 
 fn json_response(body: &serde_json::Value) -> Response {
@@ -813,6 +1082,7 @@ fn render_sync_page(online: bool, roots_raw: &str, pending_raw: &str, csrf: &str
 <h2>Pending</h2><pre>{pending}</pre>\
 <h2>Add sync root</h2>\
 <form method=\"post\" action=\"/sync\">\
+<input type=\"hidden\" name=\"csrf_token\" value=\"{csrf_attr}\">\
 <label>Local path <input name=\"local_path\" required></label>\
 <label>Remote path <input name=\"remote_path\" required></label>\
 <label>Type \
@@ -822,14 +1092,13 @@ fn render_sync_page(online: bool, roots_raw: &str, pending_raw: &str, csrf: &str
 <option value=\"upload\">upload</option>\
 </select></label>\
 <button type=\"submit\">add</button>\
-<p><em>Submission requires the X-CSRF-Token header \
-(double-submit cookie pattern; no JS bundled).</em></p>\
+<p><em>Submission uses a hidden CSRF token; no JavaScript or custom headers required.</em></p>\
 </form>",
         online = xml_escape(online_badge),
         roots = xml_escape(roots_raw),
         pending = xml_escape(pending_raw),
+        csrf_attr = xml_escape(csrf),
     );
-    let _ = csrf;
     page_shell("pcloud-rs — sync", &body, csrf)
 }
 
@@ -841,6 +1110,7 @@ fn render_publinks_page(online: bool, raw: &str, csrf: &str) -> String {
 <h2>Active links</h2><pre>{raw}</pre>\
 <h2>Create public link</h2>\
 <form method=\"post\" action=\"/publinks\">\
+<input type=\"hidden\" name=\"csrf_token\" value=\"{csrf_attr}\">\
 <label>Path <input name=\"path\" required placeholder=\"/folder/file.txt or /folder/\"></label>\
 <label>Expiry (unix seconds, optional) <input name=\"expiry\"></label>\
 <label>Password (optional) <input name=\"password\" type=\"password\"></label>\
@@ -848,6 +1118,7 @@ fn render_publinks_page(online: bool, raw: &str, csrf: &str) -> String {
 </form>",
         online = xml_escape(online_badge),
         raw = xml_escape(raw),
+        csrf_attr = xml_escape(csrf),
     );
     page_shell("pcloud-rs — publinks", &body, csrf)
 }

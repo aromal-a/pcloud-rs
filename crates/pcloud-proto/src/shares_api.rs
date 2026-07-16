@@ -474,7 +474,7 @@ where
     /// the recipient's pubkey via `crypto_getpubkey`, borrowed the
     /// cached folder sym-key from the sharer's unlocked
     /// `PclsyncCompatState`, and produced the base64 ciphertext via
-    /// [`pcloud_crypto::share_rsa::wrap_share_invitation_b64`]. This
+    /// `pcloud_crypto::share_rsa::wrap_share_invitation_b64` (intra-doc link disabled — cross-crate path resolution is unreliable from `pcloud-proto`; the symbol is `pub` and wired through `crypto_share_folder_rsa` / `crypto_account_team_share_rsa`; the gate flagged by `CLAUDEREV/03-crypto.md` HIGH-2 is on the temppass-style `derive_temppass_wire` path, not on this symbol). This
     /// method simply attaches that blob under the `sharedfolderkey`
     /// parameter.
     ///

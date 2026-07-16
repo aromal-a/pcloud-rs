@@ -293,6 +293,19 @@ impl CryptoRuntime {
     ) -> Result<(u64, Vec<u8>), CryptoApiError<CryptoBackendError>> {
         self.api.get_file_key(auth_token, file_id)
     }
+
+    /// Fetch a recipient's `pub_key_ver1` blob via `crypto_getpubkey`.
+    /// CLAUDEREV deferred-set D6 (fire 56). Used by the daemon-side
+    /// `crypto_share_folder_rsa` orchestrator to produce the
+    /// `recipient_pub_blob` argument that
+    /// `SharesRuntime::crypto_share_folder_rsa` needs.
+    pub fn get_pub_key(
+        &self,
+        auth_token: &str,
+        recipient: pcloud_proto::methods::crypto::CryptoPubKeyRecipient,
+    ) -> Result<Vec<u8>, CryptoApiError<CryptoBackendError>> {
+        self.api.get_pub_key(auth_token, recipient)
+    }
 }
 
 fn map_response_parse_err(err: ResponseParseError) -> io::Error {

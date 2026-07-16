@@ -1,0 +1,621 @@
+<!DOCTYPE HTML>
+<html lang="en" class="navy sidebar-visible" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>First Login - pcloud-rs Rust Handbook</title>
+
+
+        <!-- Custom HTML head -->
+
+        <meta name="description" content="Operator and developer handbook for the pcloud-rs Rust workspace.">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="../favicon-de23e50b.svg">
+        <link rel="shortcut icon" href="../favicon-8114d1fc.png">
+        <link rel="stylesheet" href="../css/variables-8adf115d.css">
+        <link rel="stylesheet" href="../css/general-0392ca55.css">
+        <link rel="stylesheet" href="../css/chrome-fc474251.css">
+        <link rel="stylesheet" href="../css/print-9e4910d8.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../fonts/fonts-9644e21d.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" id="mdbook-highlight-css" href="../highlight-493f70e1.css">
+        <link rel="stylesheet" id="mdbook-tomorrow-night-css" href="../tomorrow-night-4c0ae647.css">
+        <link rel="stylesheet" id="mdbook-ayu-highlight-css" href="../ayu-highlight-3fdfc3ac.css">
+
+        <!-- Custom theme stylesheets -->
+
+
+        <!-- Provide site root and default themes to javascript -->
+        <script>
+            const path_to_root = "../";
+            const default_light_theme = "navy";
+            const default_dark_theme = "navy";
+            window.path_to_searchindex_js = "../searchindex-3f71521c.js";
+        </script>
+        <!-- Start loading toc.js asap -->
+        <script src="../toc-c4fa1d14.js"></script>
+    </head>
+    <body>
+    <div id="mdbook-help-container">
+        <div id="mdbook-help-popup">
+            <h2 class="mdbook-help-title">Keyboard shortcuts</h2>
+            <div>
+                <p>Press <kbd>←</kbd> or <kbd>→</kbd> to navigate between chapters</p>
+                <p>Press <kbd>S</kbd> or <kbd>/</kbd> to search in the book</p>
+                <p>Press <kbd>?</kbd> to show this help</p>
+                <p>Press <kbd>Esc</kbd> to hide this help</p>
+            </div>
+        </div>
+    </div>
+    <div id="mdbook-body-container">
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                let theme = localStorage.getItem('mdbook-theme');
+                let sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            const default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? default_dark_theme : default_light_theme;
+            let theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            const html = document.documentElement;
+            html.classList.remove('navy')
+            html.classList.add(theme);
+            html.classList.add("js");
+        </script>
+
+        <input type="checkbox" id="mdbook-sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            let sidebar = null;
+            const sidebar_toggle = document.getElementById("mdbook-sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+                sidebar_toggle.checked = false;
+            }
+            if (sidebar === 'visible') {
+                sidebar_toggle.checked = true;
+            } else {
+                html.classList.remove('sidebar-visible');
+            }
+        </script>
+
+        <nav id="mdbook-sidebar" class="sidebar" aria-label="Table of contents">
+            <!-- populated by js -->
+            <mdbook-sidebar-scrollbox class="sidebar-scrollbox"></mdbook-sidebar-scrollbox>
+            <noscript>
+                <iframe class="sidebar-iframe-outer" src="../toc.html"></iframe>
+            </noscript>
+            <div id="mdbook-sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <div id="mdbook-page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                <div id="mdbook-menu-bar-hover-placeholder"></div>
+                <div id="mdbook-menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="mdbook-sidebar-toggle" class="icon-button" for="mdbook-sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="mdbook-sidebar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M0 96C0 78.3 14.3 64 32 64H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32C14.3 128 0 113.7 0 96zM0 256c0-17.7 14.3-32 32-32H416c17.7 0 32 14.3 32 32s-14.3 32-32 32H32c-17.7 0-32-14.3-32-32zM448 416c0 17.7-14.3 32-32 32H32c-17.7 0-32-14.3-32-32s14.3-32 32-32H416c17.7 0 32 14.3 32 32z"/></svg></span>
+                        </label>
+                        <button id="mdbook-theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="mdbook-theme-list">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M371.3 367.1c27.3-3.9 51.9-19.4 67.2-42.9L600.2 74.1c12.6-19.5 9.4-45.3-7.6-61.2S549.7-4.4 531.1 9.6L294.4 187.2c-24 18-38.2 46.1-38.4 76.1L371.3 367.1zm-19.6 25.4l-116-104.4C175.9 290.3 128 339.6 128 400c0 3.9 .2 7.8 .6 11.6c1.8 17.5-10.2 36.4-27.8 36.4H96c-17.7 0-32 14.3-32 32s14.3 32 32 32H240c61.9 0 112-50.1 112-112c0-2.5-.1-5-.2-7.5z"/></svg></span>
+                        </button>
+                        <ul id="mdbook-theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-default_theme">Auto</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="mdbook-theme-ayu">Ayu</button></li>
+                        </ul>
+                        <button id="mdbook-search-toggle" class="icon-button" type="button" title="Search (`/`)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="/ s" aria-controls="mdbook-searchbar">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M416 208c0 45.9-14.9 88.3-40 122.7L502.6 457.4c12.5 12.5 12.5 32.8 0 45.3s-32.8 12.5-45.3 0L330.7 376c-34.4 25.2-76.8 40-122.7 40C93.1 416 0 322.9 0 208S93.1 0 208 0S416 93.1 416 208zM208 352c79.5 0 144-64.5 144-144s-64.5-144-144-144S64 128.5 64 208s64.5 144 144 144z"/></svg></span>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">pcloud-rs Rust Handbook</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <span class=fa-svg id="print-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M128 0C92.7 0 64 28.7 64 64v96h64V64H354.7L384 93.3V160h64V93.3c0-17-6.7-33.3-18.7-45.3L400 18.7C388 6.7 371.7 0 354.7 0H128zM384 352v32 64H128V384 368 352H384zm64 32h32c17.7 0 32-14.3 32-32V256c0-35.3-28.7-64-64-64H64c-35.3 0-64 28.7-64 64v96c0 17.7 14.3 32 32 32H64v64c0 35.3 28.7 64 64 64H384c35.3 0 64-28.7 64-64V384zm-16-88c-13.3 0-24-10.7-24-24s10.7-24 24-24s24 10.7 24 24s-10.7 24-24 24z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs" title="Git repository" aria-label="Git repository">
+                            <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 496 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M165.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6zm-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3zm44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9zM244.8 8C106.1 8 0 113.3 0 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C428.2 457.8 496 362.9 496 252 496 113.3 383.5 8 244.8 8zM97.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1zm-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7zm32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1zm-11.4-14.7c-1.6 1-1.6 3.6 0 5.9 1.6 2.3 4.3 3.3 5.6 2.3 1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2z"/></svg></span>
+                        </a>
+                        <a href="https://github.com/ezechiel203/pcloud-rs/edit/main/docs/book/src/getting-started/first-login.md" title="Suggest an edit" aria-label="Suggest an edit" rel="edit">
+                            <span class=fa-svg id="git-edit-button"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M421.7 220.3l-11.3 11.3-22.6 22.6-205 205c-6.6 6.6-14.8 11.5-23.8 14.1L30.8 511c-8.4 2.5-17.5 .2-23.7-6.1S-1.5 489.7 1 481.2L38.7 353.1c2.6-9 7.5-17.2 14.1-23.8l205-205 22.6-22.6 11.3-11.3 33.9 33.9 62.1 62.1 33.9 33.9zM96 353.9l-9.3 9.3c-.9 .9-1.6 2.1-2 3.4l-25.3 86 86-25.3c1.3-.4 2.5-1.1 3.4-2l9.3-9.3H112c-8.8 0-16-7.2-16-16V353.9zM453.3 19.3l39.4 39.4c25 25 25 65.5 0 90.5l-14.5 14.5-22.6 22.6-11.3 11.3-33.9-33.9-62.1-62.1L314.3 67.7l11.3-11.3 22.6-22.6 14.5-14.5c25-25 65.5-25 90.5 0z"/></svg></span>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="mdbook-search-wrapper" class="hidden">
+                    <form id="mdbook-searchbar-outer" class="searchbar-outer">
+                        <div class="search-wrapper">
+                            <input type="search" id="mdbook-searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="mdbook-searchresults-outer" aria-describedby="searchresults-header">
+                            <div class="spinner-wrapper">
+                                <span class=fa-svg id="fa-spin"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M304 48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zm0 416c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM48 304c26.5 0 48-21.5 48-48s-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48zm464-48c0-26.5-21.5-48-48-48s-48 21.5-48 48s21.5 48 48 48s48-21.5 48-48zM142.9 437c18.7-18.7 18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zm0-294.2c18.7-18.7 18.7-49.1 0-67.9S93.7 56.2 75 75s-18.7 49.1 0 67.9s49.1 18.7 67.9 0zM369.1 437c18.7 18.7 49.1 18.7 67.9 0s18.7-49.1 0-67.9s-49.1-18.7-67.9 0s-18.7 49.1 0 67.9z"/></svg></span>
+                            </div>
+                        </div>
+                    </form>
+                    <div id="mdbook-searchresults-outer" class="searchresults-outer hidden">
+                        <div id="mdbook-searchresults-header" class="searchresults-header"></div>
+                        <ul id="mdbook-searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('mdbook-sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('mdbook-sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#mdbook-sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="mdbook-content" class="content">
+                    <main>
+                        <h1 id="first-login"><a class="header" href="#first-login">First Login</a></h1>
+<blockquote>
+<p><strong>TL;DR</strong> — start the daemon, log in, prove you’re in:</p>
+<pre><code class="language-bash">systemctl --user start pcloudd          # or `pcloudc start`
+pcloudc login -u you@example.com               # interactive; prompts for password + 2FA
+printf '%s' "$PASS" | pcloudc login \
+  --user you@example.com --password-stdin      # scripted alternative
+pcloudc status                                 # verify: "authenticated as you@example.com"
+</code></pre>
+<p>Raw passwords are <strong>never written to disk</strong>, no matter which flag
+you pass. <code>--save-password</code> persists the <em>auth token</em>, not the
+password, and only when <code>PCLOUD_DURABLE_AUTH_TOKENS=1</code> is set.</p>
+</blockquote>
+<h2 id="what-youll-learn"><a class="header" href="#what-youll-learn">What you’ll learn</a></h2>
+<ul>
+<li>How to start and verify the daemon on Linux, macOS, Windows, and
+ad-hoc foreground mode.</li>
+<li>The exact IPC messages the CLI exchanges with the daemon during
+login (useful when tracing or debugging).</li>
+<li>Three scripted login patterns, in security-preference order:
+<code>--password-stdin</code>, <code>--password-env</code>, durable token vault.</li>
+<li>Every 2FA fallback: TOTP, SMS, push notification, recovery code —
+which one you should prefer for which account type.</li>
+<li>The stable exit-code contract — how to tell an invalid password
+from rate limiting, clock drift, or a broken network.</li>
+<li>How to log out cleanly, including secure purge of the token vault.</li>
+</ul>
+<h2 id="conceptual-background"><a class="header" href="#conceptual-background">Conceptual background</a></h2>
+<p><strong>Auth in pCloud is token-based.</strong> You present a username + password;
+the API returns a bearer <strong>auth token</strong> scoped to your account. Every
+subsequent API call carries that token. There is no cookie, no OAuth
+refresh dance — the token is long-lived, and the only reason to
+re-authenticate is if it gets revoked or expires server-side.</p>
+<p>Two things flow from that:</p>
+<ol>
+<li><strong>The token is the secret.</strong> Protect it like you would protect a
+long-lived SSH key. That is why the optional on-disk vault is
+owner-only (<code>0600</code>) inside an owner-only parent (<code>0700</code>), why the
+daemon validates ownership + mode on every read, and why the vault
+is opt-in behind an environment variable <em>and</em> a CLI flag.</li>
+<li><strong>Passwords never need to touch disk.</strong> The C client used to
+persist the raw password to make unattended restart possible. We
+deliberately <strong>do not mirror that behaviour</strong>. If you need
+unattended restart, persist the token; if you need the password,
+use a proper secret manager and feed it via <code>--password-stdin</code>.</li>
+</ol>
+<p><strong>2FA</strong> adds a second challenge to the password exchange. pCloud
+supports four methods:</p>
+<ul>
+<li><strong>TOTP</strong> — the 6-digit code from an authenticator app (Authy, 1Password,
+Google Authenticator, etc). This is the default and the fastest.</li>
+<li><strong>SMS</strong> — a code texted to your registered phone. Slower and subject
+to SIM-swap attacks; use only when TOTP is unavailable.</li>
+<li><strong>Push</strong> — a tap on an approved pCloud mobile app. Convenient and
+phishing-resistant.</li>
+<li><strong>Recovery code</strong> — one of the one-time codes you printed when you
+set up 2FA. Use when you have lost every other factor.</li>
+</ul>
+<p>For <strong>business / team</strong> accounts, policy may force TOTP or push; for
+<strong>personal</strong> accounts all four are available.</p>
+<blockquote>
+<p><strong>Expert sidebar.</strong> The CLI and daemon speak a length-prefixed
+framed-JSON protocol over a local socket. Login is a small
+state-machine: <code>Request::PasswordSubmission</code> → (optional
+<code>Request::SendTwoFactorSms</code> / <code>Request::SendTwoFactorNotification</code>)
+→ <code>Request::SubmitTwoFactorCode</code> or <code>Request::SubmitRecoveryCode</code>.
+The daemon owns the challenge token — the CLI is pure I/O glue.
+This matters when writing a custom wrapper: you re-use the
+running daemon by calling <code>submit-password</code>, <code>submit-tfa</code>, or
+<code>submit-recovery</code> against an existing session rather than
+re-running <code>login</code>.</p>
+</blockquote>
+<h2 id="step-by-step"><a class="header" href="#step-by-step">Step-by-step</a></h2>
+<h3 id="1-start-the-daemon"><a class="header" href="#1-start-the-daemon">1. Start the daemon</a></h3>
+<p>Pick <strong>one</strong> path per host. Do not start the daemon with <code>sudo</code>.</p>
+<pre><code class="language-bash"># Linux — systemd (recommended)
+systemctl --user start pcloudd
+systemctl --user enable pcloudd           # optional: start on login
+systemctl --user status pcloudd           # verify "active (running)"
+
+# macOS — launchd (after a local source/package build)
+launchctl kickstart -k gui/$(id -u)/dev.pcloud-rs.daemon
+
+# Windows — per-user daemon (same SID as IPC/DPAPI/WinFSP)
+pcloudc start
+
+# Any platform — foreground (useful for debugging; Ctrl-C to stop)
+pcloudd serve
+
+# Any platform — friendly wrapper (spawn detached, logs to state dir)
+pcloudc start
+</code></pre>
+<p>What each command does:</p>
+<ul>
+<li><code>systemctl --user start pcloudd</code> — tells systemd’s user
+manager to activate the unit. Exit code 0 means active; a non-zero
+exit or <code>status: failed</code> means read the journal:
+<code>journalctl --user -u pcloudd -n 50</code>.</li>
+<li><code>pcloudc start</code> — the cross-platform fallback. Spawns <code>pcloudd serve</code>
+under the current user, redirects stdio to the platform data directory,
+and returns once an authenticated IPC health request succeeds. <code>pcloudc login</code> can offer the same startup when it finds no running daemon.</li>
+</ul>
+<p>Common failures and fixes:</p>
+<ul>
+<li><code>Failed to start pcloud-daemon.service: Unit not found</code> — the user
+unit isn’t installed. Run <code>systemctl --user daemon-reload</code> after
+the package installs; if still missing, the package dropped the
+unit in the wrong prefix — re-install.</li>
+<li><code>error: socket runtime dir owned by uid 0</code> — classic <code>sudo</code> mistake.
+Delete the runtime dir as root, then run again as your user:
+<code>sudo rm -rf ~/.local/state/pcloud-rs &amp;&amp; pcloudc start</code>.</li>
+</ul>
+<h3 id="2-verify-the-daemon-is-up"><a class="header" href="#2-verify-the-daemon-is-up">2. Verify the daemon is up</a></h3>
+<pre><code class="language-bash">pcloudc doctor
+# socket:  ~/.local/state/pcloud-rs/ipc.sock (0600, peer-UID ok)
+</code></pre>
+<p>The <code>socket:</code> line is the one that matters here. Anything other than
+<code>(0600, peer-UID ok)</code> — stop, do not proceed. See
+<a href="#socket-and-permission-errors">Socket and permission errors</a> below.</p>
+<blockquote>
+<p><strong>Expert tip.</strong> On a fleet, use <code>pcloudc doctor --json --strict</code>
+and pipe into Prometheus via <code>node_exporter</code> textfile collector.
+A dashboard panel on <code>probes{name="socket",status="ok"}</code> catches
+misconfigured hosts inside of one scrape interval.</p>
+</blockquote>
+<h3 id="3-interactive-login"><a class="header" href="#3-interactive-login">3. Interactive login</a></h3>
+<pre><code class="language-bash">pcloudc login -u you@example.com
+</code></pre>
+<p>Prompt sequence:</p>
+<pre><code>Email: you@example.com                  # pre-filled by -u
+Password: ********                       # no echo, never logged
+Two-factor code (or 'sms', 'push', 'recovery'): 123456
+Logged in as you@example.com (uid 12345678).
+</code></pre>
+<p>What’s happening at each prompt:</p>
+<ul>
+<li><strong>Email / username</strong> — the address on your pCloud account. Pre-fill
+with <code>-u</code> / <code>--user</code> / <code>--username</code> (all three spellings are
+accepted).</li>
+<li><strong>Password</strong> — read through the platform’s secure password API
+(<code>termios</code> <code>ECHO</code> off on Unix; <code>ReadConsole</code> on Windows). Never
+echoed, never written to shell history, never persisted to disk.</li>
+<li><strong>Two-factor code</strong> — 6-digit TOTP. Fallback keywords:
+<ul>
+<li><code>sms</code> — request an SMS code, then re-prompt for it.</li>
+<li><code>push</code> — send a device notification; approve in the pCloud app,
+then press Enter.</li>
+<li><code>recovery</code> — switch to the recovery-code flow (one-time codes
+issued when you enabled 2FA).</li>
+</ul>
+</li>
+</ul>
+<p>The CLI sends <code>Request::PasswordSubmission</code>, then — if needed — one
+of <code>Request::SubmitTwoFactorCode</code>, <code>Request::SendTwoFactorSms</code>,
+<code>Request::SendTwoFactorNotification</code>, or <code>Request::SubmitRecoveryCode</code>.
+The daemon owns the challenge state.</p>
+<h4 id="useful-login-flags-verified-against-canonical_token_for"><a class="header" href="#useful-login-flags-verified-against-canonical_token_for">Useful login flags (verified against <code>canonical_token_for</code>)</a></h4>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Flag</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>-u</code>, <code>--user</code>, <code>--username EMAIL</code></td><td>Pre-fill email.</td></tr>
+<tr><td><code>-m</code>, <code>--mountpoint PATH</code></td><td>Also attach a mount after login (Linux only today; see mount step).</td></tr>
+<tr><td><code>-c</code>, <code>--crypto</code></td><td>Unlock the crypto subsystem on the same session.</td></tr>
+<tr><td><code>--tfa-code CODE</code></td><td>Supply a TOTP code non-interactively.</td></tr>
+<tr><td><code>-T</code>, <code>--tfa-channel sms|push|recovery</code></td><td>Pick the 2FA fallback method.</td></tr>
+<tr><td><code>-r</code>, <code>--trust-device</code>, <code>--trusted-device</code></td><td>Ask pCloud to skip 2FA for this device next time.</td></tr>
+<tr><td><code>-s</code>, <code>--save-password</code></td><td>Persist the <strong>auth token</strong> (requires <code>PCLOUD_DURABLE_AUTH_TOKENS=1</code>).</td></tr>
+<tr><td><code>--password-stdin</code></td><td>Read password from stdin (one line, newline-terminated).</td></tr>
+<tr><td><code>--password-env VAR</code></td><td>Read password from env var <code>VAR</code>.</td></tr>
+<tr><td><code>--fuse-opts</code>, <code>-O OPTS</code></td><td>Mount options, passed through to the FUSE layer.</td></tr>
+<tr><td><code>--cache-size GB</code></td><td>Page-cache cap, in gigabytes.</td></tr>
+</tbody>
+</table>
+</div>
+<blockquote>
+<p><strong>Expert tip.</strong> <code>--trust-device</code> is the single highest-impact
+convenience flag for your own workstation. For shared / build hosts,
+<strong>never</strong> pass it — trusted-device state lives server-side and
+survives re-imaging.</p>
+</blockquote>
+<h3 id="4-non-interactive-login-ci-scripts-ansible"><a class="header" href="#4-non-interactive-login-ci-scripts-ansible">4. Non-interactive login (CI, scripts, Ansible)</a></h3>
+<p>Three patterns, ordered from <strong>most to least preferred</strong>:</p>
+<h4 id="4a-password-from-stdin"><a class="header" href="#4a-password-from-stdin">4a. Password from stdin</a></h4>
+<pre><code class="language-bash">printf '%s' "$PCLOUD_PASSWORD" | pcloudc login \
+  --user you@example.com \
+  --password-stdin \
+  --tfa-code "$PCLOUD_TOTP"
+</code></pre>
+<ul>
+<li><code>--password-stdin</code> reads exactly one line, strips the trailing
+newline, and never touches <code>argv</code>.</li>
+<li>The secret never appears in <code>ps</code>, in audit logs, in error traces,
+or in <code>/proc/&lt;pid&gt;/cmdline</code>.</li>
+<li>This is the pattern to use in GitHub Actions, GitLab CI, Jenkins,
+Ansible, anywhere.</li>
+</ul>
+<p>Expected output (scripted-friendly):</p>
+<pre><code>Logged in as you@example.com (uid 12345678).
+</code></pre>
+<p>Exit code zero means success. Parse with:</p>
+<pre><code class="language-bash">pcloudc login --json --user … --password-stdin --tfa-code … | \
+  jq -r '.uid'
+</code></pre>
+<h4 id="4b-password-from-a-named-env-var"><a class="header" href="#4b-password-from-a-named-env-var">4b. Password from a named env var</a></h4>
+<pre><code class="language-bash">export PCLOUD_PW="$(cat /run/secrets/pcloud.pw)"
+pcloudc login \
+  --user you@example.com \
+  --password-env PCLOUD_PW \
+  --tfa-code "$PCLOUD_TOTP"
+unset PCLOUD_PW
+</code></pre>
+<p><code>--password-env VAR</code> reads env <code>VAR</code> once, copies its bytes into a
+zeroising <code>SecretString</code>, and clears the variable. Prefer
+<code>--password-stdin</code> when you have a choice — env vars are visible to
+every child process and to anyone who can read
+<code>/proc/&lt;pid&gt;/environ</code>.</p>
+<h4 id="4c-durable-token-vault"><a class="header" href="#4c-durable-token-vault">4c. Durable token vault</a></h4>
+<pre><code class="language-bash"># ONE interactive login with both opt-ins:
+PCLOUD_DURABLE_AUTH_TOKENS=1 pcloudc login --save-password
+
+# then:
+pcloudc auth-save                         # persist current in-memory token
+ls -la ~/.local/state/pcloud-rs/vault.toml
+# -rw------- 1 you you 312 ... vault.toml
+</code></pre>
+<p>Both opt-ins are required. The vault is written to
+<code>~/.local/state/pcloud-rs/vault.toml</code> mode <code>0600</code> inside a <code>0700</code>
+parent, with ownership and mode re-validated on every read. On next
+invocation, <code>pcloudc</code> uses the cached <strong>token</strong> (not the password)
+and skips prompts entirely.</p>
+<blockquote>
+<p><strong>We do not mirror the C client’s raw-password-on-disk behaviour.</strong>
+If you need the actual password available to another process, use
+a proper secret manager — HashiCorp Vault, 1Password, AWS Secrets
+Manager, macOS Keychain, libsecret — and feed it into pCloud via
+<code>--password-stdin</code>.</p>
+</blockquote>
+<h3 id="5-2fa-which-method-when"><a class="header" href="#5-2fa-which-method-when">5. 2FA: which method when</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Account type</th><th>Best first choice</th><th>Fallback</th><th>When to pick which</th></tr>
+</thead>
+<tbody>
+<tr><td>Personal, has phone</td><td>TOTP</td><td>Push</td><td>TOTP: offline-safe. Push: fastest on a good network.</td></tr>
+<tr><td>Personal, phone only</td><td>SMS</td><td>Recovery</td><td>SMS is slow and SIM-swap-prone but usable.</td></tr>
+<tr><td>Business / Team</td><td>TOTP or Push (per policy)</td><td>Recovery</td><td>Your admin sets the allowed set.</td></tr>
+<tr><td>Recovery scenario</td><td>Recovery code</td><td>—</td><td>One-time. The code is then invalid; regenerate codes afterwards.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Keyword fallbacks at the interactive prompt:</p>
+<ul>
+<li><code>sms</code> → <code>pcloudc send-tfa-sms</code> is sent under the hood, then the
+prompt re-appears expecting the texted code.</li>
+<li><code>push</code> → <code>pcloudc send-tfa-notification</code>; approve in the pCloud
+mobile app, then press Enter.</li>
+<li><code>recovery</code> → switches to <code>pcloudc submit-recovery</code> challenge.</li>
+</ul>
+<p>Scripted equivalents:</p>
+<pre><code class="language-bash">pcloudc send-tfa-sms
+pcloudc submit-tfa 123456              # `tfa 123456` is the legacy alias
+
+pcloudc send-tfa-notification
+# approve in app, then:
+pcloudc submit-tfa 123456              # the notification returns the code in-app
+
+pcloudc submit-recovery abcd-1234-efgh
+</code></pre>
+<blockquote>
+<p><strong>Expert tip (incident response).</strong> Recovery codes are single-use
+and invalidate the whole set once exhausted. Treat them like
+root-CA paper material: store in the same safe you keep your
+KMS master-key printout. After you burn one, regenerate the set
+via the pCloud web UI immediately; otherwise the next on-call may
+have no fallback left.</p>
+</blockquote>
+<h3 id="6-verify-login-succeeded"><a class="header" href="#6-verify-login-succeeded">6. Verify login succeeded</a></h3>
+<pre><code class="language-bash">pcloudc status
+# authenticated as you@example.com (uid 12345678)
+# quota: 142.3 GiB / 2.0 TiB (7%)
+# sync roots: 0
+</code></pre>
+<p>Machine-readable variants:</p>
+<pre><code class="language-bash">pcloudc status --json | jq '.session'
+# {
+#   "authenticated": true,
+#   "user": {"email": "you@example.com", "uid": 12345678},
+#   "quota_bytes_used": 152753849987,
+#   "quota_bytes_total": 2199023255552
+# }
+
+pcloudc userinfo --json | jq '.email,.cryptosetup,.business'
+</code></pre>
+<p>Extract specific fields:</p>
+<pre><code class="language-bash">pcloudc status --json | jq -r '.session.user.uid'       # → 12345678
+pcloudc status --json | jq -r '.session.authenticated'  # → true
+</code></pre>
+<h3 id="7-log-out"><a class="header" href="#7-log-out">7. Log out</a></h3>
+<pre><code class="language-bash">pcloudc logout           # forget in-memory session; keep vault
+pcloudc logout --purge   # also zero-overwrite and unlink vault.toml
+</code></pre>
+<p><code>--purge</code> overwrites <code>vault.toml</code> with zero bytes before unlinking —
+best-effort secure deletion. On journalling filesystems (ext4, XFS,
+APFS, NTFS) blocks may remain recoverable forensically; assume the
+token is compromised the moment the disk leaves your control and
+rotate it server-side via the pCloud web UI.</p>
+<h2 id="verification-checklist"><a class="header" href="#verification-checklist">Verification checklist</a></h2>
+<ul>
+<li><input disabled="" type="checkbox"> <code>pcloudc doctor</code> prints <code>socket: … (0600, peer-UID ok)</code>.</li>
+<li><input disabled="" type="checkbox"> <code>pcloudc status --json | jq -r '.session.authenticated'</code> → <code>true</code>.</li>
+<li><input disabled="" type="checkbox"> <code>pcloudc userinfo --json | jq -r '.email'</code> matches the email you
+passed to <code>pcloudc login</code>.</li>
+<li><input disabled="" type="checkbox"> If you opted into the vault: <code>stat -c '%a' ~/.local/state/pcloud-rs/vault.toml</code>
+→ <code>600</code>.</li>
+<li><input disabled="" type="checkbox"> <code>pcloudc logout &amp;&amp; pcloudc status --json | jq -r '.session.authenticated'</code>
+→ <code>false</code>.</li>
+</ul>
+<h2 id="troubleshooting--top-five"><a class="header" href="#troubleshooting--top-five">Troubleshooting — top five</a></h2>
+<p>Every login error has a stable exit code. Full table in
+<a href="../reference/exit-codes.html">Exit codes</a>.</p>
+<h3 id="1-exit_auth_invalid_credentials-2--login-failed-invalid-username-or-password"><a class="header" href="#1-exit_auth_invalid_credentials-2--login-failed-invalid-username-or-password">1. <code>EXIT_AUTH_INVALID_CREDENTIALS</code> (2) — <code>Login failed: invalid username or password</code></a></h3>
+<p>Email (not display name). Caps lock. Password just rotated — wait a
+few seconds for propagation. Three bad tries in a row triggers
+server-side rate limiting; back off for 60 seconds.</p>
+<h3 id="2-exit_auth_tfa_invalid-4--two-factor-code-invalid-or-expired"><a class="header" href="#2-exit_auth_tfa_invalid-4--two-factor-code-invalid-or-expired">2. <code>EXIT_AUTH_TFA_INVALID</code> (4) — <code>Two-factor code invalid or expired</code></a></h3>
+<p>Almost always clock drift. TOTP codes rotate every 30 seconds; a
+clock skew above ~1 minute breaks matching forever. Fix:</p>
+<pre><code class="language-bash">sudo timedatectl set-ntp true             # Linux
+sudo sntp -sS time.apple.com              # macOS
+w32tm /resync                             # Windows (admin PowerShell)
+</code></pre>
+<p>If the clock is fine, check that the authenticator entry you are
+reading is labelled with the right pCloud account (email-level,
+not just “pCloud”).</p>
+<h3 id="3-exit_network_unreachable-10--cannot-reach-apipcloudcom"><a class="header" href="#3-exit_network_unreachable-10--cannot-reach-apipcloudcom">3. <code>EXIT_NETWORK_UNREACHABLE</code> (10) — <code>Cannot reach api.pcloud.com</code></a></h3>
+<p>The daemon talks TLS to <code>api.pcloud.com</code> (US region) or
+<code>eapi.pcloud.com</code> (EU region). Check:</p>
+<ul>
+<li>outbound 443 not blocked by host / cloud firewall,</li>
+<li>corporate MITM proxy configured under <code>[network.proxy]</code> in
+<code>config.toml</code>,</li>
+<li>DNS resolves: <code>getent hosts api.pcloud.com</code>,</li>
+<li>no captive portal hijacking TLS (hotel / conference Wi-Fi).</li>
+</ul>
+<h3 id="4-exit_daemon_not_running-20--cannot-connect-to-pcloud-daemon-"><a class="header" href="#4-exit_daemon_not_running-20--cannot-connect-to-pcloud-daemon-">4. <code>EXIT_DAEMON_NOT_RUNNING</code> (20) — <code>Cannot connect to pcloud-daemon ...</code></a></h3>
+<p>Start the daemon. If it is running and you still see this, you and
+the daemon disagree on <code>XDG_STATE_HOME</code> / <code>HOME</code>:</p>
+<pre><code class="language-bash">echo "client HOME=$HOME XDG_STATE_HOME=${XDG_STATE_HOME:-$HOME/.local/state}"
+ps -o user=,cmd= -C pcloud-daemon
+</code></pre>
+<p>Mixed <code>sudo</code> invocations are the usual culprit.</p>
+<h3 id="5-socket-and-permission-errors"><a class="header" href="#5-socket-and-permission-errors">5. Socket and permission errors</a></h3>
+<pre><code>Refusing to connect: socket mode is 0666, expected 0600.
+</code></pre>
+<p>Stop the daemon, delete the runtime dir, restart:</p>
+<pre><code class="language-bash">systemctl --user stop pcloudd
+rm -rf ~/.local/state/pcloud-rs
+systemctl --user start pcloudd
+</code></pre>
+<pre><code>Refusing to connect: peer UID 0 != expected 1000.
+</code></pre>
+<p>You ran the CLI with <code>sudo</code>. Don’t. The daemon runs as you; the CLI
+must run as you; no root is ever required.</p>
+<h2 id="next-steps"><a class="header" href="#next-steps">Next steps</a></h2>
+<ul>
+<li><a href="first-sync.html">First sync</a> — register your first local ↔ remote
+pairing.</li>
+<li><a href="first-sync.html#5-first-mount-linux">Mount a virtual drive</a> — uses FUSE,
+fuse-t, or WinFSP according to the qualified native target.</li>
+<li><a href="first-sync.html#6-first-public-link">Create a public link</a> — share
+one file without granting account access.</li>
+<li><a href="first-sync.html#7-first-backup-snapshot">Back up a directory</a> —
+encrypted, deduplicated snapshot.</li>
+<li><a href="../reference/exit-codes.html">Exit codes reference</a>.</li>
+<li><a href="../reference/ipc-protocol.html">IPC protocol reference</a> — if you are
+writing a custom wrapper around the daemon.</li>
+</ul>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                            <a rel="prev" href="../getting-started/install.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                            </a>
+
+                            <a rel="next prefetch" href="../getting-started/first-sync.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                            </a>
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                    <a rel="prev" href="../getting-started/install.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M41.4 233.4c-12.5 12.5-12.5 32.8 0 45.3l160 160c12.5 12.5 32.8 12.5 45.3 0s12.5-32.8 0-45.3L109.3 256 246.6 118.6c12.5-12.5 12.5-32.8 0-45.3s-32.8-12.5-45.3 0l-160 160z"/></svg></span>
+                    </a>
+
+                    <a rel="next prefetch" href="../getting-started/first-sync.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M278.6 233.4c12.5 12.5 12.5 32.8 0 45.3l-160 160c-12.5 12.5-32.8 12.5-45.3 0s-12.5-32.8 0-45.3L210.7 256 73.4 118.6c-12.5-12.5-12.5-32.8 0-45.3s32.8-12.5 45.3 0l160 160z"/></svg></span>
+                    </a>
+            </nav>
+
+        </div>
+
+        <template id=fa-eye><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 576 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M288 32c-80.8 0-145.5 36.8-192.6 80.6C48.6 156 17.3 208 2.5 243.7c-3.3 7.9-3.3 16.7 0 24.6C17.3 304 48.6 356 95.4 399.4C142.5 443.2 207.2 480 288 480s145.5-36.8 192.6-80.6c46.8-43.5 78.1-95.4 93-131.1c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C433.5 68.8 368.8 32 288 32zM432 256c0 79.5-64.5 144-144 144s-144-64.5-144-144s64.5-144 144-144s144 64.5 144 144zM288 192c0 35.3-28.7 64-64 64c-11.5 0-22.3-3-31.6-8.4c-.2 2.8-.4 5.5-.4 8.4c0 53 43 96 96 96s96-43 96-96s-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6z"/></svg></span></template>
+        <template id=fa-eye-slash><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M38.8 5.1C28.4-3.1 13.3-1.2 5.1 9.2S-1.2 34.7 9.2 42.9l592 464c10.4 8.2 25.5 6.3 33.7-4.1s6.3-25.5-4.1-33.7L525.6 386.7c39.6-40.6 66.4-86.1 79.9-118.4c3.3-7.9 3.3-16.7 0-24.6c-14.9-35.7-46.2-87.7-93-131.1C465.5 68.8 400.8 32 320 32c-68.2 0-125 26.3-169.3 60.8L38.8 5.1zM223.1 149.5C248.6 126.2 282.7 112 320 112c79.5 0 144 64.5 144 144c0 24.9-6.3 48.3-17.4 68.7L408 294.5c5.2-11.8 8-24.8 8-38.5c0-53-43-96-96-96c-2.8 0-5.6 .1-8.4 .4c5.3 9.3 8.4 20.1 8.4 31.6c0 10.2-2.4 19.8-6.6 28.3l-90.3-70.8zm223.1 298L373 389.9c-16.4 6.5-34.3 10.1-53 10.1c-79.5 0-144-64.5-144-144c0-6.9 .5-13.6 1.4-20.2L83.1 161.5C60.3 191.2 44 220.8 34.5 243.7c-3.3 7.9-3.3 16.7 0 24.6c14.9 35.7 46.2 87.7 93 131.1C174.5 443.2 239.2 480 320 480c47.8 0 89.9-12.9 126.2-32.5z"/></svg></span></template>
+        <template id=fa-copy><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M502.6 70.63l-61.25-61.25C435.4 3.371 427.2 0 418.7 0H255.1c-35.35 0-64 28.66-64 64l.0195 256C192 355.4 220.7 384 256 384h192c35.2 0 64-28.8 64-64V93.25C512 84.77 508.6 76.63 502.6 70.63zM464 320c0 8.836-7.164 16-16 16H255.1c-8.838 0-16-7.164-16-16L239.1 64.13c0-8.836 7.164-16 16-16h128L384 96c0 17.67 14.33 32 32 32h47.1V320zM272 448c0 8.836-7.164 16-16 16H63.1c-8.838 0-16-7.164-16-16L47.98 192.1c0-8.836 7.164-16 16-16H160V128H63.99c-35.35 0-64 28.65-64 64l.0098 256C.002 483.3 28.66 512 64 512h192c35.2 0 64-28.8 64-64v-32h-47.1L272 448z"/></svg></span></template>
+        <template id=fa-play><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M73 39c-14.8-9.1-33.4-9.4-48.5-.9S0 62.6 0 80V432c0 17.4 9.4 33.4 24.5 41.9s33.7 8.1 48.5-.9L361 297c14.3-8.7 23-24.2 23-41s-8.7-32.2-23-41L73 39z"/></svg></span></template>
+        <template id=fa-clock-rotate-left><span class=fa-svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 6.2.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2022 Fonticons, Inc. --><path d="M75 75L41 41C25.9 25.9 0 36.6 0 57.9V168c0 13.3 10.7 24 24 24H134.1c21.4 0 32.1-25.9 17-41l-30.8-30.8C155 85.5 203 64 256 64c106 0 192 86 192 192s-86 192-192 192c-40.8 0-78.6-12.7-109.7-34.4c-14.5-10.1-34.4-6.6-44.6 7.9s-6.6 34.4 7.9 44.6C151.2 495 201.7 512 256 512c141.4 0 256-114.6 256-256S397.4 0 256 0C185.3 0 121.3 28.7 75 75zm181 53c-13.3 0-24 10.7-24 24V256c0 6.4 2.5 12.5 7 17l72 72c9.4 9.4 24.6 9.4 33.9 0s9.4-24.6 0-33.9l-65-65V152c0-13.3-10.7-24-24-24z"/></svg></span></template>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="../elasticlunr-ef4e11c1.min.js"></script>
+        <script src="../mark-09e88c2c.min.js"></script>
+        <script src="../searcher-09f2665d.js"></script>
+
+        <script src="../clipboard-1626706a.min.js"></script>
+        <script src="../highlight-abc7f01d.js"></script>
+        <script src="../book-c22b7243.js"></script>
+
+        <!-- Custom JS scripts -->
+
+
+
+    </div>
+    </body>
+</html>

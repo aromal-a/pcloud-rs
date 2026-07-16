@@ -8,8 +8,8 @@
 //! layer. The goal is to exercise `PlatformIpc` through `ActivePlatform`
 //! so whichever backend is selected at compile time (Linux SO_PEERCRED,
 //! BSD/macOS getpeereid, Windows named-pipe SID) gets a smoke-level
-//! correctness proof in CI on Linux today, and the same test file runs
-//! unchanged when macOS / Windows CI targets come online.
+//! correctness proof in the native Linux, BSD, macOS, illumos/Solaris,
+//! and Windows CI jobs.
 //!
 //! What this file does NOT do:
 //! - modify production code (only allowed file: this test file),
@@ -44,9 +44,12 @@ fn active_ipc_backend_is_non_empty_string() {
         target_os = "freebsd",
         target_os = "openbsd",
         target_os = "netbsd",
-        target_os = "macos"
+        target_os = "macos",
+        target_os = "dragonfly"
     ))]
     let expected = "unix-getpeereid";
+    #[cfg(any(target_os = "illumos", target_os = "solaris"))]
+    let expected = "solarish-getpeerucred";
     #[cfg(windows)]
     let expected = "windows-named-pipe";
 
@@ -69,10 +72,8 @@ fn active_ipc_backend_is_non_empty_string() {
 /// assert that `peer_uid` returns the current process's euid. This is the
 /// round-trip that `transport.rs::peer_identity` relies on.
 ///
-/// On Windows the same shape is preserved, but the assertion instead
-/// checks SID equality. Since we do not have a Windows test target yet
-/// (named-pipe backend is the Windows-tier-1 stub), the Windows arm is
-/// implemented as a compile-time scaffold only.
+/// On Windows the equivalent test below checks the live named-pipe SID
+/// authentication path.
 #[cfg(unix)]
 #[test]
 fn bind_listener_roundtrip_with_owner() {
@@ -139,23 +140,43 @@ fn bind_listener_roundtrip_with_owner() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Windows scaffold for `bind_listener_roundtrip_with_owner`. Left as a
-/// `#[cfg(windows)]` compile-time checker so the expected SID-match shape
-/// is captured now. When the Windows named-pipe backend materializes
-/// (`bd-xplat-windows`), this test is the first one to un-ignore.
+/// Bind the native per-user named pipe, connect from this process, and
+/// prove that the server authenticates the client TokenUser SID.
 #[cfg(windows)]
 #[test]
-#[ignore = "Windows named-pipe backend is still a stub — enable once \
-            platform::windows::WindowsIpc is live"]
 fn bind_listener_roundtrip_with_owner() {
-    // On Windows, the PlatformIpc trait lands on named pipes. Under SCM
-    // this will execute the SID-match path (peer SID must equal the
-    // owning process's token SID). When the stub is replaced, the check
-    // below should become: bind a pipe, connect from the same process,
-    // recover the peer identity, assert peer_uid == 0 placeholder OR the
-    // SID-equality accessor returns true.
-    let _ = ActivePlatform::default();
-    unreachable!("Windows IPC backend not yet wired in production code");
+    let backend = ActivePlatform::default();
+    let listener = backend
+        .bind_listener(std::path::Path::new("windows-pipe-diagnostic"))
+        .expect("named-pipe listener should bind for the current user");
+
+    let client = std::thread::spawn(pcloud_ipc::platform::windows::connect_client);
+    let server_stream = listener
+        .accept()
+        .expect("same-user named-pipe client should authenticate");
+    let client_stream = client
+        .join()
+        .expect("client thread should not panic")
+        .expect("client should connect to the current user's pipe");
+
+    assert_eq!(
+        backend
+            .peer_uid(&server_stream)
+            .expect("same-user TokenUser SID should match"),
+        0,
+        "Windows uses uid=0 as the authenticated-owner sentinel"
+    );
+    let display = backend
+        .peer_display(&server_stream)
+        .expect("peer SID should be available for audit display");
+    assert!(
+        display.starts_with("S-1-"),
+        "expected a Windows SID: {display}"
+    );
+
+    drop(client_stream);
+    drop(server_stream);
+    drop(listener);
 }
 
 /// Negative test: binding inside a directory that does not exist must
@@ -191,9 +212,13 @@ fn binding_in_nonexistent_dir_errors() {
 
 #[cfg(windows)]
 #[test]
-#[ignore = "Windows named-pipe backend is still a stub"]
-fn binding_in_nonexistent_dir_errors() {
-    // Placeholder: the Windows named-pipe backend will fail when the
-    // pipe's namespace is malformed. Re-enable once WindowsIpc is live.
-    let _ = ActivePlatform::default();
+fn binding_does_not_require_a_filesystem_parent() {
+    let backend = ActivePlatform::default();
+    let listener = backend.bind_listener(std::path::Path::new(
+        r"Z:\this\filesystem\path\does\not\exist\ipc.sock",
+    ));
+    assert!(
+        listener.is_ok(),
+        "Windows named pipes live in the NT pipe namespace, not this path"
+    );
 }

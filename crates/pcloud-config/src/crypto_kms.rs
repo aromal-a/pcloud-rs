@@ -191,6 +191,17 @@ impl CryptoKmsConfig {
                 if url.is_empty() {
                     return Err("crypto.kms.vault.url must be non-empty");
                 }
+                let parsed = url::Url::parse(url)
+                    .map_err(|_| "crypto.kms.vault.url must be an absolute https URL")?;
+                if parsed.scheme() != "https" {
+                    return Err("crypto.kms.vault.url must use https");
+                }
+                if parsed.host_str().is_none() {
+                    return Err("crypto.kms.vault.url must include a host");
+                }
+                if !parsed.username().is_empty() || parsed.password().is_some() {
+                    return Err("crypto.kms.vault.url must not include credentials");
+                }
                 if transit_key.is_empty() {
                     return Err("crypto.kms.vault.transit_key must be non-empty");
                 }
@@ -359,6 +370,39 @@ mod tests {
             token_env: String::new(),
         };
         assert!(c.validate().is_err());
+    }
+
+    #[test]
+    fn vault_url_must_be_https() {
+        let c = CryptoKmsConfig::Vault {
+            url: "http://vault.example.com:8200".into(),
+            transit_key: "k".into(),
+            token_env: "PCLOUD_VAULT_TOKEN".into(),
+        };
+        assert_eq!(c.validate(), Err("crypto.kms.vault.url must use https"));
+    }
+
+    #[test]
+    fn vault_url_must_be_absolute() {
+        let c = CryptoKmsConfig::Vault {
+            url: "vault.example.com".into(),
+            transit_key: "k".into(),
+            token_env: "PCLOUD_VAULT_TOKEN".into(),
+        };
+        assert_eq!(
+            c.validate(),
+            Err("crypto.kms.vault.url must be an absolute https URL")
+        );
+    }
+
+    #[test]
+    fn vault_url_accepts_https() {
+        let c = CryptoKmsConfig::Vault {
+            url: "https://vault.example.com:8200".into(),
+            transit_key: "k".into(),
+            token_env: "PCLOUD_VAULT_TOKEN".into(),
+        };
+        assert!(c.validate().is_ok());
     }
 
     #[test]

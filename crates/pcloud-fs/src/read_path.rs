@@ -7,7 +7,13 @@
 
 use std::sync::Arc;
 
-use pcloud_cache::{page_cache::PageCache, staging::StagingCache};
+// CLAUDEREV deferred-set D1.1b.2c (fire 41): migrated `pages` from the
+// legacy `pcloud_cache::page_cache::PageCache` (string-keyed, RwLock +
+// LinkedHashMap) to the unified `PageCacheGeneric<String>` (string-keyed,
+// Mutex + LruCache). The wire format of `ReadPathService` is unchanged
+// because both impls' serde Serialize/Deserialize emit equivalent JSON
+// shapes (an `entries: Vec<(String, Vec<u8>)>` payload).
+use pcloud_cache::{page_cache_generic::PageCacheGeneric, staging::StagingCache};
 use serde::{Deserialize, Serialize};
 
 /// Result of a successful staged read.
@@ -60,15 +66,16 @@ pub struct ReadPathService {
     /// Number of bytes to load ahead of the requested offset on a miss.
     pub prefetch_window_bytes: usize,
     /// Page cache used to serve subsequent reads without re-fetching from
-    /// the staging area.
-    pub pages: PageCache,
+    /// the staging area. Backed by `PageCacheGeneric<String>` since
+    /// CLAUDEREV deferred-set D1.1b.2c (fire 41).
+    pub pages: PageCacheGeneric<String>,
 }
 
 impl Default for ReadPathService {
     fn default() -> Self {
         Self {
             prefetch_window_bytes: 256 * 1024,
-            pages: PageCache::default(),
+            pages: PageCacheGeneric::default(),
         }
     }
 }
@@ -117,18 +124,29 @@ impl ReadPathService {
         while cursor < target_len {
             let window_start = self.window_start(cursor);
             let cache_key = self.window_cache_key(path, cursor);
-            // P5.1: `PageCache::get` now returns `Arc<Vec<u8>>` so a hit
-            // is a pointer bump instead of a 64 KiB clone. On a miss we
-            // build the window once, wrap it in an `Arc`, stash that
-            // `Arc` into the cache, and reuse the same `Arc` locally —
-            // so the allocation is shared, not duplicated.
+            // P5.1: `PageCacheGeneric::get` returns `Arc<Vec<u8>>` so a
+            // hit is a pointer bump instead of a 64 KiB clone. On a
+            // miss we put the bytes into the cache (which wraps them
+            // in an `Arc` internally), then `get` them back so the
+            // post-put `Arc` we hold is the **same** allocation the
+            // cache stores — no duplicated 64 KiB copy. The `cache_key`
+            // clone is a small `String`, much cheaper than a Vec clone.
             let (window, source): (Arc<Vec<u8>>, ReadSource) =
                 if let Some(window) = self.pages.get(&cache_key) {
                     (window, ReadSource::Cache)
                 } else {
                     let (_, window_end) = self.window_bounds(staged.len(), cursor)?;
-                    let window = Arc::new(staged[window_start..window_end].to_vec());
-                    self.pages.put(cache_key, Arc::clone(&window));
+                    let window_bytes = staged[window_start..window_end].to_vec();
+                    self.pages.put(cache_key.clone(), window_bytes);
+                    // SAFETY: we just `put` the entry under `cache_key` on
+                    // the line above. `PageCacheGeneric` is owned by `&mut
+                    // self` here, so no concurrent mutator can have evicted
+                    // it between the `put` and this `get`. The lookup is
+                    // therefore infallible by construction.
+                    let window = self
+                        .pages
+                        .get(&cache_key)
+                        .expect("just-inserted cache entry must be present");
                     (window, ReadSource::Stage)
                 };
 

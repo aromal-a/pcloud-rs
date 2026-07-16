@@ -75,10 +75,10 @@ fn sd_notify(_msg: &str) {
 
 /// No-op supervisor signalling stub for BSD and Windows.
 ///
-/// Neither FreeBSD rc.d nor Windows SCM use the sd_notify protocol. On BSD,
-/// the rc.d script supervises via `daemon(8)`; on Windows, the SCM uses
-/// `SetServiceStatus`. If launchd/rc.d/SCM lifecycle signals become important,
-/// wire platform-specific calls in the branches below.
+/// Neither FreeBSD rc.d nor the per-user Windows launcher use the sd_notify
+/// protocol. On BSD, the rc.d script supervises via `daemon(8)`; on Windows,
+/// `pcloudc start` owns process launch and IPC shutdown. The optional
+/// experimental SCM host reports its own `SetServiceStatus` transitions.
 ///
 /// TODO(pcloud-rs-0cx): BSD rc.d `daemon(8)` does not need sd_notify;
 /// document the supervision story in packaging/freebsd/pcloudd.rc instead.
@@ -86,6 +86,118 @@ fn sd_notify(_msg: &str) {
 #[allow(dead_code)]
 fn sd_notify(_msg: &str) {
     // No supervisor protocol on BSD / Windows. No-op intentionally.
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_watchdog_timeout() -> Option<Duration> {
+    match std::env::var("WATCHDOG_PID") {
+        Ok(raw_pid) => match raw_pid.parse::<u32>() {
+            Ok(pid) if pid == std::process::id() => {}
+            Ok(pid) => {
+                log::debug!(
+                    "systemd watchdog disabled: WATCHDOG_PID={pid} does not match current pid={}",
+                    std::process::id()
+                );
+                return None;
+            }
+            Err(err) => {
+                log::warn!("systemd watchdog disabled: invalid WATCHDOG_PID={raw_pid:?}: {err}");
+                return None;
+            }
+        },
+        Err(std::env::VarError::NotPresent) => {}
+        Err(err) => {
+            log::warn!("systemd watchdog disabled: failed to read WATCHDOG_PID: {err}");
+            return None;
+        }
+    }
+
+    match std::env::var("WATCHDOG_USEC") {
+        Ok(raw_usec) => match raw_usec.parse::<u64>() {
+            Ok(0) => None,
+            Ok(usec) => Some(Duration::from_micros(usec)),
+            Err(err) => {
+                log::warn!("systemd watchdog disabled: invalid WATCHDOG_USEC={raw_usec:?}: {err}");
+                None
+            }
+        },
+        Err(std::env::VarError::NotPresent) => None,
+        Err(err) => {
+            log::warn!("systemd watchdog disabled: failed to read WATCHDOG_USEC: {err}");
+            None
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn systemd_watchdog_timeout() -> Option<Duration> {
+    None
+}
+
+fn watchdog_ping_interval_from_timeout(timeout: Duration) -> Duration {
+    let micros = timeout.as_micros();
+    if micros <= 1 {
+        return Duration::from_micros(1);
+    }
+    let half = (micros / 2).min(u128::from(u64::MAX));
+    Duration::from_micros(half as u64)
+}
+
+fn systemd_watchdog_ping_interval() -> Option<Duration> {
+    systemd_watchdog_timeout().map(watchdog_ping_interval_from_timeout)
+}
+
+/// Maximum time an idle Unix listener may remain inside one `accept(2)` call.
+/// This bound exists independently of auth refresh and systemd watchdog
+/// configuration so externally supervised and embedded daemons always observe
+/// cooperative shutdown promptly.
+const SHUTDOWN_ACCEPT_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
+pub(crate) fn accept_timeout_with_watchdog(base: Option<Duration>) -> Option<Duration> {
+    let configured = match (base, systemd_watchdog_ping_interval()) {
+        (Some(base), Some(watchdog)) => Some(base.min(watchdog)),
+        (Some(base), None) => Some(base),
+        (None, Some(watchdog)) => Some(watchdog),
+        (None, None) => None,
+    };
+    Some(
+        configured
+            .unwrap_or(SHUTDOWN_ACCEPT_POLL_INTERVAL)
+            .min(SHUTDOWN_ACCEPT_POLL_INTERVAL),
+    )
+}
+
+pub(crate) fn notify_systemd_watchdog() {
+    #[cfg(target_os = "linux")]
+    sd_notify("WATCHDOG=1\n");
+}
+
+pub(crate) fn notify_systemd_stopping() {
+    #[cfg(target_os = "linux")]
+    sd_notify("STOPPING=1\n");
+}
+
+pub(crate) fn notify_systemd_reloading() {
+    #[cfg(target_os = "linux")]
+    sd_notify("RELOADING=1\n");
+}
+
+pub(crate) fn notify_systemd_ready() {
+    #[cfg(target_os = "linux")]
+    sd_notify("READY=1\n");
+}
+
+fn parse_health_port(raw: &str) -> Result<u16, String> {
+    raw.parse::<u16>()
+        .map_err(|err| format!("invalid PCLOUD_HEALTH_PORT={raw:?}: {err}"))
+}
+
+fn health_port_from_env() -> Result<u16, String> {
+    match std::env::var("PCLOUD_HEALTH_PORT") {
+        Ok(raw) => parse_health_port(&raw),
+        Err(std::env::VarError::NotPresent) => Ok(0),
+        Err(err) => Err(format!("failed to read PCLOUD_HEALTH_PORT: {err}")),
+    }
 }
 
 use pcloud_ipc::{
@@ -103,35 +215,15 @@ use crate::signals::{self, DrainState};
 /// to the audit log before dispatch so operators can detect unexpected
 /// privileged activity even without a full audit chain sweep.
 ///
-/// Operations listed here match the enterprise audit M-2 finding:
-/// shutdown, credential lifecycle, crypto lifecycle, auth persistence,
-/// sync removal, backup/device operations.
+/// Implementation note (CLAUDEREV iter-1 IPC-H-7.1 fix): the capability
+/// table is now authoritative on the [`Request`] type itself via
+/// [`Request::is_privileged`]. This wrapper exists for backwards-compat
+/// and for the use site below; new privileged variants only need to be
+/// classified in the type-side method. Adding a `Request` variant
+/// without classifying it falls through to the deny-by-audit default
+/// (`true`) so the audit log cannot be silently bypassed.
 fn is_privileged_request(req: &Request) -> bool {
-    matches!(
-        req,
-        Request::Plain {
-            method: Method::Shutdown
-                | Method::CryptoReset
-                | Method::SetAuthPersistence
-                | Method::SendCryptoChangeUserPrivate
-        } | Request::AccountChangePassword { .. }
-            | Request::CryptoSetup { .. }
-            | Request::CryptoSetupV2 { .. }
-            | Request::CryptoGetFolderKey { .. }
-            | Request::CryptoGetFileKey { .. }
-            | Request::CryptoChangePassword { .. }
-            | Request::CryptoChangePasswordUnlocked { .. }
-            | Request::AuthPersistence { .. }
-            | Request::SyncRootRemove { .. }
-            | Request::DeleteBackup { .. }
-            | Request::UploadWriteFromFile { .. }
-            | Request::CreateTreePublicLinkFromPaths { .. }
-            | Request::CreateBackup { .. }
-            | Request::StopDevice { .. }
-            | Request::DeleteBackupDevice
-            | Request::LostPassword { .. }
-            | Request::VerifyEmailRestricted { .. }
-    )
+    req.is_privileged()
 }
 
 /// Return a short, non-secret, human-readable name for the request
@@ -158,6 +250,9 @@ fn request_kind_name(req: &Request) -> &'static str {
         Request::DeleteBackup { .. } => "DeleteBackup",
         Request::UploadWriteFromFile { .. } => "UploadWriteFromFile",
         Request::CreateTreePublicLinkFromPaths { .. } => "CreateTreePublicLinkFromPaths",
+        Request::CreateTreePublicLinkFromPathTargets { .. } => {
+            "CreateTreePublicLinkFromPathTargets"
+        }
         Request::CreateBackup { .. } => "CreateBackup",
         Request::StopDevice { .. } => "StopDevice",
         Request::DeleteBackupDevice => "DeleteBackupDevice",
@@ -266,12 +361,12 @@ pub(crate) fn dispatch_with_drain_gate(
 }
 
 /// Same as [`serve_until_shutdown`], but additionally honors an external
-/// `Arc<AtomicBool>` shutdown flag. Used by the Windows Service shim and
-/// any other host that owns the shutdown signal outside the daemon (e.g.
-/// SCM `Stop`/`Shutdown` on Windows). When the external flag flips to
-/// `true`, the loop returns cleanly just like the internal signal/IPC
-/// shutdown paths, and the runtime-level flag is synchronized so the
-/// rest of the runtime sees a single consistent source of truth.
+/// `Arc<AtomicBool>` shutdown flag. Used by the per-user Windows daemon,
+/// the optional experimental SCM host, and embedders that own lifecycle
+/// signalling outside the daemon. When the external flag flips to `true`,
+/// the loop returns cleanly just like the internal signal/IPC shutdown
+/// paths, and the runtime-level flag is synchronized so the rest of the
+/// runtime sees a single consistent source of truth.
 pub fn serve_until_shutdown_with_flag(
     bound: &BoundIpcServer,
     runtime: &mut RuntimeShell,
@@ -280,11 +375,15 @@ pub fn serve_until_shutdown_with_flag(
     // Set an accept timeout so the loop wakes periodically to run the
     // session-refresh tick even when the daemon is idle (no IPC
     // clients). The timeout matches the configured refresh check
-    // interval, capped at 60 s to keep shutdown responsive. A zero
-    // config value disables the background refresh entirely.
+    // interval, capped at one second to keep cooperative shutdown responsive.
+    // A zero config value disables background refresh, not shutdown polling.
     let refresh_enabled = runtime.config.auth.refresh_check_interval_secs > 0;
-    if let Some(timeout) = crate::session_refresh::accept_timeout(&runtime.config.auth) {
-        let _ = bound.set_accept_timeout(Some(timeout));
+    let accept_timeout =
+        accept_timeout_with_watchdog(crate::session_refresh::accept_timeout(&runtime.config.auth));
+    if let Some(timeout) = accept_timeout {
+        if let Err(err) = bound.set_accept_timeout(Some(timeout)) {
+            log::warn!("pcloud-daemon: failed to configure IPC accept timeout: {err}");
+        }
     }
 
     let drain_timeout = Duration::from_secs(u64::from(runtime.config.upgrade.drain_timeout_secs));
@@ -393,8 +492,7 @@ fn serve_loop_body(
                 // Notify systemd that the daemon is entering the drain/stop
                 // phase. This transitions the service from active to
                 // deactivating in the unit state machine.
-                #[cfg(target_os = "linux")]
-                sd_notify("STOPPING=1\n");
+                notify_systemd_stopping();
                 *drain_deadline = Some(Instant::now() + drain_timeout);
                 // bd-1du.4: quiesce the mount on the *first* transition
                 // into Draining. The kernel mount stays live so
@@ -437,8 +535,7 @@ fn serve_loop_body(
                 };
                 // Notify systemd that a reload is in progress. The READY=1
                 // suffix re-arms the watchdog once the reload completes.
-                #[cfg(target_os = "linux")]
-                sd_notify("RELOADING=1\n");
+                notify_systemd_reloading();
                 let (outcome, new_profile) = try_reload(config_path, &runtime.config);
                 match outcome {
                     ReloadOutcome::Applied { changed_keys } => {
@@ -458,8 +555,7 @@ fn serve_loop_body(
                 }
                 // Re-assert READY=1 to signal that the reload phase is
                 // complete and the daemon is accepting connections again.
-                #[cfg(target_os = "linux")]
-                sd_notify("READY=1\n");
+                notify_systemd_ready();
             }
         }
         match bound.serve_once_with_peer(|peer, request| {
@@ -483,8 +579,7 @@ fn serve_loop_body(
 
         // Emit a watchdog keepalive so systemd knows the serve loop is
         // still making progress. A no-op when not supervised by systemd.
-        #[cfg(target_os = "linux")]
-        sd_notify("WATCHDOG=1\n");
+        notify_systemd_watchdog();
 
         // Session-refresh tick: run one iteration of the proactive
         // token-refresh check. This is cheap when the session is
@@ -503,29 +598,28 @@ fn serve_loop_body(
 /// coordination from an external host via the supplied `shutdown` flag.
 /// Intended consumers:
 ///
-/// - the Windows Service shim (`pcloud-daemon-win`), where the SCM
-///   control handler flips the flag on `Stop`/`Shutdown` requests;
-/// - any embedder that needs to drive daemon startup and shutdown from
-///   a parent thread without relying on UNIX signals.
+/// - the supported per-user Windows `pcloudd serve` process;
+/// - the optional experimental Windows Service shim (`pcloud-daemon-win`);
+/// - any embedder that needs to drive daemon startup and shutdown from a
+///   parent thread without relying on Unix signals.
 ///
 /// The function:
 ///
-/// 1. installs the default signal handlers (idempotent; safe to call
-///    from inside an SCM-hosted process where these handlers are still
-///    meaningful for `SIGTERM`-equivalent shutdowns),
+/// 1. installs the default signal handlers on Unix (idempotent; a no-op on
+///    Windows),
 /// 2. bootstraps the `RuntimeShell`,
 /// 3. binds the configured IPC socket,
 /// 4. runs the serve loop via [`serve_until_shutdown_with_flag`] so both
 ///    the external flag and the internal SIGTERM/IPC flags are honored,
-/// 5. returns `Ok(())` once any flag flips, allowing the caller to
-///    proceed with teardown / SCM state reporting.
+/// 5. returns `Ok(())` once any flag flips, allowing the caller to proceed
+///    with teardown or external supervisor reporting.
 ///
 /// Any bootstrap, bind, or serve error is propagated as `anyhow::Error`
 /// so the caller can log a single cause chain and exit with a non-zero
 /// status.
 /// Driver for the daemon's local IPC + serve loop with a shared
-/// cooperative-shutdown flag. Used by the `pcloudd serve` binary on
-/// Unix and by `pcloud-daemon-win`'s worker thread on Windows.
+/// cooperative-shutdown flag. Used by the per-user `pcloudd serve` path on
+/// Windows and by embedders or external supervisors on any platform.
 ///
 /// On Windows the underlying transport is a per-user-SID named pipe
 /// (see `pcloud_ipc::platform::windows`); on Unix it is a `0600` Unix
@@ -558,10 +652,7 @@ pub fn serve_with_shutdown(shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
     // for the daemon lifetime — dropping it does not stop the thread, but
     // holding it makes the intent explicit.
     let _health_handle: Option<crate::health_server::HealthServerHandle> = {
-        let port: u16 = std::env::var("PCLOUD_HEALTH_PORT")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(0);
+        let port = health_port_from_env().map_err(|err| anyhow::anyhow!("{err}"))?;
         let cfg = crate::health_server::HealthServerConfig {
             http_port: port,
             read_timeout_ms: 2_000,
@@ -587,8 +678,7 @@ pub fn serve_with_shutdown(shutdown: Arc<AtomicBool>) -> anyhow::Result<()> {
     // correct PID. Without MAINPID= the unit state machine follows the
     // parent (which will exit immediately) and may race with WatchdogSec
     // expiry before the child sends WATCHDOG=1. See sd_notify(3) §MAINPID.
-    #[cfg(target_os = "linux")]
-    sd_notify("READY=1\n");
+    notify_systemd_ready();
 
     serve_until_shutdown_with_flag(&bound, &mut runtime, Some(&shutdown))
         .map_err(|err| anyhow::anyhow!("daemon request handling failed: {err}"))?;
@@ -656,9 +746,12 @@ mod tests {
     use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use pcloud_config::{ConfigProfile, Environment};
-    use pcloud_ipc::{IpcClient, IpcServer, Request, current_effective_uid};
+    use pcloud_ipc::{IpcServer, Request, current_effective_uid};
 
-    use super::{serve_until_shutdown_with_flag, should_reject_during_drain};
+    use super::{
+        parse_health_port, serve_until_shutdown_with_flag, should_reject_during_drain,
+        watchdog_ping_interval_from_timeout,
+    };
     use crate::bootstrap_with_config;
 
     fn bootstrap_test_shell() -> crate::RuntimeShell {
@@ -688,11 +781,8 @@ mod tests {
     /// this test already does explicitly. The flag semantics being
     /// asserted here are identical.
     ///
-    /// Mechanics: once the external flag is set we need one more
-    /// `accept(2)` iteration for the loop to observe it, so the test
-    /// sends a harmless IPC ping after flipping the flag. This mirrors
-    /// how the SCM-plus-signal-driven shutdown path already behaves in
-    /// `serve_loop_exits_after_shutdown_request`.
+    /// No client request is allowed to nudge the listener: idle daemons must
+    /// observe cooperative shutdown within the accept-poll bound on their own.
     #[test]
     fn serve_with_shutdown_exits_when_flag_set() {
         let mut runtime = bootstrap_test_shell();
@@ -713,18 +803,14 @@ mod tests {
         });
 
         barrier.wait();
+        // Give the serve thread time to enter the idle accept. Without this,
+        // the flag can win the race before the first loop iteration and fail
+        // to exercise the blocked-listener shutdown path.
+        std::thread::sleep(Duration::from_millis(200));
 
-        // Flip the external flag, then nudge the accept loop so it
-        // observes it. A single ping is enough; the response is
-        // ignored because we only care about the loop returning.
+        // Flip the external flag while accept is idle. The listener timeout
+        // must wake the loop without an artificial client connection.
         flag.store(true, Ordering::SeqCst);
-        let client = IpcClient;
-        let _ = client.send(
-            &socket_path,
-            &Request::Plain {
-                method: pcloud_ipc::Method::GetStatus,
-            },
-        );
 
         // The loop must finish within 5s; anything longer indicates the
         // external flag is not actually being honored.
@@ -776,5 +862,24 @@ mod tests {
             method: pcloud_ipc::Method::Logout
         }));
         assert!(should_reject_during_drain(&Request::Unmount));
+    }
+
+    #[test]
+    fn health_port_parser_rejects_invalid_env_value() {
+        assert_eq!(parse_health_port("9354").expect("valid port"), 9354);
+        let err = parse_health_port("not-a-port").expect_err("invalid port must fail");
+        assert!(err.contains("PCLOUD_HEALTH_PORT"), "err={err}");
+    }
+
+    #[test]
+    fn watchdog_ping_interval_uses_half_of_systemd_timeout() {
+        assert_eq!(
+            watchdog_ping_interval_from_timeout(Duration::from_secs(30)),
+            Duration::from_secs(15)
+        );
+        assert_eq!(
+            watchdog_ping_interval_from_timeout(Duration::from_micros(1)),
+            Duration::from_micros(1)
+        );
     }
 }

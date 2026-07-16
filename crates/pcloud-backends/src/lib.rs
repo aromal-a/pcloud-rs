@@ -15,7 +15,8 @@
 //! **Stability:** T1 internal — not semver-stable; access via
 //! `pcloud-daemon` re-exports.
 //!
-//! **MSRV:** Rust 1.82 (workspace-pinned; edition 2024).
+//! **MSRV:** Rust 1.89 for the portable crate; full workspace and release
+//! validation use the repository-pinned Rust 1.96.1 toolchain.
 //!
 //! **Features:** none.
 //!
@@ -157,6 +158,7 @@ pub mod mount_discovery;
 pub mod notifications_backend;
 pub mod path_resolver;
 pub mod public_link_backend;
+pub mod remote_fs;
 pub mod residency;
 pub mod shares_backend;
 pub mod snapshot;

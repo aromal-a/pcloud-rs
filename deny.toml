@@ -25,26 +25,13 @@ unmaintained = "workspace"
 #
 # Current reviewer: @ezechiel203. Next scheduled sweep: 2026-07-15.
 ignore = [
-    # RUSTSEC-2023-0071: `rsa 0.9.10` Marvin Attack — non-constant-time RSA
-    # decrypt leaks private-key bits via timing on a network observer.
-    # No upstream patched release; RustCrypto/RSA#19 tracks the migration
-    # to a constant-time backend. Reachable via pcloud-crypto share_rsa
-    # (crypto share invitation unwrap) and pclsync_rsa (pclsync-compat
-    # private-key decrypt). Operational mitigation: the affected paths do
-    # not loop on attacker-chosen ciphertexts during normal operation
-    # (each invitation is a single decrypt), which bounds the timing
-    # signal. Tracked under bd-ktj; flip to hard-fail as soon as upstream
-    # ships the constant-time release.
+    # RUSTSEC-2023-0071: pinned rsa 0.10.0-rc.18 uses crypto-bigint for
+    # private-key arithmetic, but RustSec still applies the family-wide
+    # advisory. The affected share and pclsync decrypt paths are bounded and
+    # must not become attacker-controlled oracle loops. Remove this exception
+    # when upstream publishes and audits the stable constant-time release.
     # review: 2026-07-15
     "RUSTSEC-2023-0071",
-    # RUSTSEC-2025-0134: rustls-pemfile is unmaintained (recommended
-    # migration: rustls-pki-types). Direct dep in pcloud-fleet is already
-    # on 2.2.0 (the final 2.x); the 1.0.4 copy is pinned by the AWS
-    # transitive chain (aws-smithy-http-client -> hyper-rustls 0.24.2).
-    # Cannot be dropped without a breaking AWS SDK bump; tracked under the
-    # enterprise-dep hygiene milestone (bd-1du.10).
-    # review: 2026-07-15
-    "RUSTSEC-2025-0134",
 ]
 
 [licenses]
@@ -81,8 +68,7 @@ exceptions = [
 # Copyleft GPL-only families are blocked at the workspace level. cargo-deny
 # denies anything not in `allow`, but we pin the intent here for reviewers.
 # Blocked (not listed above): GPL-2.0-only, GPL-3.0-only, AGPL-3.0-only,
-# LGPL-2.1-only, LGPL-3.0-only, SSPL-1.0, Apache-2.0 WITH LLVM-exception,
-# CC0-1.0, OpenSSL, BSL-1.0.
+# LGPL-2.1-only, LGPL-3.0-only, SSPL-1.0.
 
 [[licenses.clarify]]
 name = "ring"
@@ -135,20 +121,13 @@ skip = [
     # --- AWS SDK legacy stack (hyper-rustls 0.24 / rustls 0.21) ---
     # Bump requires aws-sdk-kms >= ? shipping on hyper-rustls 0.27 / rustls 0.23.
     # Upstream: https://github.com/awslabs/aws-sdk-rust/issues/977
-    { name = "base64", version = "0.21" },
-    { name = "rustls-pemfile", version = "1.0" },
-    { name = "hyper-rustls", version = "0.24" },
-    { name = "rustls", version = "0.21" },
-    { name = "rustls-webpki", version = "0.101" },
-    { name = "rustls-native-certs", version = "0.6" },
-    { name = "tokio-rustls", version = "0.24" },
-    { name = "h2", version = "0.3" },
+    # Cleanup 2026-04-30 (CLAUDEREV iter-3 fix CQ-M-4): pruned skips that
+    # `cargo deny check` flagged as `unmatched-skip` (crate not present in
+    # the resolved graph) or `unnecessary-skip` (only one version in graph).
+    # Retained entries are the ones still needed for legitimate dual-version
+    # families surfaced by the AWS SDK pull-in.
     { name = "http", version = "0.2" },
     { name = "http-body", version = "0.4" },
-    { name = "hyper", version = "0.14" },
-    { name = "core-foundation", version = "0.9" },
-    { name = "core-foundation-sys", version = "0.8.6" },
-    { name = "security-framework", version = "2" },
 
     # --- zbus split: secret-service 4 (zbus 4) vs notify-rust 4 (zbus 5) ---
     # Upstream: https://github.com/hwchen/keyring-rs/issues (secret-service 5).
@@ -163,7 +142,6 @@ skip = [
     # Upstream: https://github.com/microsoft/regorus/issues
     { name = "thiserror", version = "1" },
     { name = "thiserror-impl", version = "1" },
-    { name = "itertools", version = "0.11" },
     { name = "rand", version = "0.8" },
     { name = "rand", version = "0.10" },
     { name = "rand_core", version = "0.6" },
@@ -178,9 +156,7 @@ skip = [
     # --- misc transitive churn (platform/cfg-driven) ---
     { name = "bitflags", version = "1" },
     { name = "socket2", version = "0.5" },
-    { name = "nix", version = "0.19" },
     { name = "cron", version = "0.12" },
-    { name = "openssl-probe", version = "0.1.5" },
     { name = "wit-bindgen", version = "0.46" },
 
     # --- windows target graph (multi-version by design) ---

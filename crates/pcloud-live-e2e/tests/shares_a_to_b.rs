@@ -49,7 +49,9 @@ use std::time::{Duration, SystemTime};
 
 use pcloud_ipc::{Method, Request, ResponseStatus};
 
-use crate::common::{TestDaemon, assert_no_secret_leak, optional_env, status_label};
+use crate::common::{
+    TestDaemon, assert_no_secret_leak, optional_env, release_gate_enabled, status_label,
+};
 
 const ENV_A_EMAIL: &str = "PCLOUD_LIVE_ACCOUNT_A_EMAIL";
 const ENV_A_PASSWORD: &str = "PCLOUD_LIVE_ACCOUNT_A_PASSWORD";
@@ -162,24 +164,44 @@ fn login_with(daemon: &mut TestDaemon, email: &str, password: &str) -> Result<()
 #[ignore = "live-e2e: requires PCLOUD_LIVE_E2E=1 + PCLOUD_LIVE_ACCOUNT_{A,B}_{EMAIL,PASSWORD}"]
 fn live_share_a_to_b_full_lifecycle() {
     if !live_gate_enabled() {
+        assert!(
+            !release_gate_enabled(),
+            "release share gate requires PCLOUD_LIVE_E2E=1"
+        );
         eprintln!(
             "[live-e2e] skipping shares_a_to_b: neither PCLOUD_LIVE=1 nor PCLOUD_LIVE_E2E=1 is set"
         );
         return;
     }
     let Some(a_email) = optional_env(ENV_A_EMAIL) else {
+        assert!(
+            !release_gate_enabled(),
+            "release share gate requires {ENV_A_EMAIL}"
+        );
         eprintln!("[live-e2e] skipping shares_a_to_b: {ENV_A_EMAIL} unset");
         return;
     };
     let Some(a_password) = optional_env(ENV_A_PASSWORD) else {
+        assert!(
+            !release_gate_enabled(),
+            "release share gate requires {ENV_A_PASSWORD}"
+        );
         eprintln!("[live-e2e] skipping shares_a_to_b: {ENV_A_PASSWORD} unset");
         return;
     };
     let Some(b_email) = optional_env(ENV_B_EMAIL) else {
+        assert!(
+            !release_gate_enabled(),
+            "release share gate requires {ENV_B_EMAIL}"
+        );
         eprintln!("[live-e2e] skipping shares_a_to_b: {ENV_B_EMAIL} unset");
         return;
     };
     let Some(b_password) = optional_env(ENV_B_PASSWORD) else {
+        assert!(
+            !release_gate_enabled(),
+            "release share gate requires {ENV_B_PASSWORD}"
+        );
         eprintln!("[live-e2e] skipping shares_a_to_b: {ENV_B_PASSWORD} unset");
         return;
     };
@@ -309,10 +331,11 @@ fn live_share_a_to_b_full_lifecycle() {
         // Optional attended-flow opt-in: keep the folder + pending invite
         // intact so the operator can accept via email and then run
         // `shares_active_a_to_b` to verify bilateral visibility.
-        let keep = matches!(
-            optional_env("PCLOUD_LIVE_KEEP_ARTIFACTS").as_deref(),
-            Some("1") | Some("true") | Some("yes")
-        );
+        let keep = !release_gate_enabled()
+            && matches!(
+                optional_env("PCLOUD_LIVE_KEEP_ARTIFACTS").as_deref(),
+                Some("1") | Some("true") | Some("yes")
+            );
         if keep {
             eprintln!(
                 "[live-e2e] PCLOUD_LIVE_KEEP_ARTIFACTS set — leaving folder \
@@ -336,6 +359,11 @@ fn live_share_a_to_b_full_lifecycle() {
                 delete.message
             );
         }
+        assert!(
+            !release_gate_enabled(),
+            "release share gate requires a complete A-to-B accept/revoke lifecycle; \
+             the share request id and outgoing-request endpoint were both unavailable"
+        );
         return;
     }
 
@@ -482,11 +510,13 @@ fn live_share_a_to_b_full_lifecycle() {
     }));
 
     // ─── Teardown (always runs) ─────────────────────────────────────────
+    let mut revoke_ok = false;
     if let Ok(Some(active_share_id)) = result.as_ref() {
         let revoke = daemon_a.dispatch(Request::RemoveShare {
             share_id: *active_share_id,
         });
         assert_no_secret_leak(&revoke);
+        revoke_ok = revoke.status == ResponseStatus::Ok;
         if revoke.status != ResponseStatus::Ok {
             eprintln!(
                 "[live-e2e] WARN A RemoveShare({active_share_id}) declined: status={} message={}",
@@ -505,6 +535,19 @@ fn live_share_a_to_b_full_lifecycle() {
         eprintln!(
             "[live-e2e] WARN A FolderDeleteById({folder_id}) declined: status={} message={}",
             status_label(&delete.status),
+            delete.message
+        );
+    }
+
+    if result.is_ok() && release_gate_enabled() {
+        assert!(
+            revoke_ok,
+            "release share gate failed to revoke active share"
+        );
+        assert_eq!(
+            delete.status,
+            ResponseStatus::Ok,
+            "release share gate failed to delete fixture folder: {}",
             delete.message
         );
     }

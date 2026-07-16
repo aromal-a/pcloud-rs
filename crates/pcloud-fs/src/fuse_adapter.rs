@@ -24,9 +24,24 @@ use std::sync::{Arc, Mutex};
 
 use crate::backend::{FileBackend, FileHandle, FolderBackend};
 use crate::errors::FsError;
+
+/// Allocation-unit size exposed by the platform mount shims.
+pub const STATFS_BLOCK_SIZE: u32 = 4096;
+
+/// Convert byte-level account quota into the block counts expected by FUSE.
+/// Total capacity rounds up to preserve every usable byte; free capacity
+/// rounds down so the mount never advertises space that the account lacks.
+#[must_use]
+pub fn statfs_blocks(total_bytes: u64, free_bytes: u64) -> (u64, u64) {
+    let block_size = u64::from(STATFS_BLOCK_SIZE);
+    (
+        total_bytes.div_ceil(block_size),
+        free_bytes.min(total_bytes) / block_size,
+    )
+}
 use crate::inode::{InodeTable, ROOT_INODE};
 use crate::metadata_cache::{CachedMetadata, MetadataCache, MetadataCacheConfig};
-use crate::page_cache::{PageCache, PageCacheConfig, PageKey};
+use crate::page_cache::{PageCacheConfig, PageCacheGeneric, PageKey};
 use crate::path_norm::{PathError, canonicalise, join_child};
 use crate::write_path::{FileUploadBackend, WritePathError, WritePathService};
 
@@ -842,6 +857,7 @@ trait WriteDelegate: Send + Sync + 'static {
     fn rename(&self, from: &str, to: &str) -> Result<(), i32>;
     fn has_open_handle(&self, ino: u64) -> bool;
     fn read_staged(&self, ino: u64, offset: u64, len: usize) -> Result<Vec<u8>, i32>;
+    fn staged_len(&self, ino: u64) -> Result<u64, i32>;
 }
 
 struct WriteDelegateImpl<U: FileUploadBackend> {
@@ -910,6 +926,11 @@ impl<U: FileUploadBackend> WriteDelegate for WriteDelegateImpl<U> {
             .read_staged(ino, offset, len)
             .map_err(|e| write_err_to_errno(&e))
     }
+    fn staged_len(&self, ino: u64) -> Result<u64, i32> {
+        self.inner
+            .staged_len(ino)
+            .map_err(|e| write_err_to_errno(&e))
+    }
 }
 
 /// FUSE adapter that resolves paths against a [`FolderBackend`] and, for
@@ -926,7 +947,7 @@ pub struct ProtoFuseAdapter<B: FolderBackend, F: FileBackend = NoFileBackend> {
     file_backend: Arc<F>,
     inodes: Arc<InodeTable>,
     cache: Arc<MetadataCache>,
-    page_cache: Arc<PageCache>,
+    page_cache: Arc<PageCacheGeneric<PageKey>>,
     /// `ino → file_id` mirror populated during directory listings so that
     /// `open(ino)` can resolve a pCloud file id without a round trip.
     file_ids: Arc<Mutex<HashMap<Ino, u64>>>,
@@ -974,7 +995,7 @@ impl<B: FolderBackend, F: FileBackend> ProtoFuseAdapter<B, F> {
             file_backend,
             inodes: Arc::new(InodeTable::new()),
             cache: Arc::new(MetadataCache::new(options.cache)),
-            page_cache: Arc::new(PageCache::new(options.page_cache)),
+            page_cache: Arc::new(PageCacheGeneric::new(options.page_cache)),
             file_ids: Arc::new(Mutex::new(HashMap::new())),
             file_sizes: Arc::new(Mutex::new(HashMap::new())),
             handles: Arc::new(Mutex::new(HandleTable::default())),
@@ -1022,7 +1043,7 @@ impl<B: FolderBackend, F: FileBackend> ProtoFuseAdapter<B, F> {
     /// Return a cloned [`Arc`] handle to the page cache. Used primarily by
     /// tests to inspect hit ratios and capacity.
     #[must_use]
-    pub fn page_cache(&self) -> Arc<PageCache> {
+    pub fn page_cache(&self) -> Arc<PageCacheGeneric<PageKey>> {
         Arc::clone(&self.page_cache)
     }
 
@@ -1229,6 +1250,10 @@ fn path_err_to_fs(err: PathError) -> FsError {
 }
 
 impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
+    fn statfs(&self) -> Result<(u64, u64), i32> {
+        self.backend.statfs().map_err(|error| error.to_errno())
+    }
+
     fn resolve_ino_to_path(&self, ino: Ino) -> Result<PathBuf, i32> {
         // The inode table stores the canonical absolute path for every
         // allocated inode (root, and everything materialised via
@@ -1475,7 +1500,8 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
             // pointer bump rather than a 64 KiB memcpy (P5.1). On a miss we
             // wrap the fetched bytes in `Arc` before caching so the same
             // allocation is shared without a second copy.
-            let page_bytes: std::sync::Arc<Vec<u8>> = if let Some(b) = self.page_cache.get(page_key)
+            let page_bytes: std::sync::Arc<Vec<u8>> = if let Some(b) =
+                self.page_cache.get(&page_key)
             {
                 b
             } else {
@@ -1505,7 +1531,7 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
                 // second clone by reusing the Arc the cache just stored.
                 // If the put was silently dropped (oversized page), fall back
                 // to an empty Arc so the EOF branch below fires cleanly.
-                self.page_cache.get(page_key).unwrap_or_default()
+                self.page_cache.get(&page_key).unwrap_or_default()
             };
 
             let page_off = (cursor - page_start) as usize;
@@ -1592,7 +1618,14 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
 
     fn write(&self, ino: Ino, offset: u64, data: &[u8]) -> Result<usize, i32> {
         let writer = self.writer.as_ref().ok_or(ENOSYS)?;
-        writer.write(ino, offset, data)
+        let written = writer.write(ino, offset, data)?;
+        let new_size = writer.staged_len(ino)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_secs())
+            .ok();
+        self.publish_local_size(ino, new_size, now);
+        Ok(written)
     }
 
     fn flush_write(&self, ino: Ino) -> Result<(), i32> {
@@ -1618,10 +1651,13 @@ impl<B: FolderBackend, F: FileBackend> FuseAdapter for ProtoFuseAdapter<B, F> {
                     .map(|(p, _, _)| p)
                     .ok_or(crate::errors::ENOENT)?;
                 writer.open_for_write(ino, path, false, false)?;
-                return writer.truncate(ino, new_size);
+                writer.truncate(ino, new_size)?;
+                self.publish_local_size(ino, new_size, None);
+                return Ok(());
             }
             return Err(errno);
         }
+        self.publish_local_size(ino, new_size, None);
         Ok(())
     }
 
@@ -1698,6 +1734,21 @@ fn split_parent(path: &str) -> Option<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn statfs_blocks_never_overstates_free_capacity() {
+        assert_eq!(statfs_blocks(4097, 4097), (2, 1));
+        assert_eq!(statfs_blocks(4096, 8192), (1, 1));
+        assert_eq!(statfs_blocks(0, u64::MAX), (0, 0));
+    }
+
+    #[test]
+    fn proto_adapter_delegates_statfs_to_account_backend() {
+        let backend = Arc::new(MockFolderBackend::new());
+        backend.set_quota(10_000, 4_000);
+        let adapter = ProtoFuseAdapter::new(backend, AdapterOptions::default());
+        assert_eq!(adapter.statfs(), Ok((10_000, 4_000)));
+    }
 
     #[test]
     fn null_adapter_lookup_returns_enosys() {
