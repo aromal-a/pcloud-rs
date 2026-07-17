@@ -3263,7 +3263,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-auth"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "pcloud-model",
  "pcloud-proto",
@@ -3274,7 +3274,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-backends"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "base64",
  "filetime",
@@ -3311,7 +3311,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-cache"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "aes-gcm",
  "getrandom 0.2.17",
@@ -3325,7 +3325,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-chaos"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "libc",
  "pcloud-resilience",
@@ -3336,7 +3336,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-cli"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "base64",
  "clap",
@@ -3359,7 +3359,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-compat"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "libc",
  "thiserror 2.0.18",
@@ -3367,7 +3367,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-config"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "directories",
  "glob",
@@ -3384,7 +3384,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-crypto"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -3418,7 +3418,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-daemon"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "anyhow",
  "base64",
@@ -3465,7 +3465,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-daemon-win"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "pcloud-daemon",
  "windows-service",
@@ -3473,7 +3473,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-embedded-sdk"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "base64",
  "criterion",
@@ -3498,7 +3498,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-engine"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "criterion",
  "globset",
@@ -3513,14 +3513,14 @@ dependencies = [
 
 [[package]]
 name = "pcloud-error"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "pcloud-fleet"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "base64",
  "bytes",
@@ -3545,7 +3545,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-fs"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "criterion",
  "fuser",
@@ -3572,7 +3572,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-idp"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "base64",
  "getrandom 0.2.17",
@@ -3589,7 +3589,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-ipc"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "criterion",
  "libc",
@@ -3605,7 +3605,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-kms"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "aws-config",
  "aws-sdk-kms",
@@ -3623,7 +3623,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-live-e2e"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "pcloud-auth",
  "pcloud-config",
@@ -3639,7 +3639,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-mockserver"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "serde",
  "serde_json",
@@ -3647,7 +3647,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-model"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "serde",
  "serde_json",
@@ -3655,7 +3655,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-observability"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "axum",
  "log",
@@ -3674,7 +3674,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-p2p"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "mdns-sd",
  "serde",
@@ -3685,7 +3685,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-plugin-api"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "ed25519-dalek",
  "pcloud-config",
@@ -3697,7 +3697,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-plugin-autoheal"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "notify-rust",
  "pcloud-plugin-api",
@@ -3709,7 +3709,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-plugin-backup-schedule"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "chrono",
  "cron 0.13.0",
@@ -3721,7 +3721,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-plugin-dlp"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "pcloud-plugin-api",
  "pcloud-secret",
@@ -3733,7 +3733,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-plugin-host"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "serde",
  "serde_json",
@@ -3742,7 +3742,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-plugin-publink-expiry"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "notify-rust",
  "pcloud-plugin-api",
@@ -3754,7 +3754,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-plugin-wasmtime"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "log",
  "pcloud-plugin-host",
@@ -3764,7 +3764,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-policy"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "regorus",
  "serde",
@@ -3775,7 +3775,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-proto"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "arbitrary",
  "base64",
@@ -3799,7 +3799,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-resilience"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "parking_lot",
  "pcloud-observability",
@@ -3810,7 +3810,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-rsync"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "serde",
  "serde_json",
@@ -3831,7 +3831,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-secret"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "criterion",
  "proptest",
@@ -3841,7 +3841,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-session"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "pcloud-auth",
  "pcloud-backends",
@@ -3855,7 +3855,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-store"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "criterion",
  "hmac",
@@ -3868,7 +3868,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-supervisor"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "pcloud-config",
  "pcloud-daemon",
@@ -3880,7 +3880,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-web"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "axum",
  "getrandom 0.2.17",
@@ -3901,7 +3901,7 @@ dependencies = [
 
 [[package]]
 name = "pcloud-webdav"
-version = "0.1.0"
+version = "0.8.1-beta"
 dependencies = [
  "log",
  "pcloud-ipc",
@@ -6751,7 +6751,7 @@ checksum = "66fee0b777b0f5ac1c69bb06d361268faafa61cd4682ae064a171c16c433e9e4"
 
 [[package]]
 name = "xtask"
-version = "0.1.0"
+version = "0.8.1-beta"
 
 [[package]]
 name = "yoke"
