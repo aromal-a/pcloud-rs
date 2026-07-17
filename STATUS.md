@@ -2,8 +2,60 @@
 
 Single source of truth for Rust parity counts.
 
-_Last reviewed: 2026-07-16 (full stabilization and local release-gate pass;
-parity tally remains `156 / 0 / 0 / 30 (186 rows)`)._
+_Last reviewed: 2026-07-17 (live-smoke remediation wave: three live-protocol
+fixes + server-vault adoption; parity tally remains `156 / 0 / 0 / 30 (186 rows)`)._
+
+## 2026-07-17 update — first live pCloud smoke + server-vault adoption
+
+First end-to-end run against real pCloud accounts surfaced and fixed four
+live-protocol defects that no offline test had caught:
+
+- **Response string-reuse cap desync.** `ParseLimits::max_reused_strings`
+  (4096) was smaller than real-world `listfolder` frames on large accounts;
+  the parser silently stopped recording strings past the cap and then
+  rejected valid back-references (`InvalidReuseReference(4096)`), breaking
+  every large-folder listing, `mkdir`, and upload. Cap raised to 1 MiB and
+  clamped to the frame length (a string costs ≥1 frame byte, so a valid
+  frame can never exceed it).
+- **Token-less TFA challenges unhandled.** pCloud returns result `1022`
+  ("Please provide 'code.'", no challenge token) for email/new-device
+  verification; the parser only knew token-carrying `2297`. 1022 now maps
+  to `TwoFactorRequired` with an empty token, which the daemon already
+  routes to the single-shot `login`+`code` path.
+- **pCloud wire base64 is URL-safe.** All crypto endpoints emit base64
+  with the `-_` alphabet, optional padding, and possible whitespace
+  (`plibs.c:75,87`); standard-alphabet decoding rejected every blob.
+  `crypto_api` now decodes URL-safe (padding-optional, whitespace-tolerant,
+  standard fallback) and the daemon uploads URL-safe.
+- **`crypto start` first-run silently used the Enhanced backend** instead
+  of the documented PclsyncCompat default, and `--password-stdin` was
+  treated as a literal password. Both fixed.
+
+**Server-vault adoption (interop unlock) landed.** New
+`crypto_getuserkeys` wire method + `CryptoRuntime::get_user_keys` +
+`CryptoShell::adopt_server_profile` + daemon `try_adopt_server_vault`:
+when the account already has a vault created by an official pCloud client,
+`crypto start` now downloads the account's `priv_key_ver1`/`pub_key_ver1`
+blobs, unwraps the RSA-4096 private key with the supplied password,
+cross-checks the derived public key against the server's blob
+(constant-time), and adopts the existing keypair (backend=pclsync-compat)
+instead of generating a parallel keypair that cannot read the vault.
+Live-verified on a real account: adoption succeeded and
+`crypto_getfolderkey` for the real Crypto Folder RSA-OAEP-unwrapped
+correctly with the adopted key. Fresh setups still upload via
+`crypto_setuserkeys` as before.
+
+Follow-ups (not yet wired): decrypted filename/content presentation in
+`ls`/mount (`pclsync_filename` + sector decryption exist in pcloud-crypto
+but nothing in the FS/RemoteFs layers consumes them), and crypto profile
+re-use across daemon restarts (currently re-adopts on each fresh root).
+
+Live smoke (Linux, one account): auth, userinfo, 2671-entry root listing,
+mkdir, 8 MiB upload→download SHA-256 byte-identical, crypto unlock
+(adopted server vault), FUSE mount + kernel write → API readback, clean
+unmount, no stale mounts, remote artifacts removed. Second account login
+blocked on a user-held email verification code (the 1022 path now holds
+the pending challenge correctly).
 
 ## 2026-07-16 update — current stabilization baseline
 
