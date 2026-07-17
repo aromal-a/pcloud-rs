@@ -749,7 +749,8 @@ mod tests {
     use pcloud_ipc::{IpcServer, Request, current_effective_uid};
 
     use super::{
-        parse_health_port, serve_until_shutdown_with_flag, should_reject_during_drain,
+        is_privileged_request, parse_health_port, request_kind_name,
+        serve_until_shutdown_with_flag, should_reject_during_drain,
         watchdog_ping_interval_from_timeout,
     };
     use crate::bootstrap_with_config;
@@ -881,5 +882,99 @@ mod tests {
             watchdog_ping_interval_from_timeout(Duration::from_micros(1)),
             Duration::from_micros(1)
         );
+    }
+
+    #[test]
+    fn privileged_request_audit_names_cover_every_specialized_discriminant() {
+        let requests = [
+            Request::Plain {
+                method: pcloud_ipc::Method::Shutdown,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::CryptoReset,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::SetAuthPersistence,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::SendCryptoChangeUserPrivate,
+            },
+            Request::Plain {
+                method: pcloud_ipc::Method::GetStatus,
+            },
+            Request::AccountChangePassword {
+                current_password: "old".into(),
+                new_password: "new".into(),
+            },
+            Request::CryptoSetup {
+                password: "password".into(),
+                hint: None,
+            },
+            Request::CryptoSetupV2 {
+                backend: pcloud_ipc::methods::CryptoBackendIpc::PclsyncCompat,
+                acknowledge_not_interop: false,
+                password: "password".into(),
+                hint: None,
+            },
+            Request::CryptoGetFolderKey { folder_id: 1 },
+            Request::CryptoGetFileKey { file_id: 1 },
+            Request::CryptoChangePassword {
+                old_password: "old".into(),
+                new_password: "new".into(),
+                hint: String::new(),
+                code: "123456".to_owned(),
+                flags: 0,
+            },
+            Request::CryptoChangePasswordUnlocked {
+                new_password: "new".into(),
+                hint: String::new(),
+                code: "123456".to_owned(),
+                flags: 0,
+            },
+            Request::AuthPersistence { enabled: true },
+            Request::SyncRootRemove { sync_id: 1 },
+            Request::DeleteBackup { backup_id: 1 },
+            Request::UploadWriteFromFile {
+                upload_session_id: 1,
+                source_fileid: 2,
+                source_hash: 3,
+                offset: 0,
+                source_offset: None,
+                count: 4,
+            },
+            Request::CreateTreePublicLinkFromPaths {
+                name: "bundle".to_owned(),
+                paths: vec!["/Documents".to_owned()],
+                expires: None,
+            },
+            Request::CreateTreePublicLinkFromPathTargets {
+                name: "bundle".to_owned(),
+                root: Some("/".to_owned()),
+                folders: vec![],
+                files: vec![],
+                expires: None,
+            },
+            Request::CreateBackup {
+                name: "backup".to_owned(),
+                root_folder_id: 1,
+                local_path: "/tmp".to_owned(),
+                parent_folder_name: None,
+            },
+            Request::StopDevice {
+                device_folder_id: 1,
+            },
+            Request::DeleteBackupDevice,
+            Request::LostPassword {
+                email: "user@example.com".to_owned(),
+            },
+            Request::VerifyEmailRestricted {
+                verify_token: "token".into(),
+            },
+            Request::Unmount,
+        ];
+        for request in requests {
+            assert!(!request_kind_name(&request).is_empty());
+            let _ = is_privileged_request(&request);
+        }
     }
 }

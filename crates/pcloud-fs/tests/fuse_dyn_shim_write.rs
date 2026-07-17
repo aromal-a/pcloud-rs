@@ -2,13 +2,15 @@
 //! bd-1du.4.6 — dyn-shim write-path integration test.
 //!
 //! Proves that write operations (`create` / `write` / `fsync` / readback)
-//! work end-to-end through the `FuserShim<A>` path (i.e. through the
-//! `FuseAdapter` trait's write methods forwarded by the platform shim),
+//! work end-to-end through the type-erased `BoxedFuserShim` path (i.e.
+//! through the `FuseAdapter` trait's write methods forwarded by the
+//! [`PlatformMount`] abstraction),
 //! not just through the concrete `PcloudFsShim`.
 //!
 //! The test:
 //!   1. Constructs a `ProtoFuseAdapter` with a `WritePathService` attached.
-//!   2. Mounts it via `MountService::mount` (which wraps in `FuserShim<A>`).
+//!   2. Mounts it via `LinuxPlatformMount::mount_adapter`, exercising the
+//!      same type-erased entry point used by cross-platform runtime code.
 //!   3. Creates a file, writes known bytes, calls `sync_all`.
 //!   4. Reads the file back through the kernel VFS and asserts byte-identity.
 //!   5. Unmounts cleanly.
@@ -22,6 +24,7 @@
 #![cfg(target_os = "linux")]
 
 use std::io::Write;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,6 +33,7 @@ use pcloud_fs::backend::mock::{MockFileBackend, MockFolderBackend};
 use pcloud_fs::fuse_adapter::{AdapterOptions, ProtoFuseAdapter};
 use pcloud_fs::mount_service::{MountOptions, MountService};
 use pcloud_fs::page_cache::PageCacheConfig;
+use pcloud_fs::platform::{PlatformMount, linux::LinuxPlatformMount};
 use pcloud_fs::staging::StagingDir;
 use pcloud_fs::write_journal::WriteJournal;
 use pcloud_fs::write_path::{
@@ -89,6 +93,7 @@ fn dyn_shim_write_file_and_readback_via_kernel_vfs() {
     // -- build adapter with write-path --
     let folder = Arc::new(MockFolderBackend::new());
     folder.insert_dir("/", 1, vec![]);
+    folder.set_quota(10 * 1024 * 1024, 7 * 1024 * 1024);
 
     let files = Arc::new(MockFileBackend::new());
 
@@ -121,12 +126,12 @@ fn dyn_shim_write_file_and_readback_via_kernel_vfs() {
 
     let adapter = adapter.with_write_path(Arc::clone(&writer));
 
-    // -- mount via MountService::mount (wraps in FuserShim<A>) --
+    // -- mount through the type-erased PlatformMount seam --
     let mountdir = tempfile::tempdir().expect("tempdir for mount");
-    let svc = MountService::new();
-    let handle = match svc.mount(
+    let platform = LinuxPlatformMount;
+    let handle = match platform.mount_adapter(
+        Box::new(adapter),
         mountdir.path(),
-        adapter,
         MountOptions {
             read_only: false,
             ..MountOptions::default()
@@ -187,6 +192,106 @@ fn dyn_shim_write_file_and_readback_via_kernel_vfs() {
         "readback through kernel VFS must be byte-identical to what was written"
     );
 
+    // Exercise the remaining kernel callback family through the same dyn
+    // shim: statfs, setattr/truncate, chmod rejection, rename and unlink.
+    let mount_c = std::ffi::CString::new(mountdir.path().as_os_str().as_encoded_bytes())
+        .expect("mount path has no NUL");
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: both pointers are valid for the duration of the syscall.
+    assert_eq!(unsafe { libc::statvfs(mount_c.as_ptr(), &mut stat) }, 0);
+    assert!(stat.f_blocks > 0);
+
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&file_path)
+        .expect("open staged file for truncate");
+    file.set_len(5).expect("truncate through setattr");
+    drop(file);
+    assert_eq!(
+        std::fs::read(&file_path).expect("read truncated file"),
+        b"hello"
+    );
+
+    let chmod = std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o600));
+    assert!(
+        chmod.is_err(),
+        "pCloud has no Unix permission bits, chmod must be rejected"
+    );
+
+    let renamed = mountdir.path().join("renamed.txt");
+    std::fs::rename(&file_path, &renamed).expect("rename through dyn shim");
+    std::fs::remove_file(&renamed).expect("unlink through dyn shim");
+
+    let mkdir = std::fs::create_dir(mountdir.path().join("unsupported-directory"));
+    assert!(
+        mkdir.is_err(),
+        "the mock folder backend deliberately rejects mkdir"
+    );
+
     // -- clean unmount --
     handle.unmount().expect("clean unmount");
+
+    // Repeat the same callback family through the generic MountService seam.
+    // Linux keeps separate generic and type-erased fuser shims, and both are
+    // production entrypoints used by embedders.
+    let folder = Arc::new(MockFolderBackend::new());
+    folder.insert_dir("/", 1, vec![]);
+    folder.set_quota(10 * 1024 * 1024, 7 * 1024 * 1024);
+    let files = Arc::new(MockFileBackend::new());
+    let stage = StagingDir::open(tmp.path().join("generic-stage")).unwrap();
+    let journal = WriteJournal::open(stage.journal_path()).unwrap();
+    let generic_upload = Arc::new(RecordingUploadBackend::default());
+    let generic_writer = Arc::new(WritePathService::new(
+        stage,
+        journal,
+        Arc::clone(&generic_upload),
+        WritePathOptions {
+            flush_threshold_bytes: 64 * 1024 * 1024,
+            flush_interval: Duration::from_secs(3600),
+            ..WritePathOptions::default()
+        },
+    ));
+    let generic_adapter = ProtoFuseAdapter::with_file_backend(
+        Arc::clone(&folder),
+        Arc::clone(&files),
+        AdapterOptions::default(),
+    )
+    .with_write_path(Arc::clone(&generic_writer));
+    let generic_mount = tempfile::tempdir().unwrap();
+    let generic_handle = MountService::new()
+        .mount(
+            generic_mount.path(),
+            generic_adapter,
+            MountOptions {
+                read_only: false,
+                ..MountOptions::default()
+            },
+        )
+        .expect("generic mount");
+    std::thread::sleep(Duration::from_millis(100));
+
+    let generic_file = generic_mount.path().join("generic.txt");
+    let mut file = std::fs::File::create(&generic_file).unwrap();
+    file.write_all(b"generic callback payload").unwrap();
+    file.sync_all().unwrap();
+    drop(file);
+    assert_eq!(
+        std::fs::read(&generic_file).unwrap(),
+        b"generic callback payload"
+    );
+    let file = std::fs::OpenOptions::new()
+        .write(true)
+        .open(&generic_file)
+        .unwrap();
+    file.set_len(7).unwrap();
+    drop(file);
+    assert_eq!(std::fs::read(&generic_file).unwrap(), b"generic");
+    assert!(
+        std::fs::set_permissions(&generic_file, std::fs::Permissions::from_mode(0o600)).is_err()
+    );
+    let generic_renamed = generic_mount.path().join("renamed.txt");
+    std::fs::rename(&generic_file, &generic_renamed).unwrap();
+    std::fs::remove_file(&generic_renamed).unwrap();
+    assert!(std::fs::create_dir(generic_mount.path().join("unsupported")).is_err());
+    generic_handle.unmount().expect("generic clean unmount");
 }

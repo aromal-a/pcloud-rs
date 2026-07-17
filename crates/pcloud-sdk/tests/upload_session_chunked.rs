@@ -28,6 +28,8 @@ struct MockLog {
 struct MockDriver {
     next_upload_id: u64,
     log: Arc<Mutex<MockLog>>,
+    fail_create: bool,
+    fail_write: bool,
     fail_save: bool,
     server_hash: Option<String>,
 }
@@ -39,6 +41,8 @@ impl MockDriver {
             Self {
                 next_upload_id: 1001,
                 log: log.clone(),
+                fail_create: false,
+                fail_write: false,
                 fail_save: false,
                 server_hash: None,
             },
@@ -54,6 +58,11 @@ impl UploadSessionDriver for MockDriver {
         file_name: &str,
         total: u64,
     ) -> Result<UploadHandle, UploadError> {
+        if self.fail_create {
+            return Err(UploadError::Helper(
+                pcloud_embedded_sdk::UploadHelperError::Create("create forced to fail".to_owned()),
+            ));
+        }
         let uid = self.next_upload_id;
         self.next_upload_id += 1;
         self.log
@@ -74,6 +83,11 @@ impl UploadSessionDriver for MockDriver {
         offset: u64,
         buf: &[u8],
     ) -> Result<u64, UploadError> {
+        if self.fail_write {
+            return Err(UploadError::Helper(
+                pcloud_embedded_sdk::UploadHelperError::Write("write forced to fail".to_owned()),
+            ));
+        }
         self.log
             .lock()
             .unwrap()
@@ -343,4 +357,109 @@ fn cancel_clears_journal_and_calls_upload_delete() {
     let log = log.lock().unwrap();
     assert_eq!(log.deletes, vec![handle.upload_id]);
     assert!(journal.replay().unwrap().entries.is_empty());
+}
+
+#[test]
+fn driver_and_state_transition_failures_are_typed_and_observable() {
+    let (mut create_failure, _) = MockDriver::new();
+    create_failure.fail_create = true;
+    assert!(matches!(
+        UploadSession::start(1, "create.bin", 4, &mut create_failure, None),
+        Err(UploadError::Helper(_))
+    ));
+
+    let (mut driver, _) = MockDriver::new();
+    let session = UploadSession::start(2, "state.bin", 4, &mut driver, None).unwrap();
+    assert!(matches!(
+        session.clone().await_completion(),
+        Err(UploadError::NotStarted)
+    ));
+    session.pause().unwrap();
+    session.pause().unwrap();
+    assert_eq!(session.progress().borrow().state, UploadState::Paused);
+    assert!(matches!(
+        session.write_chunk(&mut driver, b"ab"),
+        Err(UploadError::InvalidState(_))
+    ));
+    session.resume().unwrap();
+
+    driver.fail_write = true;
+    assert!(matches!(
+        session.write_chunk(&mut driver, b"ab"),
+        Err(UploadError::Helper(_))
+    ));
+    assert_eq!(session.current_offset(), Some(0));
+    driver.fail_write = false;
+    session.write_chunk(&mut driver, b"ab").unwrap();
+    assert!(matches!(
+        session.clone().save_and_complete(&mut driver, None),
+        Err(UploadError::InvalidState(_))
+    ));
+    session.write_chunk(&mut driver, b"cd").unwrap();
+
+    driver.fail_save = true;
+    let mut progress = session.progress();
+    assert!(matches!(
+        session.clone().save_and_complete(&mut driver, None),
+        Err(UploadError::Helper(_))
+    ));
+    assert_eq!(
+        progress.borrow_and_update().state,
+        UploadState::Failed,
+        "save failure must be terminal"
+    );
+    assert!(matches!(session.pause(), Err(UploadError::InvalidState(_))));
+    assert!(matches!(
+        session.resume(),
+        Err(UploadError::InvalidState(_))
+    ));
+    assert!(matches!(
+        session.await_completion(),
+        Err(UploadError::Helper(_))
+    ));
+}
+
+#[test]
+fn server_hash_verification_covers_match_and_mismatch_outcomes() {
+    let (mut mismatch_driver, _) = MockDriver::new();
+    mismatch_driver.server_hash = Some("server-hash".to_owned());
+    let mismatch = UploadSession::start(3, "mismatch.bin", 3, &mut mismatch_driver, None).unwrap();
+    mismatch.write_chunk(&mut mismatch_driver, b"abc").unwrap();
+    let progress = mismatch.progress();
+    assert!(matches!(
+        mismatch
+            .clone()
+            .save_and_complete(&mut mismatch_driver, Some("local-hash")),
+        Err(UploadError::HashMismatch { .. })
+    ));
+    assert_eq!(progress.borrow().state, UploadState::Failed);
+    assert!(matches!(
+        mismatch.await_completion(),
+        Err(UploadError::HashMismatch { .. })
+    ));
+
+    let (mut matching_driver, _) = MockDriver::new();
+    matching_driver.server_hash = Some("same-hash".to_owned());
+    let matching = UploadSession::start(4, "match.bin", 3, &mut matching_driver, None).unwrap();
+    matching.write_chunk(&mut matching_driver, b"abc").unwrap();
+    let meta = matching
+        .clone()
+        .save_and_complete(&mut matching_driver, Some("same-hash"))
+        .unwrap();
+    assert_eq!(meta.server_hash.as_deref(), Some("same-hash"));
+    assert_eq!(
+        matching.await_completion().unwrap().name,
+        "match.bin".to_owned()
+    );
+}
+
+#[test]
+fn payload_debug_never_exposes_in_memory_bytes() {
+    let bytes = pcloud_embedded_sdk::UploadPayload::Bytes(b"private payload".to_vec());
+    let rendered = format!("{bytes:?}");
+    assert!(rendered.contains("len"));
+    assert!(!rendered.contains("private payload"));
+
+    let file = pcloud_embedded_sdk::UploadPayload::File("payload.bin".into());
+    assert!(format!("{file:?}").contains("payload.bin"));
 }

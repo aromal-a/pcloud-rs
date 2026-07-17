@@ -1443,6 +1443,107 @@ mod tests {
     }
 
     #[test]
+    fn credential_files_are_owner_only_regular_utf8_and_trimmed() {
+        let root = tempfile::tempdir().unwrap();
+        let missing = root.path().join("missing");
+        assert!(read_secret_file(&missing).unwrap().is_none());
+
+        let credential = root.path().join("credential");
+        fs::write(&credential, b"  secret value\n").unwrap();
+        fs::set_permissions(&credential, fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            read_secret_file(&credential)
+                .unwrap()
+                .unwrap()
+                .expose_secret(),
+            "secret value"
+        );
+        assert_eq!(
+            read_text_file(&credential).unwrap().as_deref(),
+            Some("secret value")
+        );
+
+        fs::write(&credential, b" \n\t").unwrap();
+        assert!(read_secret_file(&credential).unwrap().is_none());
+
+        fs::write(&credential, [0xff, 0xfe]).unwrap();
+        assert!(matches!(
+            read_secret_file(&credential),
+            Err(BootstrapError::CredentialBootstrap(message))
+                if message.contains("valid UTF-8")
+        ));
+
+        fs::write(&credential, b"secret").unwrap();
+        fs::set_permissions(&credential, fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(matches!(
+            validate_secret_file(&credential),
+            Err(BootstrapError::CredentialBootstrap(message))
+                if message.contains("group/other")
+        ));
+        assert!(matches!(
+            validate_secret_file(root.path()),
+            Err(BootstrapError::CredentialBootstrap(message))
+                if message.contains("not a regular file")
+        ));
+    }
+
+    #[test]
+    fn bootstrap_credential_environment_resolves_explicit_and_systemd_files() {
+        let root = tempfile::tempdir().unwrap();
+        let write_secret = |name: &str, bytes: &[u8]| {
+            let path = root.path().join(name);
+            fs::write(&path, bytes).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            path
+        };
+        let explicit_token = write_secret("explicit-token", b"explicit");
+        write_secret("pcloud-rs-token", b"systemd-token");
+        write_secret("pcloud-rs-username", b"alice@example.com");
+        write_secret("pcloud-rs-password", b"password");
+        write_secret("pcloud-rs-tfa-code", b"123456");
+        write_secret("pcloud-rs-recovery-code", b"recover");
+
+        with_env_vars(
+            &[
+                ("CREDENTIALS_DIRECTORY", Some(root.path().as_os_str())),
+                ("PCLOUDRS_TOKEN_FILE", Some(explicit_token.as_os_str())),
+                ("PCLOUDRS_USERNAME_FILE", None),
+                ("PCLOUDRS_PASSWORD_FILE", None),
+                ("PCLOUDRS_TFA_CODE_FILE", None),
+                ("PCLOUDRS_RECOVERY_CODE_FILE", None),
+                ("PCLOUDRS_TRUST_DEVICE", Some(std::ffi::OsStr::new("yes"))),
+            ],
+            || {
+                assert_eq!(
+                    system_credential_path("pcloud-rs-token").unwrap(),
+                    root.path().join("pcloud-rs-token")
+                );
+                assert_eq!(
+                    env_credential_path("PCLOUDRS_TOKEN_FILE").unwrap(),
+                    explicit_token
+                );
+                assert_eq!(
+                    resolve_credential_path("PCLOUDRS_TOKEN_FILE", "pcloud-rs-token").unwrap(),
+                    explicit_token
+                );
+                let credentials = load_bootstrap_credentials().unwrap();
+                assert_eq!(credentials.token.unwrap().expose_secret(), "explicit");
+                assert_eq!(credentials.username.as_deref(), Some("alice@example.com"));
+                assert_eq!(credentials.password.unwrap().expose_secret(), "password");
+                assert_eq!(
+                    credentials.two_factor_code.unwrap().expose_secret(),
+                    "123456"
+                );
+                assert_eq!(
+                    credentials.recovery_code.unwrap().expose_secret(),
+                    "recover"
+                );
+                assert!(credentials.trust_device);
+            },
+        );
+    }
+
+    #[test]
     fn bootstrap_shell_loads_pcloud_config_and_preserves_reload_path() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let root = tmp.path().join("profile-root");

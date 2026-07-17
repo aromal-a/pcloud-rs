@@ -2337,6 +2337,96 @@ mod tests {
     }
 
     #[test]
+    fn filesystem_helper_error_matrix_is_typed_and_confined() {
+        use pcloud_engine::recovery::RecoveryFailure;
+
+        let uninitialized = Connection::open_in_memory().unwrap();
+        let error = load_sync_root(&uninitialized, SyncId::new(1)).unwrap_err();
+        assert!(matches!(
+            error.failure,
+            RecoveryFailure::RetryableNetworkError
+        ));
+        assert!(error.message.contains("load sync roots"));
+
+        let tmp = TempDir::new().unwrap();
+        let db = tmp.path().join("roots.sqlite");
+        let _ = bootstrap_profile(&db).unwrap();
+        let conn = Connection::open(&db).unwrap();
+        let error = load_sync_root(&conn, SyncId::new(404)).unwrap_err();
+        assert!(matches!(error.failure, RecoveryFailure::InvalidPath));
+
+        let root = tmp.path().join("root");
+        std::fs::create_dir_all(root.join("dir")).unwrap();
+        std::fs::write(root.join("ordinary-file"), b"x").unwrap();
+        assert!(safe_local_target_path(&root, "../escape").is_err());
+        assert!(safe_local_target_path(&tmp.path().join("missing"), "file").is_err());
+        assert_eq!(
+            safe_local_target_path(&root, "new/child").unwrap(),
+            root.join("new/child")
+        );
+        assert!(safe_local_target_path(&root, "ordinary-file/child").is_err());
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(tmp.path(), root.join("linked")).unwrap();
+            assert!(safe_local_target_path(&root, "linked/child").is_err());
+        }
+
+        assert!(remote_child_path("/", "../escape").is_err());
+        assert_eq!(remote_child_path("", "file").unwrap(), "/file");
+        assert_eq!(
+            remote_child_path("/Documents/", "file").unwrap(),
+            "/Documents/file"
+        );
+
+        for (kind, expected) in [
+            (
+                std::io::ErrorKind::PermissionDenied,
+                RecoveryFailure::PermissionDenied,
+            ),
+            (
+                std::io::ErrorKind::InvalidInput,
+                RecoveryFailure::InvalidPath,
+            ),
+            (
+                std::io::ErrorKind::TimedOut,
+                RecoveryFailure::RetryableNetworkError,
+            ),
+        ] {
+            let pending = io_error_to_pending_fs_error(std::io::Error::from(kind), "pending");
+            assert_eq!(
+                std::mem::discriminant(&pending.failure),
+                std::mem::discriminant(&expected)
+            );
+            let upload = io_error_to_local_payload_error(std::io::Error::from(kind), "upload");
+            assert_eq!(
+                std::mem::discriminant(&upload.failure),
+                std::mem::discriminant(&expected)
+            );
+        }
+
+        assert!(read_local_upload_payload_from_root(&root, "../escape").is_err());
+        assert!(read_local_upload_payload_from_root(&root, "missing").is_err());
+        assert!(read_local_upload_payload_from_root(&root, "dir").is_err());
+        std::fs::write(root.join("changing"), b"before").unwrap();
+        let payload = read_local_upload_payload_from_root(&root, "changing").unwrap();
+        std::fs::write(root.join("changing"), b"after-change").unwrap();
+        let changed = validate_local_upload_snapshot(&payload.snapshot).unwrap_err();
+        assert!(matches!(
+            changed.failure,
+            RecoveryFailure::RetryableNetworkError
+        ));
+
+        let mut cache = CacheShell::default();
+        cache.staging.stage("whole", b"whole buffer".to_vec());
+        let filesystem = FilesystemShell::default();
+        let chunks: Vec<_> = read_upload_payload_chunks(&filesystem, &cache, "whole", 0)
+            .unwrap()
+            .collect();
+        assert_eq!(chunks, vec![b"whole buffer".as_slice()]);
+    }
+
+    #[test]
     fn retryable_failure_requeues_operation() {
         let tmp = TempDir::new().unwrap();
         let db_path = tmp.path().join("retry.db");
@@ -2534,6 +2624,79 @@ mod tests {
         assert!(!sync_root.join("old").exists());
         assert_eq!(runtime.engine.downloads.completed_count(), 2);
         assert_eq!(runtime.engine.downloads.active_count(), 0);
+    }
+
+    #[test]
+    fn execute_downloads_streams_remote_file_and_publishes_caches() {
+        use pcloud_model::ids::RemoteFileId;
+        use pcloud_store::repositories::file_metadata::FileMetadataRecord;
+
+        let tmp = TempDir::new().unwrap();
+        let sync_root = tmp.path().join("sync-root");
+        std::fs::create_dir_all(&sync_root).unwrap();
+
+        let db_path = tmp.path().join("remote-download.db");
+        let (_store, _integrity) = bootstrap_profile(&db_path).unwrap();
+        let conn = Connection::open(&db_path).unwrap();
+        SyncGraphRepository {
+            tracked_sync_roots: vec![SyncRootRecord {
+                sync_id: SyncId::new(23),
+                local_path: sync_root.to_string_lossy().to_string(),
+                remote_path: "/remote".to_owned(),
+                paused: false,
+                sync_type: SyncType::Full,
+                exclude_globs: Vec::new(),
+            }],
+        }
+        .save(&conn)
+        .unwrap();
+        FileMetadataRepository::upsert(
+            &conn,
+            &FileMetadataRecord {
+                file_id: 77,
+                parent_folder_id: 0,
+                name: "download.txt".to_owned(),
+                size: 1024,
+                hash: String::new(),
+                modified: 0,
+                created: 0,
+                is_folder: false,
+            },
+        )
+        .unwrap();
+
+        let config = ConfigProfile::secure_defaults(
+            std::env::temp_dir().join("pcloud-slr-remote-download-test"),
+            pcloud_config::Environment::Development,
+        );
+        let token = shared_auth_token();
+        let mut runtime = RealSyncLoopRuntime::new(Arc::clone(&token), &config, &db_path).unwrap();
+        runtime
+            .engine
+            .downloads
+            .active_downloads
+            .push(TransferTask {
+                operation: PlannedOperation::DownloadFile {
+                    sync_id: SyncId::new(23),
+                    path: "download.txt".to_owned(),
+                    remote_file_id: Some(RemoteFileId::new(77)),
+                },
+                state: TransferState::Streaming,
+                last_error: None,
+            });
+
+        let completed = runtime
+            .execute_downloads(&SecretString::new("dev-token".to_owned()))
+            .expect("development download should complete");
+
+        assert_eq!(completed, 1);
+        assert_eq!(runtime.engine.downloads.completed_count(), 1);
+        assert!(
+            runtime
+                .filesystem
+                .staged_bytes("download.txt")
+                .is_some_and(|bytes| !bytes.is_empty())
+        );
     }
 
     #[test]
@@ -3250,5 +3413,107 @@ mod tests {
         // a no-op past the very first apply (which always emits
         // Changed because last_applied was uninitialized).
         assert_eq!(pacer.limit(), None);
+    }
+
+    #[test]
+    fn sync_path_helpers_reject_escape_symlinks_and_type_changes() {
+        let root = TempDir::new().unwrap();
+        std::fs::create_dir(root.path().join("parent")).unwrap();
+        assert_eq!(
+            safe_local_target_path(root.path(), "parent/child")
+                .unwrap()
+                .strip_prefix(root.path())
+                .unwrap(),
+            Path::new("parent/child")
+        );
+        assert!(safe_local_target_path(root.path(), "../escape").is_err());
+        assert!(safe_local_target_path(&root.path().join("missing"), "child").is_err());
+
+        std::fs::write(root.path().join("file-parent"), b"x").unwrap();
+        assert!(safe_local_target_path(root.path(), "file-parent/child").is_err());
+
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(root.path().join("parent"), root.path().join("link"))
+                .unwrap();
+            assert!(safe_local_target_path(root.path(), "link/child").is_err());
+        }
+
+        assert_eq!(remote_child_path("/", "a/b").unwrap(), "/a/b");
+        assert_eq!(remote_child_path("/root/", "a/b").unwrap(), "/root/a/b");
+        assert!(remote_child_path("/root", "../escape").is_err());
+
+        let staged_a = staged_download_path(root.path(), 7, "a/file");
+        let staged_b = staged_download_path(root.path(), 7, "b/file");
+        assert_ne!(staged_a, staged_b);
+        assert!(
+            staged_a
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .starts_with("f7-")
+        );
+
+        let permission = io_error_to_pending_fs_error(
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+            "fixture",
+        );
+        assert_eq!(
+            permission.failure,
+            pcloud_engine::recovery::RecoveryFailure::PermissionDenied
+        );
+        let invalid = io_error_to_pending_fs_error(
+            std::io::Error::from(std::io::ErrorKind::InvalidInput),
+            "fixture",
+        );
+        assert_eq!(
+            invalid.failure,
+            pcloud_engine::recovery::RecoveryFailure::InvalidPath
+        );
+        let retryable = io_error_to_pending_fs_error(std::io::Error::other("fixture"), "fixture");
+        assert_eq!(
+            retryable.failure,
+            pcloud_engine::recovery::RecoveryFailure::RetryableNetworkError
+        );
+    }
+
+    #[test]
+    fn local_upload_snapshot_detects_mutation_and_non_file_sources() {
+        let root = TempDir::new().unwrap();
+        std::fs::create_dir(root.path().join("parent")).unwrap();
+        let source = root.path().join("parent/source.bin");
+        std::fs::write(&source, b"before").unwrap();
+
+        let payload =
+            read_local_upload_payload_from_root(root.path(), "parent/source.bin").unwrap();
+        assert_eq!(payload.bytes, b"before");
+        validate_local_upload_snapshot(&payload.snapshot).unwrap();
+
+        std::fs::write(&source, b"after mutation").unwrap();
+        assert!(validate_local_upload_snapshot(&payload.snapshot).is_err());
+        assert!(read_local_upload_payload_from_root(root.path(), "parent").is_err());
+        assert!(read_local_upload_payload_from_root(root.path(), "../escape").is_err());
+        assert!(safe_local_source_path(root.path(), "missing/file").is_err());
+
+        std::fs::remove_file(&source).unwrap();
+        std::fs::create_dir(&source).unwrap();
+        assert!(validate_local_upload_snapshot(&payload.snapshot).is_err());
+
+        let permission = io_error_to_local_payload_error(
+            std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+            "fixture",
+        );
+        assert_eq!(
+            permission.failure,
+            pcloud_engine::recovery::RecoveryFailure::PermissionDenied
+        );
+        let invalid = io_error_to_local_payload_error(
+            std::io::Error::from(std::io::ErrorKind::InvalidInput),
+            "fixture",
+        );
+        assert_eq!(
+            invalid.failure,
+            pcloud_engine::recovery::RecoveryFailure::InvalidPath
+        );
     }
 }

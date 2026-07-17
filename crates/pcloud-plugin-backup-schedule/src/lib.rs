@@ -363,11 +363,16 @@ fn natural_to_cron(input: &str) -> Result<String, BackupScheduleError> {
             })?;
             let dow = parse_dow(dow_tok)?;
             // Optional "at" — consume if present.
-            if tokens.front().copied() == Some("at") {
+            let explicit_at = tokens.front().copied() == Some("at");
+            if explicit_at {
                 tokens.pop_front();
             }
             let (hh, mm) = if let Some(tok) = tokens.pop_front() {
                 parse_hhmm(tok)?
+            } else if explicit_at {
+                return Err(BackupScheduleError::InvalidSchedule(
+                    "every: expected HH:MM after 'at'".into(),
+                ));
             } else {
                 (0, 0)
             };

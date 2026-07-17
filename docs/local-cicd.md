@@ -28,10 +28,9 @@ The normal and release toolchain is pinned to Rust 1.96.1. The explicit Rust
 1.89 portable-core and Rust 1.91 Wasmtime MSRV checks are compatibility
 contracts, not the toolchain used for ordinary builds.
 
-The coverage stage requires line coverage strictly above 90%. The verified 2026-07-16
-full-workspace result is 82.65% (`77,060 / 93,234` lines), so
-`cargo xtask ci` intentionally remains red until the LCOV report exceeds the
-threshold; see `docs/coverage.md`.
+The coverage stage requires line coverage strictly above 90%. The verified
+2026-07-16 full-workspace result passes at 90.09% (`85,716 / 95,146` lines);
+see `docs/coverage.md`.
 
 ## Windows
 

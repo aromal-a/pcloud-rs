@@ -446,8 +446,23 @@ pub const ENCRYPTED_PREFIX: &str = "pcloud-rs-";
 
 const SECS_PER_DAY: u64 = 86_400;
 
-fn gpg_available() -> bool {
+#[cfg(test)]
+static GPG_TEST_BINARY: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+fn gpg_command() -> Command {
+    #[cfg(test)]
+    if let Some(path) = GPG_TEST_BINARY
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+    {
+        return Command::new(path);
+    }
     Command::new("gpg")
+}
+
+fn gpg_available() -> bool {
+    gpg_command()
         .arg("--version")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -458,7 +473,7 @@ fn gpg_available() -> bool {
 }
 
 fn gpg_recipient_known(recipient: &str) -> bool {
-    Command::new("gpg")
+    gpg_command()
         .arg("--list-keys")
         .arg("--with-colons")
         .arg(recipient)
@@ -512,7 +527,8 @@ pub fn create_encrypted_snapshot(
         &staged_tar,
     )?;
 
-    let mut child = Command::new("gpg")
+    let mut child = gpg_command();
+    let mut child = child
         .arg("--batch")
         .arg("--yes")
         .arg("--encrypt")
@@ -546,7 +562,7 @@ fn gpg_decrypt_to(archive: &Path, plaintext_out: &Path) -> Result<(), SnapshotEr
     if !gpg_available() {
         return Err(SnapshotError::GpgUnavailable);
     }
-    let status = Command::new("gpg")
+    let status = gpg_command()
         .arg("--batch")
         .arg("--yes")
         .arg("--decrypt")
@@ -1002,7 +1018,8 @@ fn gpg_encrypt_bytes(bytes: &[u8], recipient: &str, out_path: &Path) -> Result<(
     if !gpg_recipient_known(recipient) {
         return Err(SnapshotError::GpgRecipientMissing);
     }
-    let mut child = Command::new("gpg")
+    let mut child = gpg_command();
+    let mut child = child
         .arg("--batch")
         .arg("--yes")
         .arg("--encrypt")
@@ -1031,7 +1048,7 @@ fn gpg_decrypt_bytes(archive: &Path) -> Result<Vec<u8>, SnapshotError> {
     if !gpg_available() {
         return Err(SnapshotError::GpgUnavailable);
     }
-    let output = Command::new("gpg")
+    let output = gpg_command()
         .arg("--batch")
         .arg("--yes")
         .arg("--decrypt")
@@ -1284,7 +1301,11 @@ pub fn restore_snapshot(
 mod tests {
     use super::*;
     use std::io::Write as IoWrite;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use tempfile::tempdir;
+
+    static GPG_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn seed_store(path: &Path, schema_version: u32) {
         let conn = rusqlite::Connection::open(path).expect("open store");
@@ -1489,6 +1510,84 @@ mod tests {
 
     fn gpg_test_enabled() -> bool {
         std::env::var("PCLOUD_GPG_TEST").ok().as_deref() == Some("1")
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn deterministic_gpg_fixture_covers_legacy_and_zstd_encrypted_pipelines() {
+        let _guard = GPG_ENV_LOCK.lock().unwrap();
+        let dir = tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let gpg = bin.join("gpg");
+        fs::write(
+            &gpg,
+            r#"#!/bin/sh
+mode=""
+out=""
+input=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --version) exit 0 ;;
+    --list-keys) exit 0 ;;
+    --encrypt) mode="encrypt" ;;
+    --decrypt) mode="decrypt" ;;
+    --output) shift; out="$1" ;;
+    --recipient) shift ;;
+    --batch|--yes|--with-colons) ;;
+    *) input="$1" ;;
+  esac
+  shift
+done
+if [ "$mode" = "encrypt" ]; then
+  if [ -n "$input" ] && [ -f "$input" ]; then
+    /bin/cp "$input" "$out"
+  else
+    /bin/cat > "$out"
+  fi
+elif [ "$mode" = "decrypt" ]; then
+  if [ -n "$out" ]; then
+    /bin/cp "$input" "$out"
+  else
+    /bin/cat "$input"
+  fi
+else
+  exit 1
+fi
+"#,
+        )
+        .unwrap();
+        fs::set_permissions(&gpg, fs::Permissions::from_mode(0o700)).unwrap();
+
+        *GPG_TEST_BINARY.lock().unwrap() = Some(gpg);
+
+        let (store, vault, audit, config) = seed_inputs(dir.path(), 17);
+        let legacy = dir.path().join("legacy.tar.gpg");
+        let manifest =
+            create_encrypted_snapshot(&store, &vault, &audit, &config, "fixture", &legacy)
+                .expect("legacy encrypted create");
+        assert_eq!(verify_encrypted_snapshot(&legacy).unwrap(), manifest);
+        let legacy_restore = dir.path().join("legacy-restore");
+        assert_eq!(
+            restore_encrypted_snapshot(&legacy, &legacy_restore).unwrap(),
+            manifest
+        );
+        for name in PAYLOAD_ENTRIES {
+            assert!(legacy_restore.join(name).is_file());
+        }
+
+        let modern = dir.path().join("modern.tar.zst.gpg");
+        let options = SnapshotOptions::default().with_gpg_recipient("fixture");
+        let sidecar = create_snapshot(&store, &vault, &audit, &config, &modern, &options)
+            .expect("modern encrypted create");
+        assert!(sidecar.encrypted);
+        assert_eq!(verify_snapshot(&modern).unwrap(), sidecar);
+        let modern_restore = RestoreTargets {
+            target_dir: dir.path().join("modern-restore"),
+        };
+        assert_eq!(restore_snapshot(&modern, &modern_restore).unwrap(), sidecar);
+
+        *GPG_TEST_BINARY.lock().unwrap() = None;
     }
 
     #[test]

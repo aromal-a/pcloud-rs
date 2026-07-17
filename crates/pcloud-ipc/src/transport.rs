@@ -1154,6 +1154,104 @@ mod tests {
     }
 
     #[test]
+    fn bound_server_hardens_paths_and_exposes_listener_controls() {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+        let runtime = std::env::temp_dir().join(format!(
+            "pcloud-ipc-runtime-hardening-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&runtime);
+        std::fs::create_dir(&runtime).unwrap();
+        std::fs::set_permissions(&runtime, std::fs::Permissions::from_mode(0o777)).unwrap();
+        let socket_path = runtime.join("pcloud.sock");
+        std::fs::write(&socket_path, b"stale").unwrap();
+
+        let server = IpcServer::new(current_effective_uid());
+        let bound = server.bind(&socket_path).expect("replace stale socket");
+        assert_eq!(bound.socket_path(), socket_path);
+        assert_eq!(
+            std::fs::metadata(&runtime).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(&socket_path)
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+        assert_eq!(
+            std::fs::metadata(&runtime).unwrap().uid(),
+            current_effective_uid()
+        );
+
+        bound
+            .set_accept_timeout(Some(Duration::from_millis(25)))
+            .unwrap();
+        bound.set_accept_timeout(None).unwrap();
+        bound.request_shutdown();
+        drop(bound);
+        assert!(!socket_path.exists());
+        std::fs::remove_dir(&runtime).unwrap();
+    }
+
+    #[test]
+    fn accept_and_spawn_dispatches_peer_request_on_worker_thread() {
+        let socket_path = test_socket_path("accept-and-spawn");
+        let server = IpcServer::new(current_effective_uid());
+        let bound = server.bind(&socket_path).expect("socket should bind");
+
+        let acceptor = thread::spawn(move || {
+            bound
+                .accept_and_spawn(|request| match request {
+                    Request::Plain {
+                        method: Method::GetHealth,
+                    } => Response {
+                        status: ResponseStatus::Ok,
+                        message: "worker healthy".to_owned(),
+                    },
+                    _ => Response {
+                        status: ResponseStatus::InvalidRequest,
+                        message: "unexpected request".to_owned(),
+                    },
+                })
+                .expect("accept and spawn");
+            thread::sleep(Duration::from_millis(50));
+        });
+
+        thread::sleep(Duration::from_millis(20));
+        let response = IpcClient
+            .send(
+                &socket_path,
+                &Request::Plain {
+                    method: Method::GetHealth,
+                },
+            )
+            .expect("worker response");
+        assert_eq!(response.status, ResponseStatus::Ok);
+        assert_eq!(response.message, "worker healthy");
+        acceptor.join().unwrap();
+    }
+
+    #[test]
+    fn runtime_connection_cap_configuration_is_clamped_and_restored() {
+        use super::{
+            MAX_IPC_CONNECTIONS, MAX_IPC_CONNECTIONS_PER_PEER, ipc_connection_cap,
+            ipc_connection_cap_per_peer, set_ipc_connection_caps,
+        };
+
+        let _lock = PER_PEER_TEST_LOCK.lock().unwrap();
+        set_ipc_connection_caps(7, 99);
+        assert_eq!(ipc_connection_cap(), 7);
+        assert_eq!(ipc_connection_cap_per_peer(), 7);
+        set_ipc_connection_caps(MAX_IPC_CONNECTIONS, MAX_IPC_CONNECTIONS_PER_PEER);
+        assert_eq!(ipc_connection_cap(), MAX_IPC_CONNECTIONS);
+        assert_eq!(ipc_connection_cap_per_peer(), MAX_IPC_CONNECTIONS_PER_PEER);
+    }
+
+    #[test]
     fn unauthorized_peer_is_rejected_before_dispatch() {
         let socket_path = test_socket_path("unauthorized");
         let server = IpcServer::new(current_effective_uid().saturating_add(1));

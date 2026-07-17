@@ -52,6 +52,7 @@
 // **GATING:** #[cfg(target_os = "linux")].
 
 use std::io::Write as _;
+use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -277,6 +278,7 @@ fn write_unmount_remount_readback_byte_identical() {
     // --- shared mocked state across the two mount cycles ----------------
     let folder = Arc::new(MockFolderBackend::new());
     folder.insert_dir("/", 1, vec![]);
+    folder.set_quota(10 * 1024 * 1024, 7 * 1024 * 1024);
     let files = Arc::new(MockFileBackend::new());
     let upload_backend = Arc::new(RecordingUploadBackend::new(
         Arc::clone(&folder),
@@ -354,6 +356,44 @@ fn write_unmount_remount_readback_byte_identical() {
 
         let immediate = std::fs::read(&file_path).expect("readback before first unmount");
         assert_eq!(immediate, payload, "pre-unmount VFS readback must be exact");
+
+        let mount_c = std::ffi::CString::new(mnt.path().as_os_str().as_encoded_bytes()).unwrap();
+        let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+        // SAFETY: mount_c and stat remain valid for the syscall duration.
+        let statvfs_result = unsafe { libc::statvfs(mount_c.as_ptr(), &mut stat) };
+        assert_eq!(
+            statvfs_result,
+            0,
+            "statvfs through PcloudFsShim: {}",
+            std::io::Error::last_os_error()
+        );
+
+        let truncate = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&file_path)
+            .unwrap();
+        truncate.set_len(7).expect("truncate through PcloudFsShim");
+        drop(truncate);
+        assert_eq!(std::fs::read(&file_path).unwrap(), &payload[..7]);
+        // Exercise the chmod/setattr callback. Kernels may treat the remote
+        // mode as advisory, so both a successful no-op and an unsupported
+        // result are valid filesystem contracts here.
+        let _ = std::fs::set_permissions(&file_path, std::fs::Permissions::from_mode(0o600));
+        assert!(
+            std::fs::create_dir(mnt.path().join("unsupported-directory")).is_err(),
+            "mock folder backend rejects mkdir"
+        );
+
+        // Restore the full payload so the remount assertion continues to
+        // prove byte-identical persistence after exercising setattr.
+        let mut restore = std::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&file_path)
+            .unwrap();
+        restore.write_all(&payload).unwrap();
+        restore.sync_all().unwrap();
+        drop(restore);
 
         // Clean unmount of mount #1.
         guard.unmount().expect("clean unmount (mount1)");

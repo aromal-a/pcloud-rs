@@ -256,6 +256,7 @@ pub fn known_flag_names() -> &'static [&'static str] {
         "--force-umount",
         "--dry-run",
         "--force-overwrite",
+        "--strict",
         "--root",
         "--folder",
         "--file",

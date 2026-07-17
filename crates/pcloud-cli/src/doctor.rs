@@ -1250,6 +1250,65 @@ mod tests {
     }
 
     #[test]
+    fn real_probe_and_filesystem_edge_matrix_covers_non_mock_paths() {
+        let tmp = TempDir::new().unwrap();
+        let socket = tmp.path().join("doctor.sock");
+        let bound = pcloud_ipc::IpcServer::new(pcloud_ipc::current_effective_uid())
+            .bind(&socket)
+            .unwrap();
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                bound
+                    .serve_once(|_| pcloud_ipc::Response {
+                        status: pcloud_ipc::ResponseStatus::Ok,
+                        message: "healthy".to_owned(),
+                    })
+                    .unwrap();
+            }
+        });
+        assert_eq!(check_daemon(&socket, None).status, DoctorStatus::Ok);
+        assert_eq!(check_clock(&socket, None, None).status, DoctorStatus::Ok);
+        server.join().unwrap();
+        assert_eq!(
+            check_daemon(&tmp.path().join("missing.sock"), None).status,
+            DoctorStatus::Fail
+        );
+        assert_eq!(
+            check_clock(&tmp.path().join("missing.sock"), None, None).status,
+            DoctorStatus::Warn
+        );
+
+        let valid_config = tmp.path().join("valid.toml");
+        fs::write(&valid_config, "# comment\n[section]\nkey = \"value\"\n").unwrap();
+        assert_eq!(check_config(&valid_config).status, DoctorStatus::Ok);
+        assert_eq!(check_mount_root(Some(tmp.path())).status, DoctorStatus::Ok);
+        let ordinary_file = tmp.path().join("ordinary-file");
+        fs::write(&ordinary_file, b"x").unwrap();
+        assert_eq!(
+            check_mount_root(Some(&ordinary_file)).status,
+            DoctorStatus::Fail
+        );
+
+        assert_eq!(disk_check("none", None).status, DoctorStatus::Warn);
+        assert_eq!(
+            disk_check("missing", Some(tmp.path().join("missing-dir"))).status,
+            DoctorStatus::Ok
+        );
+        assert!(matches!(
+            disk_check("present", Some(tmp.path().to_path_buf())).status,
+            DoctorStatus::Ok | DoctorStatus::Warn
+        ));
+        assert!(free_space_bytes(&tmp.path().join("missing-dir")).is_err());
+
+        assert_eq!(check_journal(&ordinary_file).status, DoctorStatus::Warn);
+        let journal = tmp.path().join("journal");
+        fs::create_dir(&journal).unwrap();
+        fs::create_dir(journal.join("nested")).unwrap();
+        fs::write(journal.join("one"), b"pending").unwrap();
+        assert_eq!(check_journal(&journal).status, DoctorStatus::Warn);
+    }
+
+    #[test]
     fn mount_root_missing_is_fail() {
         let p = Path::new("/nonexistent/pcloudc-doctor");
         let c = check_mount_root(Some(p));

@@ -304,3 +304,61 @@ fn concurrent_writers_do_not_surface_sqlite_busy() {
         );
     }
 }
+
+#[test]
+fn pooled_handle_exercises_every_value_and_setting_accessor_and_poison_recovery() {
+    use pcloud_store::repositories::values::ValueKind;
+
+    let path = temp_db("pooled-surface");
+    let _ = std::fs::remove_file(&path);
+    let _ = bootstrap_profile(&path).expect("bootstrap");
+    let handle = StoreHandle::open(&path).expect("open pooled handle");
+    assert!(format!("{handle:?}").contains(path.to_str().unwrap()));
+    assert_eq!(
+        handle.with_connection(|connection| read_schema_version(connection).unwrap()),
+        SCHEMA_VERSION_V12
+    );
+
+    let values = handle.value_kv();
+    values.set_uint("uint", 42).unwrap();
+    values.set_int("int", -7).unwrap();
+    values.set_bool("bool", true).unwrap();
+    values.set_string("string", "value").unwrap();
+    assert_eq!(values.get_uint("uint").unwrap(), 42);
+    assert_eq!(values.get_int("int").unwrap(), -7);
+    assert!(values.get_bool("bool").unwrap());
+    assert_eq!(
+        values.get_string("string").unwrap().as_deref(),
+        Some("value")
+    );
+    assert!(values.has("uint", ValueKind::Uint).unwrap());
+    assert!(!values.has("uint", ValueKind::String).unwrap());
+    assert!(values.delete("uint").unwrap());
+    assert!(!values.delete("uint").unwrap());
+
+    let settings = handle.settings_kv();
+    settings.set_bool("bool-setting", true).unwrap();
+    settings.set_int("int-setting", -9).unwrap();
+    settings.set_uint("uint-setting", 99).unwrap();
+    settings.set_string("string-setting", "dark").unwrap();
+    assert_eq!(settings.get_bool("bool-setting").unwrap(), Some(true));
+    assert_eq!(settings.get_int("int-setting").unwrap(), Some(-9));
+    assert_eq!(settings.get_uint("uint-setting").unwrap(), Some(99));
+    assert_eq!(
+        settings.get_string("string-setting").unwrap().as_deref(),
+        Some("dark")
+    );
+    assert!(settings.reset("string-setting").unwrap());
+    assert!(!settings.reset("string-setting").unwrap());
+
+    let poisoned = handle.clone();
+    let panic = std::panic::catch_unwind(move || {
+        let _guard = poisoned.lock();
+        panic!("poison pooled connection for recovery coverage");
+    });
+    assert!(panic.is_err());
+    assert_eq!(
+        handle.with_connection(|connection| read_schema_version(connection).unwrap()),
+        SCHEMA_VERSION_V12
+    );
+}

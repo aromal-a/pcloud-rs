@@ -9259,9 +9259,10 @@ mod tests {
             },
         ];
 
+        let mut authenticated_runtime = bootstrap_test_shell();
         for request in requests {
             let label = format!("{request:?}");
-            let response = runtime.handle_request(request);
+            let response = runtime.handle_request(request.clone());
             assert!(
                 !response.message.contains("unsupported ipc request"),
                 "{label} fell through the request dispatcher"
@@ -9270,6 +9271,29 @@ mod tests {
                 !response.message.contains("panicked while handling"),
                 "{label} panicked: {}",
                 response.message
+            );
+
+            // Repeat malformed fixtures after the authentication boundary.
+            // This reaches the handler-level validation and backend error
+            // taxonomy that an unauthenticated routing matrix cannot observe.
+            // Resetting the session for every request prevents secret-bearing
+            // auth fixtures from changing the precondition of later cases.
+            authenticated_runtime.auth = SessionManager::new();
+            authenticated_runtime.pending_password_auth = None;
+            authenticate_test_shell(&mut authenticated_runtime);
+            let authenticated_response = authenticated_runtime.handle_request(request);
+            assert!(
+                !authenticated_response
+                    .message
+                    .contains("unsupported ipc request"),
+                "authenticated {label} fell through the request dispatcher"
+            );
+            assert!(
+                !authenticated_response
+                    .message
+                    .contains("panicked while handling"),
+                "authenticated {label} panicked: {}",
+                authenticated_response.message
             );
         }
     }
@@ -10040,5 +10064,293 @@ mod tests {
                 .api_server_location_id,
             None
         );
+    }
+
+    #[test]
+    fn stable_error_mappers_and_path_helpers_cover_the_full_public_taxonomy() {
+        use crate::path_resolver::PathResolveError as P;
+        use pcloud_backends::remote_fs::RemoteFsError as R;
+        use pcloud_backends::snapshot::SnapshotError as S;
+
+        for error in [
+            P::InvalidPath {
+                path: "relative".into(),
+            },
+            P::ExpectedFolder {
+                path: "/file".into(),
+            },
+            P::ExpectedFile {
+                path: "/folder".into(),
+            },
+        ] {
+            assert_eq!(
+                map_path_resolve_error(error).status,
+                ResponseStatus::InvalidRequest
+            );
+        }
+        for error in [
+            P::NotFound {
+                path: "/missing".into(),
+                segment: "missing".into(),
+            },
+            P::Ambiguous {
+                path: "/same".into(),
+                count: 2,
+            },
+            P::MissingId {
+                path: "/broken".into(),
+            },
+        ] {
+            assert_eq!(
+                map_path_resolve_error(error).status,
+                ResponseStatus::Conflict
+            );
+        }
+        assert_eq!(
+            map_path_resolve_error(P::Transport {
+                path: "/offline".into(),
+                source: Box::new(std::io::Error::other("offline")),
+            })
+            .status,
+            ResponseStatus::Unavailable
+        );
+
+        for error in [
+            R::InvalidPath {
+                path: "relative".into(),
+                reason: "fixture",
+            },
+            R::RangeTooLarge {
+                requested: 2,
+                maximum: 1,
+            },
+            R::UnexpectedEof {
+                expected: 2,
+                actual: 1,
+            },
+            R::SourceTooLong { expected: 1 },
+            R::RecursiveCopy {
+                from: "/a".into(),
+                to: "/a/b".into(),
+            },
+        ] {
+            assert_eq!(
+                remote_fs_error_response("fixture", error).status,
+                ResponseStatus::InvalidRequest
+            );
+        }
+        for error in [
+            R::NotFound {
+                path: "/missing".into(),
+            },
+            R::Ambiguous {
+                path: "/same".into(),
+                matches: 2,
+            },
+            R::ExpectedFolder {
+                path: "/file".into(),
+            },
+            R::ExpectedFile {
+                path: "/folder".into(),
+            },
+            R::MissingId {
+                path: "/broken".into(),
+            },
+            R::MissingSize {
+                path: "/broken".into(),
+            },
+            R::DestinationExists {
+                path: PathBuf::from("/tmp/existing"),
+            },
+        ] {
+            assert_eq!(
+                remote_fs_error_response("fixture", error).status,
+                ResponseStatus::Conflict
+            );
+        }
+        for error in [R::SharingUnavailable, R::DurabilityUnavailable] {
+            assert_eq!(
+                remote_fs_error_response("fixture", error).status,
+                ResponseStatus::Unavailable
+            );
+        }
+        assert_eq!(
+            remote_fs_error_response("fixture", R::Io(std::io::Error::other("fixture"))).status,
+            ResponseStatus::InternalError
+        );
+
+        for error in [
+            S::InvalidZstdLevel { got: 0 },
+            S::InvalidOutputSuffix,
+            S::SidecarMissing,
+            S::SidecarCorrupt,
+        ] {
+            assert_eq!(
+                snapshot_error_to_response("fixture", error).status,
+                ResponseStatus::InvalidRequest
+            );
+        }
+        for error in [
+            S::DigestMismatch,
+            S::SchemaMismatch {
+                expected: 1,
+                got: 2,
+            },
+        ] {
+            assert_eq!(
+                snapshot_error_to_response("fixture", error).status,
+                ResponseStatus::Conflict
+            );
+        }
+        for error in [S::GpgUnavailable, S::GpgRecipientMissing, S::GpgFailed] {
+            assert_eq!(
+                snapshot_error_to_response("fixture", error).status,
+                ResponseStatus::Unavailable
+            );
+        }
+        assert_eq!(
+            snapshot_error_to_response("fixture", S::UnsafePath).status,
+            ResponseStatus::InternalError
+        );
+
+        assert!(sync_root_path_conflict(Path::new("/a"), "/a").is_some());
+        assert!(sync_root_path_conflict(Path::new("/a/b"), "/a").is_some());
+        assert!(sync_root_path_conflict(Path::new("/a"), "/a/b").is_some());
+        assert!(sync_root_path_conflict(Path::new("/a"), "/b").is_none());
+        assert_eq!(
+            split_parent_and_leaf("/folder/file"),
+            Some(("/folder".to_owned(), "file".to_owned()))
+        );
+        assert_eq!(
+            split_parent_and_leaf("/file"),
+            Some(("/".to_owned(), "file".to_owned()))
+        );
+        assert_eq!(split_parent_and_leaf("/"), None);
+        assert_eq!(
+            short_code_from_link("https://example.test/show?code=ABC123&x=1"),
+            "ABC123"
+        );
+        assert_eq!(
+            short_code_from_link("https://example.test/XYZ789"),
+            "XYZ789"
+        );
+        assert_eq!(short_code_from_link(""), "");
+    }
+
+    #[test]
+    fn hot_reload_secret_clone_display_and_snapshot_lifecycle_are_defined() {
+        use pcloud_ipc::methods::SnapshotAction;
+
+        let pending = PendingPasswordAuth {
+            username: "alice@example.com".to_owned(),
+            password: SecretString::new("account-secret"),
+        };
+        let cloned = pending.clone();
+        assert_eq!(cloned.username, pending.username);
+        assert_eq!(
+            cloned.password.expose_secret(),
+            pending.password.expose_secret()
+        );
+        assert_eq!(
+            SetApiServerError::InvalidHint("invalid server").to_string(),
+            "invalid server"
+        );
+
+        let mut runtime = bootstrap_test_shell();
+        let mut updated = runtime.config.clone();
+        updated.observability.metrics_enabled = !updated.observability.metrics_enabled;
+        updated.rate_limit.enabled = !updated.rate_limit.enabled;
+        updated.features.integrity_sweeper.enabled = !updated.features.integrity_sweeper.enabled;
+        updated.sync_loop.enabled = !updated.sync_loop.enabled;
+        updated.data_residency.strict = !updated.data_residency.strict;
+        runtime.apply_hot_reload(updated.clone());
+        assert_eq!(runtime.config.observability, updated.observability);
+        assert_eq!(runtime.config.rate_limit, updated.rate_limit);
+        assert_eq!(
+            runtime.config.features.integrity_sweeper,
+            updated.features.integrity_sweeper
+        );
+        assert_eq!(runtime.config.sync_loop, updated.sync_loop);
+        assert_eq!(runtime.config.data_residency, updated.data_residency);
+
+        std::fs::write(
+            runtime.config.paths.auth_token_vault_path(),
+            b"coverage-vault",
+        )
+        .unwrap();
+        let snapshots = tempfile::tempdir().unwrap();
+        let archive = snapshots.path().join("runtime-snapshot.tar.zst");
+        let create = runtime.handle_request(Request::BackupSnapshot {
+            action: SnapshotAction::Create,
+            path: archive.clone(),
+            gpg_recipient: None,
+            yes: true,
+            retention_days: None,
+            zstd_level: Some(3),
+        });
+        assert_eq!(create.status, ResponseStatus::Ok, "{}", create.message);
+        let verify = runtime.handle_request(Request::BackupSnapshot {
+            action: SnapshotAction::Verify,
+            path: archive.clone(),
+            gpg_recipient: None,
+            yes: false,
+            retention_days: None,
+            zstd_level: None,
+        });
+        assert_eq!(verify.status, ResponseStatus::Ok, "{}", verify.message);
+
+        for request in [
+            Request::BackupSnapshot {
+                action: SnapshotAction::Create,
+                path: snapshots.path().join("bad-level.tar.zst"),
+                gpg_recipient: None,
+                yes: true,
+                retention_days: None,
+                zstd_level: Some(0),
+            },
+            Request::BackupSnapshot {
+                action: SnapshotAction::Restore,
+                path: archive.clone(),
+                gpg_recipient: None,
+                yes: false,
+                retention_days: None,
+                zstd_level: None,
+            },
+            Request::BackupSnapshot {
+                action: SnapshotAction::Restore,
+                path: snapshots.path().join("missing.tar.zst"),
+                gpg_recipient: None,
+                yes: true,
+                retention_days: None,
+                zstd_level: None,
+            },
+            Request::BackupSnapshot {
+                action: SnapshotAction::Prune,
+                path: snapshots.path().to_path_buf(),
+                gpg_recipient: None,
+                yes: false,
+                retention_days: Some(30),
+                zstd_level: None,
+            },
+            Request::BackupSnapshot {
+                action: SnapshotAction::Prune,
+                path: snapshots.path().to_path_buf(),
+                gpg_recipient: None,
+                yes: true,
+                retention_days: None,
+                zstd_level: None,
+            },
+        ] {
+            assert_ne!(runtime.handle_request(request).status, ResponseStatus::Ok);
+        }
+        let prune = runtime.handle_request(Request::BackupSnapshot {
+            action: SnapshotAction::Prune,
+            path: snapshots.path().to_path_buf(),
+            gpg_recipient: None,
+            yes: true,
+            retention_days: Some(30),
+            zstd_level: None,
+        });
+        assert_eq!(prune.status, ResponseStatus::Ok, "{}", prune.message);
     }
 }

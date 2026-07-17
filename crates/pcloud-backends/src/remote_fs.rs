@@ -2118,4 +2118,229 @@ mod tests {
         assert!(!part.exists());
         assert!(!state.exists());
     }
+
+    #[test]
+    fn public_operations_validation_and_retry_helpers_cover_error_taxonomy() {
+        let (folder, transfer, config) = service();
+        let remote = RemoteFs::new(&folder, &transfer, token());
+        assert!(format!("{remote:?}").contains("<redacted>"));
+
+        assert!(matches!(
+            remote.share_folder(
+                "/Documents",
+                "reader@example.test".to_owned(),
+                String::new(),
+                SharePermissions::default(),
+                None,
+            ),
+            Err(RemoteFsError::SharingUnavailable)
+        ));
+        assert!(matches!(
+            remote.upload_file_resumable(
+                "/missing.bin",
+                Path::new("/definitely/missing"),
+                UploadConflict::Overwrite,
+            ),
+            Err(RemoteFsError::DurabilityUnavailable)
+        ));
+
+        assert!(matches!(
+            normalize_path("relative"),
+            Err(RemoteFsError::InvalidPath { .. })
+        ));
+        assert!(matches!(
+            normalize_path("/bad\0name"),
+            Err(RemoteFsError::InvalidPath { .. })
+        ));
+        assert!(matches!(
+            normalize_non_root("/"),
+            Err(RemoteFsError::InvalidPath { .. })
+        ));
+        assert!(split_parent_name("relative").is_err());
+        assert!(split_parent_name("/folder/").is_err());
+        assert_eq!(
+            split_parent_name("/name").unwrap(),
+            ("/".into(), "name".into())
+        );
+        assert_eq!(join_path("/", "name"), "/name");
+        assert_eq!(join_path("/folder", "name"), "/folder/name");
+
+        let missing_folder_id = pcloud_proto::folder_api::RemoteFolderEntry {
+            name: "broken".to_owned(),
+            is_folder: true,
+            folder_id: None,
+            file_id: None,
+            owner_user_id: None,
+            is_mine: false,
+            encrypted: false,
+            is_shared: false,
+            permissions: None,
+            size: None,
+            modified: None,
+        };
+        assert!(matches!(
+            metadata_from_entry(&missing_folder_id, 0, "/broken".to_owned()),
+            Err(RemoteFsError::MissingId { .. })
+        ));
+        let missing_file_id = pcloud_proto::folder_api::RemoteFolderEntry {
+            name: "broken".to_owned(),
+            is_folder: false,
+            folder_id: None,
+            file_id: None,
+            owner_user_id: None,
+            is_mine: false,
+            encrypted: false,
+            is_shared: false,
+            permissions: None,
+            size: None,
+            modified: None,
+        };
+        assert!(matches!(
+            metadata_from_entry(&missing_file_id, 0, "/broken".to_owned()),
+            Err(RemoteFsError::MissingId { .. })
+        ));
+
+        assert!(matches!(
+            remote.read_range_by_id(20, 0, MAX_RANGE_READ_BYTES + 1),
+            Err(RemoteFsError::RangeTooLarge { .. })
+        ));
+        assert!(remote.read_range_by_id(20, 0, 0).unwrap().is_empty());
+        assert!(remote.read_range("/notes.txt", 0, 0).unwrap().is_empty());
+        assert!(remote.read_range("/notes.txt", 2048, 8).unwrap().is_empty());
+        assert!(matches!(
+            remote.read_range("/Documents", 0, 8),
+            Err(RemoteFsError::ExpectedFile { .. })
+        ));
+
+        let created = remote.mkdir("/Created").unwrap();
+        assert!(created.id.is_folder());
+        assert!(matches!(
+            remote.mkdir("/notes.txt/child"),
+            Err(RemoteFsError::ExpectedFolder { .. })
+        ));
+        assert_eq!(
+            remote.delete("/missing", true).unwrap(),
+            DeleteOutcome::AlreadyAbsent
+        );
+        assert!(matches!(
+            remote.delete("/", true),
+            Err(RemoteFsError::InvalidPath { .. })
+        ));
+        let _ = remote.move_path("/notes.txt", "/renamed.txt");
+        let _ = remote.move_path("/Documents", "/MovedDocuments");
+
+        let mut exact = Cursor::new(b"exact".to_vec());
+        assert!(
+            remote
+                .write_stream("/exact.bin", &mut exact, 5, None)
+                .is_ok()
+        );
+        let mut too_long = Cursor::new(b"too-long".to_vec());
+        assert!(matches!(
+            remote.write_stream("/too-long.bin", &mut too_long, 3, None),
+            Err(RemoteFsError::SourceTooLong { .. })
+        ));
+        let session = remote.begin_streaming_write("/session.bin", 3).unwrap();
+        assert_eq!(
+            remote
+                .write_streaming_chunk(session.upload_id, 0, 0, b"abc")
+                .unwrap(),
+            3
+        );
+        let _ = remote.streaming_write_status(session.upload_id, 0);
+        let _ = remote.commit_streaming_write(&session, Some(ConflictParam::New), 1);
+        let _ = remote.abort_streaming_write(session.upload_id);
+
+        assert!(matches!(
+            remote.copy_path("/Documents", "/Documents/nested"),
+            Err(RemoteFsError::RecursiveCopy { .. })
+        ));
+        let _ = remote.copy_path("/notes.txt", "/notes-copy.txt");
+
+        let root = tempfile::tempdir().unwrap();
+        let missing_state = root.path().join("missing.json");
+        assert!(load_download_state(&missing_state).unwrap().is_none());
+        std::fs::write(&missing_state, b"not-json").unwrap();
+        assert_eq!(
+            load_download_state(&missing_state).unwrap_err().kind(),
+            std::io::ErrorKind::InvalidData
+        );
+
+        let short = root.path().join("short.bin");
+        std::fs::write(&short, b"short").unwrap();
+        assert_eq!(
+            sha1_prefix(&short, 10).unwrap_err().kind(),
+            std::io::ErrorKind::UnexpectedEof
+        );
+        assert_eq!(hex_digest([0x00, 0xab, 0xff]), "00abff");
+        assert_eq!(
+            upload_idempotency_key("digest", "chunk", 7),
+            upload_idempotency_key("digest", "chunk", 7)
+        );
+
+        let mut backend_attempts = 0;
+        let retried = retry_backend(|| {
+            backend_attempts += 1;
+            if backend_attempts == 1 {
+                Err(TransferBackendError::TransientResultCode { result: 5000 })
+            } else {
+                Ok(42)
+            }
+        })
+        .unwrap();
+        assert_eq!(retried, 42);
+        assert_eq!(backend_attempts, 2);
+        assert!(
+            retry_backend::<(), _>(|| Err(TransferBackendError::PermanentResultCode {
+                result: 2005
+            }))
+            .is_err()
+        );
+
+        let mut remote_attempts = 0;
+        assert_eq!(
+            retry_remote_read(|| {
+                remote_attempts += 1;
+                if remote_attempts == 1 {
+                    Err(RemoteFsError::Transfer(
+                        TransferBackendError::TransientResultCode { result: 5000 },
+                    ))
+                } else {
+                    Ok(vec![1, 2, 3])
+                }
+            })
+            .unwrap(),
+            vec![1, 2, 3]
+        );
+
+        let transient_api = TransferApiError::Result {
+            result: 5000,
+            message: None,
+        };
+        assert!(api_error_retryable(&transient_api));
+        assert!(!api_error_retryable(&TransferApiError::Malformed(
+            "fixture"
+        )));
+        assert!(!backend_error_retryable(&TransferBackendError::Malformed(
+            "fixture"
+        )));
+        assert!(backend_error_retryable(
+            &TransferBackendError::NetworkExecutionUnavailable
+        ));
+
+        let db_path = config.paths.state_dir.join("invalid-source.sqlite3");
+        pcloud_store::bootstrap_profile(&db_path).unwrap();
+        let durable = RemoteFs::new(&folder, &transfer, token())
+            .with_durability(&db_path, &config.paths.runtime_dir)
+            .unwrap();
+        assert!(matches!(
+            durable.upload_file_resumable_to_parent(
+                0,
+                "/directory.bin",
+                root.path(),
+                UploadConflict::IfHash(1),
+            ),
+            Err(RemoteFsError::InvalidPath { .. })
+        ));
+    }
 }

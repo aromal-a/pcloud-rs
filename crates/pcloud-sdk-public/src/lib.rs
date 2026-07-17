@@ -761,4 +761,85 @@ mod tests {
             Err(Error::Transport(_))
         ));
     }
+
+    #[test]
+    fn constructors_builders_protocol_guards_and_status_mapping_cover_edges() {
+        let real = Client::new(std::env::temp_dir().join("missing-pcloud-sdk.sock"));
+        assert!(format!("{real:?}").contains("missing-pcloud-sdk.sock"));
+        assert!(matches!(real.remote().stat("/"), Err(Error::Transport(_))));
+        assert_eq!(SharePermissions::default(), SharePermissions::READ_ONLY);
+        let options = ShareOptions::new("person@example.test")
+            .message("hello")
+            .hint("folder hint")
+            .permissions(SharePermissions::READ_WRITE);
+        assert_eq!(options.message, "hello");
+        assert_eq!(options.hint.as_deref(), Some("folder hint"));
+
+        let file_client = Client::with_sender(|_, request| match request {
+            Request::StatPath { path } => ok(&stat(path, false)),
+            _ => Err("unexpected request".to_owned()),
+        });
+        assert!(matches!(
+            file_client.remote().list("/file"),
+            Err(Error::Conflict(_))
+        ));
+        assert!(matches!(
+            file_client.remote().share_folder("/file", &options),
+            Err(Error::Conflict(_))
+        ));
+        assert!(matches!(
+            file_client.remote().read_range("/file", 0, 0),
+            Err(Error::InvalidRequest(_))
+        ));
+
+        let malformed_range = Client::with_sender(|_, request| match request {
+            Request::ReadFileRange { .. } => ok(&ReadRangePayload {
+                data_b64: B64.encode(b"x"),
+                bytes_returned: 2,
+                total_size: 2,
+                eof: false,
+            }),
+            _ => Err("unexpected request".to_owned()),
+        });
+        assert!(matches!(
+            malformed_range.remote().read_range("/file", 0, 2),
+            Err(Error::Protocol(_))
+        ));
+
+        for (status, check) in [
+            (
+                ResponseStatus::InvalidRequest,
+                Error::InvalidRequest(String::new()),
+            ),
+            (
+                ResponseStatus::Unauthorized,
+                Error::Unauthorized(String::new()),
+            ),
+            (ResponseStatus::Conflict, Error::Conflict(String::new())),
+            (
+                ResponseStatus::Unavailable,
+                Error::Unavailable(String::new()),
+            ),
+            (ResponseStatus::InternalError, Error::Backend(String::new())),
+            (
+                ResponseStatus::PolicyViolation {
+                    kind: "coverage".to_owned(),
+                },
+                Error::Policy {
+                    kind: String::new(),
+                    message: String::new(),
+                },
+            ),
+        ] {
+            let mapped = successful_body(Response {
+                status,
+                message: "fixture".to_owned(),
+            })
+            .unwrap_err();
+            assert_eq!(
+                std::mem::discriminant(&mapped),
+                std::mem::discriminant(&check)
+            );
+        }
+    }
 }

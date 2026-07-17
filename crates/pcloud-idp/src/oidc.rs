@@ -88,6 +88,21 @@ impl OidcAuthorizationCodeBroker {
         })
     }
 
+    #[cfg(test)]
+    fn with_http_client(
+        issuer: impl Into<String>,
+        redirect_uri: impl Into<String>,
+        http: reqwest::blocking::Client,
+    ) -> Self {
+        let issuer = issuer.into();
+        let jwks = JwksCache::new(http.clone(), issuer);
+        Self {
+            http,
+            jwks,
+            redirect_uri: redirect_uri.into(),
+        }
+    }
+
     /// Build a challenge from a pre-generated verifier/state/nonce — used in
     /// tests to assert URL formatting without invoking the RNG.
     #[cfg(test)]
@@ -340,6 +355,9 @@ mod tests {
     use super::*;
     use crate::IdpFlow;
     use pcloud_secret::ExposeSecret;
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpListener};
+    use std::thread;
 
     fn cfg() -> IdpConfig {
         IdpConfig {
@@ -348,6 +366,65 @@ mod tests {
             flow: IdpFlow::OidcAuthorizationCode,
             scopes: vec!["openid".into(), "email".into()],
         }
+    }
+
+    fn permissive_client() -> reqwest::blocking::Client {
+        reqwest::blocking::Client::builder()
+            .connect_timeout(Duration::from_secs(2))
+            .timeout(Duration::from_secs(2))
+            .https_only(false)
+            .build()
+            .unwrap()
+    }
+
+    fn write_json(mut stream: std::net::TcpStream, status: &str, body: &str) {
+        let response = format!(
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    }
+
+    fn spawn_token_stub(status: &'static str, body: &'static str) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0_u8; 4096];
+            let _ = stream.read(&mut request);
+            write_json(stream, status, body);
+        });
+        addr
+    }
+
+    fn spawn_discovery_stub(requests: usize) -> SocketAddr {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let base = format!("http://{addr}");
+            for _ in 0..requests {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0_u8; 4096];
+                let read = stream.read(&mut request).unwrap_or(0);
+                let request = String::from_utf8_lossy(&request[..read]);
+                if request.starts_with("GET /.well-known/openid-configuration ") {
+                    write_json(
+                        stream,
+                        "200 OK",
+                        &serde_json::json!({
+                            "issuer": base,
+                            "authorization_endpoint": format!("{base}/authorize"),
+                            "token_endpoint": format!("{base}/token"),
+                            "jwks_uri": format!("{base}/jwks"),
+                        })
+                        .to_string(),
+                    );
+                } else {
+                    write_json(stream, "200 OK", r#"{"keys":[]}"#);
+                }
+            }
+        });
+        addr
     }
 
     #[test]
@@ -441,5 +518,115 @@ mod tests {
             .map(|(_, v)| v.into_owned())
             .unwrap();
         assert!(scope.starts_with("openid"), "scope = {scope}");
+    }
+
+    #[test]
+    fn discovery_begin_cache_refresh_and_missing_key_paths_are_local() {
+        use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+        let addr = spawn_discovery_stub(4);
+        let issuer = format!("http://{addr}");
+        let broker = OidcAuthorizationCodeBroker::with_http_client(
+            issuer.clone(),
+            "http://127.0.0.1/callback",
+            permissive_client(),
+        );
+        let config = IdpConfig {
+            issuer,
+            client_id: "pcloudc".into(),
+            flow: IdpFlow::OidcAuthorizationCode,
+            scopes: vec!["email".into()],
+        };
+        let challenge = broker.begin_authorization(&config).unwrap();
+        assert!(challenge.authorization_url.contains("/authorize?"));
+        assert!(challenge.authorization_url.contains("scope=openid"));
+        assert_eq!(
+            broker.jwks.discovery().unwrap().authorization_endpoint,
+            challenge.authorization_url.split('?').next().unwrap()
+        );
+
+        let header = URL_SAFE_NO_PAD.encode(r#"{"alg":"RS256","kid":"missing"}"#);
+        let payload = URL_SAFE_NO_PAD.encode(
+            serde_json::json!({
+                "iss": config.issuer,
+                "aud": "pcloudc",
+                "exp": 9_999_999_999_i64
+            })
+            .to_string(),
+        );
+        let error = broker
+            .jwks
+            .verify_id_token(&format!("{header}.{payload}.signature"), "pcloudc")
+            .unwrap_err();
+        assert!(matches!(error, IdpError::Validation(message) if message.contains("JWKS")));
+
+        let token = IdpToken {
+            id_token: SecretString::new("unused"),
+            refresh_token: None,
+            expires_at: SystemTime::now(),
+        };
+        assert!(matches!(
+            broker.refresh(&token),
+            Err(IdpError::RefreshRejected)
+        ));
+    }
+
+    #[test]
+    fn token_endpoint_success_error_and_decode_paths_are_redacted() {
+        for (status, body, expected) in [
+            (
+                "400 Bad Request",
+                r#"{"error":"invalid_grant","error_description":"secret"}"#,
+                "refresh",
+            ),
+            (
+                "400 Bad Request",
+                r#"{"error":"temporarily_unavailable","error_description":"secret"}"#,
+                "exchange",
+            ),
+            ("200 OK", r#"{"unexpected":true}"#, "decode"),
+        ] {
+            let addr = spawn_token_stub(status, body);
+            let broker = OidcAuthorizationCodeBroker::with_http_client(
+                format!("http://{addr}"),
+                "http://127.0.0.1/callback",
+                permissive_client(),
+            );
+            let error = broker
+                .post_token(
+                    &format!("http://{addr}/token"),
+                    &[("grant_type", "fixture")],
+                )
+                .unwrap_err();
+            match expected {
+                "refresh" => assert!(matches!(&error, IdpError::RefreshRejected)),
+                "exchange" => assert!(
+                    matches!(&error, IdpError::TokenExchange(message) if message == "temporarily_unavailable")
+                ),
+                _ => assert!(
+                    matches!(&error, IdpError::TokenExchange(message) if message.contains("decode token response"))
+                ),
+            }
+            assert!(!error.to_string().contains("secret"));
+        }
+
+        let addr = spawn_token_stub(
+            "200 OK",
+            r#"{"id_token":"id-token","refresh_token":"refresh","expires_in":30}"#,
+        );
+        let broker = OidcAuthorizationCodeBroker::with_http_client(
+            format!("http://{addr}"),
+            "http://127.0.0.1/callback",
+            permissive_client(),
+        );
+        let response = broker
+            .post_token(
+                &format!("http://{addr}/token"),
+                &[("grant_type", "fixture")],
+            )
+            .unwrap();
+        assert_eq!(response.id_token, "id-token");
+        assert_eq!(response.refresh_token.as_deref(), Some("refresh"));
+        assert_eq!(response.expires_in, Some(30));
     }
 }

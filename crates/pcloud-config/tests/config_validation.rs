@@ -10,11 +10,18 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use pcloud_config::{
-    ConfigError, ConfigProfile, Environment, api::ApiMode, env::apply_env_overrides,
-    migrate::migrate_to_current, sync_loop::SyncLoopConfig,
+    ConfigError, ConfigProfile, Environment,
+    api::ApiMode,
+    env::apply_env_overrides,
+    migrate::migrate_to_current,
+    paths::{ManagedPaths, PcloudDirs},
+    schema::validate_document,
+    sync_loop::SyncLoopConfig,
 };
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+
+type DocumentMutation = (&'static str, Box<dyn Fn(&mut serde_json::Value)>);
 
 fn root() -> PathBuf {
     // `validate()` requires absolute paths. Unix `/tmp/...` satisfies that;
@@ -58,6 +65,8 @@ const PCLOUD_ENV_KEYS: &[&str] = &[
     "PCLOUD_MOUNT_PAGE_CACHE_ENTRIES",
     "PCLOUD_MOUNT_METADATA_TTL_SECS",
     "PCLOUD_AUTO_MOUNT_PATH",
+    "PCLOUD_MIGRATE_LEGACY_PATHS",
+    "HOME",
 ];
 
 static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -95,6 +104,92 @@ fn with_pcloud_env<T>(overrides: &[(&str, &str)], f: impl FnOnce() -> T) -> T {
         }
     }
     result
+}
+
+#[test]
+fn managed_paths_report_each_relative_field() {
+    let absolute = root();
+    for field in ["config_dir", "state_dir", "runtime_dir", "cache_dir"] {
+        let mut paths = ManagedPaths {
+            config_dir: absolute.join("config"),
+            state_dir: absolute.join("state"),
+            runtime_dir: absolute.join("runtime"),
+            cache_dir: absolute.join("cache"),
+        };
+        match field {
+            "config_dir" => paths.config_dir = "relative-config".into(),
+            "state_dir" => paths.state_dir = "relative-state".into(),
+            "runtime_dir" => paths.runtime_dir = "relative-runtime".into(),
+            "cache_dir" => paths.cache_dir = "relative-cache".into(),
+            _ => unreachable!(),
+        }
+        assert!(matches!(
+            paths.validate(),
+            Err(ConfigError::PathMustBeAbsolute { field: actual }) if actual == field
+        ));
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn opted_in_legacy_path_migration_copies_recursively_without_overwriting() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let legacy = home.join(".pcloud");
+    std::fs::create_dir_all(legacy.join("config/nested")).unwrap();
+    std::fs::create_dir_all(legacy.join("state")).unwrap();
+    std::fs::create_dir_all(legacy.join("cache")).unwrap();
+    std::fs::write(legacy.join("config/nested/profile.json"), b"config").unwrap();
+    std::fs::write(legacy.join("state/store.db"), b"state").unwrap();
+    std::fs::write(legacy.join("cache/blob"), b"cache").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        legacy.join("state/store.db"),
+        legacy.join("config/ignored-link"),
+    )
+    .unwrap();
+
+    let destination = temp.path().join("canonical");
+    let dirs = PcloudDirs {
+        config: destination.join("config"),
+        data: destination.join("data"),
+        cache: destination.join("cache"),
+        runtime: destination.join("runtime"),
+    };
+    let home_text = home.to_string_lossy();
+    with_pcloud_env(
+        &[
+            ("HOME", home_text.as_ref()),
+            ("PCLOUD_MIGRATE_LEGACY_PATHS", "1"),
+        ],
+        || {
+            assert_eq!(
+                PcloudDirs::legacy_linux_home().as_deref(),
+                Some(legacy.as_path())
+            );
+            assert!(dirs.migrate_from_legacy_if_needed().unwrap());
+            assert_eq!(
+                std::fs::read(dirs.config.join("nested/profile.json")).unwrap(),
+                b"config"
+            );
+            assert_eq!(std::fs::read(dirs.data.join("store.db")).unwrap(), b"state");
+            assert_eq!(std::fs::read(dirs.cache.join("blob")).unwrap(), b"cache");
+            assert!(!dirs.config.join("ignored-link").exists());
+
+            // Every destination is now non-empty, so a second migration is
+            // intentionally a no-op and cannot overwrite canonical data.
+            std::fs::write(dirs.data.join("store.db"), b"canonical").unwrap();
+            assert!(!dirs.migrate_from_legacy_if_needed().unwrap());
+            assert_eq!(
+                std::fs::read(dirs.data.join("store.db")).unwrap(),
+                b"canonical"
+            );
+        },
+    );
+
+    with_pcloud_env(&[("HOME", home_text.as_ref())], || {
+        assert!(!dirs.migrate_from_legacy_if_needed().unwrap())
+    });
 }
 
 // ── secure_defaults + validate ────────────────────────────────────────────────
@@ -225,6 +320,58 @@ fn env_pcloud_root_rewrites_managed_paths() {
         p.paths.cache_dir,
         PathBuf::from("/tmp/pcloud-root-override/cache")
     );
+}
+
+#[test]
+fn env_override_matrix_covers_every_targeted_runtime_setting() {
+    let result = with_pcloud_env(
+        &[
+            ("PCLOUD_ENV", "production"),
+            ("PCLOUD_API_MODE", "tls"),
+            ("PCLOUD_API_SERVER_NAME", "api.coverage.example"),
+            ("PCLOUD_API_CONNECT_TIMEOUT_MS", "1234"),
+            ("PCLOUD_API_READ_TIMEOUT_MS", "5678"),
+            ("PCLOUD_PLUGINS_ENABLED", "yes"),
+            ("PCLOUD_PLUGIN_ALLOW_NETWORK", "on"),
+            ("PCLOUD_PLUGIN_ALLOW_SYNC_CONTROL", "1"),
+            ("PCLOUD_PLUGIN_ALLOW_CRYPTO", "true"),
+            ("PCLOUD_VAULT", "file"),
+            ("PCLOUD_MOUNT_CACHE_SIZE_MB", "512"),
+            ("PCLOUD_MOUNT_PAGE_CACHE_ENTRIES", "8192"),
+            ("PCLOUD_MOUNT_METADATA_TTL_SECS", "17"),
+            ("PCLOUD_AUTO_MOUNT_PATH", "/tmp/pcloud-auto-mount"),
+        ],
+        || apply_env_overrides(dev_profile()),
+    )
+    .unwrap();
+    assert_eq!(result.environment, Environment::Production);
+    assert_eq!(result.api.mode, ApiMode::Tls);
+    assert_eq!(result.api.server_name, "api.coverage.example");
+    assert_eq!(result.api.connect_timeout_ms, 1234);
+    assert_eq!(result.api.read_timeout_ms, 5678);
+    assert!(result.extensions.plugins_enabled);
+    assert!(result.extensions.allow_network_capability);
+    assert!(result.extensions.allow_sync_control_capability);
+    assert!(result.extensions.allow_crypto_capability);
+    assert_eq!(result.mount.cache_size_mb, 512);
+    assert_eq!(result.mount.page_cache_entries, 8192);
+    assert_eq!(result.mount.metadata_ttl_secs, 17);
+    assert_eq!(
+        result.mount.auto_mount_path.as_deref(),
+        Some(std::path::Path::new("/tmp/pcloud-auto-mount"))
+    );
+
+    for (key, value) in [
+        ("PCLOUD_API_MODE", "invalid"),
+        ("PCLOUD_API_CONNECT_TIMEOUT_MS", "invalid"),
+        ("PCLOUD_MOUNT_CACHE_SIZE_MB", "invalid"),
+        ("PCLOUD_VAULT", "invalid"),
+    ] {
+        assert!(
+            with_pcloud_env(&[(key, value)], || apply_env_overrides(dev_profile())).is_err(),
+            "{key}"
+        );
+    }
 }
 
 #[test]
@@ -433,4 +580,243 @@ fn limits_zero_concurrent_uploads_still_validates() {
     p.limits.max_concurrent_uploads = 0;
     p.validate()
         .expect("zero concurrent uploads is a valid (if useless) config");
+}
+
+#[test]
+fn schema_validator_reports_every_supported_shape_and_bound() {
+    fn envelope() -> serde_json::Value {
+        serde_json::json!({
+            "version": pcloud_config::migrate::CURRENT_VERSION,
+            "profile": dev_profile(),
+        })
+    }
+
+    fn reasons(doc: &serde_json::Value) -> Vec<pcloud_config::schema::SchemaViolation> {
+        validate_document(doc, &serde_json::to_string_pretty(doc).unwrap())
+    }
+
+    for scalar in [
+        serde_json::Value::Null,
+        serde_json::Value::Bool(true),
+        serde_json::json!(1),
+        serde_json::json!("text"),
+        serde_json::json!([]),
+    ] {
+        let errors = reasons(&scalar);
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].reason.contains("expected object"));
+        assert_eq!(errors[0].line, Some(1));
+        assert!(format!("{}", errors[0]).contains("at "));
+    }
+
+    let mut missing = envelope();
+    missing["profile"]
+        .as_object_mut()
+        .unwrap()
+        .remove("environment");
+    let missing_errors = reasons(&missing);
+    assert!(
+        missing_errors
+            .iter()
+            .any(|error| error.pointer == "/profile/environment" && error.line.is_none())
+    );
+    assert!(format!("{}", missing_errors[0]).starts_with("at "));
+
+    let mut additional = envelope();
+    additional["profile"]["bad~/key"] = serde_json::json!(true);
+    assert!(
+        reasons(&additional)
+            .iter()
+            .any(|error| error.pointer.contains("bad~0~1key"))
+    );
+
+    let mutations: Vec<DocumentMutation> = vec![
+        (
+            "string type",
+            Box::new(|doc| doc["profile"]["api"]["host"] = serde_json::json!(9)),
+        ),
+        (
+            "string enum",
+            Box::new(|doc| doc["profile"]["environment"] = serde_json::json!("Staging")),
+        ),
+        (
+            "array type",
+            Box::new(|doc| {
+                doc["profile"]["extensions"]["trusted_plugin_keys"] = serde_json::json!("bad")
+            }),
+        ),
+        (
+            "array item",
+            Box::new(|doc| {
+                doc["profile"]["extensions"]["trusted_plugin_keys"] = serde_json::json!([["bad"]])
+            }),
+        ),
+        (
+            "number type",
+            Box::new(|doc| {
+                doc["profile"]["resilience"]["rate_limit_refill_per_sec"] =
+                    serde_json::json!("fast")
+            }),
+        ),
+        (
+            "boolean type",
+            Box::new(|doc| doc["profile"]["features"]["crypto_enabled"] = serde_json::json!("yes")),
+        ),
+        (
+            "integer type",
+            Box::new(|doc| doc["profile"]["api"]["port"] = serde_json::json!(1.5)),
+        ),
+        (
+            "signed minimum",
+            Box::new(|doc| doc["version"] = serde_json::json!(-1)),
+        ),
+        (
+            "signed maximum",
+            Box::new(|doc| doc["profile"]["api"]["port"] = serde_json::json!(70_000)),
+        ),
+        (
+            "array string item",
+            Box::new(|doc| {
+                doc["profile"]["data_residency"]["allowed_regions"] = serde_json::json!(["eu", 2])
+            }),
+        ),
+    ];
+    for (label, mutate) in mutations {
+        let mut doc = envelope();
+        mutate(&mut doc);
+        assert!(!reasons(&doc).is_empty(), "{label} unexpectedly passed");
+    }
+
+    let mut unsigned_max = envelope();
+    unsigned_max["profile"]["api"]["port"] =
+        serde_json::Value::Number(serde_json::Number::from(u64::MAX));
+    assert!(
+        reasons(&unsigned_max)
+            .iter()
+            .any(|error| error.reason.contains("above maximum"))
+    );
+
+    let mut unsigned_ok = envelope();
+    unsigned_ok["version"] =
+        serde_json::Value::Number(serde_json::Number::from(i64::MAX as u64 + 1));
+    assert!(reasons(&unsigned_ok).is_empty());
+
+    let mut any = envelope();
+    any["profile"]["api"]["tls_revocation_check"] =
+        serde_json::json!({"future": ["shape", 1, true]});
+    assert!(reasons(&any).is_empty());
+}
+
+#[test]
+fn standalone_policy_defaults_and_ipc_limit_errors_cover_public_contracts() {
+    let limits: pcloud_config::limits::ResourceLimits = serde_json::from_value(serde_json::json!({
+        "max_concurrent_uploads": 4,
+        "max_concurrent_downloads": 4,
+        "max_parser_frame_bytes": 8_388_608
+    }))
+    .unwrap();
+    assert_eq!(limits.max_ipc_connections, 128);
+    assert_eq!(limits.max_ipc_connections_per_peer, 32);
+    limits.validate_ipc_limits().unwrap();
+
+    for (global, per_peer) in [(0, 1), (65_536, 1), (128, 0), (65_535, 65_536), (2, 3)] {
+        let candidate = pcloud_config::limits::ResourceLimits {
+            max_ipc_connections: global,
+            max_ipc_connections_per_peer: per_peer,
+            ..limits.clone()
+        };
+        assert!(
+            candidate.validate_ipc_limits().is_err(),
+            "{global}/{per_peer}"
+        );
+    }
+
+    let mount: pcloud_config::mount::MountPolicy = serde_json::from_value(serde_json::json!({
+        "allow_other": false,
+        "owner_only_by_default": true
+    }))
+    .unwrap();
+    assert_eq!(
+        mount.cache_size_mb,
+        pcloud_config::mount::MountPolicy::DEFAULT_CACHE_SIZE_MB
+    );
+    assert_eq!(
+        mount.page_cache_entries,
+        pcloud_config::mount::MountPolicy::DEFAULT_PAGE_CACHE_ENTRIES
+    );
+    assert_eq!(
+        mount.metadata_ttl_secs,
+        pcloud_config::mount::MountPolicy::DEFAULT_METADATA_TTL_SECS
+    );
+    assert!(mount.auto_mount_path.is_none());
+
+    let observability = pcloud_config::observability::ObservabilityFlags::default();
+    assert!(observability.structured_logs_enabled);
+    assert!(observability.audit_export_enabled);
+    assert!(!observability.tracing_enabled);
+    assert!(!observability.metrics_enabled);
+}
+
+#[test]
+fn crypto_kms_validation_matrix_rejects_every_incomplete_provider_shape() {
+    use pcloud_config::crypto_kms::{CryptoConfig, CryptoKmsConfig, CryptoMode};
+
+    assert_eq!(CryptoMode::Raw.tag(), "raw");
+    assert_eq!(CryptoMode::Kms.tag(), "kms");
+    assert!(CryptoConfig::default().validate().is_ok());
+    assert!(
+        CryptoConfig {
+            mode: CryptoMode::Kms,
+            kms: None,
+        }
+        .validate()
+        .is_err()
+    );
+    assert!(
+        CryptoConfig {
+            mode: CryptoMode::Kms,
+            kms: Some(CryptoKmsConfig::Null),
+        }
+        .validate()
+        .is_err()
+    );
+
+    let aws = |region: &str, key_id: &str| CryptoKmsConfig::Aws {
+        region: region.to_owned(),
+        key_id: key_id.to_owned(),
+    };
+    assert!(aws("eu-central-1", "").validate().is_err());
+    assert_eq!(aws("eu-central-1", "key").tag(), "aws");
+
+    let vault = |url: &str, transit_key: &str, token_env: &str| CryptoKmsConfig::Vault {
+        url: url.to_owned(),
+        transit_key: transit_key.to_owned(),
+        token_env: token_env.to_owned(),
+    };
+    for provider in [
+        vault("", "key", "TOKEN"),
+        vault("https://user@vault.example", "key", "TOKEN"),
+        vault("https://user:password@vault.example", "key", "TOKEN"),
+        vault("https://vault.example", "", "TOKEN"),
+    ] {
+        assert!(provider.validate().is_err(), "{provider:?}");
+    }
+    assert_eq!(
+        vault("https://vault.example", "key", "TOKEN").tag(),
+        "vault"
+    );
+
+    let pkcs11 = |module: &str, pin: &str, key: &str| CryptoKmsConfig::Pkcs11 {
+        module_path: module.to_owned(),
+        slot_id: 7,
+        pin_env: pin.to_owned(),
+        key_label: key.to_owned(),
+    };
+    for provider in [
+        pkcs11("", "PIN", "key"),
+        pkcs11("/module.so", "", "key"),
+        pkcs11("/module.so", "PIN", ""),
+    ] {
+        assert!(provider.validate().is_err(), "{provider:?}");
+    }
 }

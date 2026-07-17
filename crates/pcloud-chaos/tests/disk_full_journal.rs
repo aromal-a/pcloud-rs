@@ -48,19 +48,54 @@ mod unix_impl {
     use std::io::Write;
     use std::os::raw::c_int;
 
-    fn set_fsize_limit(cap_bytes: u64) {
+    struct FsizeLimitGuard {
+        previous: libc::rlimit,
+    }
+
+    impl Drop for FsizeLimitGuard {
+        fn drop(&mut self) {
+            // SAFETY: `previous` came from a successful `getrlimit` call.
+            let rc = unsafe { libc::setrlimit(libc::RLIMIT_FSIZE, &self.previous) };
+            if rc != 0 {
+                let error = std::io::Error::last_os_error();
+                if std::thread::panicking() {
+                    eprintln!("failed to restore RLIMIT_FSIZE while unwinding: {error}");
+                } else {
+                    panic!("failed to restore RLIMIT_FSIZE: {error}");
+                }
+            }
+        }
+    }
+
+    fn current_fsize_limit() -> libc::rlimit {
+        let mut limit = libc::rlimit {
+            rlim_cur: 0,
+            rlim_max: 0,
+        };
+        // SAFETY: `limit` points to writable storage for one `rlimit`.
+        let rc = unsafe { libc::getrlimit(libc::RLIMIT_FSIZE, &mut limit) };
+        assert_eq!(rc, 0, "getrlimit(RLIMIT_FSIZE) failed");
+        limit
+    }
+
+    fn set_fsize_limit(cap_bytes: u64) -> FsizeLimitGuard {
         // Ignore SIGXFSZ so we get EFBIG from write() instead of termination.
         // SAFETY: standard libc signal handler install in a test process.
         unsafe {
             libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
         }
+        let previous = current_fsize_limit();
         let lim = libc::rlimit {
             rlim_cur: cap_bytes,
-            rlim_max: cap_bytes,
+            // Never lower the hard limit: doing so is irreversible for an
+            // unprivileged process and can break LLVM's coverage-profile
+            // flush after this test returns.
+            rlim_max: previous.rlim_max,
         };
         // SAFETY: lim is a valid, fully initialized rlimit.
         let rc: c_int = unsafe { libc::setrlimit(libc::RLIMIT_FSIZE, &lim) };
         assert_eq!(rc, 0, "setrlimit(RLIMIT_FSIZE, {cap_bytes}) failed");
+        FsizeLimitGuard { previous }
     }
 
     fn journal_append(path: &std::path::Path, data: &[u8]) -> Result<(), JournalError> {
@@ -91,7 +126,8 @@ mod unix_impl {
         let path = dir.path().join("j.bin");
 
         // Cap at 4 KiB.
-        set_fsize_limit(4 * 1024);
+        let original_limit = current_fsize_limit();
+        let limit_guard = set_fsize_limit(4 * 1024);
 
         let mut frame = vec![0u8; 1024];
         frame.iter_mut().enumerate().for_each(|(i, b)| *b = i as u8);
@@ -123,5 +159,10 @@ mod unix_impl {
             matches!(retry, Err(JournalError::DiskFull)),
             "retry after DiskFull must surface the same typed error, got {retry:?}"
         );
+
+        drop(limit_guard);
+        let restored_limit = current_fsize_limit();
+        assert_eq!(restored_limit.rlim_cur, original_limit.rlim_cur);
+        assert_eq!(restored_limit.rlim_max, original_limit.rlim_max);
     }
 }

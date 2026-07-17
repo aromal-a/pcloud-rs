@@ -205,6 +205,40 @@ fn tfa_code_can_complete_to_authenticated() {
     assert_eq!(manager.snapshot().state, SessionState::Authenticated);
 }
 
+#[test]
+fn snapshot_clone_duplicates_secret_fields_without_changing_state() {
+    use pcloud_auth::{PendingChallenge, SessionSnapshot};
+    use pcloud_model::ids::UserId;
+    use pcloud_secret::ExposeSecret;
+
+    let snapshot = SessionSnapshot {
+        state: SessionState::TwoFactorRequired,
+        authenticated_user: Some(UserId::new(19)),
+        auth_token: Some(make_secret("auth-token")),
+        email: Some("clone@example.test".to_owned()),
+        pending_challenge: Some(PendingChallenge {
+            token: make_secret("challenge-token"),
+            trust_device: true,
+        }),
+        last_auth_error: Some("retry".to_owned()),
+    };
+    let cloned = snapshot.clone();
+    assert_eq!(cloned, snapshot);
+    assert_eq!(
+        cloned.auth_token.as_ref().unwrap().expose_secret(),
+        "auth-token"
+    );
+    assert_eq!(
+        cloned
+            .pending_challenge
+            .as_ref()
+            .unwrap()
+            .token
+            .expose_secret(),
+        "challenge-token"
+    );
+}
+
 // ── Logout ────────────────────────────────────────────────────────────────────
 
 #[test]

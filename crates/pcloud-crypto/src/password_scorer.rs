@@ -438,7 +438,14 @@ fn ppassword_score(password: &[u8]) -> u64 {
         let mut nlen = 0usize;
         loop {
             plen -= 1;
-            num = num * 10 + (password[plen] - b'0') as u64;
+            // The C implementation accumulates into `uint64_t`, whose
+            // overflow semantics are defined modulo 2^64. Use explicit
+            // wrapping arithmetic so debug and release builds stay
+            // byte-for-byte consistent instead of panicking on a long
+            // all-digit password in debug/test builds.
+            num = num
+                .wrapping_mul(10)
+                .wrapping_add((password[plen] - b'0') as u64);
             nlen += 1;
             if plen == 0 || !is_digit(password[plen - 1]) {
                 break;
@@ -779,6 +786,43 @@ mod tests {
         let q_year = psync_password_quality("password2019");
         let q_rand = psync_password_quality("X7&pQ!w9Lm#zRb2v$Ks4");
         assert!(q_year <= q_rand);
+    }
+
+    #[test]
+    fn scorer_internal_edge_matrix_covers_legacy_branch_shapes() {
+        assert_eq!(find_in_dict(b"abc"), 0);
+        let _ = find_in_dict(b"password-and-more");
+        assert_eq!(trailing_num_score(0, 1, b"0"), 2);
+        assert_eq!(trailing_num_score(9, 1, b"9"), 5);
+        assert_eq!(trailing_num_score(11, 2, b"11"), 2);
+        assert_eq!(trailing_num_score(69, 2, b"69"), 4);
+        assert_eq!(trailing_num_score(42, 2, b"42"), 8);
+        assert_eq!(trailing_num_score(2026, 4, b"2026"), 10);
+        assert!(trailing_num_score(12_121_212, 8, b"12121212") > 0);
+        assert!(trailing_num_score(10_246_809, 8, b"10246809") > 0);
+
+        assert!(keyboard_buddies(b'q', b'w'));
+        assert!(!keyboard_buddies(0, b'q'));
+        assert_eq!(uint_sqrt(1), 1);
+        assert!(uint_sqrt(81) >= 8);
+        assert!(uint_sqrt(82) >= 8);
+
+        let (lower, folded) = build_variants(b"0 1 3 4 5 7 $ @ ! Z");
+        assert_eq!(lower, b"0 1 3 4 5 7 $ @ ! z");
+        assert_eq!(folded, b"o i e a s t s a l z");
+
+        for password in [
+            b"qwerty".as_slice(),
+            b"QWERTY".as_slice(),
+            b"ababABAB".as_slice(),
+            b"aZ9! \xff".as_slice(),
+            b"base!!!!".as_slice(),
+            b"base1111".as_slice(),
+            b"base??2026".as_slice(),
+            b"1234567890123456789012345678901234567890".as_slice(),
+        ] {
+            let _ = ppassword_score(password);
+        }
     }
 
     #[test]

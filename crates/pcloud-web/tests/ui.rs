@@ -8,8 +8,12 @@
 // **PLATFORM:** all
 // **GATING:** none (portable).
 
-use std::path::PathBuf;
+use std::{
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
+use pcloud_ipc::{IpcServer, Method, Request, Response, ResponseStatus};
 use pcloud_secret::secret_string::SecretString;
 use pcloud_web::{WebConfig, bind_for_test, generate_web_token};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -20,6 +24,23 @@ async fn start() -> (std::net::SocketAddr, String, tokio::task::JoinHandle<()>) 
     let token = generate_web_token().expect("getrandom unavailable in test");
     let cfg = WebConfig {
         socket_path: PathBuf::new(),
+        bind_addr: "127.0.0.1:0".parse().unwrap(),
+        web_token: SecretString::new(token.clone()),
+        ..WebConfig::default()
+    };
+    let (listener, addr, app) = bind_for_test(cfg).await.expect("bind");
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app).await;
+    });
+    (addr, token, handle)
+}
+
+async fn start_with_socket(
+    socket_path: &Path,
+) -> (std::net::SocketAddr, String, tokio::task::JoinHandle<()>) {
+    let token = generate_web_token().expect("getrandom unavailable in test");
+    let cfg = WebConfig {
+        socket_path: socket_path.to_path_buf(),
         bind_addr: "127.0.0.1:0".parse().unwrap(),
         web_token: SecretString::new(token.clone()),
         ..WebConfig::default()
@@ -59,6 +80,35 @@ fn extract_cookie(resp: &str, name: &str) -> String {
 
 fn extract_csrf_cookie(resp: &str) -> String {
     extract_cookie(resp, "pcw_csrf")
+}
+
+fn successful_daemon_response(request: Request) -> Response {
+    let message = match request {
+        Request::Plain {
+            method: Method::GetStatus,
+        } => r#"{"sync_root_count":2,"mount_state":"mounted"}"#.to_string(),
+        Request::Plain {
+            method: Method::GetSyncRoots,
+        } => r#"[{"sync_id":7,"local_path":"/tmp/local","remote_path":"/remote"}]"#.to_string(),
+        Request::Plain {
+            method: Method::GetPending,
+        } => r#"{"pending":1}"#.to_string(),
+        Request::Plain {
+            method: Method::ListPublicLinks,
+        } => r#"[{"link_id":42,"code":"fixture-code"}]"#.to_string(),
+        Request::Plain {
+            method: Method::ListNotifications,
+        } => r#"[{"event":"fixture"}]"#.to_string(),
+        Request::CreateFilePublicLink { .. } | Request::CreateFolderPublicLink { .. } => {
+            r#"{"link_id":42}"#.to_string()
+        }
+        Request::ShowPublicLink { .. } => r#"{"link_id":42}"#.to_string(),
+        _ => r#"{"ok":true}"#.to_string(),
+    };
+    Response {
+        status: ResponseStatus::Ok,
+        message,
+    }
 }
 
 #[tokio::test]
@@ -391,4 +441,157 @@ async fn settings_redacts_secret_fields() {
     // but assert no placeholder strings leak).
     assert!(!resp.contains("hunter2"));
     handle.abort();
+}
+
+#[tokio::test]
+async fn online_daemon_routes_and_mutations_succeed_end_to_end() {
+    let root = tempfile::tempdir().expect("temporary web runtime");
+    let socket = root.path().join("runtime/pcloud.sock");
+    let bound = IpcServer::new(pcloud_ipc::current_effective_uid())
+        .bind(&socket)
+        .expect("bind fake daemon");
+    bound
+        .set_accept_timeout(Some(Duration::from_millis(300)))
+        .expect("set accept timeout");
+    let daemon = std::thread::spawn(move || {
+        let mut served = 0;
+        loop {
+            match bound.serve_once(successful_daemon_response) {
+                Ok(()) => served += 1,
+                Err(pcloud_ipc::IpcTransportError::Io(error))
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    break;
+                }
+                Err(error) => panic!("fake daemon failure: {error}"),
+            }
+        }
+        served
+    });
+
+    let (addr, web_token, handle) = start_with_socket(&socket).await;
+    let host = format!("localhost:{}", addr.port());
+    let origin = format!("http://{host}");
+
+    let index = raw_request(
+        addr,
+        &format!(
+            "GET / HTTP/1.1\r\nHost: {host}\r\n\
+             X-PCloud-Web-Token: {web_token}\r\nConnection: close\r\n\r\n"
+        ),
+    )
+    .await;
+    assert!(index.starts_with("HTTP/1.1 200 "), "{index}");
+    assert!(index.contains("Online"), "{index}");
+    assert!(index.contains("mounted"), "{index}");
+    let csrf = extract_csrf_cookie(&index);
+    let session = extract_cookie(&index, "pcw_session");
+
+    for (path, expected) in [
+        ("/api/status", "sync_root_count"),
+        ("/sync", "Pending"),
+        ("/publinks", "fixture-code"),
+        ("/activity", "fixture"),
+        ("/settings", "socket_path"),
+        ("/metrics", "metrics feature"),
+    ] {
+        let response = raw_request(
+            addr,
+            &format!(
+                "GET {path} HTTP/1.1\r\nHost: {host}\r\n\
+                 Cookie: pcw_session={session}\r\nConnection: close\r\n\r\n"
+            ),
+        )
+        .await;
+        assert!(
+            response.starts_with("HTTP/1.1 200 ")
+                || (path == "/metrics" && response.starts_with("HTTP/1.1 404 ")),
+            "{path}: {response}"
+        );
+        assert!(response.contains(expected), "{path}: {response}");
+    }
+
+    let activity_json = raw_request(
+        addr,
+        &format!(
+            "GET /activity HTTP/1.1\r\nHost: {host}\r\n\
+             Accept: application/x-ndjson\r\nCookie: pcw_session={session}\r\n\
+             Connection: close\r\n\r\n"
+        ),
+    )
+    .await;
+    assert!(
+        activity_json.starts_with("HTTP/1.1 200 "),
+        "{activity_json}"
+    );
+    assert!(activity_json.contains("\"online\":true"), "{activity_json}");
+
+    for sync_type in ["full", "mirror", "backup", "unknown"] {
+        let body = format!(
+            "local_path=%2Ftmp%2Flocal&remote_path=%2Fremote&sync_type={sync_type}&csrf_token={csrf}"
+        );
+        let response = raw_request(
+            addr,
+            &format!(
+                "POST /sync HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\n\
+                 Content-Type: application/x-www-form-urlencoded\r\n\
+                 Cookie: pcw_csrf={csrf}; pcw_session={session}\r\n\
+                 Content-Length: {len}\r\nConnection: close\r\n\r\n{body}",
+                len = body.len()
+            ),
+        )
+        .await;
+        assert!(response.starts_with("HTTP/1.1 303 "), "{response}");
+        assert!(response.contains("location: /sync"), "{response}");
+    }
+
+    let delete_sync = raw_request(
+        addr,
+        &format!(
+            "DELETE /sync/7 HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\n\
+             Cookie: pcw_csrf={csrf}; pcw_session={session}\r\n\
+             X-CSRF-Token: {csrf}\r\nConnection: close\r\n\r\n"
+        ),
+    )
+    .await;
+    assert!(delete_sync.starts_with("HTTP/1.1 200 "), "{delete_sync}");
+
+    for path in ["/fixture.txt", "/fixture-folder/"] {
+        let body =
+            format!("path={path}&expiry=4102444800&password=fixture-password&csrf_token={csrf}");
+        let response = raw_request(
+            addr,
+            &format!(
+                "POST /publinks HTTP/1.1\r\nHost: {host}\r\nOrigin: {origin}\r\n\
+                 Content-Type: application/x-www-form-urlencoded\r\n\
+                 Cookie: pcw_csrf={csrf}; pcw_session={session}\r\n\
+                 Content-Length: {len}\r\nConnection: close\r\n\r\n{body}",
+                len = body.len()
+            ),
+        )
+        .await;
+        assert!(response.starts_with("HTTP/1.1 303 "), "{response}");
+        assert!(response.contains("location: /publinks"), "{response}");
+    }
+
+    for code in ["42", "fixture-code"] {
+        let response = raw_request(
+            addr,
+            &format!(
+                "DELETE /publinks/{code} HTTP/1.1\r\nHost: {host}\r\n\
+                 Referer: {origin}/publinks\r\n\
+                 Cookie: pcw_csrf={csrf}; pcw_session={session}\r\n\
+                 X-CSRF-Token: {csrf}\r\nConnection: close\r\n\r\n"
+            ),
+        )
+        .await;
+        assert!(response.starts_with("HTTP/1.1 200 "), "{response}");
+    }
+
+    handle.abort();
+    let served = daemon.join().expect("fake daemon thread");
+    assert!(served >= 20, "expected broad IPC coverage, served {served}");
 }

@@ -113,7 +113,7 @@
 
 use std::path::{Path, PathBuf};
 
-use pcloud_config::{ConfigProfile, Environment};
+use pcloud_config::{ConfigProfile, Environment, extensions::ExtensionPolicy};
 use pcloud_daemon::path_resolver::PathResolveError;
 use pcloud_daemon::{BootstrapError, RuntimeShell, bootstrap_with_config, dispatch};
 use pcloud_ipc::{Method, Request, Response, ResponseStatus};
@@ -166,6 +166,7 @@ pub struct EmbeddedDaemon {
 pub struct EmbeddedDaemonBuilder {
     root: PathBuf,
     environment: Environment,
+    extensions: Option<ExtensionPolicy>,
 }
 
 /// Error surface for [`EmbeddedDaemonBuilder::build`] and for plugin
@@ -1275,6 +1276,7 @@ impl EmbeddedDaemonBuilder {
         Self {
             root,
             environment: Environment::Production,
+            extensions: None,
         }
     }
 
@@ -1292,6 +1294,17 @@ impl EmbeddedDaemonBuilder {
     #[must_use]
     pub fn environment(mut self, environment: Environment) -> Self {
         self.environment = environment;
+        self
+    }
+
+    /// Override the secure-default plugin policy for this embedded daemon.
+    ///
+    /// The default keeps plugins disabled. Embedders that register plugins
+    /// must opt in explicitly and grant only the capabilities their plugins
+    /// require. The policy is validated during [`Self::build`].
+    #[must_use]
+    pub fn extension_policy(mut self, policy: ExtensionPolicy) -> Self {
+        self.extensions = Some(policy);
         self
     }
 
@@ -1329,7 +1342,10 @@ impl EmbeddedDaemonBuilder {
     /// assert!(!d.runtime_summary().is_empty());
     /// ```
     pub fn build(self) -> Result<EmbeddedDaemon, SdkError> {
-        let requested_config = ConfigProfile::secure_defaults(self.root, self.environment);
+        let mut requested_config = ConfigProfile::secure_defaults(self.root, self.environment);
+        if let Some(extensions) = self.extensions {
+            requested_config.extensions = extensions;
+        }
         let runtime =
             bootstrap_with_config(requested_config).map_err(EmbeddedDaemonError::Bootstrap)?;
 
@@ -3844,6 +3860,19 @@ mod tests {
             .expect_err("default extension policy should deny plugins");
 
         assert!(err.to_string().contains("disabled"));
+
+        let root = unique_test_root("plugin-enabled");
+        let mut policy =
+            pcloud_config::extensions::ExtensionPolicy::secure_defaults(root.join("plugins"));
+        policy.plugins_enabled = true;
+        let mut daemon = EmbeddedDaemon::builder(root)
+            .extension_policy(policy)
+            .build()
+            .expect("enabled embedded daemon should bootstrap");
+        let loaded = daemon
+            .register_plugin(&mut plugin)
+            .expect("observe plugin should load with an explicit policy");
+        assert_eq!(loaded.manifest.id, "observe");
     }
 
     #[test]

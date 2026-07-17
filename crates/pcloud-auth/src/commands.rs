@@ -102,3 +102,53 @@ impl Clone for AuthCommand {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pcloud_secret::ExposeSecret;
+
+    #[test]
+    fn every_command_clone_preserves_non_secret_shape_and_secret_value() {
+        let commands = [
+            AuthCommand::BeginLogin,
+            AuthCommand::LoginWithPassword {
+                username: "alice@example.com".to_owned(),
+                password: SecretString::new("password"),
+            },
+            AuthCommand::LoginWithToken {
+                token: SecretString::new("token"),
+            },
+            AuthCommand::SubmitTwoFactorCode {
+                code: SecretString::new("123456"),
+                trust_device: true,
+            },
+            AuthCommand::MarkAuthenticated {
+                user_id: Some(UserId::new(7)),
+                auth_token: SecretString::new("auth-token"),
+            },
+            AuthCommand::MarkAuthenticationFailed {
+                message: Some("denied".to_owned()),
+            },
+            AuthCommand::MarkTwoFactorCodeInvalid {
+                message: Some("retry".to_owned()),
+            },
+            AuthCommand::Logout,
+        ];
+
+        for command in commands {
+            let cloned = command.clone();
+            assert_eq!(cloned, command);
+            assert!(!format!("{cloned:?}").contains("auth-token"));
+            match cloned {
+                AuthCommand::LoginWithPassword { password, .. } => {
+                    assert_eq!(password.expose_secret(), "password");
+                }
+                AuthCommand::LoginWithToken { token } => {
+                    assert_eq!(token.expose_secret(), "token");
+                }
+                _ => {}
+            }
+        }
+    }
+}

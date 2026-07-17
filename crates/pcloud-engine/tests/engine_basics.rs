@@ -161,6 +161,76 @@ fn single_busy_root_does_not_starve_idle_root() {
     );
 }
 
+#[test]
+#[allow(deprecated)]
+fn scheduler_peek_fair_drain_and_ack_edge_matrix() {
+    let mut scheduler = Scheduler {
+        max_parallel_uploads: 2,
+        max_parallel_downloads: 2,
+        ..Default::default()
+    };
+    assert!(scheduler.peek_batch().is_empty());
+    assert!(scheduler.peek_batch_fair(1).is_empty());
+    assert!(scheduler.next_batch_fair(1).is_empty());
+    assert!(scheduler.drain_batch().is_empty());
+    scheduler.ack_batch(&[]);
+    scheduler.ack_batch(&[(SyncId::new(1), "absent")]);
+
+    for (sync_id, path) in [
+        (1, "a/one"),
+        (1, "a/two"),
+        (1, "a/three"),
+        (2, "b/one"),
+        (2, "b/two"),
+        (3, "c/one"),
+    ] {
+        scheduler.enqueue(PlannedOperation::DeleteLocal {
+            sync_id: SyncId::new(sync_id),
+            path: path.to_owned(),
+        });
+    }
+
+    assert!(scheduler.peek_batch_fair(0).is_empty());
+    let fair = scheduler.peek_batch();
+    assert_eq!(fair.len(), 4);
+    assert_eq!(scheduler.total_queued(), 6, "peek must not consume work");
+    assert!(fair.iter().any(|op| op.sync_id() == SyncId::new(2)));
+    assert_eq!(
+        fair.iter()
+            .filter(|op| op.sync_id() == SyncId::new(1))
+            .count(),
+        2
+    );
+    assert_eq!(scheduler.next_batch_fair(1).len(), 3);
+
+    let dispatched = scheduler.next_batch();
+    assert_eq!(dispatched.len(), 4);
+    assert_eq!(scheduler.dispatched_operations.len(), 4);
+    scheduler.ack_batch(&[(SyncId::new(1), "a/one")]);
+    assert_eq!(scheduler.dispatched_operations.len(), 3);
+    scheduler.ack_batch(&[
+        (SyncId::new(1), "a/two"),
+        (SyncId::new(2), "b/one"),
+        (SyncId::new(99), "absent"),
+    ]);
+    assert_eq!(scheduler.dispatched_operations.len(), 1);
+
+    let drained = scheduler.drain_batch();
+    assert_eq!(drained.len(), 2);
+    assert_eq!(scheduler.total_queued(), 0);
+
+    let mut minimum_capacity = Scheduler {
+        max_parallel_uploads: 0,
+        max_parallel_downloads: 0,
+        ..Default::default()
+    };
+    minimum_capacity.enqueue(PlannedOperation::DeleteLocal {
+        sync_id: SyncId::new(9),
+        path: "minimum".to_owned(),
+    });
+    assert_eq!(minimum_capacity.peek_batch().len(), 1);
+}
+
 // ---------------------------------------------------------------------------
 // ConflictResolver: newest_wins correctness
 // ---------------------------------------------------------------------------
@@ -439,4 +509,110 @@ fn engine_fairness_across_two_roots() {
     assert!(root10_count >= 1, "root 10 should be scheduled");
     assert!(root20_count >= 1, "root 20 should be scheduled");
     assert_eq!(engine.scheduler.total_queued(), 0, "all items consumed");
+}
+
+#[test]
+fn engine_public_state_lifecycle_and_filesystem_guards_are_complete() {
+    for valid in ["file", "docs/report.txt", " spaced "] {
+        assert!(pcloud_engine::is_valid_relative_path(valid), "{valid:?}");
+    }
+    for invalid in [
+        "",
+        " ",
+        "/absolute",
+        "./relative",
+        r"windows\path",
+        "a//b",
+        "a/./b",
+        "a/../b",
+    ] {
+        assert!(
+            !pcloud_engine::is_valid_relative_path(invalid),
+            "{invalid:?}"
+        );
+    }
+
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(root.path().join("a/b")).unwrap();
+    std::fs::write(root.path().join("a/file"), b"x").unwrap();
+    assert!(!pcloud_engine::probe_case_insensitive_fs(root.path()).unwrap());
+    assert!(!pcloud_engine::warn_if_case_insensitive(root.path()));
+    assert!(!pcloud_engine::warn_if_case_insensitive(
+        root.path().join("missing").as_path()
+    ));
+    let mut visited = Vec::new();
+    pcloud_engine::walk_local_tree(root.path(), 8, &mut |path, is_dir| {
+        visited.push((path.to_path_buf(), is_dir));
+    })
+    .unwrap();
+    assert!(visited.iter().any(|(_, is_dir)| *is_dir));
+    assert!(visited.iter().any(|(_, is_dir)| !*is_dir));
+
+    let mut engine = EngineShell::default();
+    assert_eq!(engine, EngineShell::new());
+    assert!(engine.summary().starts_with("engine("));
+    assert_eq!(engine.wake_localscan(), 1);
+    assert_ne!(engine, EngineShell::new());
+    assert!(!engine.mark_transfer_completed("missing"));
+    assert!(!engine.mark_transfer_failed("missing", "error"));
+    assert!(
+        engine
+            .resolve_conflict_by_path("missing", "prefer_local")
+            .is_err()
+    );
+    assert!(
+        engine
+            .resolve_conflict_by_sync_id_and_path(Some(SyncId::new(9)), "missing", "prefer_remote")
+            .is_err()
+    );
+
+    let candidate = SyncCandidate {
+        sync_id: SyncId::new(4),
+        source: ChangeSource::Local,
+        path: "queued.txt".into(),
+        entry_kind: EntryKind::File,
+        change_kind: ChangeKind::Upsert,
+        remote_file_id: None,
+        remote_folder_id: None,
+    };
+    engine.restore_planner_overflow(vec![candidate.clone()]);
+    assert_eq!(engine.overflow_sync_root_ids(), vec![SyncId::new(4)]);
+    assert_eq!(engine.drain_planner_overflow(), vec![candidate]);
+    assert!(engine.drain_planner_overflow().is_empty());
+
+    let op_b = PlannedOperation::DeleteLocal {
+        sync_id: SyncId::new(2),
+        path: "b".into(),
+    };
+    let op_a = PlannedOperation::DeleteLocal {
+        sync_id: SyncId::new(1),
+        path: "a".into(),
+    };
+    engine.restore_scheduler_queue(vec![op_b.clone(), op_a.clone()]);
+    assert_eq!(
+        engine.scheduler_sync_root_ids(),
+        vec![SyncId::new(1), SyncId::new(2)]
+    );
+    assert_eq!(
+        engine.snapshot_scheduler_queue(),
+        vec![op_a.clone(), op_b.clone()]
+    );
+    assert_eq!(
+        engine.snapshot_scheduler_durable(),
+        vec![op_a.clone(), op_b.clone()]
+    );
+    engine.ack_dispatched_path(SyncId::new(1), "absent");
+    assert_eq!(engine.drain_scheduler_queue(), vec![op_a, op_b]);
+    assert!(engine.snapshot_scheduler_queue().is_empty());
+
+    assert!(engine.pause_sync_root(SyncId::new(7)));
+    assert!(!engine.pause_sync_root(SyncId::new(7)));
+    assert!(engine.is_sync_root_paused(SyncId::new(7)));
+    assert_eq!(engine.paused_sync_root_ids(), vec![SyncId::new(7)]);
+    assert!(engine.resume_sync_root(SyncId::new(7)));
+    assert!(!engine.resume_sync_root(SyncId::new(7)));
+    engine.evict_sync_root(SyncId::new(7));
+    engine.evict_sync_root(SyncId::new(7));
+    assert_eq!(engine.drain_watcher_evictions(), vec![SyncId::new(7)]);
+    assert!(engine.drain_watcher_evictions().is_empty());
 }

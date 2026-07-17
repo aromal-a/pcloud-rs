@@ -1197,15 +1197,19 @@ fn run_daemon_start(flags: &GlobalFlags) -> ExitCode {
             return ExitCode::Ok;
         }
 
-        // Resolve daemon binary path. Prefer sibling of the running CLI so
-        // a local build works without $PATH manipulation; then PATH.
-        let daemon_path: std::path::PathBuf = match std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|d| d.join("pcloudd")))
-            .filter(|p| p.is_file())
-        {
-            Some(p) => p,
-            None => std::path::PathBuf::from("pcloudd"),
+        // Use the shared resolver so explicit `$PCLOUDD`, sibling binaries,
+        // and `$PATH` behave identically for `start` and login autostart.
+        let daemon_path = match locate_daemon_binary() {
+            Ok(path) => path,
+            Err(err) => {
+                return report_error(
+                    Some("Start".into()),
+                    flags.output,
+                    flags.quiet,
+                    ExitCode::Unavailable,
+                    &format!("daemon binary resolution failed: {err}"),
+                );
+            }
         };
 
         // Prepare the log directory and file (0600). Under the same
@@ -3534,5 +3538,102 @@ mod tests {
         );
         assert_eq!(kept, argv(&["pcloudc", "fs-status", "/srv/data"]));
         assert_eq!(fields, vec!["state"]);
+    }
+
+    #[test]
+    fn login_option_parser_pidfiles_and_confirmation_helpers_cover_all_shapes() {
+        let options = LoginOptions::from_argv(&argv(&[
+            "login",
+            "-u",
+            "first@example.com",
+            "--user=second@example.com",
+            "--username=final@example.com",
+            "-T",
+            "sms",
+            "--channel",
+            "notification",
+            "--password-stdin",
+            "--password-env",
+            "PCLOUD_TEST_PASSWORD",
+            "-c",
+            "--pass-as-crypto",
+            "--trusted-device",
+            "--save-password",
+            "-m",
+            "/tmp/pcloud-mount",
+            "-O",
+            "allow_root",
+            "--log-path",
+            "/tmp/pcloud.log",
+            "--fs-event-log",
+            "/tmp/pcloud-events.log",
+            "--log-level",
+            "debug",
+            "--cache-size",
+            "12",
+            "--config",
+            "/tmp/pcloud.toml",
+        ]));
+        assert_eq!(options.username.as_deref(), Some("final@example.com"));
+        assert_eq!(options.tfa_channel, Some(TfaChannel::Push));
+        assert!(matches!(
+            options.password_source,
+            PasswordSource::Env(ref name) if name == "PCLOUD_TEST_PASSWORD"
+        ));
+        assert_eq!(options.crypto, Some(true));
+        assert_eq!(options.passascrypto, Some(true));
+        assert_eq!(options.trust_device, Some(true));
+        assert_eq!(options.save_password, Some(true));
+        assert_eq!(options.mountpoint.as_deref(), Some("/tmp/pcloud-mount"));
+        assert_eq!(options.fuse_opts.as_deref(), Some("allow_root"));
+        assert_eq!(options.log_path.as_deref(), Some("/tmp/pcloud.log"));
+        assert_eq!(
+            options.fs_event_log.as_deref(),
+            Some("/tmp/pcloud-events.log")
+        );
+        assert_eq!(options.log_level.as_deref(), Some("debug"));
+        assert_eq!(options.cache_size_gb, Some(12));
+        assert_eq!(options.config_path.as_deref(), Some("/tmp/pcloud.toml"));
+
+        let aliases = LoginOptions::from_argv(&argv(&[
+            "login",
+            "--user",
+            "alias@example.com",
+            "--tfa-channel",
+            "push",
+            "-y",
+            "-r",
+            "-s",
+            "--mountpoint=/srv/pcloud",
+        ]));
+        assert_eq!(aliases.username.as_deref(), Some("alias@example.com"));
+        assert_eq!(aliases.tfa_channel, Some(TfaChannel::Push));
+        assert_eq!(aliases.mountpoint.as_deref(), Some("/srv/pcloud"));
+
+        let empty_mount = LoginOptions::from_argv(&argv(&["login", "-m", "--crypto"]));
+        assert_eq!(empty_mount.mountpoint.as_deref(), Some(""));
+        let invalid_numbers =
+            LoginOptions::from_argv(&argv(&["login", "--cache-size", "not-a-number"]));
+        assert_eq!(invalid_numbers.cache_size_gb, None);
+
+        assert_eq!(parse_channel("SMS"), Some(TfaChannel::Sms));
+        assert_eq!(parse_channel("notif"), Some(TfaChannel::Push));
+        assert_eq!(parse_channel("unknown"), None);
+        for answer in ["", "y", "YES", "yeah", "yep", "o", "oui", "ok", "1"] {
+            assert!(is_affirmative(answer), "{answer:?}");
+        }
+        for answer in ["n", "no", "0", "later"] {
+            assert!(!is_affirmative(answer), "{answer:?}");
+        }
+
+        let temp = tempfile::tempdir().unwrap();
+        let pidfile = temp.path().join("daemon.pid");
+        assert!(read_pid_file(&pidfile).is_err());
+        std::fs::write(&pidfile, " \n").unwrap();
+        assert_eq!(read_pid_file(&pidfile), Err("pidfile is empty".to_owned()));
+        std::fs::write(&pidfile, "not-a-pid\n").unwrap();
+        assert!(read_pid_file(&pidfile).unwrap_err().contains("non-numeric"));
+        std::fs::write(&pidfile, " 4242 \n").unwrap();
+        assert_eq!(read_pid_file(&pidfile), Ok(4242));
     }
 }

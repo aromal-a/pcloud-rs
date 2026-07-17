@@ -29,37 +29,23 @@ host, remain in scope.
 
 ## Current working-tree measurement
 
-The verified local run on 2026-07-16 measured **82.65%**
-(`77,060 / 93,234` lines). The policy therefore fails by design until at
-least 83,911 lines are covered (6,851 more at the current denominator). Do
-not describe the greater-than-90% target as passing until a fresh
-`cargo xtask coverage` exits successfully.
-
-The largest current crate-level gaps are:
-
-| Crate | Uncovered / instrumented lines | Coverage |
-|---|---:|---:|
-| `pcloud-daemon` | 4,192 / 17,413 | 75.93% |
-| `pcloud-cli` | 2,758 / 10,836 | 74.55% |
-| `pcloud-fs` | 2,071 / 8,822 | 76.52% |
-| `pcloud-backends` | 1,639 / 11,215 | 85.39% |
-| `pcloud-sdk` | 981 / 3,272 | 70.02% |
-
-These are concentrated in daemon orchestration, CLI execution/parsing,
-filesystem platform/backend adapters, the embedded SDK, and remote backend
-error paths. The LCOV file is the auditable source for prioritising tests.
+The verified local run on 2026-07-16 passed at **90.09%**
+(`85,716 / 95,146` lines). This is a complete `cargo +1.96.1 xtask coverage`
+run, including the opt-in real Linux FUSE suites and deterministic Unix chaos
+tests. The generated `target/xtask/lcov.info` is the auditable source for the
+measurement.
 
 ## Security-critical floors
 
 The shared parser also enforces:
 
-| Crate | Line floor |
-|---|---:|
-| `pcloud-secret` | 90% |
-| `pcloud-crypto` | 85% |
-| `pcloud-auth` | 85% |
-| `pcloud-resilience` | 80% |
-| `pcloud-ipc` | 80% |
+| Crate | Verified coverage | Line floor |
+|---|---:|---:|
+| `pcloud-secret` | 100.00% (`51 / 51`) | 90% |
+| `pcloud-crypto` | 92.94% (`4,820 / 5,186`) | 85% |
+| `pcloud-auth` | 96.22% (`1,094 / 1,137`) | 85% |
+| `pcloud-resilience` | 89.85% (`1,735 / 1,931`) | 80% |
+| `pcloud-ipc` | 87.17% (`1,121 / 1,286`) | 80% |
 
 The workspace or per-crate floors must never be lowered automatically to make
 a release pass.

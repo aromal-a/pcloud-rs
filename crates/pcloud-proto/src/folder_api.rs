@@ -549,7 +549,8 @@ fn parse_modified_string(s: &str) -> Option<u64> {
     let hms = parts.next()?;
     let tz = parts.next().unwrap_or("+0000");
 
-    let month: u32 = match &mon.to_ascii_lowercase()[..3] {
+    let lowercase_month = mon.to_ascii_lowercase();
+    let month: u32 = match lowercase_month.get(..3)? {
         "jan" => 1,
         "feb" => 2,
         "mar" => 3,
@@ -568,30 +569,54 @@ fn parse_modified_string(s: &str) -> Option<u64> {
     let hh: u32 = hms_iter.next()?.parse().ok()?;
     let mm: u32 = hms_iter.next()?.parse().ok()?;
     let ss: u32 = hms_iter.next()?.parse().ok()?;
+    if hms_iter.next().is_some() || hh > 23 || mm > 59 || ss > 59 {
+        return None;
+    }
+    let leap_year = yyyy % 4 == 0 && (yyyy % 100 != 0 || yyyy % 400 == 0);
+    let days_in_month = match month {
+        2 if leap_year => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    if dd == 0 || dd > days_in_month {
+        return None;
+    }
 
     // Days-from-civil (Howard Hinnant) — converts (y,m,d) to days since 1970-01-01
+    let yyyy = i64::from(yyyy);
     let y = if month <= 2 { yyyy - 1 } else { yyyy };
     let era = (if y >= 0 { y } else { y - 399 }) / 400;
-    let yoe = (y - era * 400) as u32;
-    let m = month;
+    let yoe = y - era * 400;
+    let m = i64::from(month);
+    let dd = i64::from(dd);
     let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + dd - 1;
     let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = (era as i64) * 146097 + (doe as i64) - 719468;
-    let mut secs = days * 86400 + (hh as i64) * 3600 + (mm as i64) * 60 + (ss as i64);
+    let days = era * 146097 + doe - 719468;
+    let mut secs = days
+        .checked_mul(86400)?
+        .checked_add(i64::from(hh) * 3600)?
+        .checked_add(i64::from(mm) * 60)?
+        .checked_add(i64::from(ss))?;
 
     // tz offset: ±HHMM
-    if tz.len() == 5 {
-        let sign = match tz.as_bytes()[0] {
-            b'+' => 1i64,
-            b'-' => -1i64,
-            _ => return None,
-        };
-        let tz_h: i64 = tz[1..3].parse().ok()?;
-        let tz_m: i64 = tz[3..5].parse().ok()?;
-        // RFC2822 timestamp is local-with-offset; subtract offset to get UTC
-        secs -= sign * (tz_h * 3600 + tz_m * 60);
+    let tz = tz.as_bytes();
+    if tz.len() != 5 || !tz[1..].iter().all(u8::is_ascii_digit) {
+        return None;
     }
-    if secs < 0 { None } else { Some(secs as u64) }
+    let sign = match tz[0] {
+        b'+' => 1i64,
+        b'-' => -1i64,
+        _ => return None,
+    };
+    let tz_h = i64::from((tz[1] - b'0') * 10 + (tz[2] - b'0'));
+    let tz_m = i64::from((tz[3] - b'0') * 10 + (tz[4] - b'0'));
+    if tz_h > 23 || tz_m > 59 {
+        return None;
+    }
+    // RFC2822 timestamp is local-with-offset; subtract offset to get UTC.
+    secs = secs.checked_sub(sign * (tz_h * 3600 + tz_m * 60))?;
+    u64::try_from(secs).ok()
 }
 
 fn parse_mutated_folder(hash: HashView<'_>) -> RenamedFolderResponse {

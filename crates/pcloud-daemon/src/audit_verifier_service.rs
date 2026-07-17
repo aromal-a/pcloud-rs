@@ -356,7 +356,6 @@ impl AuditVerifierShell {
         let (outcome, latest_id) = runner.run(start_from);
         let now_ts = Utc::now().timestamp();
         self.last_run_ts.store(now_ts, Ordering::Relaxed);
-        self.scheduled_run_count.fetch_add(1, Ordering::Relaxed);
         match &outcome {
             VerifierOutcome::Pass { chain_length } => {
                 self.total_passes.fetch_add(1, Ordering::Relaxed);
@@ -392,6 +391,10 @@ impl AuditVerifierShell {
         if let Ok(mut g) = self.shared.outcome.lock() {
             g.0 = outcome.clone();
         }
+        // Publish completion only after every observable tick side effect,
+        // including checkpoint persistence and the status snapshot. Tests and
+        // callers use this counter as the completion signal.
+        self.scheduled_run_count.fetch_add(1, Ordering::Release);
         outcome
     }
 
@@ -490,7 +493,7 @@ impl AuditVerifierShell {
     /// Number of scheduler ticks that actually fired. Test helper.
     #[must_use]
     pub fn scheduled_run_count(&self) -> u64 {
-        self.scheduled_run_count.load(Ordering::Relaxed)
+        self.scheduled_run_count.load(Ordering::Acquire)
     }
 }
 
@@ -535,7 +538,6 @@ fn scheduler_loop(
         let (outcome, latest_id) = runner.run(start_from);
         let now_ts = Utc::now().timestamp();
         last_run_ts.store(now_ts, Ordering::Relaxed);
-        scheduled_run_count.fetch_add(1, Ordering::Relaxed);
         match &outcome {
             VerifierOutcome::Pass { chain_length } => {
                 total_passes.fetch_add(1, Ordering::Relaxed);
@@ -569,6 +571,9 @@ fn scheduler_loop(
         if let Ok(mut g) = shared.outcome.lock() {
             g.0 = outcome;
         }
+        // This release pairs with `scheduled_run_count()`'s acquire load so
+        // observing a completed tick also observes its checkpoint and status.
+        scheduled_run_count.fetch_add(1, Ordering::Release);
     }
 }
 

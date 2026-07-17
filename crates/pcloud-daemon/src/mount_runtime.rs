@@ -1862,6 +1862,162 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn mount_control_pidfile_and_idle_recovery_contracts_are_stable() {
+        let root = tempdir().unwrap();
+        let state = root.path().join("state");
+        let pidfile = state.join("mount_pid");
+        let mut ctl = MountControl::default();
+
+        assert_eq!(
+            ctl.sweep_stale_pidfile().unwrap(),
+            StalePidfileOutcome::Absent
+        );
+        assert_eq!(ctl.state_dir(), None);
+        assert!(!ctl.force_umount_enabled());
+        assert_eq!(ctl.quiesce_for_drain(), "no active mount");
+
+        ctl.set_state_dir(state.clone());
+        assert_eq!(ctl.state_dir(), Some(state.as_path()));
+        assert_eq!(
+            ctl.sweep_stale_pidfile().unwrap(),
+            StalePidfileOutcome::Absent
+        );
+
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(&pidfile, "not-a-pid /mnt/pcloud\n").unwrap();
+        assert_eq!(
+            ctl.sweep_stale_pidfile().unwrap(),
+            StalePidfileOutcome::Corrupt
+        );
+        assert!(!pidfile.exists());
+
+        std::fs::write(&pidfile, "1234\n").unwrap();
+        assert_eq!(
+            ctl.sweep_stale_pidfile().unwrap(),
+            StalePidfileOutcome::Corrupt
+        );
+
+        std::fs::write(&pidfile, "0 /mnt/dead\n").unwrap();
+        assert_eq!(
+            ctl.sweep_stale_pidfile().unwrap(),
+            StalePidfileOutcome::Cleaned {
+                mountpoint: PathBuf::from("/mnt/dead")
+            }
+        );
+
+        std::fs::write(&pidfile, format!("{} /mnt/live\n", std::process::id())).unwrap();
+        assert_eq!(
+            ctl.sweep_stale_pidfile().unwrap(),
+            StalePidfileOutcome::Live {
+                pid: std::process::id() as i32,
+                mountpoint: PathBuf::from("/mnt/live")
+            }
+        );
+        assert!(pidfile.exists());
+        assert!(pid_is_alive(std::process::id() as i32));
+        assert!(!pid_is_alive(0));
+
+        ctl.set_force_umount(true);
+        assert!(ctl.force_umount_enabled());
+        ctl.set_journal_sync(Arc::new(|| Ok(())));
+        assert_eq!(
+            ctl.require_successful_drain().unwrap(),
+            "no drain work queued"
+        );
+
+        let response = ctl.force_unmount_path(&root.path().join("not-mounted"));
+        assert_eq!(response.status, ResponseStatus::InternalError);
+        assert!(response.message.contains("force-unmount failed"));
+    }
+
+    #[test]
+    fn mount_refuses_path_already_present_in_mount_table() {
+        use pcloud_fs::mount_orphan::StaticMountinfoReader;
+
+        let root = tempdir().unwrap();
+        let mountpoint = root.path().join("drive");
+        std::fs::create_dir(&mountpoint).unwrap();
+        let payload = format!(
+            "25 28 0:44 / {} rw,nosuid,nodev - fuse.sshfs sshfs rw\n",
+            mountpoint.display()
+        );
+        let mounts = Arc::new(AtomicUsize::new(0));
+        let mut ctl = MountControl::new(
+            mock_factory(Arc::clone(&mounts)),
+            Arc::new(|| Ok("drained".to_owned())),
+        );
+        ctl.set_mountinfo_reader(Box::new(StaticMountinfoReader::new(payload)));
+
+        let response = ctl.mount(&mountpoint);
+        assert_eq!(response.status, ResponseStatus::Conflict);
+        assert!(response.message.contains("already mounted as fuse.sshfs"));
+        assert_eq!(mounts.load(Ordering::SeqCst), 0);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn live_mount_control_lifecycle_covers_active_conflicts_and_drain() {
+        if std::env::var("PCLOUD_FUSE_TEST").ok().as_deref() != Some("1") {
+            return;
+        }
+        use pcloud_fs::fuse_adapter::NullFuseAdapter;
+        use pcloud_fs::mount_orphan::StaticMountinfoReader;
+
+        let mountpoint = tempdir().unwrap();
+        let state = tempdir().unwrap();
+        let drain_calls = Arc::new(AtomicUsize::new(0));
+        let drain_for_hook = Arc::clone(&drain_calls);
+        let mut ctl = MountControl::new(
+            Box::new(|| Ok(boxed_adapter(NullFuseAdapter))),
+            Arc::new(move || {
+                drain_for_hook.fetch_add(1, Ordering::SeqCst);
+                Ok("all writes durable".to_owned())
+            }),
+        );
+        ctl.set_state_dir(state.path().to_path_buf());
+        ctl.set_mountinfo_reader(Box::new(StaticMountinfoReader::new("")));
+
+        let mounted = ctl.mount(mountpoint.path());
+        if mounted.status == ResponseStatus::Unavailable
+            && (mounted.message.contains("/dev/fuse")
+                || mounted.message.contains("Permission denied")
+                || mounted.message.contains("Operation not permitted"))
+        {
+            return;
+        }
+        assert_eq!(mounted.status, ResponseStatus::Ok, "{}", mounted.message);
+        assert!(ctl.is_mounted());
+        assert_eq!(ctl.active_mountpoint(), Some(mountpoint.path()));
+        assert!(state.path().join("mount_pid").is_file());
+        assert!(!ctl.replace_factory(
+            Box::new(|| Ok(boxed_adapter(NullFuseAdapter))),
+            Arc::new(|| Ok("replacement".to_owned()))
+        ));
+
+        assert_eq!(
+            ctl.mount(mountpoint.path()).status,
+            ResponseStatus::Conflict
+        );
+        assert_eq!(
+            ctl.force_unmount_path(mountpoint.path()).status,
+            ResponseStatus::Conflict
+        );
+        assert!(ctl.quiesce_for_drain().contains("all writes durable"));
+        assert_eq!(drain_calls.load(Ordering::SeqCst), 1);
+
+        let unmounted = ctl.unmount();
+        assert_eq!(
+            unmounted.status,
+            ResponseStatus::Ok,
+            "{}",
+            unmounted.message
+        );
+        assert_eq!(drain_calls.load(Ordering::SeqCst), 2);
+        assert!(!ctl.is_mounted());
+        assert!(!state.path().join("mount_pid").exists());
+    }
+
     #[cfg(target_os = "linux")]
     #[test]
     fn pcloud_shim_factory_composes_real_shim_and_drain_reports_no_writer() {
@@ -1945,6 +2101,105 @@ mod tests {
             expected
         );
         assert_eq!(backend.statfs().expect("cached account quota"), expected);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn canonical_mount_backend_exercises_mutation_and_chunked_upload_contracts() {
+        use pcloud_config::{ConfigProfile, Environment};
+        use pcloud_fs::backend::FolderBackend as _;
+        use pcloud_fs::write_path::FileUploadBackend as _;
+        use pcloud_secret::secret_string::SecretString;
+
+        let root = tempdir().unwrap();
+        let config =
+            ConfigProfile::secure_defaults(root.path().to_path_buf(), Environment::Development);
+        pcloud_store::bootstrap_profile(&config.paths.state_dir.join("store.sqlite3"))
+            .expect("bootstrap durable upload store");
+        std::fs::create_dir_all(&config.paths.runtime_dir)
+            .expect("create upload runtime directory");
+        let backend = CanonicalMountBackend::new(&config, SecretString::new("test-token"));
+        assert!(!format!("{backend:?}").contains("test-token"));
+
+        assert_eq!(
+            backend
+                .create_folder("/", "mount-created")
+                .expect("development folder create"),
+            123
+        );
+        assert!(backend.delete_folder("/missing").is_ok());
+        assert!(backend.unlink_remote("/missing.txt").is_ok());
+        assert!(backend.rename_remote("/notes.txt", "/renamed.txt").is_err());
+
+        let staging = root.path().join("staging.bin");
+        std::fs::write(&staging, b"mount upload payload").unwrap();
+        backend
+            .upload_file("/", "uploaded.bin", &staging)
+            .expect("durable development upload");
+
+        let upload_id = backend
+            .upload_create("/", "chunked.bin")
+            .expect("begin chunked upload");
+        backend
+            .upload_write(upload_id, 0, b"first")
+            .expect("first chunk");
+        backend
+            .upload_write(upload_id, 5, b"-second")
+            .expect("second chunk");
+        assert!(backend.upload_status(upload_id).is_err());
+        backend
+            .upload_save(upload_id, "/", "chunked.bin", 12)
+            .expect("commit development upload");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn canonical_mount_error_mapping_covers_stable_errno_taxonomy() {
+        use pcloud_backends::remote_fs::RemoteFsError;
+
+        assert!(matches!(
+            remote_error_to_fs(RemoteFsError::NotFound { path: "/x".into() }),
+            FsError::NotFound
+        ));
+        assert!(matches!(
+            remote_error_to_fs(RemoteFsError::ExpectedFolder { path: "/x".into() }),
+            FsError::NotDirectory
+        ));
+        for error in [
+            RemoteFsError::InvalidPath {
+                path: "x".into(),
+                reason: "fixture",
+            },
+            RemoteFsError::ExpectedFile { path: "/x".into() },
+            RemoteFsError::MissingId { path: "/x".into() },
+            RemoteFsError::MissingSize { path: "/x".into() },
+            RemoteFsError::RangeTooLarge {
+                requested: 2,
+                maximum: 1,
+            },
+            RemoteFsError::UnexpectedEof {
+                expected: 2,
+                actual: 1,
+            },
+            RemoteFsError::SourceTooLong { expected: 1 },
+            RemoteFsError::RecursiveCopy {
+                from: "/a".into(),
+                to: "/a/b".into(),
+            },
+            RemoteFsError::DestinationExists {
+                path: PathBuf::from("/tmp/x"),
+            },
+        ] {
+            assert!(matches!(remote_error_to_fs(error), FsError::Invalid));
+        }
+        assert!(matches!(
+            remote_error_to_fs(RemoteFsError::Io(std::io::Error::other("fixture"))),
+            FsError::Io
+        ));
+        assert!(matches!(
+            remote_error_to_fs(RemoteFsError::SharingUnavailable),
+            FsError::Transport(_)
+        ));
     }
 
     #[cfg(target_os = "linux")]
@@ -2079,5 +2334,46 @@ mod tests {
         assert!(!ctl.is_mounted());
         // Drain hook must not fire unless something was mounted.
         assert_eq!(drain_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn control_debug_io_force_orphan_and_error_mapping_edges_are_stable() {
+        use pcloud_fs::mount_orphan::StaticMountinfoReader;
+
+        let root = tempdir().unwrap();
+        let mut ctl = MountControl::default();
+        let rendered = format!("{ctl:?}");
+        assert!(rendered.contains("MountControl"));
+        assert!(rendered.contains("active_mountpoint"));
+
+        let state_file = root.path().join("state-file");
+        std::fs::write(&state_file, b"not a directory").unwrap();
+        ctl.set_state_dir(state_file);
+        assert!(ctl.sweep_stale_pidfile().is_err());
+
+        let orphan = root.path().join("orphan");
+        let payload = format!(
+            "25 28 0:44 / {} rw,nosuid,nodev - fuse.pcloud-rs pcloud-rs rw\n",
+            orphan.display()
+        );
+        ctl.set_force_umount(true);
+        ctl.set_mountinfo_reader(Box::new(StaticMountinfoReader::new(payload)));
+        match ctl.check_orphans().unwrap() {
+            OrphanCheckOutcome::ForceUnmounted(results) => {
+                assert_eq!(results.len(), 1);
+                assert_eq!(results[0].0, orphan);
+            }
+            other => panic!("expected force-unmount result, got {other:?}"),
+        }
+
+        for error in [
+            MountError::Unsupported("fixture".to_owned()),
+            MountError::Io(std::io::Error::other("fixture")),
+        ] {
+            assert_ne!(mount_error_to_response(error).status, ResponseStatus::Ok);
+        }
+        assert_eq!(join_remote_path("/", "file"), "/file");
+        assert_eq!(join_remote_path("/Documents", "file"), "/Documents/file");
+        assert!(unix_now() > 0);
     }
 }

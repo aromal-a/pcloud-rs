@@ -13,10 +13,13 @@
 // **GATING:** none (portable).
 
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
-use pcloud_config::{ConfigProfile, Environment};
-use pcloud_daemon::audit_verifier_service::{VerifierOutcome, VerifierRunner};
+use pcloud_config::{ConfigProfile, Environment, audit_verifier::AuditVerifierConfig};
+use pcloud_daemon::audit_verifier_service::{
+    AuditVerifierShell, StoreVerifierRunner, VerifierOutcome, VerifierRunner,
+};
 use pcloud_daemon::{bootstrap_with_config, dispatch};
 use pcloud_ipc::{AuditVerifierStatusPayload, Method, Request, ResponseStatus};
 use pcloud_observability::slo::Slo;
@@ -185,4 +188,64 @@ fn pass_then_fail_increments_both_counters() {
     assert_eq!(payload.total_failures, 1);
     // Last result should be the most recent (fail)
     assert_eq!(payload.last_result, "fail");
+}
+
+#[test]
+fn store_runner_covers_real_empty_chain_and_invalid_database() {
+    let runtime = fresh_runtime("store-runner");
+    let runner = StoreVerifierRunner::new(runtime.store.db_path.clone());
+    let (outcome, latest) = runner.run(None);
+    assert!(matches!(outcome, VerifierOutcome::Pass { .. }));
+    assert!(latest.is_none());
+
+    let missing = StoreVerifierRunner::new(unique_root("missing-db").join("missing.sqlite3"));
+    let (outcome, latest) = missing.run(Some(i64::MAX));
+    assert!(matches!(outcome, VerifierOutcome::Fail { .. }));
+    assert!(latest.is_none());
+}
+
+#[test]
+fn cron_scheduler_ticks_checkpoints_is_idempotent_and_shuts_down() {
+    let root = unique_root("scheduled");
+    let checkpoint = root.join("checkpoint/audit.json");
+    let mut shell = AuditVerifierShell::from_config(AuditVerifierConfig {
+        enabled: true,
+        schedule_cron: "* * * * * * *".to_owned(),
+        checkpoint_path: Some(checkpoint.clone()),
+    })
+    .expect("valid every-second schedule");
+    let runner: Arc<dyn VerifierRunner> = Arc::new(MockRunner::single_pass(3, 3));
+    let slo = Arc::new(Slo::new());
+    shell
+        .start_schedule(Arc::clone(&runner), Arc::clone(&slo))
+        .expect("start scheduler");
+    shell
+        .start_schedule(runner, slo)
+        .expect("second start is idempotent");
+
+    let deadline = Instant::now() + Duration::from_secs(3);
+    while shell.scheduled_run_count() == 0 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(shell.scheduled_run_count() > 0, "scheduler did not tick");
+    assert!(shell.total_passes() > 0);
+    assert_eq!(shell.total_failures(), 0);
+    assert!(checkpoint.exists());
+    let checkpoint_json: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&checkpoint).expect("checkpoint bytes"))
+            .expect("checkpoint JSON");
+    assert_eq!(checkpoint_json["last_verified_id"], 3);
+    shell.shutdown();
+    shell.shutdown();
+
+    let mut disabled = AuditVerifierShell::disabled();
+    assert!(
+        disabled
+            .start_schedule(
+                Arc::new(MockRunner::single_pass(0, 0)),
+                Arc::new(Slo::new()),
+            )
+            .is_err()
+    );
+    disabled.shutdown();
 }

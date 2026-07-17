@@ -1078,6 +1078,8 @@ fn allowed_flags_for(command: &Command) -> &'static [&'static str] {
         // `migrate-from-c [--dry-run] [--force-overwrite] [--from <dir>]`
         // — flags consumed CLI-side by `main::run_migrate_from_c`.
         Command::MigrateFromC { .. } => &["--dry-run", "--force-overwrite", "--from"],
+        // `doctor --strict` promotes advisory warnings to failures.
+        Command::Doctor => &["--strict"],
         // `verify <path> [--recursive] [--fix] [--yes]` — R9 #12.
         // `--json` is consumed globally so it does not appear here.
         Command::Verify { .. } => &["--recursive", "--fix", "--yes"],
@@ -3894,7 +3896,10 @@ mod tests {
     use crate::commands::Command;
     use pcloud_model::public_links::PublicLinkUploadPolicy;
 
-    use super::{CommandParseError, help_text, parse_command, parse_inputs_for_command};
+    use super::{
+        CommandParseError, canonical_token_for, command_display, help_text, parse_command,
+        parse_inputs_for_command,
+    };
 
     #[test]
     fn submit_password_uses_provided_args_without_defaults() {
@@ -6012,6 +6017,288 @@ mod tests {
             let args = argv(&tokens);
             let command = parse_command(&args).unwrap();
             assert!(parse_inputs_for_command(&command, &args).is_err());
+        }
+    }
+
+    #[test]
+    fn every_specialized_command_has_a_human_display_label() {
+        let commands = [
+            Command::Status,
+            Command::LoginBegin,
+            Command::Mount,
+            Command::MountForceUnmount,
+            Command::Unmount,
+            Command::SyncAdd,
+            Command::SyncRemove,
+            Command::SyncChangeType,
+            Command::SyncExcludeAdd,
+            Command::SyncExcludeRemove,
+            Command::SyncExcludeList,
+            Command::SyncList,
+            Command::SyncStatus,
+            Command::RunLocalScan,
+            Command::SendPublink,
+            Command::AuditVerify,
+            Command::CreateRemoteFolder,
+            Command::GetFolderIdByPath,
+            Command::GetFolderFlags,
+            Command::GetFolderOwnerId,
+            Command::FilesystemStatus,
+            Command::Stat,
+            Command::RemoteLs,
+            Command::RemoteGet,
+            Command::RemotePut,
+            Command::RemoteCp,
+            Command::RemoteMv,
+            Command::RemoteRm,
+            Command::RemoteMkdir,
+            Command::RemoteCat,
+            Command::SubmitCryptoPassword,
+            Command::LockCrypto,
+            Command::CryptoStatus,
+            Command::SessionStatus,
+            Command::SubmitPassword,
+            Command::SubmitAuthToken,
+            Command::SubmitTwoFactorCode,
+            Command::SubmitRecoveryCode,
+            Command::ListNotifications,
+            Command::MarkNotificationsRead { upto_id: 1 },
+            Command::Verify {
+                path: std::path::PathBuf::from("/tmp"),
+                recursive: false,
+                fix: false,
+                yes: false,
+            },
+            Command::SnapshotCreate,
+            Command::SnapshotRestore,
+            Command::SnapshotVerify,
+            Command::SnapshotPrune,
+            Command::BackupSnapshotCreate,
+            Command::BackupSnapshotRestore,
+            Command::BackupSnapshotVerify,
+            Command::BackupSnapshotPrune,
+            Command::CryptoReset,
+            Command::CryptoPrivKeyFlags,
+            Command::CryptoSendChangePrivate,
+            Command::CryptoChangePassword,
+            Command::CryptoChangePasswordUnlocked,
+            Command::CryptoHint,
+            Command::CryptoSetupV2,
+            Command::CryptoGetFolderKey,
+            Command::CryptoGetFileKey,
+            Command::SyncSuggest,
+            Command::SyncIsSyncable,
+            Command::AccountVerifyEmail,
+            Command::AccountVerifyEmailRestricted,
+            Command::AccountLostPassword,
+            Command::AccountChangePassword,
+            Command::AccountRegister,
+            Command::AccountApiServers,
+            Command::AccountSetApiServer,
+            Command::AccountSetLanguage,
+            Command::AccountPromo,
+            Command::DownloadLink,
+            Command::DownloadFile,
+            Command::BackupDelete,
+            Command::BackupCreate,
+            Command::BackupStopDevice,
+            Command::BackupDeleteDevice,
+        ];
+        for command in commands {
+            assert!(
+                !command_display(&command).is_empty(),
+                "missing label for {command:?}"
+            );
+            if !matches!(
+                command,
+                Command::SubmitPassword
+                    | Command::SubmitAuthToken
+                    | Command::SubmitTwoFactorCode
+                    | Command::SubmitRecoveryCode
+                    | Command::SubmitCryptoPassword
+                    | Command::ChangeLinkPassword
+                    | Command::CryptoChangePassword
+                    | Command::CryptoChangePasswordUnlocked
+                    | Command::CryptoSetupV2
+                    | Command::AccountChangePassword
+                    | Command::AccountRegister
+            ) {
+                let args = vec!["pcloudc".to_owned(), canonical_token_for(&command)];
+                let _ = parse_inputs_for_command(&command, &args);
+            }
+        }
+    }
+
+    #[test]
+    fn legacy_command_families_aliases_and_diagnostics_all_normalize() {
+        let successful: &[&[&str]] = &[
+            &[],
+            &["sync", "list"],
+            &["s", "ls"],
+            &["sync", "status"],
+            &["s", "st"],
+            &["sync", "add"],
+            &["sync", "remove"],
+            &["s", "rm"],
+            &["sync", "change-type"],
+            &["sync", "set-type"],
+            &["sync", "retype"],
+            &["sync", "pause"],
+            &["sync", "resume"],
+            &["sync", "localscan"],
+            &["sync", "conflict"],
+            &["sync", "conflicts"],
+            &["sync", "suggest"],
+            &["sync", "syncable"],
+            &["sync", "is-syncable"],
+            &["sync", "exclude", "add"],
+            &["sync", "excl", "remove"],
+            &["sync", "exclude", "rm"],
+            &["sync", "excl", "list"],
+            &["sync", "exclude", "ls"],
+            &["conflict", "list"],
+            &["conflict", "ls"],
+            &["conflict", "resolve"],
+            &["publink", "send"],
+            &["folder", "create"],
+            &["folder", "id"],
+            &["folder", "flags"],
+            &["folder", "owner"],
+            &["fs", "status"],
+            &["crypto", "start"],
+            &["c", "stop"],
+            &["crypto", "status"],
+            &["c", "st"],
+            &["crypto", "reset"],
+            &["crypto", "privkeyflags"],
+            &["crypto", "priv-key-flags"],
+            &["crypto", "send-change"],
+            &["crypto", "send-change-private"],
+            &["crypto", "change-pass"],
+            &["crypto", "change-password"],
+            &["crypto", "change-pass-unlocked"],
+            &["crypto", "change-password-unlocked"],
+            &["crypto", "hint"],
+            &["crypto", "setup"],
+            &["crypto", "setup-v2"],
+            &["crypto", "folder-key"],
+            &["crypto", "get-folder-key"],
+            &["crypto", "file-key"],
+            &["crypto", "get-file-key"],
+            &["account", "verify-email"],
+            &["account", "verify-restricted"],
+            &["account", "verify-email-restricted"],
+            &["account", "reset-password"],
+            &["account", "forgot-password"],
+            &["account", "lost-password"],
+            &["account", "change-pass"],
+            &["account", "change-password"],
+            &["account", "register"],
+            &["account", "apiservers"],
+            &["account", "api-servers"],
+            &["account", "set-server"],
+            &["account", "set-api-server"],
+            &["account", "language"],
+            &["account", "set-language"],
+            &["account", "promo"],
+            &["download", "link"],
+            &["dl", "file"],
+            &["notifications", "list"],
+            &["notif", "ls"],
+            &["notifications", "mark-read", "42"],
+            &["session", "status"],
+            &["session", "st"],
+            &["backup", "snapshot-create"],
+            &["backup", "snapshot-restore"],
+            &["backup", "snapshot-verify"],
+            &["backup", "snapshot-prune"],
+            &["backup", "delete"],
+            &["backup", "rm"],
+            &["backup", "create"],
+            &["backup", "stop-device"],
+            &["backup", "delete-device"],
+            &["snapshot"],
+            &["snapshot", "create"],
+            &["snapshot", "restore"],
+            &["snapshot", "verify"],
+            &["snapshot", "prune"],
+            &["audit", "verify"],
+            &["integrity"],
+            &["integrity", "status"],
+            &["integrity", "st"],
+            &["integrity", "run-once"],
+            &["integrity", "run_once"],
+            &["integrity", "skip"],
+            &["ha"],
+            &["ha", "status"],
+            &["ha", "st"],
+            &["audit-verifier"],
+            &["audit-verifier", "status"],
+            &["audit-verifier", "st"],
+            &["upload"],
+            &["upload", "create"],
+            &["upload", "pause"],
+            &["upload", "resume"],
+            &["upload", "cancel"],
+            &["upload", "list"],
+            &["upload", "ls"],
+            &["upload", "write-from-file"],
+            &["upload", "writefromfile"],
+            &["mount", "--force-umount"],
+            &["auth", "account-secret", "--allow-argv-password"],
+        ];
+
+        for tokens in successful {
+            let mut args = vec!["pcloudc".to_owned()];
+            args.extend(tokens.iter().map(|token| (*token).to_owned()));
+            super::normalize_args(&args)
+                .unwrap_or_else(|error| panic!("{tokens:?} did not normalize: {error}"));
+        }
+
+        let invalid: &[&[&str]] = &[
+            &["sync"],
+            &["sync", "unknown"],
+            &["sync", "exclude"],
+            &["sync", "exclude", "unknown"],
+            &["conflict"],
+            &["conflict", "unknown"],
+            &["publink"],
+            &["publink", "unknown"],
+            &["folder"],
+            &["folder", "unknown"],
+            &["fs"],
+            &["fs", "unknown"],
+            &["crypto"],
+            &["crypto", "unknown"],
+            &["account"],
+            &["account", "unknown"],
+            &["download"],
+            &["download", "unknown"],
+            &["notifications", "mark-read"],
+            &["notifications", "mark-read", "not-a-number"],
+            &["notifications", "unknown"],
+            &["session"],
+            &["session", "unknown"],
+            &["backup"],
+            &["backup", "unknown"],
+            &["snapshot", "unknown"],
+            &["audit"],
+            &["audit", "unknown"],
+            &["integrity", "unknown"],
+            &["ha", "unknown"],
+            &["audit-verifier", "unknown"],
+            &["upload", "unknown"],
+        ];
+        for tokens in invalid {
+            let mut args = vec!["pcloudc".to_owned()];
+            args.extend(tokens.iter().map(|token| (*token).to_owned()));
+            assert!(
+                matches!(
+                    super::normalize_args(&args),
+                    Err(CommandParseError::UnknownCommand(_))
+                ),
+                "{tokens:?} must be rejected"
+            );
         }
     }
 }

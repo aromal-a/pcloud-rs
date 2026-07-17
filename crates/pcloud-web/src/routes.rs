@@ -1177,6 +1177,13 @@ fn _enum_type_parity(_t: SyncType, _p: PublicLinkUploadPolicy) {}
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        path::PathBuf,
+        sync::{Arc, atomic::AtomicBool},
+    };
+
+    use pcloud_secret::secret_string::SecretString;
+
     use super::*;
 
     #[test]
@@ -1190,6 +1197,110 @@ mod tests {
         assert!(!is_valid_token(""));
         assert!(!is_valid_token("zzzz"));
         assert!(!is_valid_token(&"a".repeat(31)));
+    }
+
+    #[tokio::test]
+    async fn route_helper_edge_matrix_covers_status_authority_and_csrf_shapes() {
+        let ready_flag = Arc::new(AtomicBool::new(true));
+        let state = AppState {
+            socket_path: Arc::new(PathBuf::new()),
+            web_token: Arc::new(SecretString::new("fixture-token".to_owned())),
+            bind_addr: "127.0.0.1:17650".parse().unwrap(),
+            allowed_hosts: Arc::new(vec![
+                "coverage.internal".to_owned(),
+                "fixed.internal:8443".to_owned(),
+            ]),
+            ready: Arc::clone(&ready_flag),
+        };
+        assert_eq!(
+            readyz(State(state.clone())).await.into_response().status(),
+            200
+        );
+
+        for invalid in ["", "bad host", "a/b", "a\\b", "a@b", "host:", "::1"] {
+            assert!(parse_host_authority(invalid).is_none(), "{invalid}");
+        }
+        assert_eq!(
+            parse_host_authority("[::1]:17650").unwrap(),
+            HostAuthority {
+                host: "::1".to_owned(),
+                port: Some(17650)
+            }
+        );
+        assert!(authority_is_allowed(
+            &parse_host_authority("coverage.internal").unwrap(),
+            &state
+        ));
+        assert!(authority_is_allowed(
+            &parse_host_authority("fixed.internal:8443").unwrap(),
+            &state
+        ));
+        assert!(!authority_is_allowed(
+            &parse_host_authority("fixed.internal:443").unwrap(),
+            &state
+        ));
+        assert!(origin_authority("ftp://localhost").is_none());
+        assert!(origin_authority("http://bad host").is_none());
+        assert!(origin_matches_host(
+            "http://localhost",
+            &parse_host_authority("localhost:80").unwrap()
+        ));
+        assert!(!origin_matches_host(
+            "https://other.example",
+            &parse_host_authority("localhost").unwrap()
+        ));
+        assert_eq!(effective_port(None, "http"), Some(80));
+        assert_eq!(effective_port(None, "https"), Some(443));
+        assert_eq!(effective_port(None, "other"), None);
+
+        let offline = parse_status(&IpcResponse {
+            status: ResponseStatus::Unavailable,
+            message: "offline".to_owned(),
+        });
+        assert!(!offline.online);
+        assert!(offline.message.contains("Offline"));
+        let roots = parse_status(&IpcResponse {
+            status: ResponseStatus::Ok,
+            message: r#"{"sync_roots":[{},{}],"mount_state":"mounted"}"#.to_owned(),
+        });
+        assert_eq!(roots.sync_root_count, Some(2));
+
+        let ok = IpcResponse {
+            status: ResponseStatus::Ok,
+            message: "{}".to_owned(),
+        };
+        let failed = IpcResponse {
+            status: ResponseStatus::Conflict,
+            message: "conflict".to_owned(),
+        };
+        assert!(raw_and_online(&Ok(ok.clone())).1);
+        assert!(!raw_and_online(&Err("offline".to_owned())).1);
+        assert_eq!(ipc_redirect_response(Ok(ok.clone()), "/").status(), 303);
+        assert_eq!(ipc_redirect_response(Ok(failed.clone()), "/").status(), 502);
+        assert_eq!(
+            ipc_redirect_response(Err("offline".to_owned()), "/").status(),
+            502
+        );
+        assert_eq!(ipc_plain_response(Ok(ok)).status(), 200);
+        assert_eq!(ipc_plain_response(Ok(failed)).status(), 502);
+        assert_eq!(ipc_plain_response(Err("offline".to_owned())).status(), 502);
+
+        let token = "0123456789abcdef0123456789abcdef";
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_str(&format!("{CSRF_COOKIE}={token}")).unwrap(),
+        );
+        assert_eq!(existing_or_new_csrf(&headers), token);
+        assert!(require_csrf(&headers, None).is_err());
+        assert!(require_csrf(&headers, Some(token)).is_ok());
+        headers.insert(
+            CSRF_HEADER,
+            HeaderValue::from_static("ffffffffffffffffffffffffffffffff"),
+        );
+        assert!(require_csrf(&headers, None).is_err());
+
+        _enum_type_parity(SyncType::Full, PublicLinkUploadPolicy::Disabled);
     }
 
     #[test]

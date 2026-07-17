@@ -119,7 +119,13 @@ impl SecretPrompt {
         let mut stdout = io::stdout();
         write!(stdout, "{}: ", self.label)?;
         stdout.flush()?;
-        Ok(rpassword::read_password()?)
+        if is_stdin_tty() {
+            Ok(rpassword::read_password()?)
+        } else {
+            let stdin = io::stdin();
+            let mut reader = stdin.lock();
+            Ok(rpassword::read_password_from_bufread(&mut reader)?)
+        }
     }
 
     /// Like [`Self::read_secret`] but echoes `*` for each character typed. Used
@@ -146,9 +152,12 @@ impl SecretPrompt {
         stdout.flush()?;
 
         if !is_stdin_tty() {
-            // No controlling terminal (pipe, tests). Drop through to the
-            // plain rpassword read which handles non-TTY input gracefully.
-            let value = rpassword::read_password()?;
+            // `rpassword::read_password()` opens `/dev/tty` on Unix. For a
+            // pipe or redirected file we must explicitly read the process
+            // stdin handle instead.
+            let stdin = io::stdin();
+            let mut reader = stdin.lock();
+            let value = rpassword::read_password_from_bufread(&mut reader)?;
             return Ok(value);
         }
 
