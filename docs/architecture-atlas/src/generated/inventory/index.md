@@ -1,12 +1,12 @@
 # Complete project file inventory
 
-**2078 tracked or unignored working-tree files** are covered.
+**2116 tracked or unignored working-tree files** are covered.
 
 | Area | Files | Page |
 |---|---:|---|
 | Root product and policy files | 38 | [open](./root.md) |
-| Workspace crate files | 581 | [open](./crates.md) |
-| Documentation files | 324 | [open](./documentation.md) |
+| Workspace crate files | 603 | [open](./crates.md) |
+| Documentation files | 340 | [open](./documentation.md) |
 | Packaging and service files | 111 | [open](./packaging.md) |
 | Automation, workflows, scripts, and fuzz files | 33 | [open](./automation.md) |
 | Operations, deployment, tools, and cross-crate tests | 12 | [open](./operations-tests.md) |

@@ -10,12 +10,21 @@
 
 Authentication primitives and session state types for the pcloud-rs Rust rewrite.
 
+## Feature-family profile
+
+**Why it exists.** Keep login, TFA, refresh, logout, and session transitions in one explicit state machine instead of scattering credential rules through callers.
+
+**What it is good for.** Interactive and unattended authentication flows, token refresh, idle expiry, and safe recovery from authentication challenges.
+
+**Why it is good at that job.** Typed commands, states, and secret-free events make invalid transitions visible and independently testable.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
 |---|---|---|
 | `pcloud_auth` | lib | [`crates/pcloud-auth/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/src/lib.rs) |
 | `auth_session` | test | [`crates/pcloud-auth/tests/auth_session.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs) |
+| `orchestrator_coverage` | test | [`crates/pcloud-auth/tests/orchestrator_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs) |
 
 ## Direct dependencies
 
@@ -25,7 +34,7 @@ Authentication primitives and session state types for the pcloud-rs Rust rewrite
 
 No declared package features.
 
-## File inventory (11)
+## File inventory (12)
 
 | File | Kind | Role |
 |---|---|---|
@@ -40,13 +49,16 @@ No declared package features.
 | [`crates/pcloud-auth/src/refresh.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/src/refresh.rs) | Rust module | Refresh coordinator: glue between `SessionManager`, `RefreshPolicy`, |
 | [`crates/pcloud-auth/src/state.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/src/state.rs) | Rust module | State types tracked by \[`crate::manager::SessionManager`\]. |
 | [`crates/pcloud-auth/tests/auth_session.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs) | test | Integration tests for the `pcloud-auth` session state machine. |
+| [`crates/pcloud-auth/tests/orchestrator_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs) | test | Public-API coverage for protocol-backed authentication orchestration. |
 
-## Rust declaration index (142 total; 72 visible)
+## Rust declaration index (157 total; 72 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
 | `AuthCommand` | `pub` | enum | [`crates/pcloud-auth/src/commands.rs:18`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/src/commands.rs#L18) | Inputs to \[`crate::manager::SessionManager::apply`\]. Variants that carry a credential (`password`, `token`, `… |
 | `clone` | `private` | fn | [`crates/pcloud-auth/src/commands.rs:74`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/src/commands.rs#L74) | Read the source/rustdoc for the exact contract. |
+| `tests` | `private` | mod | [`crates/pcloud-auth/src/commands.rs:107`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/src/commands.rs#L107) | Read the source/rustdoc for the exact contract. |
+| `every_command_clone_preserves_non_secret_shape_and_secret_value` | `private` | fn | [`crates/pcloud-auth/src/commands.rs:112`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/src/commands.rs#L112) | Read the source/rustdoc for the exact contract. |
 | `AuthEvent` | `pub` | enum | [`crates/pcloud-auth/src/events.rs:30`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/src/events.rs#L30) | Auth-layer lifecycle event. Every variant is intentionally free of secret material so audit pipelines can for… |
 | `commands` | `pub` | mod | [`crates/pcloud-auth/src/lib.rs:108`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/src/lib.rs#L108) | Read the source/rustdoc for the exact contract. |
 | `events` | `pub` | mod | [`crates/pcloud-auth/src/lib.rs:109`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/src/lib.rs#L109) | Read the source/rustdoc for the exact contract. |
@@ -183,10 +195,23 @@ No declared package features.
 | `submit_tfa_code_when_challenge_present_transitions_to_authenticating` | `private` | fn | [`crates/pcloud-auth/tests/auth_session.rs:142`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs#L142) | Read the source/rustdoc for the exact contract. |
 | `submit_tfa_code_without_pending_challenge_returns_error` | `private` | fn | [`crates/pcloud-auth/tests/auth_session.rs:166`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs#L166) | Read the source/rustdoc for the exact contract. |
 | `tfa_code_can_complete_to_authenticated` | `private` | fn | [`crates/pcloud-auth/tests/auth_session.rs:181`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs#L181) | Read the source/rustdoc for the exact contract. |
-| `logout_from_authenticated_transitions_to_logged_out_and_clears_token` | `private` | fn | [`crates/pcloud-auth/tests/auth_session.rs:211`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs#L211) | Read the source/rustdoc for the exact contract. |
-| `revoke_zeroizes_token_and_transitions_to_logged_out` | `private` | fn | [`crates/pcloud-auth/tests/auth_session.rs:238`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs#L238) | Read the source/rustdoc for the exact contract. |
-| `mark_auth_failed_transitions_to_auth_failed_and_records_error` | `private` | fn | [`crates/pcloud-auth/tests/auth_session.rs:261`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs#L261) | Read the source/rustdoc for the exact contract. |
-| `replace_auth_token_requires_authenticated_state` | `private` | fn | [`crates/pcloud-auth/tests/auth_session.rs:287`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs#L287) | Read the source/rustdoc for the exact contract. |
+| `snapshot_clone_duplicates_secret_fields_without_changing_state` | `private` | fn | [`crates/pcloud-auth/tests/auth_session.rs:209`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs#L209) | Read the source/rustdoc for the exact contract. |
+| `logout_from_authenticated_transitions_to_logged_out_and_clears_token` | `private` | fn | [`crates/pcloud-auth/tests/auth_session.rs:245`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs#L245) | Read the source/rustdoc for the exact contract. |
+| `revoke_zeroizes_token_and_transitions_to_logged_out` | `private` | fn | [`crates/pcloud-auth/tests/auth_session.rs:272`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs#L272) | Read the source/rustdoc for the exact contract. |
+| `mark_auth_failed_transitions_to_auth_failed_and_records_error` | `private` | fn | [`crates/pcloud-auth/tests/auth_session.rs:295`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs#L295) | Read the source/rustdoc for the exact contract. |
+| `replace_auth_token_requires_authenticated_state` | `private` | fn | [`crates/pcloud-auth/tests/auth_session.rs:321`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/auth_session.rs#L321) | Read the source/rustdoc for the exact contract. |
+| `ScriptedTransport` | `private` | struct | [`crates/pcloud-auth/tests/orchestrator_coverage.rs:19`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs#L19) | Read the source/rustdoc for the exact contract. |
+| `new` | `private` | fn | [`crates/pcloud-auth/tests/orchestrator_coverage.rs:24`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs#L24) | Read the source/rustdoc for the exact contract. |
+| `failing` | `private` | fn | [`crates/pcloud-auth/tests/orchestrator_coverage.rs:32`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs#L32) | Read the source/rustdoc for the exact contract. |
+| `Error` | `private` | type | [`crates/pcloud-auth/tests/orchestrator_coverage.rs:40`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs#L40) | Read the source/rustdoc for the exact contract. |
+| `execute` | `private` | fn | [`crates/pcloud-auth/tests/orchestrator_coverage.rs:42`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs#L42) | Read the source/rustdoc for the exact contract. |
+| `apply_api_server_hint` | `private` | fn | [`crates/pcloud-auth/tests/orchestrator_coverage.rs:53`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs#L53) | Read the source/rustdoc for the exact contract. |
+| `hash` | `private` | fn | [`crates/pcloud-auth/tests/orchestrator_coverage.rs:56`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs#L56) | Read the source/rustdoc for the exact contract. |
+| `challenge_session` | `private` | fn | [`crates/pcloud-auth/tests/orchestrator_coverage.rs:65`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs#L65) | Read the source/rustdoc for the exact contract. |
+| `flow` | `private` | fn | [`crates/pcloud-auth/tests/orchestrator_coverage.rs:71`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs#L71) | Read the source/rustdoc for the exact contract. |
+| `submitted_two_factor_code_covers_success_rechallenge_and_soft_failure` | `private` | fn | [`crates/pcloud-auth/tests/orchestrator_coverage.rs:76`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs#L76) | Read the source/rustdoc for the exact contract. |
+| `submitted_two_factor_code_covers_missing_challenge_and_protocol_failure` | `private` | fn | [`crates/pcloud-auth/tests/orchestrator_coverage.rs:125`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs#L125) | Read the source/rustdoc for the exact contract. |
+| `password_plus_code_covers_all_server_outcomes` | `private` | fn | [`crates/pcloud-auth/tests/orchestrator_coverage.rs:145`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-auth/tests/orchestrator_coverage.rs#L145) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 

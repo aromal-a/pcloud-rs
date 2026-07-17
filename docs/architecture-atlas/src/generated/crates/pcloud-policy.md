@@ -10,6 +10,14 @@
 
 Policy enforcement layer (OPA/Rego) for the pcloud-rs Rust daemon.
 
+## Feature-family profile
+
+**Why it exists.** Apply organization rules before sensitive operations rather than relying only on server-side administration.
+
+**What it is good for.** Default-deny Rego evaluation, policy bundle loading/hot reload, contextual allow/deny decisions, and null single-user policy.
+
+**Why it is good at that job.** Fail-closed evaluation, owner-only policy files, deterministic inputs, and a null default preserve security and single-user simplicity.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

@@ -10,6 +10,14 @@
 
 Auto-heal checksum scanner plugin: detects checksum mismatches, requests quarantine, and escalates repeated corruption to a full sync pause.
 
+## Feature-family profile
+
+**Why it exists.** Detect local integrity drift and escalate corruption through a bounded plugin workflow.
+
+**What it is good for.** Checksum scans, quarantine requests, retry tracking, and full-sync pause escalation.
+
+**Why it is good at that job.** A small state machine separates detection from privileged remediation and caps repeated failure behavior.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
@@ -34,7 +42,7 @@ No declared package features.
 | [`crates/pcloud-plugin-autoheal/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/src/lib.rs) | library root | Auto-Heal Checksum Scanner Plugin |
 | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs) | test | Behavioural tests for the auto-heal plugin. All tests inject a |
 
-## Rust declaration index (46 total; 18 visible)
+## Rust declaration index (47 total; 18 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -69,21 +77,22 @@ No declared package features.
 | `on_load` | `private` | fn | [`crates/pcloud-plugin-autoheal/src/lib.rs:381`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/src/lib.rs#L381) | Read the source/rustdoc for the exact contract. |
 | `next_operation` | `private` | fn | [`crates/pcloud-plugin-autoheal/src/lib.rs:388`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/src/lib.rs#L388) | Read the source/rustdoc for the exact contract. |
 | `on_response` | `private` | fn | [`crates/pcloud-plugin-autoheal/src/lib.rs:392`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/src/lib.rs#L392) | Read the source/rustdoc for the exact contract. |
-| `FakeClock` | `private` | struct | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:17`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L17) | Deterministic, manually-advanced clock. `Send`-safe so the plugin continues to satisfy the plugin trait bound… |
-| `new` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:22`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L22) | Read the source/rustdoc for the exact contract. |
-| `advance` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:27`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L27) | Read the source/rustdoc for the exact contract. |
-| `now_secs` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:33`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L33) | Read the source/rustdoc for the exact contract. |
-| `CapturingNotifier` | `private` | struct | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:40`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L40) | Capturing notifier that records every (title, body) pair. |
-| `count` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:45`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L45) | Read the source/rustdoc for the exact contract. |
-| `notify` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:51`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L51) | Read the source/rustdoc for the exact contract. |
-| `mismatch_event` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:59`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L59) | Read the source/rustdoc for the exact contract. |
-| `ok_event` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:68`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L68) | Read the source/rustdoc for the exact contract. |
-| `drain_ops` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:77`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L77) | Read the source/rustdoc for the exact contract. |
-| `single_mismatch_emits_notification_and_quarantine` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:88`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L88) | Read the source/rustdoc for the exact contract. |
-| `three_mismatches_escalate_to_full_pause` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:109`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L109) | Read the source/rustdoc for the exact contract. |
-| `daily_quarantine_limit_respected` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:151`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L151) | Read the source/rustdoc for the exact contract. |
-| `ok_result_does_not_escalate` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:183`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L183) | Read the source/rustdoc for the exact contract. |
-| `notification_rate_limit_one_per_path_per_hour` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:201`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L201) | Read the source/rustdoc for the exact contract. |
+| `FakeClock` | `private` | struct | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:23`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L23) | Deterministic, manually-advanced clock. `Send`-safe so the plugin continues to satisfy the plugin trait bound… |
+| `new` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:28`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L28) | Read the source/rustdoc for the exact contract. |
+| `advance` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:33`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L33) | Read the source/rustdoc for the exact contract. |
+| `now_secs` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:39`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L39) | Read the source/rustdoc for the exact contract. |
+| `CapturingNotifier` | `private` | struct | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:46`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L46) | Capturing notifier that records every (title, body) pair. |
+| `count` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:51`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L51) | Read the source/rustdoc for the exact contract. |
+| `notify` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:57`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L57) | Read the source/rustdoc for the exact contract. |
+| `mismatch_event` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:65`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L65) | Read the source/rustdoc for the exact contract. |
+| `ok_event` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:74`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L74) | Read the source/rustdoc for the exact contract. |
+| `drain_ops` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:83`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L83) | Read the source/rustdoc for the exact contract. |
+| `single_mismatch_emits_notification_and_quarantine` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:94`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L94) | Read the source/rustdoc for the exact contract. |
+| `three_mismatches_escalate_to_full_pause` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:115`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L115) | Read the source/rustdoc for the exact contract. |
+| `daily_quarantine_limit_respected` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:157`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L157) | Read the source/rustdoc for the exact contract. |
+| `ok_result_does_not_escalate` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:189`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L189) | Read the source/rustdoc for the exact contract. |
+| `notification_rate_limit_one_per_path_per_hour` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:207`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L207) | Read the source/rustdoc for the exact contract. |
+| `plugin_contract_history_unreadable_and_retention_are_defined` | `private` | fn | [`crates/pcloud-plugin-autoheal/tests/behaviour.rs:232`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-autoheal/tests/behaviour.rs#L232) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 

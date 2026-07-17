@@ -10,11 +10,20 @@
 
 Enterprise KMS / HSM wrapping-key integration for pcloud-rs.
 
+## Feature-family profile
+
+**Why it exists.** Allow enterprise operators to wrap data-encryption keys under external KMS or HSM control.
+
+**What it is good for.** Null/default operation plus optional AWS KMS, HashiCorp Vault Transit, and PKCS#11 provider paths.
+
+**Why it is good at that job.** A narrow KmsProvider contract, provider-specific feature gates, no silent downgrade, and zeroized plaintext DEKs isolate external key custody.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
 |---|---|---|
 | `pcloud_kms` | lib | [`crates/pcloud-kms/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/src/lib.rs) |
+| `coverage_surface` | test | [`crates/pcloud-kms/tests/coverage_surface.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/tests/coverage_surface.rs) |
 
 ## Direct dependencies
 
@@ -30,14 +39,15 @@ Enterprise KMS / HSM wrapping-key integration for pcloud-rs.
 | `serde` | `dep:serde` |
 | `vault` | `dep:reqwest`, `dep:base64`, `dep:serde_json`, `dep:serde` |
 
-## File inventory (2)
+## File inventory (3)
 
 | File | Kind | Role |
 |---|---|---|
 | [`crates/pcloud-kms/Cargo.toml`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/Cargo.toml) | Cargo manifest | `aws` feature — AWS KMS provider. Off by default. |
 | [`crates/pcloud-kms/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/src/lib.rs) | library root | pcloud-kms — Enterprise KMS / HSM key-wrapping integration |
+| [`crates/pcloud-kms/tests/coverage_surface.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/tests/coverage_surface.rs) | test | \[test\] |
 
-## Rust declaration index (97 total; 20 visible)
+## Rust declaration index (104 total; 20 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -138,6 +148,13 @@ Enterprise KMS / HSM wrapping-key integration for pcloud-rs.
 | `vault_constructor_rejects_url_credentials` | `private` | fn | [`crates/pcloud-kms/src/lib.rs:1354`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/src/lib.rs#L1354) | Read the source/rustdoc for the exact contract. |
 | `vault_constructor_accepts_https_url` | `private` | fn | [`crates/pcloud-kms/src/lib.rs:1369`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/src/lib.rs#L1369) | Read the source/rustdoc for the exact contract. |
 | `vault_wrap_unwrap_roundtrip` | `private` | fn | [`crates/pcloud-kms/src/lib.rs:1385`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/src/lib.rs#L1385) | Read the source/rustdoc for the exact contract. |
+| `EchoKms` | `private` | struct | [`crates/pcloud-kms/tests/coverage_surface.rs:8`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/tests/coverage_surface.rs#L8) | Read the source/rustdoc for the exact contract. |
+| `name` | `private` | fn | [`crates/pcloud-kms/tests/coverage_surface.rs:13`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/tests/coverage_surface.rs#L13) | Read the source/rustdoc for the exact contract. |
+| `encrypt_dek` | `private` | fn | [`crates/pcloud-kms/tests/coverage_surface.rs:17`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/tests/coverage_surface.rs#L17) | Read the source/rustdoc for the exact contract. |
+| `decrypt_dek` | `private` | fn | [`crates/pcloud-kms/tests/coverage_surface.rs:26`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/tests/coverage_surface.rs#L26) | Read the source/rustdoc for the exact contract. |
+| `health_check` | `private` | fn | [`crates/pcloud-kms/tests/coverage_surface.rs:36`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/tests/coverage_surface.rs#L36) | Read the source/rustdoc for the exact contract. |
+| `public_value_types_null_provider_and_cache_are_observable` | `private` | fn | [`crates/pcloud-kms/tests/coverage_surface.rs:42`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/tests/coverage_surface.rs#L42) | Read the source/rustdoc for the exact contract. |
+| `disabled_pkcs11_constructors_fail_loudly` | `private` | fn | [`crates/pcloud-kms/tests/coverage_surface.rs:110`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-kms/tests/coverage_surface.rs#L110) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 

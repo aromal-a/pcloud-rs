@@ -10,6 +10,14 @@
 
 In-memory caching primitives for pcloud-rs metadata and transfer state.
 
+## Feature-family profile
+
+**Why it exists.** Reduce latency and repeated I/O without allowing cached data to become remote truth.
+
+**What it is good for.** Metadata/page reuse, checksum reuse, bounded staging, eviction, and optional encrypted local cache blobs.
+
+**Why it is good at that job.** Bounded LRU-style structures and explicit staging/cipher boundaries make memory use and invalidation behavior controllable.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

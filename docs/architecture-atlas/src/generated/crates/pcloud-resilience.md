@@ -10,12 +10,22 @@
 
 Enterprise resilience primitives (rate limiter, circuit breaker, retry, timeout) for pcloud-rs.
 
+## Feature-family profile
+
+**Why it exists.** Keep transient faults from becoming retry storms, indefinite hangs, or cascading outages.
+
+**What it is good for.** Retry/backoff, global retry budgets, circuit breakers, rate limits, pacing, metered-network awareness, and optional async timeouts.
+
+**Why it is good at that job.** Injectable clocks, explicit state machines, token budgets, jitter, and metrics make failure policy observable and testable.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
 |---|---|---|
 | `pcloud_resilience` | lib | [`crates/pcloud-resilience/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/src/lib.rs) |
 | `circuit_breaker_proptest` | test | [`crates/pcloud-resilience/tests/circuit_breaker_proptest.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/circuit_breaker_proptest.rs) |
+| `retry_coverage` | test | [`crates/pcloud-resilience/tests/retry_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/retry_coverage.rs) |
+| `transport_coverage` | test | [`crates/pcloud-resilience/tests/transport_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/transport_coverage.rs) |
 
 ## Direct dependencies
 
@@ -29,7 +39,7 @@ Enterprise resilience primitives (rate limiter, circuit breaker, retry, timeout)
 | `tokio-timeout` | `dep:tokio` |
 | `transport-metrics` | `dep:pcloud-observability`, `pcloud-observability/prometheus-exporter` |
 
-## File inventory (13)
+## File inventory (15)
 
 | File | Kind | Role |
 |---|---|---|
@@ -46,8 +56,10 @@ Enterprise resilience primitives (rate limiter, circuit breaker, retry, timeout)
 | [`crates/pcloud-resilience/src/timeout.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/src/timeout.rs) | Rust module | Tokio-backed, cancellation-safe timeout helper. |
 | [`crates/pcloud-resilience/src/transport.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/src/transport.rs) | Rust module | `ResilientTransport` — retry-aware HTTP request executor. |
 | [`crates/pcloud-resilience/tests/circuit_breaker_proptest.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/circuit_breaker_proptest.rs) | test | Property tests for `CircuitBreaker`: drive a random event stream |
+| [`crates/pcloud-resilience/tests/retry_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/retry_coverage.rs) | test | Public retry-policy edge coverage. |
+| [`crates/pcloud-resilience/tests/transport_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/transport_coverage.rs) | test | \[test\] |
 
-## Rust declaration index (238 total; 107 visible)
+## Rust declaration index (245 total; 107 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -289,6 +301,13 @@ Enterprise resilience primitives (rate limiter, circuit breaker, retry, timeout)
 | `Event` | `private` | enum | [`crates/pcloud-resilience/tests/circuit_breaker_proptest.rs:18`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/circuit_breaker_proptest.rs#L18) | Read the source/rustdoc for the exact contract. |
 | `event_strategy` | `private` | fn | [`crates/pcloud-resilience/tests/circuit_breaker_proptest.rs:25`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/circuit_breaker_proptest.rs#L25) | Read the source/rustdoc for the exact contract. |
 | `state_machine_invariants` | `private` | fn | [`crates/pcloud-resilience/tests/circuit_breaker_proptest.rs:45`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/circuit_breaker_proptest.rs#L45) | Invariants checked on every step: * `state()` is always one of the three allowed variants. * When the breaker… |
+| `retry_policy_validates_construction_and_handles_numeric_edges` | `private` | fn | [`crates/pcloud-resilience/tests/retry_coverage.rs:10`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/retry_coverage.rs#L10) | Read the source/rustdoc for the exact contract. |
+| `method_retry_policy_exposes_inner_clock_and_every_class_toggle` | `private` | fn | [`crates/pcloud-resilience/tests/retry_coverage.rs:99`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/retry_coverage.rs#L99) | Read the source/rustdoc for the exact contract. |
+| `transport` | `private` | fn | [`crates/pcloud-resilience/tests/transport_coverage.rs:17`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/transport_coverage.rs#L17) | Read the source/rustdoc for the exact contract. |
+| `no_sleep` | `private` | fn | [`crates/pcloud-resilience/tests/transport_coverage.rs:31`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/transport_coverage.rs#L31) | Read the source/rustdoc for the exact contract. |
+| `labels_retry_after_and_typed_classification_cover_complete_taxonomy` | `private` | fn | [`crates/pcloud-resilience/tests/transport_coverage.rs:34`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/transport_coverage.rs#L34) | Read the source/rustdoc for the exact contract. |
+| `response_helpers_and_config_invariants_are_stable` | `private` | fn | [`crates/pcloud-resilience/tests/transport_coverage.rs:154`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/transport_coverage.rs#L154) | Read the source/rustdoc for the exact contract. |
+| `executor_covers_success_terminal_policy_rate_limit_retry_and_budget_paths` | `private` | fn | [`crates/pcloud-resilience/tests/transport_coverage.rs:181`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-resilience/tests/transport_coverage.rs#L181) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 

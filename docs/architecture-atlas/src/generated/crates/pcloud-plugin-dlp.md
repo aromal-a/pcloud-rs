@@ -10,6 +10,14 @@
 
 Built-in pre-upload DLP scanner plugin (regex + Shannon entropy) for pcloud-rs.
 
+## Feature-family profile
+
+**Why it exists.** Inspect outbound content before upload so obvious secrets can be blocked or reviewed.
+
+**What it is good for.** Built-in regex and Shannon-entropy scanning with findings and policy decisions.
+
+**Why it is good at that job.** Bounded scanning, explicit rules, and pre-upload placement provide useful local detection without granting network access.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

@@ -10,6 +10,14 @@
 
 Multi-account supervisor scaffold (T2.8). Per-account state + IPC routing model.
 
+## Feature-family profile
+
+**Why it exists.** Model multiple isolated accounts without merging credentials, state directories, or daemon authority.
+
+**What it is good for.** Experimental account registry, account selection, IPC routing metadata, and per-account sub-daemon spawning.
+
+**Why it is good at that job.** Process and path isolation make account boundaries explicit; the scaffold remains separate until routing and lifecycle are production-wired.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

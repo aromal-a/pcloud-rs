@@ -10,6 +10,14 @@
 
 Local in-process HTTP mock of the pCloud REST API for integration tests. No network access required; no production secrets involved.
 
+## Feature-family profile
+
+**Why it exists.** Make protocol and backend integration deterministic without network access or production secrets.
+
+**What it is good for.** Local pCloud-like HTTP responses, error injection, request assertions, and repeatable integration flows.
+
+**Why it is good at that job.** An in-process server gives tests realistic I/O boundaries while retaining exact control of timing and responses.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

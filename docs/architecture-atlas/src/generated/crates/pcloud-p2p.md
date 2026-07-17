@@ -10,6 +10,14 @@
 
 Peer-to-peer LAN sync scaffolding for pcloud-rs (experimental).
 
+## Feature-family profile
+
+**Why it exists.** Reserve typed policy and lifecycle seams for possible LAN-assisted transfer while preserving the cloud as authority.
+
+**What it is good for.** Design exploration and compile-time/API compatibility only: the current runtime opens no mDNS socket, advertises nothing, returns no peers, and transfers no bytes.
+
+**Why it is good at that job.** The inert scaffold prevents an unfinished peer path from becoming a trusted metadata or data source and is not wired into pcloudd.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
@@ -30,8 +38,8 @@ No declared package features.
 |---|---|---|
 | [`crates/pcloud-p2p/Cargo.toml`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/Cargo.toml) | Cargo manifest | Defines package/workspace metadata, features, targets, and dependencies. |
 | [`crates/pcloud-p2p/README.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/README.md) | documentation | pcloud-p2p |
-| [`crates/pcloud-p2p/src/discovery.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/discovery.rs) | Rust module | Peer discovery configuration (maximum peers to track at once). |
-| [`crates/pcloud-p2p/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs) | library root | pcloud-p2p |
+| [`crates/pcloud-p2p/src/discovery.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/discovery.rs) | Rust module | Inert discovery contract: opens no socket, advertises nothing, and always reports an empty peer list. |
+| [`crates/pcloud-p2p/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs) | library root | Experimental P2P shell around an inert discovery runtime; no current peer networking, planning, or transfer path. |
 | [`crates/pcloud-p2p/src/policy.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/policy.rs) | Rust module | Global on/off policy for the P2P subsystem. |
 | [`crates/pcloud-p2p/src/transfer.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/transfer.rs) | Rust module | Peer-to-peer transfer tuning knobs. |
 
@@ -49,17 +57,17 @@ No declared package features.
 | `shutdown` | `pub` | fn | [`crates/pcloud-p2p/src/discovery.rs:93`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/discovery.rs#L93) | Shutdown hook. No-op today. |
 | `peers` | `pub` | fn | [`crates/pcloud-p2p/src/discovery.rs:97`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/discovery.rs#L97) | Snapshot of known peers. Always empty on the scaffold. |
 | `instance_id` | `pub` | fn | [`crates/pcloud-p2p/src/discovery.rs:103`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/discovery.rs#L103) | Advertised instance id for this runtime. |
-| `discovery` | `pub` | mod | [`crates/pcloud-p2p/src/lib.rs:76`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L76) | Peer discovery primitives (LAN scan, peer inventory). |
+| `discovery` | `pub` | mod | [`crates/pcloud-p2p/src/lib.rs:76`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L76) | Configuration plus an inert discovery handle; no LAN scan or peer inventory is implemented. |
 | `policy` | `pub` | mod | [`crates/pcloud-p2p/src/lib.rs:78`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L78) | P2P on/off policy and gating rules. |
 | `transfer` | `pub` | mod | [`crates/pcloud-p2p/src/lib.rs:80`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L80) | Peer-to-peer transfer tuning surface. |
 | `CRATE_NAME` | `pub` | const | [`crates/pcloud-p2p/src/lib.rs:85`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L85) | Crate identifier used in logs and telemetry. |
-| `SERVICE_TYPE` | `pub` | const | [`crates/pcloud-p2p/src/lib.rs:88`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L88) | mDNS service type advertised and browsed by the discovery runtime. |
+| `SERVICE_TYPE` | `pub` | const | [`crates/pcloud-p2p/src/lib.rs:88`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L88) | Reserved future mDNS service string; current code neither advertises nor browses it. |
 | `P2pShell` | `pub` | struct | [`crates/pcloud-p2p/src/lib.rs:102`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L102) | Composition of the three P2P sub-shells (policy / discovery / transfer). # Honest scope (2026-04-15) This she… |
 | `new` | `pub` | fn | [`crates/pcloud-p2p/src/lib.rs:116`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L116) | Construct a disabled-by-default shell with no active runtime. |
 | `summary` | `pub` | fn | [`crates/pcloud-p2p/src/lib.rs:122`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L122) | Render a single-line human-readable summary of the shell state. |
-| `start` | `pub` | fn | [`crates/pcloud-p2p/src/lib.rs:147`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L147) | Start the mDNS discovery runtime: spawn a responder advertising \[`SERVICE_TYPE`\] with TXT keys `instance=&lt;uui… |
-| `stop` | `pub` | fn | [`crates/pcloud-p2p/src/lib.rs:157`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L157) | Stop the active mDNS runtime, if any. Idempotent. |
-| `is_running` | `pub` | fn | [`crates/pcloud-p2p/src/lib.rs:165`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L165) | Whether an mDNS runtime is currently active. |
+| `start` | `pub` | fn | [`crates/pcloud-p2p/src/lib.rs:147`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L147) | Creates an inert local handle only; opens no socket and performs no mDNS work. |
+| `stop` | `pub` | fn | [`crates/pcloud-p2p/src/lib.rs:157`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L157) | Drops the inert local handle; there is no network responder to stop. |
+| `is_running` | `pub` | fn | [`crates/pcloud-p2p/src/lib.rs:165`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L165) | Reports whether the inert handle exists, not discovery/network health. |
 | `peers` | `pub` | fn | [`crates/pcloud-p2p/src/lib.rs:172`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L172) | Return a snapshot of currently-known peers. Empty when the runtime is not active. |
 | `instance_id` | `pub` | fn | [`crates/pcloud-p2p/src/lib.rs:182`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L182) | Instance id advertised by the active runtime, or `None` when discovery is not running. |
 | `drop` | `private` | fn | [`crates/pcloud-p2p/src/lib.rs:188`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-p2p/src/lib.rs#L188) | Read the source/rustdoc for the exact contract. |

@@ -10,6 +10,14 @@
 
 Rolling-hash + strong-hash block signatures and delta encoder for differential sync. T2.1 — only the modified blocks of an edit travel over the wire.
 
+## Feature-family profile
+
+**Why it exists.** Avoid retransmitting unchanged blocks when a large file changes locally.
+
+**What it is good for.** Rolling weak hashes, strong block signatures, delta planning, and differential-upload strategy inputs.
+
+**Why it is good at that job.** Rsync-style weak/strong matching finds reusable blocks in one pass while strong hashes protect against weak-hash collisions.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

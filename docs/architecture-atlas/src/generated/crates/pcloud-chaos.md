@@ -10,6 +10,14 @@
 
 Chaos test harness for pcloud-rs (P1.6). Scripted fault-injection scenarios with predicted outcomes.
 
+## Feature-family profile
+
+**Why it exists.** Exercise failure modes that ordinary success-path tests cannot prove.
+
+**What it is good for.** Disk-full, process-kill, slow-peer, clock-jump, and network-blackhole recovery validation.
+
+**Why it is good at that job.** Scripted fault scenarios have predicted outcomes, allowing crash safety and resilience claims to be falsified repeatably.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
@@ -42,7 +50,7 @@ No declared package features.
 | [`crates/pcloud-chaos/tests/sigkill_mid_flush.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/sigkill_mid_flush.rs) | test | Scenario 1: SIGKILL mid-flush → journal replay completes without panic. |
 | [`crates/pcloud-chaos/tests/slowloris_timeout.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/slowloris_timeout.rs) | test | Scenario 5: slowloris partial response → per-request timeout fires. |
 
-## Rust declaration index (20 total; 4 visible)
+## Rust declaration index (23 total; 4 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -56,9 +64,12 @@ No declared package features.
 | `JournalError` | `private` | enum | [`crates/pcloud-chaos/tests/disk_full_journal.rs:20`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/disk_full_journal.rs#L20) | Read the source/rustdoc for the exact contract. |
 | `chaos_disk_full_journal` | `private` | fn | [`crates/pcloud-chaos/tests/disk_full_journal.rs:29`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/disk_full_journal.rs#L29) | Read the source/rustdoc for the exact contract. |
 | `unix_impl` | `private` | mod | [`crates/pcloud-chaos/tests/disk_full_journal.rs:46`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/disk_full_journal.rs#L46) | Read the source/rustdoc for the exact contract. |
-| `set_fsize_limit` | `private` | fn | [`crates/pcloud-chaos/tests/disk_full_journal.rs:51`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/disk_full_journal.rs#L51) | Read the source/rustdoc for the exact contract. |
-| `journal_append` | `private` | fn | [`crates/pcloud-chaos/tests/disk_full_journal.rs:66`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/disk_full_journal.rs#L66) | Read the source/rustdoc for the exact contract. |
-| `run` | `pub` | fn | [`crates/pcloud-chaos/tests/disk_full_journal.rs:89`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/disk_full_journal.rs#L89) | Read the source/rustdoc for the exact contract. |
+| `FsizeLimitGuard` | `private` | struct | [`crates/pcloud-chaos/tests/disk_full_journal.rs:51`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/disk_full_journal.rs#L51) | Read the source/rustdoc for the exact contract. |
+| `drop` | `private` | fn | [`crates/pcloud-chaos/tests/disk_full_journal.rs:56`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/disk_full_journal.rs#L56) | Read the source/rustdoc for the exact contract. |
+| `current_fsize_limit` | `private` | fn | [`crates/pcloud-chaos/tests/disk_full_journal.rs:70`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/disk_full_journal.rs#L70) | Read the source/rustdoc for the exact contract. |
+| `set_fsize_limit` | `private` | fn | [`crates/pcloud-chaos/tests/disk_full_journal.rs:81`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/disk_full_journal.rs#L81) | Read the source/rustdoc for the exact contract. |
+| `journal_append` | `private` | fn | [`crates/pcloud-chaos/tests/disk_full_journal.rs:101`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/disk_full_journal.rs#L101) | Read the source/rustdoc for the exact contract. |
+| `run` | `pub` | fn | [`crates/pcloud-chaos/tests/disk_full_journal.rs:124`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/disk_full_journal.rs#L124) | Read the source/rustdoc for the exact contract. |
 | `chaos_sigkill_mid_flush` | `private` | fn | [`crates/pcloud-chaos/tests/sigkill_mid_flush.rs:33`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/sigkill_mid_flush.rs#L33) | Read the source/rustdoc for the exact contract. |
 | `unix_impl` | `private` | mod | [`crates/pcloud-chaos/tests/sigkill_mid_flush.rs:50`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/sigkill_mid_flush.rs#L50) | Read the source/rustdoc for the exact contract. |
 | `append_frame` | `private` | fn | [`crates/pcloud-chaos/tests/sigkill_mid_flush.rs:60`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-chaos/tests/sigkill_mid_flush.rs#L60) | Writes a single 32-byte record: \[u32 len\]\[u32 crc\]\[24 bytes payload\] fsync'd before returning. Matches the du… |

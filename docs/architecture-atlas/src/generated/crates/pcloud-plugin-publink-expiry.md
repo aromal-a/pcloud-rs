@@ -10,11 +10,20 @@
 
 First-party pcloud-rs plugin that emits desktop notifications when public links are about to expire.
 
+## Feature-family profile
+
+**Why it exists.** Warn users before expiring public links become an operational surprise.
+
+**What it is good for.** Single-user desktop notifications with persistent per-link rate limiting.
+
+**Why it is good at that job.** A clock/notifier abstraction and atomic owner-only state make behavior testable and restart-safe without auto-mutating links.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
 |---|---|---|
 | `pcloud_plugin_publink_expiry` | lib | [`crates/pcloud-plugin-publink-expiry/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-publink-expiry/src/lib.rs) |
+| `coverage_surface` | test | [`crates/pcloud-plugin-publink-expiry/tests/coverage_surface.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-publink-expiry/tests/coverage_surface.rs) |
 
 ## Direct dependencies
 
@@ -24,15 +33,16 @@ First-party pcloud-rs plugin that emits desktop notifications when public links 
 
 No declared package features.
 
-## File inventory (3)
+## File inventory (4)
 
 | File | Kind | Role |
 |---|---|---|
 | [`crates/pcloud-plugin-publink-expiry/Cargo.toml`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-publink-expiry/Cargo.toml) | Cargo manifest | Defines package/workspace metadata, features, targets, and dependencies. |
 | [`crates/pcloud-plugin-publink-expiry/README.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-publink-expiry/README.md) | documentation | pcloud-plugin-publink-expiry |
 | [`crates/pcloud-plugin-publink-expiry/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-publink-expiry/src/lib.rs) | library root | pcloud-plugin-publink-expiry |
+| [`crates/pcloud-plugin-publink-expiry/tests/coverage_surface.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-publink-expiry/tests/coverage_surface.rs) | test | \[test\] |
 
-## Rust declaration index (59 total; 27 visible)
+## Rust declaration index (62 total; 27 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -95,6 +105,9 @@ No declared package features.
 | `MtN` | `private` | struct | [`crates/pcloud-plugin-publink-expiry/src/lib.rs:712`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-publink-expiry/src/lib.rs#L712) | Read the source/rustdoc for the exact contract. |
 | `notify` | `private` | fn | [`crates/pcloud-plugin-publink-expiry/src/lib.rs:714`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-publink-expiry/src/lib.rs#L714) | Read the source/rustdoc for the exact contract. |
 | `zero_window_hours_rejected_by_config` | `private` | fn | [`crates/pcloud-plugin-publink-expiry/src/lib.rs:735`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-publink-expiry/src/lib.rs#L735) | Read the source/rustdoc for the exact contract. |
+| `temp_path` | `private` | fn | [`crates/pcloud-plugin-publink-expiry/tests/coverage_surface.rs:14`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-publink-expiry/tests/coverage_surface.rs#L14) | Read the source/rustdoc for the exact contract. |
+| `configuration_state_and_default_components_cover_public_contract` | `private` | fn | [`crates/pcloud-plugin-publink-expiry/tests/coverage_surface.rs:26`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-publink-expiry/tests/coverage_surface.rs#L26) | Read the source/rustdoc for the exact contract. |
+| `plugin_lifecycle_and_link_filtering_cover_all_public_branches` | `private` | fn | [`crates/pcloud-plugin-publink-expiry/tests/coverage_surface.rs:99`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-publink-expiry/tests/coverage_surface.rs#L99) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 

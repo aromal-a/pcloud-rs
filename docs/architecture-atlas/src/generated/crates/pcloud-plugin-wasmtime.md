@@ -10,6 +10,14 @@
 
 T2.5.b — wasmtime-backed `PluginBackend` impl for `pcloud-plugin-host`. Kept in a separate crate so the host core stays dep-light.
 
+## Feature-family profile
+
+**Why it exists.** Provide a concrete WebAssembly sandbox without forcing Wasmtime into the core plugin host dependency graph.
+
+**What it is good for.** Experimental execution of capability-bounded plugins with fuel and memory limits.
+
+**Why it is good at that job.** A separate backend crate contains the large runtime dependency and translates only the narrow PluginBackend contract.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

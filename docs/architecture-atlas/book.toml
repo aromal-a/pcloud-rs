@@ -1,7 +1,7 @@
 [book]
-title = "pcloud-rs Architecture Atlas"
+title = "pcloud-rs Architecture & Feature Atlas"
 authors = ["pcloud-rs contributors"]
-description = "Source-derived architecture, entrypoint, operations, and file inventory for pcloud-rs."
+description = "Complete source-derived pcloud-rs feature encyclopedia, architecture, entrypoint, operations, and file inventory."
 language = "en"
 src = "src"
 

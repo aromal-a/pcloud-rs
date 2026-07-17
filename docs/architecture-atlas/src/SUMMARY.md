@@ -3,6 +3,23 @@
 - [Architecture Atlas](./index.md)
 - [Truth, maturity, and scope](./truth-and-scope.md)
 
+# Complete feature encyclopedia
+
+- [Feature encyclopedia: how to read it](./features/index.md)
+- [Personal cloud and account features](./features/personal-cloud.md)
+- [Transfers, sync, backup, and mounted drives](./features/sync-mount-transfer.md)
+- [Cryptography, secrets, and key custody](./features/crypto.md)
+- [Sharing, multi-user, and enterprise](./features/collaboration-enterprise.md)
+- [CLI, SDK, web, protocols, and automation](./features/interfaces-automation.md)
+- [Runtime, storage, resilience, and internal helpers](./features/runtime-internals.md)
+- [Platforms, packaging, and operations](./features/platform-operations.md)
+- [Verification, test, fuzz, and developer features](./features/verification-helpers.md)
+- [All package feature families](./generated/features/package-families.md)
+- [All API and compatibility capabilities](./generated/features/api-capabilities.md)
+- [All current CLI, IPC, SDK, and binary surfaces](./generated/features/current-surfaces.md)
+- [All Cargo feature flags](./generated/features/cargo-flags.md)
+- [All internal modules and helpers](./generated/features/source-units.md)
+
 # Architecture
 
 - [System overview](./system-overview.md)

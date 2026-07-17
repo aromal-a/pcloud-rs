@@ -10,16 +10,26 @@
 
 Typed pCloud protocol clients (auth, transfer, shares, public links) over TLS.
 
+## Feature-family profile
+
+**Why it exists.** Represent pCloud wire operations as typed clients and builders rather than stringly-typed calls throughout the product.
+
+**What it is good for.** Auth, account, folders, transfers, diff, backup, notifications, shares, business/team, public links, Crypto, binary framing, TLS, and downloads.
+
+**Why it is good at that job.** Typed DTOs, bounded parsers, shared TLS, redacted secrets, resilient wrappers, and synchronous/async transfer helpers isolate protocol risk.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
 |---|---|---|
 | `pcloud_proto` | lib | [`crates/pcloud-proto/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/lib.rs) |
+| `folder_api_coverage` | test | [`crates/pcloud-proto/tests/folder_api_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/folder_api_coverage.rs) |
 | `http_download_integrity` | test | [`crates/pcloud-proto/tests/http_download_integrity.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/http_download_integrity.rs) |
 | `proptest_framer` | test | [`crates/pcloud-proto/tests/proptest_framer.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/proptest_framer.rs) |
 | `proptest_response_and_frames` | test | [`crates/pcloud-proto/tests/proptest_response_and_frames.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/proptest_response_and_frames.rs) |
 | `smoke_fuzz_arbitrary` | test | [`crates/pcloud-proto/tests/smoke_fuzz_arbitrary.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/smoke_fuzz_arbitrary.rs) |
 | `transfer_and_public_link_roundtrip` | test | [`crates/pcloud-proto/tests/transfer_and_public_link_roundtrip.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/transfer_and_public_link_roundtrip.rs) |
+| `value_coverage` | test | [`crates/pcloud-proto/tests/value_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/value_coverage.rs) |
 | `proto_dispatch` | bench | [`crates/pcloud-proto/benches/proto_dispatch.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/benches/proto_dispatch.rs) |
 
 ## Direct dependencies
@@ -30,7 +40,7 @@ Typed pCloud protocol clients (auth, transfer, shares, public links) over TLS.
 
 No declared package features.
 
-## File inventory (51)
+## File inventory (53)
 
 | File | Kind | Role |
 |---|---|---|
@@ -80,13 +90,15 @@ No declared package features.
 | [`crates/pcloud-proto/src/tls.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/tls.rs) | Rust module | Shared rustls \[`ClientConfig`\] for all pCloud TLS clients. |
 | [`crates/pcloud-proto/src/transfer_api.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/transfer_api.rs) | Rust module | Transfer protocol client: `getfilelink`, `upload_create`, |
 | [`crates/pcloud-proto/src/transport.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/transport.rs) | Rust module | Transport traits and type shims over `pcloud-transport`: the typed |
+| [`crates/pcloud-proto/tests/folder_api_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/folder_api_coverage.rs) | test | Public folder API coverage for date parsing and server-hint variants. |
 | [`crates/pcloud-proto/tests/http_download_integrity.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/http_download_integrity.rs) | test | Integration tests covering the optional SHA-256 integrity |
 | [`crates/pcloud-proto/tests/proptest_framer.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/proptest_framer.rs) | test | Property tests for the pcloud-proto binary framer. |
 | [`crates/pcloud-proto/tests/proptest_response_and_frames.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/proptest_response_and_frames.rs) | test | Property tests for the pcloud-proto binary response parser and |
 | [`crates/pcloud-proto/tests/smoke_fuzz_arbitrary.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/smoke_fuzz_arbitrary.rs) | test | CI-friendly smoke fuzzing driven by the `arbitrary` crate. |
 | [`crates/pcloud-proto/tests/transfer_and_public_link_roundtrip.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/transfer_and_public_link_roundtrip.rs) | test | Integration tests for pcloud-proto transfer and public-link round-trips. |
+| [`crates/pcloud-proto/tests/value_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/value_coverage.rs) | test | Public value-wrapper and response-parser edge coverage. |
 
-## Rust declaration index (1252 total; 510 visible)
+## Rust declaration index (1264 total; 510 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -356,38 +368,38 @@ No declared package features.
 | `execute_create_folder` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:465`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L465) | Read the source/rustdoc for the exact contract. |
 | `RenamedFolderResponse` | `pub` | struct | [`crates/pcloud-proto/src/folder_api.rs:520`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L520) | Metadata snippet returned by `deletefolder`, `deletefolderrecursive`, and `renamefolder`. Every field is best… |
 | `parse_modified_string` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:536`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L536) | Parse a pCloud `modified`/`created` date string into Unix epoch seconds. pCloud's listfolder returns dates in… |
-| `parse_mutated_folder` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:597`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L597) | Read the source/rustdoc for the exact contract. |
-| `perm_bits` | `pub` | mod | [`crates/pcloud-proto/src/folder_api.rs:618`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L618) | `PSYNC_PERM_*` bitmap constants, mirroring `pclsync/psynclib.h:206-216`. |
-| `READ` | `pub` | const | [`crates/pcloud-proto/src/folder_api.rs:620`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L620) | `READ` — read. |
-| `CREATE` | `pub` | const | [`crates/pcloud-proto/src/folder_api.rs:622`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L622) | `CREATE` — create. |
-| `MODIFY` | `pub` | const | [`crates/pcloud-proto/src/folder_api.rs:624`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L624) | `MODIFY` — modify. |
-| `DELETE` | `pub` | const | [`crates/pcloud-proto/src/folder_api.rs:626`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L626) | `DELETE` — delete. |
-| `MANAGE` | `pub` | const | [`crates/pcloud-proto/src/folder_api.rs:628`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L628) | `MANAGE` — manage. |
-| `ALL` | `pub` | const | [`crates/pcloud-proto/src/folder_api.rs:630`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L630) | `ALL` — all. |
-| `MetadataFacets` | `private` | struct | [`crates/pcloud-proto/src/folder_api.rs:636`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L636) | Subset of per-entry metadata facets (ownership, crypto, sharing, permissions) extracted from a listfolder has… |
-| `extract_metadata_facets` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:644`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L644) | Read the source/rustdoc for the exact contract. |
-| `extract_api_server_hint` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:685`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L685) | Read the source/rustdoc for the exact contract. |
-| `expect_ok_result` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:698`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L698) | Read the source/rustdoc for the exact contract. |
-| `tests` | `private` | mod | [`crates/pcloud-proto/src/folder_api.rs:714`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L714) | Read the source/rustdoc for the exact contract. |
-| `MockTransport` | `private` | struct | [`crates/pcloud-proto/src/folder_api.rs:725`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L725) | Read the source/rustdoc for the exact contract. |
-| `with_responses` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:731`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L731) | Read the source/rustdoc for the exact contract. |
-| `Error` | `private` | type | [`crates/pcloud-proto/src/folder_api.rs:740`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L740) | Read the source/rustdoc for the exact contract. |
-| `execute` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:742`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L742) | Read the source/rustdoc for the exact contract. |
-| `apply_api_server_hint` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:752`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L752) | Read the source/rustdoc for the exact contract. |
-| `list_folder_by_path_parses_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:761`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L761) | Read the source/rustdoc for the exact contract. |
-| `list_folder_by_path_rejects_nonzero_result` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:795`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L795) | Read the source/rustdoc for the exact contract. |
-| `list_folder_contents_by_path_parses_entries` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:813`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L813) | Read the source/rustdoc for the exact contract. |
-| `create_folder_parses_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:853`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L853) | Read the source/rustdoc for the exact contract. |
-| `create_folder_by_path_parses_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:875`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L875) | Read the source/rustdoc for the exact contract. |
-| `create_folder_if_not_exists_reports_existing_folder` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:894`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L894) | Read the source/rustdoc for the exact contract. |
-| `create_folder_propagates_error_result_codes` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:915`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L915) | Read the source/rustdoc for the exact contract. |
-| `mutated_folder_response` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:933`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L933) | Read the source/rustdoc for the exact contract. |
-| `delete_folder_parses_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:949`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L949) | Read the source/rustdoc for the exact contract. |
-| `delete_folder_recursive_parses_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:963`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L963) | Read the source/rustdoc for the exact contract. |
-| `delete_folder_recursive_tolerates_missing_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:975`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L975) | Read the source/rustdoc for the exact contract. |
-| `rename_folder_parses_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:989`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L989) | Read the source/rustdoc for the exact contract. |
-| `delete_folder_propagates_nonzero_result` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:1013`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L1013) | Read the source/rustdoc for the exact contract. |
-| `rename_folder_propagates_nonzero_result` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:1029`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L1029) | Read the source/rustdoc for the exact contract. |
+| `parse_mutated_folder` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:622`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L622) | Read the source/rustdoc for the exact contract. |
+| `perm_bits` | `pub` | mod | [`crates/pcloud-proto/src/folder_api.rs:643`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L643) | `PSYNC_PERM_*` bitmap constants, mirroring `pclsync/psynclib.h:206-216`. |
+| `READ` | `pub` | const | [`crates/pcloud-proto/src/folder_api.rs:645`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L645) | `READ` — read. |
+| `CREATE` | `pub` | const | [`crates/pcloud-proto/src/folder_api.rs:647`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L647) | `CREATE` — create. |
+| `MODIFY` | `pub` | const | [`crates/pcloud-proto/src/folder_api.rs:649`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L649) | `MODIFY` — modify. |
+| `DELETE` | `pub` | const | [`crates/pcloud-proto/src/folder_api.rs:651`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L651) | `DELETE` — delete. |
+| `MANAGE` | `pub` | const | [`crates/pcloud-proto/src/folder_api.rs:653`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L653) | `MANAGE` — manage. |
+| `ALL` | `pub` | const | [`crates/pcloud-proto/src/folder_api.rs:655`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L655) | `ALL` — all. |
+| `MetadataFacets` | `private` | struct | [`crates/pcloud-proto/src/folder_api.rs:661`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L661) | Subset of per-entry metadata facets (ownership, crypto, sharing, permissions) extracted from a listfolder has… |
+| `extract_metadata_facets` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:669`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L669) | Read the source/rustdoc for the exact contract. |
+| `extract_api_server_hint` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:710`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L710) | Read the source/rustdoc for the exact contract. |
+| `expect_ok_result` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:723`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L723) | Read the source/rustdoc for the exact contract. |
+| `tests` | `private` | mod | [`crates/pcloud-proto/src/folder_api.rs:739`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L739) | Read the source/rustdoc for the exact contract. |
+| `MockTransport` | `private` | struct | [`crates/pcloud-proto/src/folder_api.rs:750`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L750) | Read the source/rustdoc for the exact contract. |
+| `with_responses` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:756`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L756) | Read the source/rustdoc for the exact contract. |
+| `Error` | `private` | type | [`crates/pcloud-proto/src/folder_api.rs:765`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L765) | Read the source/rustdoc for the exact contract. |
+| `execute` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:767`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L767) | Read the source/rustdoc for the exact contract. |
+| `apply_api_server_hint` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:777`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L777) | Read the source/rustdoc for the exact contract. |
+| `list_folder_by_path_parses_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:786`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L786) | Read the source/rustdoc for the exact contract. |
+| `list_folder_by_path_rejects_nonzero_result` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:820`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L820) | Read the source/rustdoc for the exact contract. |
+| `list_folder_contents_by_path_parses_entries` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:838`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L838) | Read the source/rustdoc for the exact contract. |
+| `create_folder_parses_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:878`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L878) | Read the source/rustdoc for the exact contract. |
+| `create_folder_by_path_parses_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:900`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L900) | Read the source/rustdoc for the exact contract. |
+| `create_folder_if_not_exists_reports_existing_folder` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:919`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L919) | Read the source/rustdoc for the exact contract. |
+| `create_folder_propagates_error_result_codes` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:940`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L940) | Read the source/rustdoc for the exact contract. |
+| `mutated_folder_response` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:958`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L958) | Read the source/rustdoc for the exact contract. |
+| `delete_folder_parses_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:974`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L974) | Read the source/rustdoc for the exact contract. |
+| `delete_folder_recursive_parses_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:988`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L988) | Read the source/rustdoc for the exact contract. |
+| `delete_folder_recursive_tolerates_missing_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:1000`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L1000) | Read the source/rustdoc for the exact contract. |
+| `rename_folder_parses_metadata` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:1014`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L1014) | Read the source/rustdoc for the exact contract. |
+| `delete_folder_propagates_nonzero_result` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:1038`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L1038) | Read the source/rustdoc for the exact contract. |
+| `rename_folder_propagates_nonzero_result` | `private` | fn | [`crates/pcloud-proto/src/folder_api.rs:1054`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/folder_api.rs#L1054) | Read the source/rustdoc for the exact contract. |
 | `SignedDownload` | `pub` | struct | [`crates/pcloud-proto/src/http_download.rs:54`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/http_download.rs#L54) | `SignedDownload` — signed download. |
 | `fmt` | `private` | fn | [`crates/pcloud-proto/src/http_download.rs:71`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/http_download.rs#L71) | Read the source/rustdoc for the exact contract. |
 | `RedactedDownloadField` | `private` | struct | [`crates/pcloud-proto/src/http_download.rs:88`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/http_download.rs#L88) | Read the source/rustdoc for the exact contract. |
@@ -1275,6 +1287,15 @@ No declared package features.
 | `api_server_hint_updates_transport_host_and_port` | `private` | fn | [`crates/pcloud-proto/src/transport.rs:799`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/transport.rs#L799) | Read the source/rustdoc for the exact contract. |
 | `api_server_hint_rejected_for_non_pcloud_domain` | `private` | fn | [`crates/pcloud-proto/src/transport.rs:815`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/transport.rs#L815) | Read the source/rustdoc for the exact contract. |
 | `is_known_safe_host_matches_pcloud_domains` | `private` | fn | [`crates/pcloud-proto/src/transport.rs:832`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/src/transport.rs#L832) | Read the source/rustdoc for the exact contract. |
+| `ScriptedTransport` | `private` | struct | [`crates/pcloud-proto/tests/folder_api_coverage.rs:16`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/folder_api_coverage.rs#L16) | Read the source/rustdoc for the exact contract. |
+| `new` | `private` | fn | [`crates/pcloud-proto/tests/folder_api_coverage.rs:22`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/folder_api_coverage.rs#L22) | Read the source/rustdoc for the exact contract. |
+| `Error` | `private` | type | [`crates/pcloud-proto/tests/folder_api_coverage.rs:31`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/folder_api_coverage.rs#L31) | Read the source/rustdoc for the exact contract. |
+| `execute` | `private` | fn | [`crates/pcloud-proto/tests/folder_api_coverage.rs:33`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/folder_api_coverage.rs#L33) | Read the source/rustdoc for the exact contract. |
+| `apply_api_server_hint` | `private` | fn | [`crates/pcloud-proto/tests/folder_api_coverage.rs:43`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/folder_api_coverage.rs#L43) | Read the source/rustdoc for the exact contract. |
+| `file_entry` | `private` | fn | [`crates/pcloud-proto/tests/folder_api_coverage.rs:51`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/folder_api_coverage.rs#L51) | Read the source/rustdoc for the exact contract. |
+| `listing_response` | `private` | fn | [`crates/pcloud-proto/tests/folder_api_coverage.rs:60`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/folder_api_coverage.rs#L60) | Read the source/rustdoc for the exact contract. |
+| `folder_dates_accept_valid_rfc2822_and_reject_malformed_server_values` | `private` | fn | [`crates/pcloud-proto/tests/folder_api_coverage.rs:76`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/folder_api_coverage.rs#L76) | Read the source/rustdoc for the exact contract. |
+| `folder_api_accepts_nested_scalar_api_server_hint` | `private` | fn | [`crates/pcloud-proto/tests/folder_api_coverage.rs:165`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/folder_api_coverage.rs#L165) | Read the source/rustdoc for the exact contract. |
 | `CountingSink` | `private` | struct | [`crates/pcloud-proto/tests/http_download_integrity.rs:27`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/http_download_integrity.rs#L27) | Sink wrapper that counts `write_all` invocations so tests can assert that the streaming download path writes… |
 | `new` | `private` | fn | [`crates/pcloud-proto/tests/http_download_integrity.rs:33`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/http_download_integrity.rs#L33) | Read the source/rustdoc for the exact contract. |
 | `write` | `private` | fn | [`crates/pcloud-proto/tests/http_download_integrity.rs:42`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/http_download_integrity.rs#L42) | Read the source/rustdoc for the exact contract. |
@@ -1342,6 +1363,9 @@ No declared package features.
 | `list_public_links_rejects_non_hash_response` | `private` | fn | [`crates/pcloud-proto/tests/transfer_and_public_link_roundtrip.rs:269`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/transfer_and_public_link_roundtrip.rs#L269) | Read the source/rustdoc for the exact contract. |
 | `list_public_links_propagates_transport_error` | `private` | fn | [`crates/pcloud-proto/tests/transfer_and_public_link_roundtrip.rs:277`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/transfer_and_public_link_roundtrip.rs#L277) | Read the source/rustdoc for the exact contract. |
 | `create_file_public_link_emits_correct_command` | `private` | fn | [`crates/pcloud-proto/tests/transfer_and_public_link_roundtrip.rs:290`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/transfer_and_public_link_roundtrip.rs#L290) | Read the source/rustdoc for the exact contract. |
+| `frame` | `private` | fn | [`crates/pcloud-proto/tests/value_coverage.rs:8`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/value_coverage.rs#L8) | Read the source/rustdoc for the exact contract. |
+| `redacted_proto_string_conversion_surface_preserves_explicit_access_only` | `private` | fn | [`crates/pcloud-proto/tests/value_coverage.rs:15`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/value_coverage.rs#L15) | Read the source/rustdoc for the exact contract. |
+| `value_accessors_and_malformed_frames_cover_every_closed_wire_shape` | `private` | fn | [`crates/pcloud-proto/tests/value_coverage.rs:29`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-proto/tests/value_coverage.rs#L29) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 

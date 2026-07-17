@@ -10,6 +10,14 @@
 
 SQLite-backed persistent store (sync roots, metadata, HMAC-indexed KV) for pcloud-rs.
 
+## Feature-family profile
+
+**Why it exists.** Persist durable local state transactionally across crashes and upgrades.
+
+**What it is good for.** SQLite schema/migrations, settings, preferences, sync graph, diff cursors, metadata, upload resume, account state, audit chain, and typed values.
+
+**Why it is good at that job.** Transactions, versioned migrations, busy retries, HMAC-indexed sensitive keys, integrity checks, and repository boundaries protect consistency.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
@@ -51,7 +59,7 @@ No declared package features.
 | [`crates/pcloud-store/src/tx.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-store/src/tx.rs) | Rust module | Wraps a closure in a `BEGIN IMMEDIATE` / `COMMIT` pair with automatic `ROLLBACK` on error. |
 | [`crates/pcloud-store/tests/store_basics.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-store/tests/store_basics.rs) | test | Integration tests for `pcloud-store`. |
 
-## Rust declaration index (308 total; 194 visible)
+## Rust declaration index (309 total; 194 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -363,6 +371,7 @@ No declared package features.
 | `migration_is_idempotent_and_user_version_stable` | `private` | fn | [`crates/pcloud-store/tests/store_basics.rs:219`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-store/tests/store_basics.rs#L219) | Verify that applying the full migration plan twice (idempotent re-run via bootstrap) produces no error and le… |
 | `store_handle_reports_path_on_missing_dir` | `private` | fn | [`crates/pcloud-store/tests/store_basics.rs:243`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-store/tests/store_basics.rs#L243) | Read the source/rustdoc for the exact contract. |
 | `concurrent_writers_do_not_surface_sqlite_busy` | `private` | fn | [`crates/pcloud-store/tests/store_basics.rs:271`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-store/tests/store_basics.rs#L271) | Closes the iter-1 finding that the short-lived facade had no `SQLITE_BUSY` mitigation. With `busy_timeout = 5… |
+| `pooled_handle_exercises_every_value_and_setting_accessor_and_poison_recovery` | `private` | fn | [`crates/pcloud-store/tests/store_basics.rs:309`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-store/tests/store_basics.rs#L309) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 

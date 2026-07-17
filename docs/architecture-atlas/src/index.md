@@ -1,13 +1,37 @@
-# pcloud-rs Architecture Atlas
+# pcloud-rs Architecture & Feature Atlas
 
-This is the source-derived map of the pcloud-rs workspace: what runs, what
-calls what, where state lives, which entrypoints are intended for external
-use, and which platform claims still require native qualification.
+This is the source-derived map and complete feature encyclopedia of the
+pcloud-rs workspace: every user-facing capability, enterprise and multi-user
+surface, cryptographic mechanism, compile-time switch, internal runtime unit,
+test/helper, entrypoint, state owner, and platform qualification boundary.
+
+## Explore every feature
+
+Start with the [complete feature encyclopedia](features/index.md). It combines
+plain-language, rationale-led chapters with four generated completeness views:
+
+- [all API and compatibility capabilities](generated/features/api-capabilities.md),
+  projected from every row of the canonical parity matrix;
+- [all current CLI, IPC, SDK, and binary surfaces](generated/features/current-surfaces.md),
+  generated from the live Rust enums and Cargo targets with routing and reachability;
+- [all Cargo package feature families](generated/features/package-families.md)
+  and [all feature flags](generated/features/cargo-flags.md);
+- [all internal modules and helpers](generated/features/source-units.md), with
+  their role, rationale, best use, and links to declaration-level references;
+- curated tours from [personal cloud](features/personal-cloud.md),
+  [sync/mount/transfer](features/sync-mount-transfer.md), and
+  [cryptography](features/crypto.md) through
+  [multi-user and enterprise](features/collaboration-enterprise.md),
+  [interfaces](features/interfaces-automation.md),
+  [runtime internals](features/runtime-internals.md),
+  [platform operations](features/platform-operations.md), and
+  [verification infrastructure](features/verification-helpers.md).
 
 The atlas is written for four audiences:
 
 | Audience | Start here | What you should leave with |
 |---|---|---|
+| Product evaluator | [Feature encyclopedia](features/index.md) | What exists, why it exists, where it excels, and what is not yet qualified |
 | CLI/API user | [Standalone use](standalone-library.md) | Which process to start and which interface to call |
 | Library implementer | [Entrypoints](entrypoints.md) and [RemoteFs](remote-fs.md) | The stable SDK boundary and canonical remote-drive contract |
 | Core developer | [System overview](system-overview.md) and [Request paths](request-paths.md) | Crate ownership, call paths, and extension seams |

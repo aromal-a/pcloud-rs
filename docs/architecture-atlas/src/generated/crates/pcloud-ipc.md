@@ -10,6 +10,14 @@
 
 Peer-authenticated local IPC over Unix sockets or Windows named pipes.
 
+## Feature-family profile
+
+**Why it exists.** Provide one owner-authenticated local protocol between untrusted client processes and the credential-holding daemon.
+
+**What it is good for.** CLI/SDK/web requests over Unix sockets, Solaris credentials, or Windows named pipes with typed framing and trace propagation.
+
+**Why it is good at that job.** Peer UID/SID checks, owner-only endpoints, request-size caps, redacted secret fields, and exhaustive typed methods harden the local boundary.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
@@ -67,7 +75,7 @@ No declared package features.
 | [`crates/pcloud-ipc/tests/security_invariants.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/tests/security_invariants.rs) | test | Security invariants integration harness (IPC slice) |
 | [`crates/pcloud-ipc/tests/stress_concurrent_clients.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/tests/stress_concurrent_clients.rs) | test | Concurrent IPC stress test: 50 clients × 500 sequential requests each |
 
-## Rust declaration index (358 total; 128 visible)
+## Rust declaration index (361 total; 128 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -364,13 +372,16 @@ No declared package features.
 | `set_write_timeout` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1088`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1088) | Read the source/rustdoc for the exact contract. |
 | `client_response_reader_rejects_oversized_header_before_payload_read` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1094`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1094) | Read the source/rustdoc for the exact contract. |
 | `uds_transport_roundtrip_works` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1117`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1117) | Read the source/rustdoc for the exact contract. |
-| `unauthorized_peer_is_rejected_before_dispatch` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1157`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1157) | Read the source/rustdoc for the exact contract. |
-| `server_handles_request_without_waiting_for_client_eof` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1189`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1189) | Read the source/rustdoc for the exact contract. |
-| `slow_client_timeout_does_not_prevent_followup_request` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1234`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1234) | Read the source/rustdoc for the exact contract. |
-| `malformed_request_is_rejected_without_killing_followup_request` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1291`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1291) | Read the source/rustdoc for the exact contract. |
-| `PER_PEER_TEST_LOCK` | `private` | static | [`crates/pcloud-ipc/src/transport.rs:1351`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1351) | Read the source/rustdoc for the exact contract. |
-| `per_peer_cap_enforced_even_when_global_cap_not_hit` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1354`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1354) | Read the source/rustdoc for the exact contract. |
-| `per_peer_cap_resets_on_disconnect` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1401`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1401) | Read the source/rustdoc for the exact contract. |
+| `bound_server_hardens_paths_and_exposes_listener_controls` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1157`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1157) | Read the source/rustdoc for the exact contract. |
+| `accept_and_spawn_dispatches_peer_request_on_worker_thread` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1201`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1201) | Read the source/rustdoc for the exact contract. |
+| `runtime_connection_cap_configuration_is_clamped_and_restored` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1239`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1239) | Read the source/rustdoc for the exact contract. |
+| `unauthorized_peer_is_rejected_before_dispatch` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1255`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1255) | Read the source/rustdoc for the exact contract. |
+| `server_handles_request_without_waiting_for_client_eof` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1287`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1287) | Read the source/rustdoc for the exact contract. |
+| `slow_client_timeout_does_not_prevent_followup_request` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1332`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1332) | Read the source/rustdoc for the exact contract. |
+| `malformed_request_is_rejected_without_killing_followup_request` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1389`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1389) | Read the source/rustdoc for the exact contract. |
+| `PER_PEER_TEST_LOCK` | `private` | static | [`crates/pcloud-ipc/src/transport.rs:1449`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1449) | Read the source/rustdoc for the exact contract. |
+| `per_peer_cap_enforced_even_when_global_cap_not_hit` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1452`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1452) | Read the source/rustdoc for the exact contract. |
+| `per_peer_cap_resets_on_disconnect` | `private` | fn | [`crates/pcloud-ipc/src/transport.rs:1499`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/src/transport.rs#L1499) | Read the source/rustdoc for the exact contract. |
 | `envelope_round_trips_with_traceparent` | `private` | fn | [`crates/pcloud-ipc/tests/envelope.rs:21`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/tests/envelope.rs#L21) | Read the source/rustdoc for the exact contract. |
 | `envelope_backward_compat_decodes_bare_request_without_traceparent` | `private` | fn | [`crates/pcloud-ipc/tests/envelope.rs:40`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/tests/envelope.rs#L40) | Read the source/rustdoc for the exact contract. |
 | `envelope_traceparent_omitted_when_none` | `private` | fn | [`crates/pcloud-ipc/tests/envelope.rs:76`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-ipc/tests/envelope.rs#L76) | Read the source/rustdoc for the exact contract. |

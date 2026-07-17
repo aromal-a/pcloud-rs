@@ -10,11 +10,20 @@
 
 Fleet-management agent for enterprise pcloud-rs installations.
 
+## Feature-family profile
+
+**Why it exists.** Let centrally managed deployments report health and receive bounded commands without changing single-user defaults.
+
+**What it is good for.** Experimental standalone enrollment, device identity, CA-authenticated HTTPS heartbeat, Ed25519 device/command signatures, SLO reporting, and fleet command envelopes.
+
+**Why it is good at that job.** Null-by-default behavior, owner-only identity files, pinned controller CA trust, and constrained signed commands limit the management trust boundary; the crate is not wired into pcloudd.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
 |---|---|---|
 | `pcloud_fleet` | lib | [`crates/pcloud-fleet/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/src/lib.rs) |
+| `coverage_surface` | test | [`crates/pcloud-fleet/tests/coverage_surface.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/coverage_surface.rs) |
 | `live_mtls` | test | [`crates/pcloud-fleet/tests/live_mtls.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/live_mtls.rs) |
 | `reference_server` | test | [`crates/pcloud-fleet/tests/reference_server.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/reference_server.rs) |
 
@@ -29,19 +38,20 @@ Fleet-management agent for enterprise pcloud-rs installations.
 | `default` | empty marker |
 | `mtls` | empty marker |
 
-## File inventory (7)
+## File inventory (8)
 
 | File | Kind | Role |
 |---|---|---|
-| [`crates/pcloud-fleet/Cargo.toml`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/Cargo.toml) | Cargo manifest | mTLS fleet agent implementation. |
-| [`crates/pcloud-fleet/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/src/lib.rs) | library root | pcloud-fleet |
+| [`crates/pcloud-fleet/Cargo.toml`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/Cargo.toml) | Cargo manifest | Historically named fleet transport: controller-authenticated HTTPS plus Ed25519 device/command signatures, not TLS client-certificate mTLS. |
+| [`crates/pcloud-fleet/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/src/lib.rs) | library root | Standalone fleet contract using controller-authenticated HTTPS plus Ed25519 device/command signatures; not wired into pcloudd. |
+| [`crates/pcloud-fleet/tests/coverage_surface.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/coverage_surface.rs) | test | Public fleet-agent error and value-surface coverage. |
 | [`crates/pcloud-fleet/tests/fixtures/fleet_test_ca.crt`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/fixtures/fleet_test_ca.crt) | test | Executable verification for the behavior named by this file. |
 | [`crates/pcloud-fleet/tests/fixtures/fleet_test_server.crt`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/fixtures/fleet_test_server.crt) | test | Executable verification for the behavior named by this file. |
 | [`crates/pcloud-fleet/tests/fixtures/fleet_test_server.key`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/fixtures/fleet_test_server.key) | test | Executable verification for the behavior named by this file. |
 | [`crates/pcloud-fleet/tests/live_mtls.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/live_mtls.rs) | test | End-to-end integration test: fleet agent -&gt; in-process reference server. |
 | [`crates/pcloud-fleet/tests/reference_server.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/reference_server.rs) | test | In-process reference fleet server used by `live_mtls.rs`. |
 
-## Rust declaration index (73 total; 31 visible)
+## Rust declaration index (76 total; 31 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -100,6 +110,9 @@ Fleet-management agent for enterprise pcloud-rs installations.
 | `rate_limiter_rejects_second_command_within_one_second` | `private` | fn | [`crates/pcloud-fleet/src/lib.rs:899`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/src/lib.rs#L899) | Read the source/rustdoc for the exact contract. |
 | `ca_bundle_missing_is_load_error` | `private` | fn | [`crates/pcloud-fleet/src/lib.rs:910`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/src/lib.rs#L910) | Read the source/rustdoc for the exact contract. |
 | `ca_bundle_empty_pem_is_config_error` | `private` | fn | [`crates/pcloud-fleet/src/lib.rs:925`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/src/lib.rs#L925) | Read the source/rustdoc for the exact contract. |
+| `config` | `private` | fn | [`crates/pcloud-fleet/tests/coverage_surface.rs:11`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/coverage_surface.rs#L11) | Read the source/rustdoc for the exact contract. |
+| `malformed_identity_files_return_typed_errors_without_panicking` | `private` | fn | [`crates/pcloud-fleet/tests/coverage_surface.rs:23`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/coverage_surface.rs#L23) | Read the source/rustdoc for the exact contract. |
+| `fleet_config_and_null_agent_cover_all_command_shapes` | `private` | fn | [`crates/pcloud-fleet/tests/coverage_surface.rs:77`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/coverage_surface.rs#L77) | Read the source/rustdoc for the exact contract. |
 | `reference_server` | `private` | mod | [`crates/pcloud-fleet/tests/live_mtls.rs:39`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/live_mtls.rs#L39) | Read the source/rustdoc for the exact contract. |
 | `mk_config` | `private` | fn | [`crates/pcloud-fleet/tests/live_mtls.rs:50`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/live_mtls.rs#L50) | Read the source/rustdoc for the exact contract. |
 | `mint_identity` | `private` | fn | [`crates/pcloud-fleet/tests/live_mtls.rs:65`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-fleet/tests/live_mtls.rs#L65) | Mint the agent once so the ed25519 identity file exists on disk, then return the base64-encoded device SID. T… |

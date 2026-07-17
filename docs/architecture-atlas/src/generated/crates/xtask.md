@@ -1,6 +1,6 @@
 # `xtask`
 
-**Maturity:** Experimental / bounded
+**Maturity:** Repository infrastructure
 
 **Version:** `0.1.0`
 
@@ -9,6 +9,14 @@
 **Manifest:** [`xtask/Cargo.toml`](https://github.com/ezechiel203/pcloud-rs/blob/main/xtask/Cargo.toml)
 
 Repository-owned local CI/CD orchestrator for pcloud-rs.
+
+## Feature-family profile
+
+**Why it exists.** Keep CI/CD policy versioned and runnable locally instead of depending on opaque hosted-workflow behavior.
+
+**What it is good for.** Format, lint, test, coverage, audit, packaging, Docker, native mount, Windows remote, release, and cleanup orchestration.
+
+**Why it is good at that job.** One Rust entrypoint pins command order, fail/skip policy, toolchain use, and cross-platform evidence so developer and release gates match.
 
 ## Targets
 
@@ -79,4 +87,4 @@ No declared package features.
 
 ## Usage guidance
 
-Treat this package as experimental, optional, enterprise-bounded, or unshipped until its feature and release evidence says otherwise.
+This package is the authoritative local build, test, coverage, packaging, qualification, and release orchestration surface; it is tooling rather than a shipped pCloud runtime library.

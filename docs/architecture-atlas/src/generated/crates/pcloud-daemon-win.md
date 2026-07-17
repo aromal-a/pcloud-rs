@@ -10,6 +10,14 @@
 
 Experimental unshipped Windows SCM host for the per-user pcloudd runtime.
 
+## Feature-family profile
+
+**Why it exists.** Explore Windows Service Control Manager hosting without contaminating the portable per-user daemon.
+
+**What it is good for.** Experimental Windows service installation and SCM lifecycle integration.
+
+**Why it is good at that job.** The wrapper is isolated and explicitly unshipped, so Windows-specific service semantics cannot be mistaken for the supported daemon contract.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

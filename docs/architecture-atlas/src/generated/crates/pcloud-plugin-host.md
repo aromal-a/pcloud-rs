@@ -10,6 +10,14 @@
 
 Sandboxed plugin host scaffold (T2.5). Capability-bound message-bus model; wasmtime backing tracked for follow-up integration.
 
+## Feature-family profile
+
+**Why it exists.** Run extensions behind a capability and message boundary instead of exposing daemon memory directly.
+
+**What it is good for.** Plugin lifecycle, operation dispatch, resource limits, audit hooks, and pluggable sandbox backends.
+
+**Why it is good at that job.** The dependency-light host core separates policy from the runtime engine and defaults to denying ungranted capabilities.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

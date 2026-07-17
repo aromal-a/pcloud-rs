@@ -10,6 +10,14 @@
 
 Session lifecycle, refresh-loop, and auth-vault primitives extracted from pcloud-daemon (P6.1).
 
+## Feature-family profile
+
+**Why it exists.** Keep daemon session refresh and vault synchronization separate from both protocol mechanics and process dispatch.
+
+**What it is good for.** Refresh loops, session lifecycle glue, persisted-token synchronization, and authentication expiry handling.
+
+**Why it is good at that job.** A narrow lifecycle layer coordinates timers and vault actions while reusing the typed auth state machine.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

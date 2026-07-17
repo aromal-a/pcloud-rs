@@ -10,6 +10,14 @@
 
 Live (gated) end-to-end verification harness for the pcloud-rs Rust rewrite. All tests are #\[ignore\]d unless PCLOUD_LIVE_E2E=1.
 
+## Feature-family profile
+
+**Why it exists.** Prove selected behavior against the real pCloud service and native environments instead of relying only on mocks.
+
+**What it is good for.** Gated auth, account, transfer, sharing, backup, Crypto, sync, mount, snapshot, rate-limit, and fleet integration checks.
+
+**Why it is good at that job.** Ignored-by-default destructive gates, disposable-account conventions, unique scratch objects, and serial execution reduce accidental production impact.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

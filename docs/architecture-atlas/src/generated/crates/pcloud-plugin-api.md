@@ -10,6 +10,14 @@
 
 Plugin manifest, signature verification (ed25519), and registry API for pcloud-rs.
 
+## Feature-family profile
+
+**Why it exists.** Define a capability-limited extension contract before loading third-party code.
+
+**What it is good for.** Signed manifests, registry/lifecycle metadata, operation/response messages, capabilities, and audit events.
+
+**Why it is good at that job.** Ed25519 verification, explicit capability grants, size/version checks, and secret-free messages make extension authority reviewable.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

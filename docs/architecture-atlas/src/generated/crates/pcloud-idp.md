@@ -10,6 +10,14 @@
 
 Enterprise identity-provider (IdP) broker traits for federated login (OIDC, SAML, LDAP). Includes an OIDC Authorization Code + PKCE broker.
 
+## Feature-family profile
+
+**Why it exists.** Model enterprise federated-login flows separately from native pCloud authentication.
+
+**What it is good for.** OIDC Authorization Code with PKCE, discovery/JWKS validation, and future SAML/LDAP or trusted-issuer exchange adapters.
+
+**Why it is good at that job.** S256-only PKCE, RS256 verification, issuer/audience checks, cached JWKS, and an explicit unimplemented exchange keep incomplete federation honest.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
@@ -39,7 +47,7 @@ Enterprise identity-provider (IdP) broker traits for federated login (OIDC, SAML
 | [`crates/pcloud-idp/src/oidc.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs) | Rust module | OIDC Authorization Code + PKCE broker. |
 | [`crates/pcloud-idp/src/pkce.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/pkce.rs) | Rust module | RFC 7636 PKCE helpers (S256 only). |
 
-## Rust declaration index (102 total; 41 visible)
+## Rust declaration index (109 total; 41 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -117,25 +125,32 @@ Enterprise identity-provider (IdP) broker traits for federated login (OIDC, SAML
 | `fmt` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:54`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L54) | Read the source/rustdoc for the exact contract. |
 | `new` | `pub` | fn | [`crates/pcloud-idp/src/oidc.rs:66`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L66) | Construct a broker pinned to `issuer` using the default redirect URI. The HTTP client is configured with rust… |
 | `with_redirect_uri` | `pub` | fn | [`crates/pcloud-idp/src/oidc.rs:72`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L72) | Construct a broker with an explicit redirect URI (e.g. a loopback URL containing the bound port chosen at run… |
-| `build_authorization_url` | `pub(crate)` | fn | [`crates/pcloud-idp/src/oidc.rs:94`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L94) | Build a challenge from a pre-generated verifier/state/nonce — used in tests to assert URL formatting without… |
-| `build_auth_url` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:113`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L113) | Read the source/rustdoc for the exact contract. |
-| `TokenResponse` | `private` | struct | [`crates/pcloud-idp/src/oidc.rs:147`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L147) | Raw OAuth2 token-endpoint response shape. `access_token` is accepted but the broker does not surface it: pClo… |
-| `TokenErrorResponse` | `private` | struct | [`crates/pcloud-idp/src/oidc.rs:157`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L157) | Token-endpoint error surface per RFC 6749 §5.2. |
-| `post_token` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:164`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L164) | Read the source/rustdoc for the exact contract. |
-| `begin_authorization` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:196`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L196) | Read the source/rustdoc for the exact contract. |
-| `complete_authorization` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:217`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L217) | Read the source/rustdoc for the exact contract. |
-| `refresh` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:253`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L253) | Read the source/rustdoc for the exact contract. |
-| `extract_client_id` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:286`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L286) | Read the source/rustdoc for the exact contract. |
-| `parse_aud_unverified` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:299`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L299) | Parse the `aud` claim from an ID token *without* verifying the signature. The value is only used to drive the… |
-| `Aud` | `private` | enum | [`crates/pcloud-idp/src/oidc.rs:311`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L311) | Read the source/rustdoc for the exact contract. |
-| `P` | `private` | struct | [`crates/pcloud-idp/src/oidc.rs:316`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L316) | Read the source/rustdoc for the exact contract. |
-| `compute_expiry` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:329`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L329) | Read the source/rustdoc for the exact contract. |
-| `tests` | `private` | mod | [`crates/pcloud-idp/src/oidc.rs:339`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L339) | Read the source/rustdoc for the exact contract. |
-| `cfg` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:344`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L344) | Read the source/rustdoc for the exact contract. |
-| `authorization_url_includes_state_and_challenge` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:354`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L354) | Read the source/rustdoc for the exact contract. |
-| `token_roundtrip_is_zeroized_on_drop` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:393`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L393) | Read the source/rustdoc for the exact contract. |
-| `extract_client_id_works` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:417`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L417) | Read the source/rustdoc for the exact contract. |
-| `openid_scope_is_injected_when_missing` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:426`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L426) | Read the source/rustdoc for the exact contract. |
+| `with_http_client` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:92`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L92) | Read the source/rustdoc for the exact contract. |
+| `build_authorization_url` | `pub(crate)` | fn | [`crates/pcloud-idp/src/oidc.rs:109`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L109) | Build a challenge from a pre-generated verifier/state/nonce — used in tests to assert URL formatting without… |
+| `build_auth_url` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:128`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L128) | Read the source/rustdoc for the exact contract. |
+| `TokenResponse` | `private` | struct | [`crates/pcloud-idp/src/oidc.rs:162`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L162) | Raw OAuth2 token-endpoint response shape. `access_token` is accepted but the broker does not surface it: pClo… |
+| `TokenErrorResponse` | `private` | struct | [`crates/pcloud-idp/src/oidc.rs:172`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L172) | Token-endpoint error surface per RFC 6749 §5.2. |
+| `post_token` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:179`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L179) | Read the source/rustdoc for the exact contract. |
+| `begin_authorization` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:211`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L211) | Read the source/rustdoc for the exact contract. |
+| `complete_authorization` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:232`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L232) | Read the source/rustdoc for the exact contract. |
+| `refresh` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:268`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L268) | Read the source/rustdoc for the exact contract. |
+| `extract_client_id` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:301`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L301) | Read the source/rustdoc for the exact contract. |
+| `parse_aud_unverified` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:314`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L314) | Parse the `aud` claim from an ID token *without* verifying the signature. The value is only used to drive the… |
+| `Aud` | `private` | enum | [`crates/pcloud-idp/src/oidc.rs:326`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L326) | Read the source/rustdoc for the exact contract. |
+| `P` | `private` | struct | [`crates/pcloud-idp/src/oidc.rs:331`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L331) | Read the source/rustdoc for the exact contract. |
+| `compute_expiry` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:344`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L344) | Read the source/rustdoc for the exact contract. |
+| `tests` | `private` | mod | [`crates/pcloud-idp/src/oidc.rs:354`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L354) | Read the source/rustdoc for the exact contract. |
+| `cfg` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:362`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L362) | Read the source/rustdoc for the exact contract. |
+| `permissive_client` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:371`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L371) | Read the source/rustdoc for the exact contract. |
+| `write_json` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:380`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L380) | Read the source/rustdoc for the exact contract. |
+| `spawn_token_stub` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:388`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L388) | Read the source/rustdoc for the exact contract. |
+| `spawn_discovery_stub` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:400`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L400) | Read the source/rustdoc for the exact contract. |
+| `authorization_url_includes_state_and_challenge` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:431`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L431) | Read the source/rustdoc for the exact contract. |
+| `token_roundtrip_is_zeroized_on_drop` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:470`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L470) | Read the source/rustdoc for the exact contract. |
+| `extract_client_id_works` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:494`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L494) | Read the source/rustdoc for the exact contract. |
+| `openid_scope_is_injected_when_missing` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:503`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L503) | Read the source/rustdoc for the exact contract. |
+| `discovery_begin_cache_refresh_and_missing_key_paths_are_local` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:524`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L524) | Read the source/rustdoc for the exact contract. |
+| `token_endpoint_success_error_and_decode_paths_are_redacted` | `private` | fn | [`crates/pcloud-idp/src/oidc.rs:575`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/oidc.rs#L575) | Read the source/rustdoc for the exact contract. |
 | `VERIFIER_BYTES` | `pub(crate)` | const | [`crates/pcloud-idp/src/pkce.rs:17`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/pkce.rs#L17) | Length of the raw random material used for the PKCE code verifier. 32 bytes encodes to 43 unpadded base64url… |
 | `STATE_BYTES` | `pub(crate)` | const | [`crates/pcloud-idp/src/pkce.rs:21`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/pkce.rs#L21) | Length of the random CSRF `state` parameter. 16 bytes → 22 unpadded base64url characters, which comfortably e… |
 | `NONCE_BYTES` | `pub(crate)` | const | [`crates/pcloud-idp/src/pkce.rs:25`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-idp/src/pkce.rs#L25) | Length of the OIDC `nonce`. 16 bytes → 128 bits of entropy to bind the request to the returned ID token's `no… |

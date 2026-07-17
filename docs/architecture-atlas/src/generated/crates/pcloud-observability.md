@@ -10,11 +10,20 @@
 
 Metrics, tracing, and structured-log helpers for pcloud-rs (Prometheus, JSON logs).
 
+## Feature-family profile
+
+**Why it exists.** Make daemon behavior diagnosable and auditable without leaking credentials or binding the core to one telemetry vendor.
+
+**What it is good for.** Structured logs, audit events, health/build reports, metrics, SLOs, Prometheus export, poison-safe locks, and optional OTLP traces.
+
+**Why it is good at that job.** A zero-dependency metrics core and feature-gated exporters keep the default lean while preserving consistent names and redaction.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
 |---|---|---|
 | `pcloud_observability` | lib | [`crates/pcloud-observability/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/src/lib.rs) |
+| `exporter_coverage` | test | [`crates/pcloud-observability/tests/exporter_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/tests/exporter_coverage.rs) |
 | `otlp_live_interop` | test | [`crates/pcloud-observability/tests/otlp_live_interop.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/tests/otlp_live_interop.rs) |
 
 ## Direct dependencies
@@ -30,7 +39,7 @@ Metrics, tracing, and structured-log helpers for pcloud-rs (Prometheus, JSON log
 | `prometheus-exporter` | empty marker |
 | `tracing-otlp` | `dep:opentelemetry`, `dep:opentelemetry-otlp`, `dep:opentelemetry_sdk`, `dep:tracing`, `dep:tracing-subscriber`, `dep:tracing-opentelemetry` |
 
-## File inventory (12)
+## File inventory (13)
 
 | File | Kind | Role |
 |---|---|---|
@@ -45,9 +54,10 @@ Metrics, tracing, and structured-log helpers for pcloud-rs (Prometheus, JSON log
 | [`crates/pcloud-observability/src/metrics.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/src/metrics.rs) | Rust module | Metric families and a self-contained Prometheus text-format exporter. |
 | [`crates/pcloud-observability/src/slo.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/src/slo.rs) | Rust module | Canonical Service-Level Objectives (SLOs) for the pcloud-rs daemon. |
 | [`crates/pcloud-observability/src/tracing.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/src/tracing.rs) | Rust module | OpenTelemetry tracing integration (H13a, feature `tracing-otlp`). |
+| [`crates/pcloud-observability/tests/exporter_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/tests/exporter_coverage.rs) | test | \[test\] |
 | [`crates/pcloud-observability/tests/otlp_live_interop.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/tests/otlp_live_interop.rs) | test | Live OTLP interop integration test (feature `tracing-otlp`). |
 
-## Rust declaration index (223 total; 101 visible)
+## Rust declaration index (225 total; 101 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -265,6 +275,8 @@ Metrics, tracing, and structured-log helpers for pcloud-rs (Prometheus, JSON log
 | `error_biased_sampling_always_records_on_err` | `private` | fn | [`crates/pcloud-observability/src/tracing.rs:361`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/src/tracing.rs#L361) | Read the source/rustdoc for the exact contract. |
 | `ErrorBiasedSpan` | `private` | struct | [`crates/pcloud-observability/src/tracing.rs:368`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/src/tracing.rs#L368) | Read the source/rustdoc for the exact contract. |
 | `is_recording` | `private` | fn | [`crates/pcloud-observability/src/tracing.rs:373`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/src/tracing.rs#L373) | Read the source/rustdoc for the exact contract. |
+| `request` | `private` | fn | [`crates/pcloud-observability/tests/exporter_coverage.rs:10`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/tests/exporter_coverage.rs#L10) | Read the source/rustdoc for the exact contract. |
+| `exporter_public_lifecycle_and_malformed_request_paths_are_executable` | `private` | fn | [`crates/pcloud-observability/tests/exporter_coverage.rs:20`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/tests/exporter_coverage.rs#L20) | Read the source/rustdoc for the exact contract. |
 | `CollectorState` | `private` | struct | [`crates/pcloud-observability/tests/otlp_live_interop.rs:73`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/tests/otlp_live_interop.rs#L73) | State shared between the in-process collector handler and the test assertions. All received span batches are… |
 | `traces_handler` | `private` | fn | [`crates/pcloud-observability/tests/otlp_live_interop.rs:79`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/tests/otlp_live_interop.rs#L79) | Axum handler for `POST /v1/traces`. Decodes the OTLP/HTTP protobuf body and stashes every span into the share… |
 | `start_collector` | `private` | fn | [`crates/pcloud-observability/tests/otlp_live_interop.rs:107`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-observability/tests/otlp_live_interop.rs#L107) | Bring up the in-process OTLP collector and return its base URL plus a handle to the shared state and shutdown… |

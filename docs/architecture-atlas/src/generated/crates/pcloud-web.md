@@ -10,13 +10,23 @@
 
 MVP Web UI scaffold for the pcloud-rs daemon (P4.5). Axum-based HTTP surface with loopback defaults and IPC-backed status views. Not the final Leptos SSR app.
 
+## Feature-family profile
+
+**Why it exists.** Offer a browser-readable local status/control surface without giving the browser direct access to pCloud credentials.
+
+**What it is good for.** Loopback-first health, status, sync, and simple UI routes backed by daemon IPC.
+
+**Why it is good at that job.** Host validation, loopback defaults, limited routes, and IPC delegation keep the MVP surface small and authority in pcloudd.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
 |---|---|---|
 | `pcloud_web` | lib | [`crates/pcloud-web/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/lib.rs) |
 | `pcloud-web` | bin | [`crates/pcloud-web/src/main.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/main.rs) |
+| `binary_coverage` | test | [`crates/pcloud-web/tests/binary_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/binary_coverage.rs) |
 | `health` | test | [`crates/pcloud-web/tests/health.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/health.rs) |
+| `serve_coverage` | test | [`crates/pcloud-web/tests/serve_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/serve_coverage.rs) |
 | `ui` | test | [`crates/pcloud-web/tests/ui.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs) |
 
 ## Direct dependencies
@@ -27,7 +37,7 @@ MVP Web UI scaffold for the pcloud-rs daemon (P4.5). Axum-based HTTP surface wit
 
 No declared package features.
 
-## File inventory (8)
+## File inventory (10)
 
 | File | Kind | Role |
 |---|---|---|
@@ -37,10 +47,12 @@ No declared package features.
 | [`crates/pcloud-web/src/main.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/main.rs) | binary root | \[derive(Debug)\] |
 | [`crates/pcloud-web/src/routes.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs) | Rust module | HTTP routes for the single-user Web UI. |
 | [`crates/pcloud-web/src/templates.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/templates.rs) | Rust module | Inline HTML rendering for the MVP web UI. |
+| [`crates/pcloud-web/tests/binary_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/binary_coverage.rs) | test | \[test\] |
 | [`crates/pcloud-web/tests/health.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/health.rs) | test | Integration test: start the MVP web server on an ephemeral loopback |
+| [`crates/pcloud-web/tests/serve_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/serve_coverage.rs) | test | \[tokio::test\] |
 | [`crates/pcloud-web/tests/ui.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs) | test | Integration tests for the expanded pcloud-web UI (P4.5+). |
 
-## Rust declaration index (132 total; 12 visible)
+## Rust declaration index (143 total; 12 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -148,34 +160,45 @@ No declared package features.
 | `render_settings_page` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1153`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1153) | Read the source/rustdoc for the exact contract. |
 | `_enum_type_parity` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1176`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1176) | Read the source/rustdoc for the exact contract. |
 | `tests` | `private` | mod | [`crates/pcloud-web/src/routes.rs:1179`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1179) | Read the source/rustdoc for the exact contract. |
-| `minted_csrf_is_valid` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1183`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1183) | Read the source/rustdoc for the exact contract. |
-| `malformed_csrf_rejected` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1189`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1189) | Read the source/rustdoc for the exact contract. |
-| `redact_settings_hides_secrets` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1196`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1196) | Read the source/rustdoc for the exact contract. |
-| `web_token_gate_rejects_missing_token` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1211`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1211) | Read the source/rustdoc for the exact contract. |
-| `web_token_gate_rejects_wrong_token` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1217`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1217) | Read the source/rustdoc for the exact contract. |
-| `web_token_gate_admits_correct_token` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1224`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1224) | Read the source/rustdoc for the exact contract. |
+| `minted_csrf_is_valid` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1190`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1190) | Read the source/rustdoc for the exact contract. |
+| `malformed_csrf_rejected` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1196`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1196) | Read the source/rustdoc for the exact contract. |
+| `route_helper_edge_matrix_covers_status_authority_and_csrf_shapes` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1203`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1203) | Read the source/rustdoc for the exact contract. |
+| `redact_settings_hides_secrets` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1307`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1307) | Read the source/rustdoc for the exact contract. |
+| `web_token_gate_rejects_missing_token` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1322`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1322) | Read the source/rustdoc for the exact contract. |
+| `web_token_gate_rejects_wrong_token` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1328`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1328) | Read the source/rustdoc for the exact contract. |
+| `web_token_gate_admits_correct_token` | `private` | fn | [`crates/pcloud-web/src/routes.rs:1335`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/routes.rs#L1335) | Read the source/rustdoc for the exact contract. |
 | `escape` | `pub(crate)` | fn | [`crates/pcloud-web/src/templates.rs:16`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/templates.rs#L16) | Escape a string for safe interpolation into HTML text/attribute content. Minimal allow-list for the five XML… |
 | `render_index` | `pub(crate)` | fn | [`crates/pcloud-web/src/templates.rs:32`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/templates.rs#L32) | Render the plain-HTML status page. |
 | `tests` | `private` | mod | [`crates/pcloud-web/src/templates.rs:88`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/templates.rs#L88) | Read the source/rustdoc for the exact contract. |
 | `escape_handles_entities` | `private` | fn | [`crates/pcloud-web/src/templates.rs:92`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/templates.rs#L92) | Read the source/rustdoc for the exact contract. |
 | `render_offline_page_contains_expected_markers` | `private` | fn | [`crates/pcloud-web/src/templates.rs:98`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/templates.rs#L98) | Read the source/rustdoc for the exact contract. |
 | `render_online_page_shows_counts` | `private` | fn | [`crates/pcloud-web/src/templates.rs:113`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/src/templates.rs#L113) | Read the source/rustdoc for the exact contract. |
+| `binary` | `private` | fn | [`crates/pcloud-web/tests/binary_coverage.rs:10`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/binary_coverage.rs#L10) | Read the source/rustdoc for the exact contract. |
+| `run` | `private` | fn | [`crates/pcloud-web/tests/binary_coverage.rs:14`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/binary_coverage.rs#L14) | Read the source/rustdoc for the exact contract. |
+| `unused_addr` | `private` | fn | [`crates/pcloud-web/tests/binary_coverage.rs:23`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/binary_coverage.rs#L23) | Read the source/rustdoc for the exact contract. |
+| `help_version_and_invalid_cli_inputs_exit_deterministically` | `private` | fn | [`crates/pcloud-web/tests/binary_coverage.rs:31`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/binary_coverage.rs#L31) | Read the source/rustdoc for the exact contract. |
+| `serve_mode_binds_and_exposes_health_and_readiness` | `private` | fn | [`crates/pcloud-web/tests/binary_coverage.rs:89`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/binary_coverage.rs#L89) | Read the source/rustdoc for the exact contract. |
 | `health_endpoint_returns_200_ok` | `private` | fn | [`crates/pcloud-web/tests/health.rs:16`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/health.rs#L16) | Read the source/rustdoc for the exact contract. |
 | `index_sends_csp_and_reports_offline_without_socket` | `private` | fn | [`crates/pcloud-web/tests/health.rs:50`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/health.rs#L50) | Read the source/rustdoc for the exact contract. |
-| `start` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:19`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L19) | Fire up the server, return (addr, web_token, join_handle). Handle is aborted by the caller at end of test. |
-| `raw_request` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:34`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L34) | Read the source/rustdoc for the exact contract. |
-| `extract_cookie` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:44`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L44) | Extract a `Set-Cookie: name=value` cookie from a raw HTTP response. Returns the cookie value or panics with t… |
-| `extract_csrf_cookie` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:60`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L60) | Read the source/rustdoc for the exact contract. |
-| `sync_list_renders_html_with_csrf_token` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:65`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L65) | Read the source/rustdoc for the exact contract. |
-| `hostile_host_header_is_rejected` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:96`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L96) | Read the source/rustdoc for the exact contract. |
-| `daemon_backed_get_routes_reject_missing_web_token` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:112`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L112) | Read the source/rustdoc for the exact contract. |
-| `sync_add_rejects_request_without_web_token` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:135`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L135) | Read the source/rustdoc for the exact contract. |
-| `sync_add_rejects_request_without_csrf` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:158`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L158) | Read the source/rustdoc for the exact contract. |
-| `publink_create_then_delete_round_trip` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:185`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L185) | Read the source/rustdoc for the exact contract. |
-| `cross_origin_mutation_is_rejected` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:260`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L260) | Read the source/rustdoc for the exact contract. |
-| `browser_like_form_post_uses_hidden_csrf_and_session_cookie` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:296`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L296) | Read the source/rustdoc for the exact contract. |
-| `activity_returns_json_when_accept_is_application_json` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:333`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L333) | Read the source/rustdoc for the exact contract. |
-| `settings_redacts_secret_fields` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:372`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L372) | Read the source/rustdoc for the exact contract. |
+| `unused_addr` | `private` | fn | [`crates/pcloud-web/tests/serve_coverage.rs:9`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/serve_coverage.rs#L9) | Read the source/rustdoc for the exact contract. |
+| `public_serve_path_writes_token_serves_and_reports_bind_conflicts` | `private` | fn | [`crates/pcloud-web/tests/serve_coverage.rs:17`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/serve_coverage.rs#L17) | Read the source/rustdoc for the exact contract. |
+| `start` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:23`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L23) | Fire up the server, return (addr, web_token, join_handle). Handle is aborted by the caller at end of test. |
+| `start_with_socket` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:38`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L38) | Read the source/rustdoc for the exact contract. |
+| `raw_request` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:55`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L55) | Read the source/rustdoc for the exact contract. |
+| `extract_cookie` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:65`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L65) | Extract a `Set-Cookie: name=value` cookie from a raw HTTP response. Returns the cookie value or panics with t… |
+| `extract_csrf_cookie` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:81`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L81) | Read the source/rustdoc for the exact contract. |
+| `successful_daemon_response` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:85`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L85) | Read the source/rustdoc for the exact contract. |
+| `sync_list_renders_html_with_csrf_token` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:115`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L115) | Read the source/rustdoc for the exact contract. |
+| `hostile_host_header_is_rejected` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:146`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L146) | Read the source/rustdoc for the exact contract. |
+| `daemon_backed_get_routes_reject_missing_web_token` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:162`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L162) | Read the source/rustdoc for the exact contract. |
+| `sync_add_rejects_request_without_web_token` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:185`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L185) | Read the source/rustdoc for the exact contract. |
+| `sync_add_rejects_request_without_csrf` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:208`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L208) | Read the source/rustdoc for the exact contract. |
+| `publink_create_then_delete_round_trip` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:235`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L235) | Read the source/rustdoc for the exact contract. |
+| `cross_origin_mutation_is_rejected` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:310`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L310) | Read the source/rustdoc for the exact contract. |
+| `browser_like_form_post_uses_hidden_csrf_and_session_cookie` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:346`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L346) | Read the source/rustdoc for the exact contract. |
+| `activity_returns_json_when_accept_is_application_json` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:383`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L383) | Read the source/rustdoc for the exact contract. |
+| `settings_redacts_secret_fields` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:422`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L422) | Read the source/rustdoc for the exact contract. |
+| `online_daemon_routes_and_mutations_succeed_end_to_end` | `private` | fn | [`crates/pcloud-web/tests/ui.rs:447`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-web/tests/ui.rs#L447) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 

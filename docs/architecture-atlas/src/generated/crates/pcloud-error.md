@@ -10,6 +10,14 @@
 
 Shared error types and result aliases for the pcloud-rs Rust workspace.
 
+## Feature-family profile
+
+**Why it exists.** Give the workspace one stable failure language instead of ad-hoc strings and platform errno leakage.
+
+**What it is good for.** Mapping failures consistently across protocol, IPC, CLI, SDK, retry, policy, and operator diagnostics.
+
+**Why it is good at that job.** Stable codes and structured variants preserve actionable context while keeping secret material out of messages.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

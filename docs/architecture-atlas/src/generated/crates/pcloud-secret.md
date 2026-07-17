@@ -10,6 +10,14 @@
 
 Zeroize-on-drop secret wrappers (SecretString, SecretBytes) with redacted Debug.
 
+## Feature-family profile
+
+**Why it exists.** Make accidental logging, cloning, serialization, comparison leakage, and residual memory less likely for credentials and key material.
+
+**What it is good for.** Passwords, tokens, private keys, PINs, and binary secret buffers across all crates.
+
+**Why it is good at that job.** Redacted Debug, no Serialize, zeroize-on-drop, explicit exposure, and constant-time equality force deliberate secret handling.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

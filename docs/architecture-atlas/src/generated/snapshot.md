@@ -1,18 +1,18 @@
 # Generated workspace snapshot
 
-- Generated: `2026-07-16T21:20:55+00:00`
-- Git HEAD: `1aab575235bf0bc900d022f191fc3b8259a5930e`
+- Generated: `2026-07-17T18:37:33+00:00`
+- Git HEAD: `8a5b189609d418f5233e65fb063704e614145589`
 - Worktree: `dirty`
 - Cargo packages: **42**
-- Git-visible files inventoried: **2078**
+- Git-visible files inventoried: **2116**
 
 ## File coverage
 
 | Area | Files | Inventory |
 |---|---:|---|
 | Root product and policy files | 38 | [open](inventory/root.md) |
-| Workspace crate files | 581 | [open](inventory/crates.md) |
-| Documentation files | 324 | [open](inventory/documentation.md) |
+| Workspace crate files | 603 | [open](inventory/crates.md) |
+| Documentation files | 340 | [open](inventory/documentation.md) |
 | Packaging and service files | 111 | [open](inventory/packaging.md) |
 | Automation, workflows, scripts, and fuzz files | 33 | [open](inventory/automation.md) |
 | Operations, deployment, tools, and cross-crate tests | 12 | [open](inventory/operations-tests.md) |

@@ -36,10 +36,14 @@ packaging, license, dependency, reproducibility, or native jobs.
 The documentation generator fails if Cargo metadata cannot be read. `mdbook
 build` validates chapter paths and renders the complete site. A separate link
 checker in `tools/check_links.py` checks internal Markdown targets before
-serving.
+serving. `tools/check_feature_coverage.py` additionally proves that every
+current Cargo package and flag has explicit rationale, every canonical API
+matrix row is rendered, every package-owned Rust unit is cataloged, and every
+feature chapter remains in navigation.
 
 ```bash
 python3 docs/architecture-atlas/tools/generate.py
+python3 docs/architecture-atlas/tools/check_feature_coverage.py
 python3 docs/architecture-atlas/tools/check_links.py
 mdbook build docs/architecture-atlas
 ```

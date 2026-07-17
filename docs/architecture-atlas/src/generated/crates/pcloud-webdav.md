@@ -10,11 +10,20 @@
 
 Experimental local HTTP/WebDAV subset; no production daemon backend or RFC 4918 compliance claim.
 
+## Feature-family profile
+
+**Why it exists.** Explore compatibility with applications that understand WebDAV but not the native SDK or CLI.
+
+**What it is good for.** Experimental local HTTP parsing, PROPFIND/multistatus, method dispatch, and daemon-IPC-backed file operations.
+
+**Why it is good at that job.** A minimal dependency-light codec and canonical IPC backend avoid creating a second remote implementation; RFC completeness is intentionally not claimed.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
 |---|---|---|
 | `pcloud_webdav` | lib | [`crates/pcloud-webdav/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/src/lib.rs) |
+| `server_coverage` | test | [`crates/pcloud-webdav/tests/server_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs) |
 
 ## Direct dependencies
 
@@ -24,7 +33,7 @@ Experimental local HTTP/WebDAV subset; no production daemon backend or RFC 4918 
 
 No declared package features.
 
-## File inventory (7)
+## File inventory (8)
 
 | File | Kind | Role |
 |---|---|---|
@@ -35,8 +44,9 @@ No declared package features.
 | [`crates/pcloud-webdav/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/src/lib.rs) | library root | Experimental local HTTP/WebDAV subset. |
 | [`crates/pcloud-webdav/src/propfind.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/src/propfind.rs) | Rust module | T1.6.a — minimal RFC 4918 `PROPFIND` parser + `multistatus` builder. |
 | [`crates/pcloud-webdav/src/server.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/src/server.rs) | Rust module | T1.6.c — TcpListener accept loop that drives the dispatcher. |
+| [`crates/pcloud-webdav/tests/server_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs) | test | \[derive(Default)\] |
 
-## Rust declaration index (179 total; 44 visible)
+## Rust declaration index (190 total; 44 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -219,6 +229,17 @@ No declared package features.
 | `propfind_over_tcp_round_trips` | `private` | fn | [`crates/pcloud-webdav/src/server.rs:462`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/src/server.rs#L462) | End-to-end smoke: open a TCP server, drive a real `PROPFIND` over `TcpStream`, parse the response on the clie… |
 | `unknown_verb_over_tcp_is_405` | `private` | fn | [`crates/pcloud-webdav/src/server.rs:519`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/src/server.rs#L519) | Server returns a 405 for unknown verbs. |
 | `over_cap_body_rejected_with_413` | `private` | fn | [`crates/pcloud-webdav/src/server.rs:555`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/src/server.rs#L555) | Body declared larger than `max_put_body_bytes` is rejected before the dispatcher runs. |
+| `Backend` | `private` | struct | [`crates/pcloud-webdav/tests/server_coverage.rs:11`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs#L11) | Read the source/rustdoc for the exact contract. |
+| `list_folder` | `private` | fn | [`crates/pcloud-webdav/tests/server_coverage.rs:16`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs#L16) | Read the source/rustdoc for the exact contract. |
+| `stat` | `private` | fn | [`crates/pcloud-webdav/tests/server_coverage.rs:20`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs#L20) | Read the source/rustdoc for the exact contract. |
+| `get_file` | `private` | fn | [`crates/pcloud-webdav/tests/server_coverage.rs:30`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs#L30) | Read the source/rustdoc for the exact contract. |
+| `put_file` | `private` | fn | [`crates/pcloud-webdav/tests/server_coverage.rs:34`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs#L34) | Read the source/rustdoc for the exact contract. |
+| `delete` | `private` | fn | [`crates/pcloud-webdav/tests/server_coverage.rs:39`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs#L39) | Read the source/rustdoc for the exact contract. |
+| `mkdir` | `private` | fn | [`crates/pcloud-webdav/tests/server_coverage.rs:43`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs#L43) | Read the source/rustdoc for the exact contract. |
+| `config` | `private` | fn | [`crates/pcloud-webdav/tests/server_coverage.rs:48`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs#L48) | Read the source/rustdoc for the exact contract. |
+| `exchange` | `private` | fn | [`crates/pcloud-webdav/tests/server_coverage.rs:59`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs#L59) | Read the source/rustdoc for the exact contract. |
+| `stopped_run_and_fragmented_body_follow_server_contract` | `private` | fn | [`crates/pcloud-webdav/tests/server_coverage.rs:88`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs#L88) | Read the source/rustdoc for the exact contract. |
+| `malformed_wire_inputs_return_bounded_http_errors` | `private` | fn | [`crates/pcloud-webdav/tests/server_coverage.rs:106`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-webdav/tests/server_coverage.rs#L106) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 

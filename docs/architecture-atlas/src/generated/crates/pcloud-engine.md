@@ -10,6 +10,14 @@
 
 Sync engine primitives (diff planner, scheduler scaffolding) for pcloud-rs.
 
+## Feature-family profile
+
+**Why it exists.** Separate synchronization decisions from transport and process lifecycle.
+
+**What it is good for.** Scanning, diff polling, selective sync, conflict policy, planning, scheduling, recovery, stall detection, and upload/download coordination.
+
+**Why it is good at that job.** Pure planners and typed events make reconciliation deterministic, testable, priority-aware, and recoverable.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
@@ -55,7 +63,7 @@ No declared package features.
 | [`crates/pcloud-engine/src/transfers/uploads.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/src/transfers/uploads.rs) | Rust module | Tracks the upload side of the transfer cycle: in-flight file |
 | [`crates/pcloud-engine/tests/engine_basics.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs) | test | Integration tests for the pcloud-engine crate. |
 
-## Rust declaration index (454 total; 213 visible)
+## Rust declaration index (456 total; 213 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -504,15 +512,17 @@ No declared package features.
 | `next_batch_with_limit_leaves_remainder_in_queue` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:62`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L62) | Read the source/rustdoc for the exact contract. |
 | `both_roots_get_scheduled_with_round_robin` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:91`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L91) | Read the source/rustdoc for the exact contract. |
 | `single_busy_root_does_not_starve_idle_root` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:136`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L136) | Read the source/rustdoc for the exact contract. |
-| `make_conflict` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:168`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L168) | Read the source/rustdoc for the exact contract. |
-| `newest_wins_picks_local_when_local_mtime_is_greater` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:177`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L177) | Read the source/rustdoc for the exact contract. |
-| `newest_wins_picks_remote_when_remote_mtime_is_greater` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:198`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L198) | Read the source/rustdoc for the exact contract. |
-| `newest_wins_uses_remote_as_tiebreaker_on_equal_timestamps` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:219`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L219) | Read the source/rustdoc for the exact contract. |
-| `newest_wins_falls_back_to_remote_with_no_timestamps` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:240`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L240) | Read the source/rustdoc for the exact contract. |
-| `rename_both_produces_two_concrete_paths_not_manual_review` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:263`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L263) | Read the source/rustdoc for the exact contract. |
-| `rename_both_preserves_file_extension` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:309`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L309) | Read the source/rustdoc for the exact contract. |
-| `engine_ingest_then_advance_dispatches_and_empties_queue` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:345`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L345) | Read the source/rustdoc for the exact contract. |
-| `engine_fairness_across_two_roots` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:383`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L383) | Read the source/rustdoc for the exact contract. |
+| `scheduler_peek_fair_drain_and_ack_edge_matrix` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:166`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L166) | Read the source/rustdoc for the exact contract. |
+| `make_conflict` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:238`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L238) | Read the source/rustdoc for the exact contract. |
+| `newest_wins_picks_local_when_local_mtime_is_greater` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:247`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L247) | Read the source/rustdoc for the exact contract. |
+| `newest_wins_picks_remote_when_remote_mtime_is_greater` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:268`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L268) | Read the source/rustdoc for the exact contract. |
+| `newest_wins_uses_remote_as_tiebreaker_on_equal_timestamps` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:289`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L289) | Read the source/rustdoc for the exact contract. |
+| `newest_wins_falls_back_to_remote_with_no_timestamps` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:310`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L310) | Read the source/rustdoc for the exact contract. |
+| `rename_both_produces_two_concrete_paths_not_manual_review` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:333`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L333) | Read the source/rustdoc for the exact contract. |
+| `rename_both_preserves_file_extension` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:379`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L379) | Read the source/rustdoc for the exact contract. |
+| `engine_ingest_then_advance_dispatches_and_empties_queue` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:415`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L415) | Read the source/rustdoc for the exact contract. |
+| `engine_fairness_across_two_roots` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:453`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L453) | Read the source/rustdoc for the exact contract. |
+| `engine_public_state_lifecycle_and_filesystem_guards_are_complete` | `private` | fn | [`crates/pcloud-engine/tests/engine_basics.rs:515`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-engine/tests/engine_basics.rs#L515) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 

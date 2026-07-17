@@ -10,6 +10,14 @@
 
 C-CLI compatibility shim primitives (rpc_message_t codec, SysV shm producer). Isolated crate, not wired into the daemon by default.
 
+## Feature-family profile
+
+**Why it exists.** Isolate the small legacy C-client ABI surfaces that are still useful during migration.
+
+**What it is good for.** Decoding legacy rpc_message_t frames and, when explicitly enabled, producing the old SysV shared-memory folder-list layout.
+
+**Why it is good at that job.** Byte-exact codecs live outside the canonical daemon so compatibility cannot silently constrain modern internal design.
+
 ## Targets
 
 | Cargo target | Kinds | Source |

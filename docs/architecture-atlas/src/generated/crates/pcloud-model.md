@@ -10,11 +10,20 @@
 
 Shared domain model types (files, folders, users, shares) for pcloud-rs.
 
+## Feature-family profile
+
+**Why it exists.** Keep shared domain data independent from transport, storage, UI, and platform code.
+
+**What it is good for.** Typed IDs, users, auth, files, folders, shares, links, sync state, transfers, conflicts, Crypto, and health payloads.
+
+**Why it is good at that job.** Small serializable types and newtype IDs prevent cross-layer duplication and accidental identifier mixing.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
 |---|---|---|
 | `pcloud_model` | lib | [`crates/pcloud-model/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-model/src/lib.rs) |
+| `transfer_coverage` | test | [`crates/pcloud-model/tests/transfer_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-model/tests/transfer_coverage.rs) |
 
 ## Direct dependencies
 
@@ -24,7 +33,7 @@ Shared domain model types (files, folders, users, shares) for pcloud-rs.
 
 No declared package features.
 
-## File inventory (12)
+## File inventory (13)
 
 | File | Kind | Role |
 |---|---|---|
@@ -40,8 +49,9 @@ No declared package features.
 | [`crates/pcloud-model/src/shares.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-model/src/shares.rs) | Rust module | Bitwise permission flags mirroring the legacy C `PSYNC_PERM_*` |
 | [`crates/pcloud-model/src/sync.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-model/src/sync.rs) | Rust module | Lifecycle state of a single sync root. |
 | [`crates/pcloud-model/src/transfer.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-model/src/transfer.rs) | Rust module | Lifecycle state of an individual transfer task as it moves through |
+| [`crates/pcloud-model/tests/transfer_coverage.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-model/tests/transfer_coverage.rs) | test | Public transfer-model constructor coverage. |
 
-## Rust declaration index (85 total; 59 visible)
+## Rust declaration index (86 total; 59 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -130,6 +140,7 @@ No declared package features.
 | `planned` | `pub` | fn | [`crates/pcloud-model/src/transfer.rs:88`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-model/src/transfer.rs#L88) | Construct a new `TransferTask` in the \[`TransferState::Planned`\] state with no recorded error. # Example ```… |
 | `FailureDisposition` | `pub` | enum | [`crates/pcloud-model/src/transfer.rs:123`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-model/src/transfer.rs#L123) | Decision returned by the failure classifier indicating how a failed transfer should be handled. Produced by t… |
 | `RecoveryDecision` | `pub` | struct | [`crates/pcloud-model/src/transfer.rs:143`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-model/src/transfer.rs#L143) | Output of recovery classification for a failed transfer: the offending operation, the chosen disposition, and… |
+| `planned_transfer_starts_without_an_error_and_round_trips` | `private` | fn | [`crates/pcloud-model/tests/transfer_coverage.rs:10`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-model/tests/transfer_coverage.rs#L10) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 

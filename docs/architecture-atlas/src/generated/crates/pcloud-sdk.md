@@ -10,6 +10,14 @@
 
 Stable blocking Rust SDK for pCloud drive operations through pcloudd.
 
+## Feature-family profile
+
+**Why it exists.** Give third-party Rust programs a small stable API without exposing daemon internals or credential handling.
+
+**What it is good for.** Blocking RemoteDrive operations for listing, metadata, directories, copy/move, upload/download, delete, public links, and sharing through pcloudd.
+
+**Why it is good at that job.** SDK-owned SemVer types and authenticated local IPC keep the public contract narrow and reuse the daemon's policy, durability, and security.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
@@ -32,7 +40,7 @@ No declared package features.
 | [`crates/pcloud-sdk-public/README.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-sdk-public/README.md) | documentation | pcloud-sdk |
 | [`crates/pcloud-sdk-public/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-sdk-public/src/lib.rs) | library root | Stable, filesystem-focused pCloud SDK. |
 
-## Rust declaration index (51 total; 33 visible)
+## Rust declaration index (52 total; 33 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -87,6 +95,7 @@ No declared package features.
 | `stat_list_and_range_use_only_canonical_requests` | `private` | fn | [`crates/pcloud-sdk-public/src/lib.rs:633`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-sdk-public/src/lib.rs#L633) | Read the source/rustdoc for the exact contract. |
 | `mutation_and_transfer_payloads_are_sdk_owned` | `private` | fn | [`crates/pcloud-sdk-public/src/lib.rs:671`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-sdk-public/src/lib.rs#L671) | Read the source/rustdoc for the exact contract. |
 | `errors_and_paths_do_not_leak_ipc_types` | `private` | fn | [`crates/pcloud-sdk-public/src/lib.rs:742`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-sdk-public/src/lib.rs#L742) | Read the source/rustdoc for the exact contract. |
+| `constructors_builders_protocol_guards_and_status_mapping_cover_edges` | `private` | fn | [`crates/pcloud-sdk-public/src/lib.rs:766`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-sdk-public/src/lib.rs#L766) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 

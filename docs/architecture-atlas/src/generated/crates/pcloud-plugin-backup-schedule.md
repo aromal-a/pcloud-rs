@@ -10,11 +10,20 @@
 
 User-level cron scheduler plugin that triggers backup sync cycles on a time-tick driven schedule. Supports native cron syntax and a small natural-language DSL.
 
+## Feature-family profile
+
+**Why it exists.** Add user-controlled backup timing without embedding cron parsing into the daemon core.
+
+**What it is good for.** Cron and natural-language schedules that emit backup-cycle operations on time ticks.
+
+**Why it is good at that job.** Pure schedule parsing plus deterministic tick handling makes time behavior independently testable.
+
 ## Targets
 
 | Cargo target | Kinds | Source |
 |---|---|---|
 | `pcloud_plugin_backup_schedule` | lib | [`crates/pcloud-plugin-backup-schedule/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs) |
+| `coverage_surface` | test | [`crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs) |
 
 ## Direct dependencies
 
@@ -24,15 +33,16 @@ User-level cron scheduler plugin that triggers backup sync cycles on a time-tick
 
 No declared package features.
 
-## File inventory (3)
+## File inventory (4)
 
 | File | Kind | Role |
 |---|---|---|
 | [`crates/pcloud-plugin-backup-schedule/Cargo.toml`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/Cargo.toml) | Cargo manifest | Defines package/workspace metadata, features, targets, and dependencies. |
 | [`crates/pcloud-plugin-backup-schedule/README.md`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/README.md) | documentation | pcloud-plugin-backup-schedule |
 | [`crates/pcloud-plugin-backup-schedule/src/lib.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs) | library root | Backup scheduler plugin. |
+| [`crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs) | test | \[derive(Clone)\] |
 
-## Rust declaration index (59 total; 27 visible)
+## Rust declaration index (64 total; 27 visible)
 
 | Item | Visibility | Kind | Source | Documentation hint |
 |---|---|---|---|---|
@@ -61,40 +71,45 @@ No declared package features.
 | `looks_like_cron` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:277`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L277) | Read the source/rustdoc for the exact contract. |
 | `canonicalize_cron` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:294`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L294) | Read the source/rustdoc for the exact contract. |
 | `natural_to_cron` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:327`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L327) | Translate a whitelisted natural-language expression to a cron string. Grammar (case-insensitive): ```text exp… |
-| `reject_trailing` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:383`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L383) | Read the source/rustdoc for the exact contract. |
-| `opt_at_time` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:392`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L392) | Read the source/rustdoc for the exact contract. |
-| `opt_on_dow` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:403`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L403) | Read the source/rustdoc for the exact contract. |
-| `opt_on_dom` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:414`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L414) | Read the source/rustdoc for the exact contract. |
-| `parse_hhmm` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:433`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L433) | Read the source/rustdoc for the exact contract. |
-| `parse_dow` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:456`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L456) | Read the source/rustdoc for the exact contract. |
-| `dow_name` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:471`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L471) | Read the source/rustdoc for the exact contract. |
-| `RuntimeEntry` | `private` | struct | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:490`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L490) | Runtime state for a single scheduled entry. |
-| `BackupSchedulePlugin` | `pub` | struct | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:499`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L499) | The backup scheduler plugin. |
-| `fmt` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:507`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L507) | Read the source/rustdoc for the exact contract. |
-| `new` | `pub` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:518`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L518) | Build a new plugin from a validated config. Uses \[`SystemClock`\]. |
-| `new_with_clock` | `pub` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:523`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L523) | Build with an explicit clock (used in tests). |
-| `tick` | `pub` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:549`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L549) | Feed a wall-clock tick to the scheduler. Any schedules whose next firing moment falls in `(last_tick, now\]` a… |
-| `pending_len` | `pub` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:581`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L581) | Number of operations currently queued and waiting for the host to pull them via \[`Plugin::next_operation`\]. |
-| `entries` | `pub` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:586`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L586) | Direct test hook: expose the current entries. |
-| `manifest` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:592`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L592) | Read the source/rustdoc for the exact contract. |
-| `signature` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:601`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L601) | Read the source/rustdoc for the exact contract. |
-| `on_load` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:605`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L605) | Read the source/rustdoc for the exact contract. |
-| `next_operation` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:610`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L610) | Read the source/rustdoc for the exact contract. |
-| `on_response` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:617`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L617) | Read the source/rustdoc for the exact contract. |
-| `BackupScheduleCliCommand` | `pub` | enum | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:632`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L632) | Commands the CLI surface (`pcloudc backup schedule ...`) issues against the backend. Kept as a plain enum so… |
-| `BackupScheduleCliReply` | `pub` | enum | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:654`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L654) | Result body the CLI returns to the user. |
-| `apply_cli` | `pub` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:672`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L672) | Apply a CLI command to a `BackupScheduleConfig` in memory. Persistence is the caller's responsibility — the d… |
-| `_keep_timezone_imported` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:706`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L706) | Read the source/rustdoc for the exact contract. |
-| `tests` | `private` | mod | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:717`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L717) | Read the source/rustdoc for the exact contract. |
-| `parses_cron_and_natural_expressions` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:722`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L722) | Read the source/rustdoc for the exact contract. |
-| `schedule_fires_at_expected_boundaries` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:758`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L758) | Read the source/rustdoc for the exact contract. |
-| `MClock` | `private` | struct | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:774`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L774) | Read the source/rustdoc for the exact contract. |
-| `now` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:776`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L776) | Read the source/rustdoc for the exact contract. |
-| `disabled_schedule_does_not_fire` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:814`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L814) | Read the source/rustdoc for the exact contract. |
-| `MClock` | `private` | struct | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:816`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L816) | Read the source/rustdoc for the exact contract. |
-| `now` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:818`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L818) | Read the source/rustdoc for the exact contract. |
-| `cli_add_and_remove_persist_in_config` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:845`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L845) | Read the source/rustdoc for the exact contract. |
-| `cap_of_32_enforced` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:910`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L910) | Read the source/rustdoc for the exact contract. |
+| `reject_trailing` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:388`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L388) | Read the source/rustdoc for the exact contract. |
+| `opt_at_time` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:397`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L397) | Read the source/rustdoc for the exact contract. |
+| `opt_on_dow` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:408`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L408) | Read the source/rustdoc for the exact contract. |
+| `opt_on_dom` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:419`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L419) | Read the source/rustdoc for the exact contract. |
+| `parse_hhmm` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:438`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L438) | Read the source/rustdoc for the exact contract. |
+| `parse_dow` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:461`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L461) | Read the source/rustdoc for the exact contract. |
+| `dow_name` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:476`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L476) | Read the source/rustdoc for the exact contract. |
+| `RuntimeEntry` | `private` | struct | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:495`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L495) | Runtime state for a single scheduled entry. |
+| `BackupSchedulePlugin` | `pub` | struct | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:504`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L504) | The backup scheduler plugin. |
+| `fmt` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:512`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L512) | Read the source/rustdoc for the exact contract. |
+| `new` | `pub` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:523`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L523) | Build a new plugin from a validated config. Uses \[`SystemClock`\]. |
+| `new_with_clock` | `pub` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:528`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L528) | Build with an explicit clock (used in tests). |
+| `tick` | `pub` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:554`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L554) | Feed a wall-clock tick to the scheduler. Any schedules whose next firing moment falls in `(last_tick, now\]` a… |
+| `pending_len` | `pub` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:586`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L586) | Number of operations currently queued and waiting for the host to pull them via \[`Plugin::next_operation`\]. |
+| `entries` | `pub` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:591`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L591) | Direct test hook: expose the current entries. |
+| `manifest` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:597`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L597) | Read the source/rustdoc for the exact contract. |
+| `signature` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:606`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L606) | Read the source/rustdoc for the exact contract. |
+| `on_load` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:610`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L610) | Read the source/rustdoc for the exact contract. |
+| `next_operation` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:615`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L615) | Read the source/rustdoc for the exact contract. |
+| `on_response` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:622`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L622) | Read the source/rustdoc for the exact contract. |
+| `BackupScheduleCliCommand` | `pub` | enum | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:637`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L637) | Commands the CLI surface (`pcloudc backup schedule ...`) issues against the backend. Kept as a plain enum so… |
+| `BackupScheduleCliReply` | `pub` | enum | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:659`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L659) | Result body the CLI returns to the user. |
+| `apply_cli` | `pub` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:677`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L677) | Apply a CLI command to a `BackupScheduleConfig` in memory. Persistence is the caller's responsibility — the d… |
+| `_keep_timezone_imported` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:711`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L711) | Read the source/rustdoc for the exact contract. |
+| `tests` | `private` | mod | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:722`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L722) | Read the source/rustdoc for the exact contract. |
+| `parses_cron_and_natural_expressions` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:727`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L727) | Read the source/rustdoc for the exact contract. |
+| `schedule_fires_at_expected_boundaries` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:763`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L763) | Read the source/rustdoc for the exact contract. |
+| `MClock` | `private` | struct | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:779`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L779) | Read the source/rustdoc for the exact contract. |
+| `now` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:781`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L781) | Read the source/rustdoc for the exact contract. |
+| `disabled_schedule_does_not_fire` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:819`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L819) | Read the source/rustdoc for the exact contract. |
+| `MClock` | `private` | struct | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:821`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L821) | Read the source/rustdoc for the exact contract. |
+| `now` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:823`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L823) | Read the source/rustdoc for the exact contract. |
+| `cli_add_and_remove_persist_in_config` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:850`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L850) | Read the source/rustdoc for the exact contract. |
+| `cap_of_32_enforced` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/src/lib.rs:915`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/src/lib.rs#L915) | Read the source/rustdoc for the exact contract. |
+| `SharedClock` | `private` | struct | [`crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs:15`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs#L15) | Read the source/rustdoc for the exact contract. |
+| `now` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs:18`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs#L18) | Read the source/rustdoc for the exact contract. |
+| `entry` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs:23`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs#L23) | Read the source/rustdoc for the exact contract. |
+| `public_schedule_parser_covers_canonical_and_rejection_surface` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs:33`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs#L33) | Read the source/rustdoc for the exact contract. |
+| `config_clock_cli_and_plugin_contract_cover_success_and_failures` | `private` | fn | [`crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs:100`](https://github.com/ezechiel203/pcloud-rs/blob/main/crates/pcloud-plugin-backup-schedule/tests/coverage_surface.rs#L100) | Read the source/rustdoc for the exact contract. |
 
 ## Usage guidance
 
