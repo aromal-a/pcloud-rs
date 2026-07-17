@@ -183,7 +183,12 @@ pub struct ParseLimits {
     ///
     /// The pCloud binary protocol supports back-references to
     /// previously emitted strings; this cap bounds the table used to
-    /// resolve those references. Default: 4096.
+    /// resolve those references. A string costs at least one frame
+    /// byte, so a frame can never legitimately contain more strings
+    /// than its own length: the effective cap is clamped to
+    /// `min(max_reused_strings, frame_len)` at parse time, which
+    /// keeps the table honest without ever desynchronising a valid
+    /// frame. Default: 1 MiB, matching the default frame cap.
     pub max_reused_strings: usize,
 }
 
@@ -195,7 +200,7 @@ impl Default for ParseLimits {
             max_array_len: 4096,
             max_hash_len: 4096,
             max_string_len: 64 * 1024,
-            max_reused_strings: 4096,
+            max_reused_strings: 1024 * 1024,
         }
     }
 }
@@ -340,7 +345,11 @@ pub fn parse_response_frame(
 
     let mut cursor = 4usize;
     let mut reused_strings = Vec::new();
-    let value = parse_value(bytes, &mut cursor, 0, limits, &mut reused_strings)?;
+    let limits = ParseLimits {
+        max_reused_strings: limits.max_reused_strings.min(frame_len),
+        ..limits.clone()
+    };
+    let value = parse_value(bytes, &mut cursor, 0, &limits, &mut reused_strings)?;
     if cursor != 4 + frame_len {
         return Err(ResponseParseError::TrailingBytes);
     }
@@ -661,8 +670,8 @@ impl<'a> HashView<'a> {
 #[cfg(test)]
 mod tests {
     use super::{
-        ParseLimits, RPARAM_BTRUE, RPARAM_END, RPARAM_HASH, RPARAM_SHORT_STR_BASE, Value,
-        parse_response_frame,
+        ParseLimits, RPARAM_ARRAY, RPARAM_BTRUE, RPARAM_END, RPARAM_HASH, RPARAM_SHORT_STR_BASE,
+        Value, parse_response_frame,
     };
 
     #[test]
@@ -715,5 +724,32 @@ mod tests {
         let hash = value.as_hash().expect("hash expected");
         assert_eq!(hash.get_number("result"), Some(0));
         assert_eq!(hash.get_bool("trustdevice"), Some(true));
+    }
+
+    #[test]
+    fn parse_frame_with_more_than_4096_reused_strings() {
+        let mut payload = vec![RPARAM_ARRAY];
+        for idx in 0..5000u32 {
+            let s = format!("s{idx:04}");
+            payload.push(RPARAM_SHORT_STR_BASE + s.len() as u8);
+            payload.extend_from_slice(s.as_bytes());
+        }
+        payload.push(4 + 1);
+        payload.extend_from_slice(&4999u32.to_le_bytes()[..2]);
+        payload.push(RPARAM_END);
+
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&(payload.len() as u32).to_le_bytes());
+        frame.extend_from_slice(&payload);
+
+        let limits = ParseLimits {
+            max_array_len: 8192,
+            ..ParseLimits::default()
+        };
+        let value = parse_response_frame(&frame, &limits).expect("frame should parse");
+        let array = value.as_array().expect("array expected");
+        assert_eq!(array.len(), 5001);
+        assert_eq!(array[4999].as_string(), Some("s4999"));
+        assert_eq!(array[5000].as_string(), Some("s4999"));
     }
 }

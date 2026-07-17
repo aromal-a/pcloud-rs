@@ -1919,7 +1919,7 @@ impl CryptoShell {
             self.start(password)
         } else {
             let dup = password.clone_secret();
-            self.setup(password, None)?;
+            self.setup_with_backend(password, None, CryptoBackend::default())?;
             self.start(dup)
         }
     }
@@ -3624,6 +3624,17 @@ mod tests {
     #[test]
     fn crypto_backend_default_is_pclsync_compat() {
         assert_eq!(CryptoBackend::default(), CryptoBackend::PclsyncCompat);
+    }
+
+    #[cfg(feature = "pclsync-v2")]
+    #[test]
+    fn unlock_first_run_setup_uses_default_backend() {
+        let mut shell = CryptoShell::default();
+        shell.unlock(pw("correct horse battery staple")).unwrap();
+        assert!(shell.is_setup());
+        assert!(shell.is_started());
+        assert_eq!(shell.effective_backend(), CryptoBackend::PclsyncCompat);
+        assert_eq!(shell.backend, Some(CryptoBackend::PclsyncCompat));
     }
 
     #[test]

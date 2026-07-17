@@ -1794,23 +1794,51 @@ pub fn parse_inputs_for_command(
             }))
         }
         Command::SubmitCryptoPassword => {
-            let crypto_password = match args.get(2) {
-                Some(password) => {
-                    // Hard failure unless the caller explicitly acknowledged the risk.
-                    if !args.iter().any(|a| a == "--allow-argv-password") {
-                        eprintln!(
-                            "Error: Passing secrets as command-line arguments leaks them via \
-                             /proc/*/cmdline and shell history. Use --allow-argv-password to override."
-                        );
-                        std::process::exit(2);
+            let crypto_password = if args.iter().any(|a| a == "--password-stdin") {
+                use std::io::BufRead;
+                let stdin = std::io::stdin();
+                let mut line = String::new();
+                stdin.lock().read_line(&mut line)?;
+                if line.ends_with('\n') {
+                    line.pop();
+                    if line.ends_with('\r') {
+                        line.pop();
                     }
-                    eprintln!(
-                        "warning: passing a crypto password on the command line is insecure \
-                         (visible via /proc/<pid>/cmdline). --allow-argv-password acknowledged."
-                    );
-                    password.clone()
                 }
-                None => SecretPrompt::new("Crypto password").read_secret()?,
+                line
+            } else if let Some(var) = args
+                .iter()
+                .position(|a| a == "--password-env")
+                .and_then(|idx| args.get(idx + 1))
+                .filter(|s| !s.starts_with("--"))
+            {
+                let value = std::env::var(var).map_err(|_| {
+                    PromptError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("--password-env: environment variable '{var}' is not set"),
+                    ))
+                })?;
+                unsafe { std::env::remove_var(var) };
+                value
+            } else {
+                match args.get(2).filter(|s| !s.starts_with("--")) {
+                    Some(password) => {
+                        // Hard failure unless the caller explicitly acknowledged the risk.
+                        if !args.iter().any(|a| a == "--allow-argv-password") {
+                            eprintln!(
+                                "Error: Passing secrets as command-line arguments leaks them via \
+                                 /proc/*/cmdline and shell history. Use --allow-argv-password to override."
+                            );
+                            std::process::exit(2);
+                        }
+                        eprintln!(
+                            "warning: passing a crypto password on the command line is insecure \
+                             (visible via /proc/<pid>/cmdline). --allow-argv-password acknowledged."
+                        );
+                        password.clone()
+                    }
+                    None => SecretPrompt::new("Crypto password").read_secret()?,
+                }
             };
             Ok(build_inputs(trust_device, recovery_code, |inputs| {
                 inputs.crypto_password = SecretString::new(crypto_password);
