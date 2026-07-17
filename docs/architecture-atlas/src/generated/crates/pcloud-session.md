@@ -2,7 +2,7 @@
 
 **Maturity:** Evolving product surface
 
-**Version:** `0.1.0`
+**Version:** `0.8.1-beta`
 
 **Directory:** `crates/pcloud-session`
 
