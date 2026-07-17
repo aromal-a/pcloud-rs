@@ -33,14 +33,25 @@ use thiserror::Error;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
+use base64::engine::general_purpose::STANDARD_NO_PAD as B64_NOPAD;
+use base64::engine::general_purpose::URL_SAFE as B64URL;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64URL_NOPAD;
 
+/// Decode a base64 field emitted by the pCloud crypto endpoints.
+///
+/// pCloud's wire base64 alphabet is URL-safe (`-` / `_` — see the C
+/// client's `base64_table` at `plibs.c:75`), and its decoder is lax:
+/// it skips whitespace and `=` padding outright and also accepts the
+/// standard `+` / `/` characters (`base64_reverse_table` at
+/// `plibs.c:87`). We mirror that: strip whitespace, then try the four
+/// alphabet × padding combinations, URL-safe first.
 use crate::{
     ProtocolMethod,
     auth_api::{ApiServerHintConsumer, ProtocolTransport},
     methods::crypto::{
         ChangeUserPrivateRequest, CryptoGetFileKeyRequest, CryptoGetFolderKeyRequest,
-        CryptoGetPubKeyRequest, CryptoPubKeyRecipient, PclsyncSetUserKeysRequest,
-        SendChangeUserPrivateRequest,
+        CryptoGetPubKeyRequest, CryptoGetUserKeysRequest, CryptoPubKeyRecipient,
+        PclsyncSetUserKeysRequest, SendChangeUserPrivateRequest,
     },
     response::HashView,
 };
@@ -72,6 +83,10 @@ pub enum CryptoApiError<E: std::error::Error + Send + Sync + 'static> {
     #[error("response was malformed: {0}")]
     Malformed(&'static str),
 }
+
+/// Decoded `priv_key_ver1` / `pub_key_ver1` blob pair returned by
+/// [`CryptoApi::get_user_keys`]. Tuple layout: `(private, public)`.
+pub type CryptoUserKeys = (Vec<u8>, Vec<u8>);
 
 impl<T> CryptoApi<T> {
     /// `new` — new.
@@ -165,6 +180,64 @@ where
         )
     }
 
+    /// Download the account's `priv_key_ver1` / `pub_key_ver1` blobs via
+    /// `crypto_getuserkeys`. Mirrors C `psync_cloud_crypto_download_keys`
+    /// (`pcloudcrypto.c:181-260`).
+    ///
+    /// Returns `Ok(Some((priv, pub)))` with the base64-decoded blob bytes
+    /// on success, `Ok(None)` when the server reports result `2111`
+    /// (crypto not set up for this account) — the caller then knows a
+    /// fresh setup is appropriate rather than an adoption.
+    ///
+    /// # Errors
+    /// Transport / malformed / non-zero `result` codes other than 2111
+    /// map onto [`CryptoApiError`] as usual.
+    pub fn get_user_keys(
+        &self,
+        auth_token: &str,
+    ) -> Result<Option<CryptoUserKeys>, CryptoApiError<T::Error>> {
+        let request = CryptoGetUserKeysRequest {
+            auth_token: crate::redacted::RedactedProtoString::from(auth_token),
+        };
+        let encoded = request.encode()?;
+        let response = self
+            .transport
+            .execute(&encoded)
+            .map_err(CryptoApiError::Transport)?;
+        let hash = response.as_hash().ok_or(CryptoApiError::Malformed(
+            "crypto_getuserkeys response was not a hash",
+        ))?;
+        let result = hash.get_number("result").unwrap_or(0);
+        if result == 2111 {
+            return Ok(None);
+        }
+        if result != 0 {
+            return Err(CryptoApiError::Result {
+                result,
+                message: hash.get_string("error").map(ToOwned::to_owned),
+            });
+        }
+        let priv_b64 = hash
+            .get_string("privatekey")
+            .ok_or(CryptoApiError::Malformed(
+                "crypto_getuserkeys response missing \"privatekey\" field",
+            ))?;
+        let pub_b64 = hash
+            .get_string("publickey")
+            .ok_or(CryptoApiError::Malformed(
+                "crypto_getuserkeys response missing \"publickey\" field",
+            ))?;
+        let priv_blob = decode_pcloud_b64(
+            "crypto_getuserkeys \"privatekey\" was not valid base64",
+            priv_b64,
+        )?;
+        let pubk = decode_pcloud_b64(
+            "crypto_getuserkeys \"publickey\" was not valid base64",
+            pub_b64,
+        )?;
+        Ok(Some((priv_blob, pubk)))
+    }
+
     /// Fetch a folder's RSA-OAEP-wrapped `sym_key_ver1` blob from the
     /// server. Mirrors `download_fldr_enckey` at
     /// `pcryptofolder.c:808`. Returns the raw wrapped-key bytes (base64
@@ -196,9 +269,10 @@ where
         let key_b64 = hash.get_string("key").ok_or(CryptoApiError::Malformed(
             "crypto_getfolderkey response missing \"key\" field",
         ))?;
-        B64.decode(key_b64).map_err(|_| {
-            CryptoApiError::Malformed("crypto_getfolderkey \"key\" field was not valid base64")
-        })
+        decode_pcloud_b64(
+            "crypto_getfolderkey \"key\" field was not valid base64",
+            key_b64,
+        )
     }
 
     /// Fetch a recipient's RSA-4096 `pub_key_ver1` blob for share-invitation
@@ -243,9 +317,10 @@ where
         if let Some(bytes) = decode_hex(key_str) {
             return Ok(bytes);
         }
-        B64.decode(key_str).map_err(|_| {
-            CryptoApiError::Malformed("crypto_getpubkey \"publickey\" was neither hex nor base64")
-        })
+        decode_pcloud_b64(
+            "crypto_getpubkey \"publickey\" was neither hex nor base64",
+            key_str,
+        )
     }
 
     /// Fetch a file's RSA-OAEP-wrapped `sym_key_ver1` blob plus its
@@ -281,9 +356,10 @@ where
         let file_hash = hash.get_number("hash").ok_or(CryptoApiError::Malformed(
             "crypto_getfilekey response missing \"hash\" field",
         ))?;
-        let wrapped = B64.decode(key_b64).map_err(|_| {
-            CryptoApiError::Malformed("crypto_getfilekey \"key\" field was not valid base64")
-        })?;
+        let wrapped = decode_pcloud_b64(
+            "crypto_getfilekey \"key\" field was not valid base64",
+            key_b64,
+        )?;
         Ok((file_hash, wrapped))
     }
 }
@@ -332,6 +408,19 @@ where
         .ok_or(CryptoApiError::Malformed(malformed_message))?;
     expect_ok_result(hash)?;
     Ok(())
+}
+
+fn decode_pcloud_b64<E>(field: &'static str, value: &str) -> Result<Vec<u8>, CryptoApiError<E>>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let cleaned: String = value.chars().filter(|c| !c.is_whitespace()).collect();
+    B64URL_NOPAD
+        .decode(&cleaned)
+        .or_else(|_| B64URL.decode(&cleaned))
+        .or_else(|_| B64_NOPAD.decode(&cleaned))
+        .or_else(|_| B64.decode(&cleaned))
+        .map_err(|_| CryptoApiError::Malformed(field))
 }
 
 fn expect_ok_result<E>(hash: HashView<'_>) -> Result<(), CryptoApiError<E>>
@@ -411,6 +500,54 @@ mod tests {
         let api = CryptoApi::new(transport);
         api.change_user_private("token", "pk", "sig", "hint", "code")
             .expect("ok");
+    }
+
+    #[test]
+    fn get_user_keys_decodes_base64_blobs() {
+        use base64::Engine as _;
+        use base64::engine::general_purpose::STANDARD as B64;
+        let transport = MockTransport::with_responses(vec![Value::Hash(vec![
+            ("result".to_owned(), Value::Number(0)),
+            (
+                "privatekey".to_owned(),
+                Value::String(B64.encode([1u8, 2, 3, 4])),
+            ),
+            (
+                "publickey".to_owned(),
+                Value::String(B64.encode([5u8, 6, 7, 8])),
+            ),
+        ])]);
+        let api = CryptoApi::new(transport);
+        let (privk, pubk) = api
+            .get_user_keys("token")
+            .expect("ok")
+            .expect("keys present");
+        assert_eq!(privk, vec![1, 2, 3, 4]);
+        assert_eq!(pubk, vec![5, 6, 7, 8]);
+        assert_eq!(
+            api.transport.captured.lock().unwrap().as_slice(),
+            ["crypto_getuserkeys"]
+        );
+    }
+
+    #[test]
+    fn get_user_keys_maps_2111_to_none() {
+        let transport = MockTransport::with_responses(vec![Value::Hash(vec![(
+            "result".to_owned(),
+            Value::Number(2111),
+        )])]);
+        let api = CryptoApi::new(transport);
+        assert!(api.get_user_keys("token").expect("ok").is_none());
+    }
+
+    #[test]
+    fn get_user_keys_surfaces_other_errors() {
+        let transport = MockTransport::with_responses(vec![err_hash(1000, "not logged in")]);
+        let api = CryptoApi::new(transport);
+        match api.get_user_keys("token") {
+            Err(CryptoApiError::Result { result, .. }) => assert_eq!(result, 1000),
+            other => panic!("expected Result error, got {other:?}"),
+        }
     }
 
     #[test]

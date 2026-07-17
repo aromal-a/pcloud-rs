@@ -81,6 +81,18 @@ pub struct PendingPasswordAuth {
     pub password: SecretString,
 }
 
+/// Failure modes of [`RuntimeShell::try_adopt_server_vault`]. Split so the
+/// caller can distinguish a bad vault password (maps to the standard
+/// "wrong crypto password" response) from a transport/query failure
+/// (maps to Unavailable with operator guidance).
+#[derive(Debug)]
+enum ServerVaultAdoptError {
+    /// The adoption itself failed (wrong password or malformed blobs).
+    Crypto(pcloud_crypto::CryptoError),
+    /// The `crypto_getuserkeys` round-trip failed.
+    Transport(String),
+}
+
 /// Error variants returned by `RuntimeShell::set_api_server`.
 ///
 /// Public because `pcloud-sdk::EmbeddedDaemon::set_api_server` delegates
@@ -3850,11 +3862,31 @@ impl RuntimeShell {
             };
         }
         let secret = password;
-        let result = if self.crypto.is_setup() {
-            self.crypto.start(secret)
-        } else {
-            self.crypto.unlock(secret)
-        };
+        let mut adopted_server_vault = false;
+        if !self.crypto.is_setup() {
+            match self.try_adopt_server_vault(&secret) {
+                Ok(adopted) => adopted_server_vault = adopted,
+                Err(ServerVaultAdoptError::Crypto(err)) => {
+                    return match err {
+                        pcloud_crypto::CryptoError::WrongPassword => Response {
+                            status: ResponseStatus::Unauthorized,
+                            message: "wrong crypto password".to_owned(),
+                        },
+                        other => Response {
+                            status: ResponseStatus::Conflict,
+                            message: format!("server crypto vault adoption failed: {other}"),
+                        },
+                    };
+                }
+                Err(ServerVaultAdoptError::Transport(message)) => {
+                    return Response {
+                        status: ResponseStatus::Unavailable,
+                        message,
+                    };
+                }
+            }
+        }
+        let result = self.crypto.unlock(secret);
         self.metric_sync_crypto_state();
         match result {
             Ok(()) => {
@@ -3880,15 +3912,16 @@ impl RuntimeShell {
                 self.audited_response(
                     "crypto.start",
                     Some(format!(
-                        "state={:?} folders_unlocked={}",
-                        self.crypto.unlock_state, unlocked_folders
+                        "state={:?} folders_unlocked={} adopted_server_vault={}",
+                        self.crypto.unlock_state, unlocked_folders, adopted_server_vault
                     )),
                     format!(
-                        "crypto started (backend={}, setup={}, folders={}, per_folder_unlocked={})",
+                        "crypto started (backend={}, setup={}, folders={}, per_folder_unlocked={}, adopted_server_vault={})",
                         self.crypto.effective_backend(),
                         self.crypto.is_setup(),
                         self.crypto.folders.len(),
                         unlocked_folders,
+                        adopted_server_vault,
                     ),
                 )
             }
@@ -3900,6 +3933,54 @@ impl RuntimeShell {
                 status: ResponseStatus::Conflict,
                 message: err.to_string(),
             },
+        }
+    }
+
+    /// Interop unlock helper for [`Self::unlock_crypto`]: when the local
+    /// shell has no profile yet, ask the server whether this account
+    /// already has a crypto vault (`crypto_getuserkeys`) and, if so,
+    /// adopt its keypair instead of generating a parallel one that
+    /// could not read the vault.
+    ///
+    /// Returns `Ok(true)` when a server vault was adopted, `Ok(false)`
+    /// when the server reports crypto not set up (2111) or no auth
+    /// token is available (offline local flow preserved).
+    fn try_adopt_server_vault(
+        &mut self,
+        password: &SecretString,
+    ) -> Result<bool, ServerVaultAdoptError> {
+        if self.crypto.is_setup() {
+            return Ok(false);
+        }
+        let auth_token = match self
+            .auth
+            .snapshot()
+            .auth_token
+            .as_ref()
+            .map(SecretString::clone_secret)
+        {
+            Some(token) => token,
+            None => return Ok(false),
+        };
+        match self
+            .crypto_runtime
+            .get_user_keys(auth_token.expose_secret())
+        {
+            Ok(Some((priv_blob, pub_blob))) => {
+                self.crypto
+                    .adopt_server_profile(password.clone_secret(), &priv_blob, &pub_blob)
+                    .map_err(ServerVaultAdoptError::Crypto)?;
+                log::info!(
+                    target: "pcloud_daemon::runtime",
+                    "adopted server-side crypto vault keypair via crypto_getuserkeys (backend=pclsync-compat)"
+                );
+                Ok(true)
+            }
+            Ok(None) => Ok(false),
+            Err(err) => Err(ServerVaultAdoptError::Transport(format!(
+                "could not query server crypto state (crypto_getuserkeys): {err}; \
+                 refusing to guess — run `pcloudc crypto setup` to force a fresh local setup"
+            ))),
         }
     }
 
@@ -4085,7 +4166,11 @@ impl RuntimeShell {
         hint: Option<String>,
     ) -> Response {
         use base64::Engine as _;
-        use base64::engine::general_purpose::STANDARD as B64;
+        // pCloud's wire base64 alphabet is URL-safe (`-` / `_`) — see the
+        // C client's `base64_table` at `plibs.c:75`. Uploading with the
+        // standard alphabet would corrupt blobs whose encoding contains
+        // `+` or `/` once the server decodes them.
+        use base64::engine::general_purpose::URL_SAFE as B64;
 
         let auth_token = match self
             .auth

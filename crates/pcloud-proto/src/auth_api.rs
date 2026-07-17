@@ -550,7 +550,13 @@ where
         });
     }
 
-    if result == 2297 {
+    if result == 2297 || result == 1022 {
+        // 2297: server-side TFA challenge (token normally arrives in the
+        // `token` field handled above; tolerate its absence).
+        // 1022 ("Please provide 'code.'"): token-less email/new-device
+        // verification challenge — the correct retry is a plain `login`
+        // carrying the `code` parameter, which the empty challenge token
+        // signals downstream.
         return Ok(PasswordLoginOutcome::TwoFactorRequired {
             challenge_token: SecretString::new(String::new()),
             trust_device: hash.get_bool("trustdevice").unwrap_or(false),
@@ -684,6 +690,7 @@ mod tests {
     use crate::response::Value;
 
     use super::{ApiServerHintConsumer, AuthApi, PasswordLoginOutcome, ProtocolTransport};
+    use pcloud_secret::ExposeSecret;
 
     #[derive(Debug)]
     struct HintTrackingTransport {
@@ -865,6 +872,40 @@ mod tests {
                 .as_slice(),
             ["bineapi-tfa.pcloud.com"]
         );
+    }
+
+    #[test]
+    fn login_maps_result_1022_to_tokenless_two_factor_challenge() {
+        let transport = HintTrackingTransport::with_responses(vec![
+            Value::Hash(vec![
+                ("result".to_owned(), Value::Number(0)),
+                (
+                    "digest".to_owned(),
+                    Value::String("development-digest".to_owned()),
+                ),
+            ]),
+            Value::Hash(vec![
+                ("result".to_owned(), Value::Number(1022)),
+                (
+                    "error".to_owned(),
+                    Value::String("Please provide 'code'.".to_owned()),
+                ),
+            ]),
+        ]);
+        let api = AuthApi::new(transport);
+
+        let outcome = api
+            .login_password("bob@example.com".to_owned(), "correct-horse")
+            .expect("login should parse");
+
+        match outcome {
+            PasswordLoginOutcome::TwoFactorRequired {
+                challenge_token, ..
+            } => {
+                assert!(challenge_token.expose_secret().is_empty());
+            }
+            other => panic!("expected two-factor outcome, got {other:?}"),
+        }
     }
 
     #[test]

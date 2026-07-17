@@ -304,6 +304,56 @@ impl PclsyncSetUserKeysResponse {
     }
 }
 
+/// `crypto_getuserkeys` — download the account's `priv_key_ver1` and
+/// `pub_key_ver1` blobs (base64 on the wire). Mirrors C
+/// `psync_cloud_crypto_download_keys` (`pcloudcrypto.c:181`).
+///
+/// This is the interop-unlock entry point: when the account already has
+/// a vault created by an official pCloud client, the returned blobs let
+/// the local crypto shell adopt the existing keypair instead of
+/// generating a parallel one that cannot read the vault.
+///
+/// Known result codes: `0` success, `2111` crypto not set up for this
+/// account, `1000` not logged in.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CryptoGetUserKeysRequest {
+    /// Authenticated session token.
+    pub auth_token: RedactedProtoString,
+}
+
+impl CryptoGetUserKeysRequest {
+    /// `command_name` — command name.
+    #[must_use]
+    pub fn command_name(&self) -> &'static str {
+        "crypto_getuserkeys"
+    }
+
+    /// `params` — typed parameter vector.
+    #[must_use]
+    pub fn params(&self) -> Vec<BinaryParam> {
+        vec![
+            BinaryParam {
+                name: "auth".to_owned(),
+                value: BinaryParamValue::String(self.auth_token.expose_secret().to_owned()),
+            },
+            BinaryParam {
+                name: "timeformat".to_owned(),
+                value: BinaryParamValue::String("timestamp".to_owned()),
+            },
+        ]
+    }
+}
+
+impl ProtocolMethod for CryptoGetUserKeysRequest {
+    fn command_name(&self) -> &'static str {
+        Self::command_name(self)
+    }
+
+    fn params(&self) -> Vec<BinaryParam> {
+        Self::params(self)
+    }
+}
+
 /// `crypto_getfolderkey` — fetch a folder's RSA-OAEP-wrapped
 /// `sym_key_ver1`. Mirrors C `download_fldr_enckey` at
 /// `pcryptofolder.c:808` (command issued at line 826).

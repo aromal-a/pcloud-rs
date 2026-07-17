@@ -308,6 +308,67 @@ pub fn unlock_profile(
     Ok(PclsyncCompatState::new(priv_key))
 }
 
+/// Adopt a server-side keypair downloaded via `crypto_getuserkeys` as the
+/// local PclsyncCompat profile.
+///
+/// This is the path that lets pcloud-rs unlock a crypto vault that was
+/// created by an official pCloud client (desktop, mobile, or the legacy
+/// C CLI): instead of generating a fresh keypair, we take the account's
+/// existing `priv_key_ver1` / `pub_key_ver1` blobs verbatim and re-root
+/// the local profile at them. The blobs pass through untouched — only
+/// validation happens here, so a later `crypto_setuserkeys` re-upload
+/// would be a no-op.
+///
+/// Validation performed (all constant-time where secrets are involved):
+///
+/// 1. Both blob headers parse and carry the expected `type` tags.
+/// 2. The password unwraps the private key: PBKDF2-HMAC-SHA512 → KEK,
+///    AES-256-CTR decrypt, PKCS#1 DER parse. A wrong password fails
+///    here with overwhelming probability (garbage DER).
+/// 3. The unwrapped private key's derived public key matches the
+///    server's `pub_key_ver1` DER byte-for-byte (constant-time) —
+///    catches both wrong passwords that slipped past step 2 and
+///    server blobs that do not belong together.
+///
+/// On success the returned profile carries the computed `pub_fingerprint`
+/// so future unlocks keep the constant-time wrong-password gate.
+///
+/// # Errors
+/// - [`PclsyncCompatError::PrivKeyTruncated`] / [`PclsyncCompatError::PubKeyTruncated`]
+/// - [`PclsyncCompatError::UnsupportedPrivType`] / [`PclsyncCompatError::UnsupportedPubType`]
+/// - [`PclsyncCompatError::Rsa`] when the password does not unwrap the key
+///   or the private/public blobs do not form a pair.
+pub fn adopt_server_blobs(
+    password: &SecretString,
+    priv_key_ver1_blob: &[u8],
+    pub_key_ver1_blob: &[u8],
+) -> Result<PclsyncCompatProfile, PclsyncCompatError> {
+    let (_typ, flags, salt, mut ct_der) =
+        PclsyncCompatProfile::parse_priv_blob(priv_key_ver1_blob)?;
+    let (_ptyp, _pflags, pub_der) = PclsyncCompatProfile::parse_pub_blob(pub_key_ver1_blob)?;
+
+    let kek = pclsync_kdf::derive_kek(password, &salt);
+    pclsync_modes::aes256_ctr_pclsync_xor_inplace(&kek.key, &kek.iv, 0, &mut ct_der);
+    let priv_key = pclsync_rsa::parse_priv_key_der(&ct_der).inspect_err(|_| {
+        ct_der.zeroize();
+    })?;
+    ct_der.zeroize();
+
+    let derived_pub_der = pclsync_rsa::serialize_pub_key_der(&priv_key.to_public_key())?;
+    let pair_ok: bool = derived_pub_der.ct_eq(&pub_der).into();
+    if !pair_ok {
+        return Err(PclsyncCompatError::Rsa(pclsync_rsa::PclsyncRsaError::Oaep));
+    }
+
+    let fpr = pub_fingerprint(&kek.key, pub_key_ver1_blob);
+    Ok(PclsyncCompatProfile {
+        priv_key_ver1_blob: priv_key_ver1_blob.to_vec(),
+        pub_key_ver1_blob: pub_key_ver1_blob.to_vec(),
+        pub_fingerprint: fpr,
+        flags,
+    })
+}
+
 /// Runtime-only PclsyncCompat state. Holds the unwrapped RSA private
 /// key and lazy caches of folder/file symmetric keys obtained via
 /// `crypto_getfolderkey` (Stage 4 will populate these).
@@ -414,6 +475,62 @@ mod tests {
         let err = unlock_profile(&wrong, &profile).expect_err("wrong pw");
         // We coerce to Rsa(Oaep) in the constant-time-reject branch.
         assert!(matches!(err, PclsyncCompatError::Rsa(_)));
+    }
+
+    #[test]
+    fn adopt_server_blobs_roundtrips_and_unlocks() {
+        let pw = SecretString::new("vault-password");
+        let original = generate_profile(&pw).expect("generate");
+
+        let adopted = adopt_server_blobs(
+            &pw,
+            &original.priv_key_ver1_blob,
+            &original.pub_key_ver1_blob,
+        )
+        .expect("adopt");
+
+        assert_eq!(adopted.priv_key_ver1_blob, original.priv_key_ver1_blob);
+        assert_eq!(adopted.pub_key_ver1_blob, original.pub_key_ver1_blob);
+        assert_eq!(adopted.flags, original.flags);
+        assert_eq!(adopted.pub_fingerprint, original.pub_fingerprint);
+
+        let state = unlock_profile(&pw, &adopted).expect("unlock adopted");
+        use rsa::traits::PublicKeyParts;
+        assert_eq!(state.priv_key().n().bits(), 4096);
+    }
+
+    #[test]
+    fn adopt_server_blobs_rejects_wrong_password() {
+        let pw = SecretString::new("vault-password");
+        let original = generate_profile(&pw).expect("generate");
+        let wrong = SecretString::new("not-the-vault-password");
+        let err = adopt_server_blobs(
+            &wrong,
+            &original.priv_key_ver1_blob,
+            &original.pub_key_ver1_blob,
+        )
+        .expect_err("wrong password must not adopt");
+        assert!(matches!(err, PclsyncCompatError::Rsa(_)));
+    }
+
+    #[test]
+    fn adopt_server_blobs_rejects_mismatched_pair() {
+        let pw = SecretString::new("vault-password");
+        let first = generate_profile(&pw).expect("generate first");
+        let second = generate_profile(&pw).expect("generate second");
+        let err = adopt_server_blobs(&pw, &first.priv_key_ver1_blob, &second.pub_key_ver1_blob)
+            .expect_err("mismatched key pair must not adopt");
+        assert!(matches!(err, PclsyncCompatError::Rsa(_)));
+    }
+
+    #[test]
+    fn adopt_server_blobs_rejects_structural_garbage() {
+        let pw = SecretString::new("vault-password");
+        let tiny = [0u8; 8];
+        assert!(matches!(
+            adopt_server_blobs(&pw, &tiny, &tiny).unwrap_err(),
+            PclsyncCompatError::PrivKeyTruncated
+        ));
     }
 
     #[test]

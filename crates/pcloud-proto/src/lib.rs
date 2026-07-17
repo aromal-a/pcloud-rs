@@ -150,7 +150,7 @@ pub use backup_api::{BackupApi, BackupApiError, CreatedBackup};
 pub use binary_api::{
     BinaryParam, BinaryParamValue, EncodedRequest, FrameParseError, encode_request,
 };
-pub use crypto_api::{CryptoApi, CryptoApiError};
+pub use crypto_api::{CryptoApi, CryptoApiError, CryptoUserKeys};
 pub use diff_api::{
     DiffApi, DiffApiError, DiffEntry as DiffApiEntry, DiffFileMetadata, DiffResponse,
     DiffResponseBatch, DiffResponseEntry, diff_response_to_batch,

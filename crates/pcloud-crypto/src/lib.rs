@@ -1563,6 +1563,59 @@ impl CryptoShell {
         Ok(())
     }
 
+    /// Adopt a server-side vault keypair (downloaded via
+    /// `crypto_getuserkeys`) as this shell's profile.
+    ///
+    /// This is the interop unlock path: when the account already has a
+    /// crypto vault created by an official pCloud client, the daemon calls
+    /// this instead of [`Self::setup_with_backend`] so the user unlocks
+    /// their *existing* vault rather than silently creating a parallel
+    /// keypair that cannot read it.
+    ///
+    /// The password is validated by actually unwrapping the private key
+    /// and cross-checking its derived public key against the server's
+    /// `pub_key_ver1` blob, so [`CryptoError::WrongPassword`] is returned
+    /// for passphrases that do not match the vault.
+    ///
+    /// # Errors
+    /// - [`CryptoError::UnsafePolicy`], [`CryptoError::EmptyPassword`],
+    ///   [`CryptoError::AlreadySetup`]
+    /// - [`CryptoError::WrongPassword`] when the password fails to unwrap
+    ///   the server private key or the key pair does not match.
+    /// - [`CryptoError::PclsyncCompat`] when the blobs are structurally
+    ///   invalid (truncated / unsupported `type` tag).
+    #[cfg(feature = "pclsync-v2")]
+    pub fn adopt_server_profile(
+        &mut self,
+        password: SecretString,
+        priv_key_ver1_blob: &[u8],
+        pub_key_ver1_blob: &[u8],
+    ) -> Result<(), CryptoError> {
+        if !self.policy.is_safe() {
+            return Err(CryptoError::UnsafePolicy);
+        }
+        if password.is_empty() {
+            return Err(CryptoError::EmptyPassword);
+        }
+        if self.is_setup() {
+            return Err(CryptoError::AlreadySetup);
+        }
+        let normalized = normalize_password_nfc(&password);
+        let profile = pclsync_compat_profile::adopt_server_blobs(
+            &normalized,
+            priv_key_ver1_blob,
+            pub_key_ver1_blob,
+        )
+        .map_err(|err| match err {
+            pclsync_compat_profile::PclsyncCompatError::Rsa(_) => CryptoError::WrongPassword,
+            _ => CryptoError::PclsyncCompat,
+        })?;
+        self.pclsync_compat = Some(profile);
+        self.unlock_state = state::UnlockState::Locked;
+        self.backend = Some(CryptoBackend::PclsyncCompat);
+        Ok(())
+    }
+
     /// `psync_crypto_start` equivalent. Verifies the password against the
     /// stored fingerprint in constant time (`subtle::ConstantTimeEq`) and,
     /// on success, keeps the derived 32-byte master key resident
