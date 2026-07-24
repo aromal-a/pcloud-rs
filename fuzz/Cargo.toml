@@ -2,7 +2,7 @@
 name = "pcloud-rs-fuzz"
 version = "0.0.0"
 edition = "2021"
-publish = false
+publish = ["kellnr"]
 
 # CLAUDEREV T3.4 (workspace-root fuzz package). This package is its own
 # subordinate workspace so the parent workspace-default `cargo build` /

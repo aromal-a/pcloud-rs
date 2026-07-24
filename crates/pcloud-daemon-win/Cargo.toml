@@ -4,7 +4,7 @@ description = "Experimental unshipped Windows SCM host for the per-user pcloudd 
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
+publish = ["kellnr"]
 rust-version.workspace = true
 
 [target.'cfg(windows)'.dependencies]

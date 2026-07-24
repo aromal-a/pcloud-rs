@@ -2,7 +2,7 @@
 name = "pcloud-ipc-fuzz"
 version = "0.0.0"
 edition = "2021"
-publish = false
+publish = ["kellnr"]
 
 # Exclude this crate from the parent workspace so the default `cargo build` /
 # `cargo test --workspace` continues to work without nightly cargo-fuzz.

@@ -3,7 +3,7 @@ name = "pcloud-embedded-sdk"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
+publish = ["kellnr"]
 rust-version.workspace = true
 description = "Internal embedded-daemon compatibility API for pcloud-rs."
 

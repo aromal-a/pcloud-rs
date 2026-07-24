@@ -2,7 +2,7 @@
 name = "pcloud-proto-fuzz"
 version = "0.0.0"
 edition = "2021"
-publish = false
+publish = ["kellnr"]
 
 # Exclude from parent workspace; cargo-fuzz is nightly-only.
 [workspace]

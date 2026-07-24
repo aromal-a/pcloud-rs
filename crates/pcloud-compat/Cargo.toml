@@ -11,7 +11,7 @@ name = "pcloud-compat"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-publish = false
+publish = ["kellnr"]
 rust-version.workspace = true
 description = "C-CLI compatibility shim primitives (rpc_message_t codec, SysV shm producer). Isolated crate, not wired into the daemon by default."
 
