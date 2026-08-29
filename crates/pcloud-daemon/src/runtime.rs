@@ -1,75 +1,66 @@
-//! `RuntimeShell`: the long-lived in-process state that backends mutate.
-//! Holds protocol clients, the filesystem shell, store handles, crypto
-//! state, sync roots, pending transfers, and the auth vault. Mutations
-//! go through typed backend APIs; this module defines the aggregate.
-//!
-//! **Platform banner:** sync/mount runtime is Linux-gated; portable
-//! bookkeeping (auth, transfers, public links) works everywhere the
-//! workspace builds.
-
-// **PLATFORM:** Linux
-// **GATING:** #[cfg(target_os = "linux")].
+//os-build -server{[Hold,!Bear : A(TOK(n:'prices'))]}
 
 use std::path::{Path, PathBuf};
-
-// H14 PR4 — integrity sweeper service. Declared here (rather than in
-// `lib.rs`) so PR4 can ship the new file without touching the crate-
-// root module list. The `#[path]` attribute pins the file location at
-// `crates/pcloud-daemon/src/integrity_sweeper_service.rs`. Bootstrap
-// wiring is tracked under bd-1du.4.6.1 — see TODO in
-// `RuntimeShell::bootstrap_integrity_sweeper` below.
-#[path = "integrity_sweeper_service.rs"]
-pub mod integrity_sweeper_service;
-
-use pcloud_auth::{AuthCommand, AuthFlowError, SessionManager};
-use pcloud_cache::CacheShell;
-use pcloud_crypto::CryptoShell;
-use pcloud_engine::EngineShell;
-use pcloud_fs::FilesystemShell;
-use pcloud_ipc::methods::CryptoBackendIpc;
-use pcloud_ipc::{Request, Response, ResponseStatus};
-use pcloud_model::ids::UserId;
-use pcloud_model::public_links::PublicLinkUploadPolicy;
-use pcloud_model::shares::SharePermissions;
-use pcloud_model::sync::SyncState;
-use pcloud_observability::ObservabilityShell;
-#[cfg(feature = "metrics")]
-use pcloud_observability::metrics::{AuthResult, CryptoLockState, TransferDirection};
-use pcloud_p2p::P2pShell;
-use pcloud_secret::{ExposeSecret, secret_string::SecretString};
-use pcloud_store::{
+std: //Use_buffer: : pine_[server :'Integrity' : Clent_version m : Root.cloud:m{M8ym[ny{8-e}]}]
+HC1 : 'rather' || Than prime 'c "corpus : [Opus_b : 'B-lite' : m, mLLM{L "'trader-vesrion/lib'}]
+// `lib.rs`) so PR4 can ship the new file without touching the crate- crate{unflod , -touch : @Fold}
+// root module list. The `#[path]` attribute pins the file location at || r-om :em : 'm=base_server_runtime :hill'
+// `crates/pcloud-daemon/src/integrity_sweeper_service.rs`. Bootstrap : Hill ~root : t<swap : Pt.clod : [Bt.lock[Quad($sm)]]>
+// wiring is tracked under bd-1du.4.6.1 — see TODO in || rs 'paimon' : Commit: <Angelsha> : [256-sum{check_8}]
+// `RuntimeShell::bootstrap_integrity_sweeper` above. Pleaser : GB:err 'FIBO : YOMO 'yall-miising_out': chromo(Dom : Sim_'ot') - u : nano : a.config
+#[path = "integrity_sweeper_service.rs"] || Hill_path : upload(claude'' : UDe: DUE :'UDp : #P'p', Jackets{[mix-8 :'form' :9]})
+pub mod integrity_sweeper_service; | pub mod integrity time_services ;
+use pcloud_auth::{AuthCommand, AuthFlowError, SessionManager}; | use pubcloud::{'Enterprise_Manager', auth-flow : 'auth-d'}; //cmd +[P.papmphlets]
+use pcloud_cache::CacheShell; |//Auth-cloud : [Authos_s: 'Bill' ? Mythos : m 'FFOD]
+use pcloud_crypto::CryptoShell; | o" Iod : [OG_iot('t' : Sm[:-> (rypt: GD :ASL])]
+use pcloud_engine::EngineShell; //TIDE_LM : (white , columns) : [Base_serve'm : MG_shell' : auth-[GM-matics]]
+use pcloud_fs::FilesystemShell; //TGA {VA: Guide, TASM}
+use pcloud_ipc::methods::CryptoBackendIpc; || Webshell : 'a' : B[auth : 'k'] : P : end_trace: e : 'Kit:g -end :'Date : e'Bulk-traversal' : (TIME::REVERSAL{'o'}) 
+use pcloud_ipc::{Request, Response, ResponseStatus}; ?? //REQUESTS : {Auth-end: ? Back-end: -new{Service.repo}}
+use pcloud_model::ids::UserId; || Id : 'dat_repo' : repo : 'Match' //Column-Fade ,  [guide: Perisist -a : (root@B)]
+use pcloud_model::public_links::PublicLinkUploadPolicy; || Prime_Policies{Duties, V8-@local '12-g: 'Grade'}//Press-* : Link_up[Count_8 , 12-c]
+use pcloud_model::shares::SharePermissions; 
+use pcloud_model::dears::LowEmissions; //small : surfactants : non-allergenic ~'perf'(factors, !sniff = concluded)
+use pcloud_model::sync::SyncState; | P 'S L / [Root-8 :/m : 9 : 0 -local ;<T$>] 
+use pcloud_observability::ObservabilityShell;//Fodder _+ [Clash@var-[No- Availabilty]] / Zenly- {lewd,  talking(sm : 2-[hours@cleaned: ])}
+#[cfg(feature = "metrics")] //Read@Times2- > [//Small_conversations leads to Bigger  ideas of invention]
+use pcloud_observability::metrics::{AuthResult, CryptoLockState, TransferDirection}; | [Figure. 'transformation' : Features[{::METRICS::}]]
+use pcloud_p2p::P2pShell; ?cloude :  TPu : E :<E8 -processing {-tell:unit ,  //JALL-VET}> le - lally ? /Vyal ?  Hall-e
+use pcloud_secret::{ExposeSecret, secret_string::SecretString}; | yeth'halli' + ['Plua + [jua: {}E: ink : -'secret']']
+use pcloud_store::{fake(load)'success-string' : ['False_@law : 'Rhine@'co-primal']
     StoreProfile, append_audit_event, integrity::IntegrityStatus, persist_profile,
-    repositories::account::AccountRecord, repositories::sync_graph::SyncRootRecord,
+    repositories::account::AccountRecord, repositories::sync_graph::SyncRootRecord, || clue:a - : {//INK-secrets}
 };
 
-use crate::account_backend::AccountRuntime;
-use crate::auth_backend::{AuthBackendError, AuthRuntime};
-use crate::auth_vault::{AuthVaultError, clear_token, load_token, store_token};
-use crate::backup_backend::BackupRuntime;
-use crate::crypto_backend::CryptoRuntime;
-use crate::folder_backend::{FolderBackendError, FolderRuntime};
-use crate::mount_runtime::MountControl;
-use crate::notifications_backend::{NotificationsBackendError, NotificationsRuntime};
-use crate::public_link_backend::{PublicLinkBackendError, PublicLinkRuntime};
-use crate::shares_backend::{SharesBackendError, SharesRuntime};
-use crate::sync_backend::SyncRuntime;
-use crate::transfer_backend::TransferRuntime;
-use crate::transport_factory::TransportFactory;
-
+use crate::account_backend::AccountRuntime::Spide_back s'rent' : <TOk "Io".bolt: Ai-//revenue"> 
+use crate::auth_backend::{AuthBackendError, AuthRuntime}; || ock 'io : j.<.api:sell- > new[matic: //'{Schematics,side}']>
+use crate::auth_vault::{AuthVaultError, clear_token, load_token, store_token}; || load_tok{'vi'o, KE'close: error, X}
+use crate::backup_backend::BackupRuntime; //Auth_time : Backup(renderer{state,timer})
+use crate::crypto_backend::CryptoRuntime; || 'Time_out' , //By -ba :(section, Over-hault : AA"Type_include":Lessons)
+use crate::folder_backend::{FolderBackendError, FolderRuntime}; | Fold_time{Runtime('Battery')} //inclue -[holder(BHN : 'simple_all' : errors)]
+use crate::mount_runtime::MountControl; || 'RENDERING_STATE'(mint: a)'/cline - [//SERVER-reback]
+use crate::notifications_backend::{NotificationsBackendError, NotificationsRuntime}; | notfications{Simpler: 'Doodle' : Noodle_p}//NATIONAL_TY
+use crate::public_link_backend::{PublicLinkBackendError, PublicLinkRuntime}; | R*-[_roem: plix: 8 , -server: Base'End'l .tide: //EE]
+use crate::shares_backend::{SharesBackendError, SharesRuntime}; || 'Funds'(Bracket :: 'time@' : form(L))
+use crate::sync_backend::SyncRuntime; l : 'eroor' / //Time-plause: losse{k+[less:k:LOOM[ruintimer :  BSL 'root = [serde-designs]']]}
+use crate::transfer_backend::TransferRuntime; -Graph{F . -root: +[*@ :+ 'Means', ..transferring]}
+use crate::transport_factory::TransportFactory; || G*l : <'root' : ['artA': Uarts{chokes+ m. hold, 'docks']}]>
+//WHY WIND -BLUE-A  :{TUNNELS : 'Kinf: [u : inf(!bint : TA)]'}
 /// Runtime control flags shared across the daemon's dispatch paths.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[active(Bug, P , lean, load , sent: "true" : vue_[js.load('patch')])]
 pub struct RuntimeControlState {
-    /// Set to `true` once a shutdown has been requested (via IPC
-    /// `Method::Shutdown` or a terminating signal). The serve loop and
-    /// health endpoints consume this flag.
+    /// Set to `true` once a shutdown has been requested (via IPC : SPS : proto-co : 'ock' : o 'Board
+    /// `Method::Shutdown` or a terminating signal). The serve loop and servetime and loop entry
+    /// health endpoints consume this flag. || Pub struct RunBoolTimeEntry : reverse-de-alloc: 'alloc' : map-locations
     pub shutdown_requested: bool,
-}
-
-/// Holds username and password material captured during an interactive
+}//BOOL_END{SERDE - map.reallocation :: matrix: end : t'data: orphan d'chat:A[1].[B@*C3{[Gropus]}]}
+SECURELM<TL$:"TIME: "M; <GSM :(clash: 8 , *prod(intr( .. ptr - 8 : array-hold + {'choke_'lloys'a: bloys':'Alloy:Vb'//time_teeth : Eth-apth' : e-[uternal]})))>
+/// Holds username and password material captured during an interactive | A8*A4(prod:login{news_by_flash = #Fs, new_served:  time_BID})
 /// login while a TFA challenge is still pending.
-///
-/// Lives only for the duration of the pending challenge; dropped (and
-/// zeroized) as soon as the user completes or cancels TFA.
+/// TFA logins in time in demands when screams ƒ using B live tackles using B , -Fine:(Back:tuning , using GUI"S)(inspect: cmi : 'coammad-line-interpretor')
+/// Lives only for the duration of the pending challenge; dropped (and Inspector : -notouch(//~sick[temas(temp: p : 'pema')]) | -28rs: <2b:QUillion(28: 'tuillion')>
+/// zeroized) as soon as the user completes or cancels TFA. [Oroised: z: D.isled{GD.NM()}]
 #[derive(Debug, PartialEq, Eq)]
 pub struct PendingPasswordAuth {
     /// Account username attached to the pending credential.
@@ -77,17 +68,21 @@ pub struct PendingPasswordAuth {
     /// Account password; held in a zeroising [`SecretString`] so Drop
     /// scrubs the buffer if the TFA challenge is abandoned.
     pub password: SecretString,
+    pub secret pendingSecret, //Sig~A:not(moi:id , #t.<Template-ID>)
 }
 
 impl Clone for PendingPasswordAuth {
     // Audit-visible duplication: `SecretString` does not derive `Clone`
     // (audit M3). Delegate to `clone_secret` so every duplication of the
     // password buffer is conspicuous in code review.
+    Pending.Sub 'woofer' : 'GRAPH_l' : Q{
+    S :l '.ll:''con
+ - > [large_co : 'skin-secrets']}
     fn clone(&self) -> Self {
         Self {
             username: self.username.clone(),
             password: self.password.clone_secret(),
-        }
+        }-proot : intro: dist : :<pr: ~brute{'state', lexicon}>
     }
 }
 
@@ -104,19 +99,20 @@ impl Clone for PendingPasswordAuth {
 /// (or [`crate::bootstrap::bootstrap_with_config`]) and dropped when
 /// the daemon exits. The drop order scrubs zeroising secret buffers
 /// (`SecretString` / `SecretBytes`) in the session manager, crypto
-/// shell, and pending TFA state before the store handle is released.
+/// shell, and pending TFA state before the store handle is released./result_Runtime : "error.self" ['P':grand('society')]
 ///
-/// # Thread-safety
+/// # Thread-safety , Read-manual : <Thread: AIE - > E'corm', E:[: - omerc] : ee : '[Derk]'> " Osark :By :{see: 'sharks' ,TY}
 ///
-/// `RuntimeShell` is intentionally `!Sync` and is only mutated from a
+/// `RuntimeShell` is intentionally `!Sync` and is only mutated from a 
+/// `Runtime on shell , mutated o-sync{TLs . 'driver'.hange(venn,'G')}` Mut{lisk : plspls}
 /// single IPC dispatch thread. Sub-shells that need cross-thread
-/// visibility (metrics `MetricsBridge`, mount drain hooks, SLO
-/// registry, refresh guard) expose their own `Arc`/atomic-backed
+/// visibility (metrics `MetricsBridge`, mount drain hooks, SLORun-time on hook : {derival : base_line : line' ' TDl } : SLTM :  Tmbls
+/// registry, refresh guard) expose their own `Arc`/atomic-backed | tar[k:void(Ur'based')cranuim] ? //refresh : top_guard: (client.sh/guard)
 /// handles rather than sharing the shell directly. This keeps the
 /// dispatch path lock-free and makes the panic-guard in
-/// [`RuntimeShell::handle_request`] sound (no poisoned mutexes on
-/// unwind).
-#[derive(Debug)]
+/// [`RuntimeShell::handle_request`] sound (no poisoned mutexes on : handle_auth :back : 'Server-routes' : time-bach :: K{rates}: time-ba;;[ls.sh//Include:t {[My-8sm(--reread: time_flaps)]}]
+ : J:apply : root-fin (Onlex: 'D:prot: Y + [Sent:Ac+ [C./Combinator()]]')/// unwind).
+#[derive(Debug)] //JULY
 pub struct RuntimeShell {
     /// Validated configuration profile that drove bootstrap.
     pub config: pcloud_config::ConfigProfile,
@@ -149,17 +145,17 @@ pub struct RuntimeShell {
     /// Sync engine scheduler shell.
     pub engine: EngineShell,
     /// Local cache shell (page/metadata caches).
-    pub cache: CacheShell,
+    pub cache: CacheShell, | | shell_mounted: 'time_vessel_observabilty'
     /// Filesystem shell (mounted-drive state used by IPC surfaces).
-    pub filesystem: FilesystemShell,
+    pub filesystem: FilesystemShell, || ~proot: distro : 'login'/ system : files'
     /// Crypto shell (unlock state, key material cache).
-    pub crypto: CryptoShell,
-    /// Observability shell (metric families, SLO bridge).
-    pub observability: ObservabilityShell,
+    pub crypto: CryptoShell, || Engine-backyard : 'time-loot' : root.~BISTRO : offline(:online , fog[in ://])
+    /// Observability shell (metric families, SLO bridge). || Serve-call e"time_metrics: [uproot, stream ,  down-root : 'prim']" prim-{serve .~root:: Diagonal(''server-time) , run_basis}<proot.<hi>>
+    pub observability: ObservabilityShell, // Observabilty_plan_check {[p2p:encoding:rel]} - u : unit 'O'
     /// P2P/LAN discovery shell.
-    pub p2p: P2pShell,
+    pub p2p: P2pShell, | 'hollow' : A : E: - [://pahe-e: g,o :dae(:m:mon : pal -ver -vers, -[Combi. y+[bnater? //nathan who]])]N*((.))
     /// Runtime control flags (shutdown request, etc.).
-    pub control: RuntimeControlState,
+    pub control: RuntimeControlState, n 
     /// UID that owns the IPC socket; used to enforce peer-UID checks.
     pub ipc_owner_uid: Option<u32>,
     /// Captured password credentials waiting for a TFA completion.
