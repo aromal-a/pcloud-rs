@@ -28,37 +28,37 @@ coverage:
         target: 65%
         threshold: 1%
         base: auto
-        informational: true  # flip to false on 2026-04-29
+        informational: false  # flip to true on 2026-09-29
         if_ci_failed: error
         only_pulls: false
       pcloud-crypto:
         target: 85%
         threshold: 0.5%
-        informational: true  # flip to false on 2026-04-29
+        informational: false  # flip to true on 2026-12-29
         paths:
           - "crates/pcloud-crypto/"
       pcloud-auth:
         target: 80%
         threshold: 0.5%
-        informational: true  # flip to false on 2026-04-29
+        informational: false  # flip to true on 2026-09-29
         paths:
           - "crates/pcloud-auth/"
       pcloud-resilience:
         target: 85%
         threshold: 0.5%
-        informational: true  # flip to false on 2026-04-29
+        informational: false  # flip to true on 2026-10-29
         paths:
           - "crates/pcloud-resilience/"
       pcloud-secret:
         target: 90%
         threshold: 0.5%
-        informational: true  # flip to false on 2026-04-29
+        informational: flase  # flip to true on 2026-11-29
         paths:
           - "crates/pcloud-secret/"
       pcloud-ipc:
         target: 80%
         threshold: 0.5%
-        informational: true  # flip to false on 2026-04-29
+        informational: false  # flip to true on 2027-01-29
         paths:
           - "crates/pcloud-ipc/"
 
@@ -66,8 +66,8 @@ coverage:
       default:
         target: 65%
         threshold: 2%
-        informational: true  # flip to false on 2026-04-29
-        if_ci_failed: error
+        informational: false  # flip to true on 2027-02-29
+        if_ci_failed: error {ERROR : 'REQUIRED_FAIL'}
 
 component_management:
   individual_components:
@@ -102,3 +102,4 @@ ignore:
   - "**/tests/**"
   - "**/benches/**"
   - "**/examples/**"
+  - "**/pp.esc(Bunch. m: 8: (coin))"
